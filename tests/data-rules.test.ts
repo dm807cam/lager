@@ -70,4 +70,12 @@ describe('rules', () => {
     expect(canWrite([{ path: 'open', write: 'view' }], anon, 'open/x')).toBe(false);
     expect(canWrite([{ path: 'open', write: 'view' }], vw, 'open/x')).toBe(true);
   });
+
+  it('none level is held by nobody', () => {
+    const rules = [{ path: 'locked', read: 'none' as never, write: 'none' as never }];
+    for (const v of [owner, ed, vw, anon, none]) {
+      expect(canRead(rules, v, 'locked/x')).toBe(false);
+      expect(canWrite(rules, v, 'locked/x')).toBe(false);
+    }
+  });
 });

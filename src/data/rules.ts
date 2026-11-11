@@ -36,9 +36,9 @@ function check(rules: DbRule[] | undefined, viewer: Viewer, path: string, kind: 
     const len = ruleMatches(rule, segs, viewer);
     if (len > bestLen) { best = rule; bestLen = len; }
   }
-  const required = best?.[kind] ?? (kind === 'read' ? DEFAULT_READ : DEFAULT_WRITE);
+  const required: string = best?.[kind] ?? (kind === 'read' ? DEFAULT_READ : DEFAULT_WRITE);
   // "self" and "none" are held by nobody; unknown levels fail closed.
-  if (required === 'self' || !(required in RANK)) return false;
+  if (required === 'self' || required === 'none' || !(required in RANK)) return false;
   return RANK[viewer.level] >= RANK[required];
 }
 
