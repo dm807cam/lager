@@ -51,3 +51,10 @@ Weiterhin nicht nachgebildet (liefern `null`): `sample`, `mcp`, `tts`, `dictatio
 
 ## Technik
 Keine neuen Abhängigkeiten. Neue Plattform-Tabellen über Migrationen 5 (Zuordnung selbst gespeicherter Versionen zu Instanzen) und 6 (Domains). Datei-Metadaten liegen in einer eigenen SQLite-Datei je Instanz neben den Dateien.
+
+## Nachtrag: Englisch als Standard und Mehrsprachigkeit (Entscheidung des Auftraggebers)
+
+- Das gesamte Produkt ist standardmäßig englisch. Mehrsprachigkeit ist eingebaut; ausgeliefert werden Englisch, Französisch, Spanisch und Deutsch. Weitere Sprachen lassen sich durch eine zusätzliche Katalog-Datei ergänzen.
+- Sprache einer Sitzung: Einstellung im Konto, sonst die im Sprachumschalter gewählte, sonst die des Browsers, sonst `LAGER_DEFAULT_LOCALE` (Standard `en`).
+- Übersetzt werden alle Seiten, Hinweise, E-Mails und Dialoge für Menschen. Nicht übersetzt (immer englisch) wird alles, was Maschinen oder Claude lesen: Fehlermeldungen der Schnittstellen, MCP-Werkzeuge, Artefakt-Prüfung, Bauanleitung, Skill, README.
+- Marken-Text (Wortlaut des Auftraggebers): „The only two apps you'll ever need: Claude + Lager." mit dem Erklärsatz darunter, auf der Anmeldeseite und in der README.

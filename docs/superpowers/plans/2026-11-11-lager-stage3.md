@@ -443,3 +443,120 @@ it('assets, room, self-publish, custom domain, export/import', async () => {
 - [ ] **Step 3: Write the example and documentation; fix nothing under `src/` — report gaps instead.**
 - [ ] **Step 4: Run `npm test`, `npm run typecheck`, `npm run build`; all pass.**
 - [ ] **Step 5: Commit** `docs: capabilities, custom domains, export and migration; stage 3 end-to-end test`.
+
+---
+
+## Addendum (owner decision during execution): English by default, internationalisation
+
+The owner decided that the whole product is English by default and must be translatable, starting with English, French, Spanish and German. This replaces the earlier rule "user-facing text German". Tasks 7 and 8 implement it; the Global Constraints rule on language now reads:
+
+- Human-facing text (HTML pages, notices, e-mails, runtime dialogs) comes only from the message catalogs under `src/i18n/` through `t()`; no literal human-facing sentence in any other source file. English is the source catalog and the fallback.
+- Machine-facing text is English only and is not translated: `LagerError` messages, JSON error bodies, REST/MCP results and tool descriptions, artifact-check warnings, log lines, the guide (`src/guide.md`), the skill, the README, code comments and commit messages.
+- Brand copy (owner's wording, English source): tagline "The only two apps you'll ever need: Claude + Lager." and the pitch "We used to buy apps. Now Claude builds any app you can imagine, on the spot. Lager is where they run — on your server, with your data staying yours."
+
+### Task 7: i18n foundation, public and account pages, e-mails, machine-facing English
+
+**Files:**
+- Create: `src/i18n/index.ts`, `src/i18n/en.ts`, `src/i18n/de.ts`, `src/i18n/fr.ts`, `src/i18n/es.ts`, `src/http/locale.ts`
+- Modify: `src/platform/db.ts` (migration 7: `users.locale TEXT`), `src/platform/users.ts`, `src/platform/accounts.ts`, `src/config.ts` (`LAGER_DEFAULT_LOCALE`), `src/http/pages.ts`, `src/http/platform.ts`, `src/http/auth.ts`, `src/http/instance.ts` and the `instance-*.ts` files (their HTML pages and error messages), `src/mcp/oauth.ts` (consent page), `src/runtime/runtime.js` (dialog text), `src/platform/check.ts`, `src/platform/lint.ts`, `src/platform/apps.ts`, `src/platform/domains.ts`, `src/data/*.ts`, `src/core.ts`, `src/mcp/tools.ts` (messages and descriptions), `src/guide.md`, `skill/lager/SKILL.md`, `.env.example`
+- Test: `tests/i18n.test.ts`, `tests/http-locale.test.ts`; update every test that asserts a German string in the files above
+
+**Interfaces:**
+- Produces:
+
+```ts
+// src/i18n/index.ts
+export const LOCALES = ['en', 'de', 'fr', 'es'] as const;
+export type Locale = (typeof LOCALES)[number];
+export const LOCALE_NAMES: Record<Locale, string>;            // 'English', 'Deutsch', 'Français', 'Español'
+export type MessageKey = keyof typeof import('./en.js').en;    // en.ts exports `en` as a const object of key → template
+export function isLocale(value: unknown): value is Locale;
+export function t(locale: Locale, key: MessageKey, params?: Record<string, string | number>): string;
+  // templates use {name} placeholders; a missing key in a non-English catalog falls back to English; a missing param leaves the placeholder text out (empty string)
+export function negotiateLocale(acceptLanguage: string | undefined, fallback: Locale): Locale;   // RFC 9110 q-values, matches primary subtags ('fr-CA' → 'fr')
+export function formatDate(locale: Locale, iso: string): string;   // Intl.DateTimeFormat, UTC, date and time to the minute
+// Each of de.ts, fr.ts, es.ts exports a catalog typed `Record<MessageKey, string>` so a missing or extra key is a compile error.
+
+// src/http/locale.ts
+export function requestLocale(core: Core, req: Request, user?: User | null): Locale;
+  // order: signed-in user's stored locale → cookie `lager_lang` → Accept-Language → config.defaultLocale
+export const LANG_COOKIE = 'lager_lang';
+
+// src/platform/users.ts: User gains `locale: Locale | null`; Users.setLocale(id, locale | null): User
+// src/config.ts: Config gains `defaultLocale: Locale` (LAGER_DEFAULT_LOCALE, default 'en'; invalid value → startup error naming the variable)
+```
+
+Behaviour:
+- `page()` takes the locale: `<html lang="…">`, translated chrome (navigation, sign-out, footer). Every platform page gets a footer language switcher: links `GET /lang/<locale>?return=<path>` that set `lager_lang` (1 year, `SameSite=Lax`, host-only, not HttpOnly-sensitive but set `HttpOnly`) and redirect to `safeReturnPath(return)`; unknown locale → 404. For a signed-in user the switcher also stores the choice with `Users.setLocale`.
+- Account page: a language select (the four locale names plus "Browser default" = null), `POST /account/locale` (csrf).
+- All pages and notices in `pages.ts`, `platform.ts` (login, errors, 404, forbidden), `auth.ts` (register, verify, forgot, reset, account) and the instance-host pages (not found, disabled, forbidden, bad code) use `t()`. Instance-host pages use `requestLocale` with the instance viewer where known, else cookie is not available on that host → Accept-Language → default.
+- OAuth consent page uses `t()`.
+- E-mails are sent in the recipient's locale: the stored locale of the user if any, else the locale of the request that triggered the mail (registration, resend, forgot, invite created by an administrator → the administrator's request locale). `Accounts` methods that send mail take an optional `locale` argument; subjects and bodies come from the catalogs.
+- Registration stores the request locale as the new user's locale.
+- `/__lager/session` reports `viewer.locale` (stored locale or negotiated); the runtime uses it for the one human-facing string it shows (the download confirmation) from a small embedded table for the four locales, falling back to English.
+- Machine-facing strings that are German today are rewritten in English in place (no catalog): artifact-check and lint warnings, `LagerError` messages in `apps.ts`, `domains.ts`, `data/*`, `core.ts` (startup refusal), MCP tool messages and descriptions, JSON error messages in the instance routes. Where a web page shows a notice derived from a `LagerError`, the page maps the error to a catalog key by a stable identifier (extend `LagerError` with an optional `reason` string code, e.g. `slug_retired`, `instance_limit`, `creation_rate`, `host_invalid`, `host_taken`, `host_forbidden`) instead of matching message text.
+- `src/guide.md` and `skill/lager/SKILL.md` are rewritten in English (same content, bodies identical, first section ≤ 15 lines). The MCP server instructions therefore become English.
+- Brand copy: the login page shows the tagline as a heading above the form and the pitch below it (catalog keys `brand.tagline`, `brand.pitch`; translated in all four catalogs, with "Claude" and "Lager" left untranslated).
+- Translation quality: French, Spanish and German texts are natural, consistent in formality (German "du", French "vous", Spanish "tú"), and keep placeholders intact.
+
+- [ ] **Step 1: Write failing tests.**
+
+```ts
+// tests/i18n.test.ts
+it('all catalogs have exactly the English keys', …)            // key sets equal for de, fr, es
+it('placeholders match the English template in every catalog', …)   // same {name} set per key
+it('no catalog value is empty or equal to its key', …)
+it('t interpolates and falls back', …)                         // t('de', key, {name:'X'}) contains X; unknown param → empty
+it('negotiateLocale', …)                                       // 'fr-CA,fr;q=0.9,en;q=0.8' → fr; 'es;q=0.1,de;q=0.9' → de; 'ja' → fallback; undefined → fallback; '*' → fallback
+it('formatDate differs by locale and is stable', …)
+it('brand copy keeps the names Claude and Lager in every locale', …)
+
+// tests/http-locale.test.ts
+it('login page is English by default with lang="en" and the tagline', …)
+it('Accept-Language selects French, Spanish, German', …)       // lang attribute and one known string per locale
+it('language switcher sets the cookie and wins over Accept-Language', …)
+it('a signed-in user\'s stored locale wins over the cookie', …) // set via POST /account/locale
+it('unknown locale in /lang → 404; return is sanitised', …)
+it('registration mail is sent in the request locale; later mails in the stored locale', …)
+it('instance-host error pages follow Accept-Language', …)
+it('LAGER_DEFAULT_LOCALE changes the fallback; invalid value is refused', …)
+it('session reports viewer.locale and the runtime dialog uses it', …)
+it('notices map by reason code, not by message text', …)       // a retired slug shows the localized notice in fr
+```
+
+- [ ] **Step 2: Run `npm test`; expect failures.**
+- [ ] **Step 3: Implement.** Update existing tests that assert German strings from the converted files to assert the English text (default locale) — prefer importing `t('en', key)` over hard-coding where the exact wording is not the point of the test.
+- [ ] **Step 4: Run `npm test` and `npm run typecheck`; both pass.**
+- [ ] **Step 5: Commit** `feat: i18n foundation with English default; public pages, mails and machine text in English`.
+
+### Task 8: Translate the signed-in area and enforce catalog-only text
+
+**Files:**
+- Modify: `src/http/dashboard.ts`, `src/http/manage.ts`, `src/http/admin.ts`, `src/i18n/en.ts`, `src/i18n/de.ts`, `src/i18n/fr.ts`, `src/i18n/es.ts`, `README.md` (section on languages), any remaining file with human-facing literals
+- Test: `tests/i18n-coverage.test.ts`; update `tests/dashboard.test.ts`, `tests/http-manage.test.ts`, `tests/http-admin.test.ts` and any other test asserting German text
+
+**Interfaces:**
+- Consumes: Task 7 `t`, `requestLocale`, `page(locale, …)`, `formatDate`, reason codes on `LagerError`.
+
+Behaviour:
+- Every heading, label, button, table header, option, empty state, confirmation hint and notice on the home page, instance page, app page and the whole administration area comes from the catalogs. Role and level names are catalog entries (`role.admin`, `level.view`, …). Dates use `formatDate`. Sizes use a locale-aware number format.
+- Notices in `manage.ts` are selected by `LagerError.reason` codes (add codes where a message is still matched by text) and shown in the viewer's locale; the signed flash carries only the notice key.
+- README gains a section "Languages": how the locale is chosen (account setting, switcher cookie, browser, `LAGER_DEFAULT_LOCALE`), which languages ship, and how to add one (copy `src/i18n/en.ts` to a new file, translate the values, register it in `LOCALES` and `LOCALE_NAMES`; the type checker reports missing keys).
+
+- [ ] **Step 1: Write failing tests.**
+
+```ts
+// tests/i18n-coverage.test.ts
+it('no human-facing German remains outside the catalogs', …)
+  // scan every file under src/ except src/i18n/*: no characters äöüÄÖÜß„“ and none of a list of German UI words
+  // (e.g. 'Speichern', 'Löschen', 'Freigabe', 'Instanz', 'Einladung', 'Passwort', 'Anmelden', 'Abmelden', 'Übersicht', 'Verwaltung') as whole words
+it('every catalog key is used somewhere in src', …)            // grep each key; unused keys fail (allow a short explicit allowlist for keys built dynamically, e.g. role.* and level.*)
+it('every t() call uses an existing key', …)                    // static scan of t(…, '<key>') literals against en
+it('the home, instance, app and admin pages render in all four locales without missing-key output', …)
+  // render each page per locale for a seeded core and assert the body contains no '{', no 'undefined' and none of the English sentinel strings when locale ≠ en (pick five distinctive English labels)
+```
+
+- [ ] **Step 2: Run `npm test`; expect failures.**
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run `npm test`, `npm run typecheck`, `npm run build`; all pass.**
+- [ ] **Step 5: Commit** `feat: translate dashboard, management and administration; enforce catalog-only text`.
