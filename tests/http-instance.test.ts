@@ -12,8 +12,8 @@ afterEach(() => { h?.core.close(); h = undefined; });
 const W = 'workout.apps.localhost';
 const O = 'other.apps.localhost';
 
-function setup(opts: { caps?: object; visibility?: 'private' | 'users' | 'public' } = {}) {
-  h = makeHarness();
+function setup(opts: { caps?: object; visibility?: 'private' | 'users' | 'public'; quota?: number } = {}) {
+  h = makeHarness({ instanceQuotaBytes: opts.quota });
   const r = h.core.apps.deploy({ slug: 'workout', html: '<html><head></head><body>v1</body></html>', userId: h.adminId, capabilities: opts.caps });
   h.core.apps.deploy({ slug: 'other', html: '<p>other</p>', userId: h.adminId });
   if (opts.visibility) h.core.apps.setVisibility(r.instances[0].id, opts.visibility, h.adminId);
@@ -297,5 +297,63 @@ describe('instance host', () => {
   it('unknown instance path → 404', async () => {
     const { h } = setup({ visibility: 'public' });
     expect((await request(h.app).get('/other.html').set('Host', W)).status).toBe(404);
+  });
+
+  it('grantee gets the granted level in the session', async () => {
+    const { h, inst } = setup();
+    const e = h.core.users.create({ email: 'e@x.y', name: 'E', password: 'pw', role: 'user' });
+    const cookie = 'lager_inst=' + signToken({ uid: e.id, iid: inst.id, k: 'inst' }, 'test-secret', 60);
+    expect((await request(h.app).get('/').set('Host', W).set('Cookie', cookie)).status).toBe(403);
+    h.core.access.setGrant(inst, 'user', e.id, 'view', h.core.users.get(h.adminId)!);
+    const platform = await h.login('e@x.y', 'pw');
+    const entered = await h.enter('workout', platform);
+    expect((await request(h.app).get('/').set('Host', W).set('Cookie', entered)).status).toBe(200);
+    const res = await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', entered);
+    expect(res.body.viewer).toMatchObject({ id: e.id, level: 'view', isOwner: false, canEdit: false });
+    expect((await db(h, W, entered, { op: 'set', path: 'tasks/a', data: { n: 1 } })).status).toBe(403);
+    expect((await db(h, W, entered, { op: 'get', path: 'tasks/a' })).status).toBe(200);
+  });
+
+  it('disabled instance serves the notice', async () => {
+    const { h, inst } = setup({ visibility: 'public' });
+    h.core.apps.setInstanceDisabled(inst.id, true);
+    const page = await request(h.app).get('/').set('Host', W);
+    expect(page.status).toBe(403);
+    expect(page.text).toContain('deaktiviert');
+    const s = await request(h.app).get('/__lager/session').set('Host', W);
+    expect(s.status).toBe(403);
+    expect(s.body.error.code).toBe('forbidden');
+    const cookie = await h.enter('other', await h.login());
+    expect((await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', cookie)).status).toBe(403);
+    expect((await db(h, W, undefined, { op: 'get', path: 'a/b' })).status).toBe(403);
+    const auth = await request(h.app).get('/auth/instance').query({ slug: 'workout' }).set('Host', PLATFORM_HOST).set('Cookie', await h.login());
+    expect(auth.status).toBe(403);
+    h.core.apps.setInstanceDisabled(inst.id, false);
+    expect((await request(h.app).get('/').set('Host', W)).status).toBe(200);
+  });
+
+  it('disabled user is treated as anonymous in the instance', async () => {
+    const { h, inst } = setup({ visibility: 'users' });
+    const e = h.core.users.create({ email: 'e@x.y', name: 'E', password: 'pw', role: 'user' });
+    const cookie = 'lager_inst=' + signToken({ uid: e.id, iid: inst.id, k: 'inst' }, 'test-secret', 60);
+    expect((await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', cookie)).status).toBe(200);
+    h.core.users.setDisabled(e.id, true);
+    expect((await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', cookie)).status).toBe(401);
+  });
+
+  it('quota_exceeded maps to 507', async () => {
+    const { h } = setup({ quota: 16 * 1024 });
+    const inst = await h.enter('workout', await h.login());
+    let status = 200;
+    let body: { error?: { code?: string } } = {};
+    for (let i = 0; i < 100 && status === 200; i++) {
+      const res = await db(h, W, inst, { op: 'set', path: `tasks/t${i}`, data: { text: 'x'.repeat(2000) } });
+      status = res.status;
+      body = res.body as typeof body;
+    }
+    expect(status).toBe(507);
+    expect(body.error?.code).toBe('quota_exceeded');
+    expect((await db(h, W, inst, { op: 'get', path: 'tasks/t0' })).status).toBe(200);
+    expect((await db(h, W, inst, { op: 'delete', path: 'tasks/t0' })).status).toBe(200);
   });
 });

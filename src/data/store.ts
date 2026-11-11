@@ -72,7 +72,8 @@ export class InstanceData {
   private dbs = new Map<string, DatabaseSync>();
   private lastStamp = 0;
 
-  constructor(private dataDir: string, private hub: Hub, private snapshotKeep: number) {}
+  /** `quotaBytes` caps the size of one instance's data (0 = unlimited). */
+  constructor(private dataDir: string, private hub: Hub, private snapshotKeep: number, private quotaBytes = 0) {}
 
   private instanceDir(instanceId: string): string {
     if (typeof instanceId !== 'string' || !INSTANCE_ID_RE.test(instanceId)) {
@@ -91,6 +92,31 @@ export class InstanceData {
 
   hasData(instanceId: string): boolean {
     return fs.existsSync(this.dataFile(instanceId));
+  }
+
+  /** Bytes of live data in the instance database (free pages do not count, so deleting makes room again); 0 without data. */
+  usage(instanceId: string): number {
+    const db = this.open(instanceId, false);
+    if (!db) return 0;
+    const n = (pragma: string): number => Number((db.prepare(`PRAGMA ${pragma}`).get() as Record<string, number>)[pragma]);
+    return (n('page_count') - n('freelist_count')) * n('page_size');
+  }
+
+  private assertQuota(instanceId: string): void {
+    if (this.quotaBytes > 0 && this.usage(instanceId) >= this.quotaBytes) {
+      throw new LagerError('quota_exceeded', 'Der Speicher dieser Instanz ist voll.');
+    }
+  }
+
+  /** Closes the instance database and moves its directory (data and snapshots) to `<dataDir>/trash`. */
+  trash(instanceId: string): void {
+    const dir = this.instanceDir(instanceId);
+    this.dbs.get(instanceId)?.close();
+    this.dbs.delete(instanceId);
+    if (!fs.existsSync(dir)) return;
+    const trash = path.join(this.dataDir, 'trash');
+    fs.mkdirSync(trash, { recursive: true });
+    fs.renameSync(dir, path.join(trash, `${instanceId}-${formatStamp(Date.now())}`));
   }
 
   /** Opens (and caches) the instance database; reads pass create=false so they never create files. */
@@ -138,6 +164,7 @@ export class InstanceData {
   private write(instanceId: string, docPath: string, data: Record<string, unknown>, by: string | null, merge: boolean): Doc {
     const { parent, id } = parseDocPath(docPath);
     assertDocData(data);
+    this.assertQuota(instanceId);
     const db = this.open(instanceId, true)!;
     const doc = this.transaction(db, () => {
       const now = new Date().toISOString();
@@ -194,7 +221,10 @@ export class InstanceData {
     if (typeof opts.holder !== 'string' || opts.holder === '' || Buffer.byteLength(opts.holder) > 200) {
       throw new LagerError('invalid_argument', 'holder must be a non-empty string of at most 200 bytes.');
     }
-    if (opts.data !== undefined) assertDocData(opts.data);
+    if (opts.data !== undefined) {
+      assertDocData(opts.data);
+      this.assertQuota(instanceId);
+    }
     const ttl = Math.min(Math.max(Number.isFinite(opts.ttlMs) ? Math.floor(opts.ttlMs!) : DEFAULT_TTL_MS, 1), MAX_TTL_MS);
     const db = this.open(instanceId, true)!;
     const result = this.transaction(db, (): AcquireResult => {

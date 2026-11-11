@@ -59,6 +59,8 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ''}
 export const notFoundPage = (): string => page('Nicht gefunden', '<h1>Nicht gefunden</h1><p>Seite nicht gefunden.</p>');
 export const forbiddenPage = (): string =>
   page('Kein Zugriff', '<h1>Kein Zugriff</h1><p>Du hast keinen Zugriff auf diese Anwendung. Bitte wende dich an die Besitzerin oder den Besitzer.</p>');
+export const disabledPage = (): string =>
+  page('Instanz deaktiviert', '<h1>Instanz deaktiviert</h1><p>Diese Instanz wurde deaktiviert.</p>');
 export const badCodePage = (): string =>
   page('Anmeldung ungültig', '<h1>Anmeldung ungültig</h1><p>Der Anmeldelink ist ungültig oder abgelaufen. Bitte öffne die Anwendung erneut.</p>');
 

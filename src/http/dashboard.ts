@@ -45,11 +45,21 @@ function instanceHtml(core: Core, inst: Instance, versions: ReturnType<Core['app
 
 function dashboardPage(core: Core, user: User, newToken?: { name: string; token: string }): string {
   const csrf = csrfToken(core, user);
-  const apps = core.apps.listApps(user.id);
-  const appsHtml = apps.length ? apps.map((app) => {
+  // Apps the user owns or collaborates on, plus apps of which they only own an instance (self-service).
+  const owned = core.apps.listInstancesOwnedBy(user.id);
+  const ownedIds = new Set(owned.map((i) => i.id));
+  const apps = new Map(core.access.appsOf(user).map((a) => [a.id, a]));
+  for (const i of owned) {
+    const app = core.apps.getApp(i.appId);
+    if (app) apps.set(app.id, app);
+  }
+  const appsHtml = apps.size ? [...apps.values()].sort((x, y) => x.slug.localeCompare(y.slug)).map((app) => {
     const versions = core.apps.listVersions(app.id);
-    const instances = core.apps.listInstances(app.id);
-    return `<section><h3>${esc(app.title)} <span class="muted mono">${esc(app.slug)}</span></h3>${instances.map((i) => instanceHtml(core, i, versions, csrf)).join('')}</section>`;
+    const instances = core.apps.listInstances(app.id).filter((i) => ownedIds.has(i.id) || core.access.canManageInstance(i, user));
+    const html = instances.map((i) => (i.disabled
+      ? `<div class="card"><h3>${esc(instanceUrl(core.config, i.slug))}</h3><p class="err">Diese Instanz wurde deaktiviert.</p></div>`
+      : instanceHtml(core, i, versions, csrf))).join('');
+    return `<section><h3>${esc(app.title)} <span class="muted mono">${esc(app.slug)}</span></h3>${html}</section>`;
   }).join('') : '<p>Noch keine Apps. Verbinde Claude und lass ein Artefakt deployen.</p>';
 
   const tokens = core.tokens.list(user.id);
@@ -103,10 +113,10 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
     },
   ];
 
-  const ownInstance = (user: User, slug: unknown): Instance => {
+  const managedInstance = (user: User, slug: unknown): Instance => {
     const inst = typeof slug === 'string' ? core.apps.getInstanceBySlug(slug) : null;
     if (!inst) throw new LagerError('not_found', 'Instanz nicht gefunden.');
-    if (inst.ownerId !== user.id) throw new LagerError('forbidden', 'Diese Instanz gehört einem anderen Konto.');
+    if (!core.access.canManageInstance(inst, user)) throw new LagerError('forbidden', 'Du darfst diese Instanz nicht verwalten.');
     return inst;
   };
 
@@ -117,17 +127,17 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
   router.post('/ui/instances/:slug/activate', ...action((req, res, user) => {
     const version = Number(field(req, 'version'));
     if (!Number.isInteger(version)) throw new LagerError('invalid_argument', 'Ungültige Version.');
-    core.apps.activate(ownInstance(user, req.params.slug).id, version, user.id);
+    core.apps.activate(managedInstance(user, req.params.slug).id, version, user.id);
     res.redirect('/');
   }));
 
   router.post('/ui/instances/:slug/visibility', ...action((req, res, user) => {
-    core.apps.setVisibility(ownInstance(user, req.params.slug).id, field(req, 'visibility') as Visibility, user.id);
+    core.apps.setVisibility(managedInstance(user, req.params.slug).id, field(req, 'visibility') as Visibility, user.id);
     res.redirect('/');
   }));
 
   router.post('/ui/instances/:slug/restore', ...action((req, res, user) => {
-    core.data.restore(ownInstance(user, req.params.slug).id, field(req, 'snapshot'));
+    core.data.restore(managedInstance(user, req.params.slug).id, field(req, 'snapshot'));
     res.redirect('/');
   }));
 

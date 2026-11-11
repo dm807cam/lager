@@ -2,7 +2,7 @@ import express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
-import { appDetail, appSummary, checkCapabilities, describeDeploy, instanceJson, ownedApp, ownedInstance } from '../mcp/tools.js';
+import { appDetail, appSummary, checkCapabilities, describeDeploy, instanceJson, managedInstance, readableApp } from '../mcp/tools.js';
 import type { User } from '../platform/users.js';
 import type { PlatformExtension } from './app.js';
 import { sessionUser } from './session.js';
@@ -109,22 +109,24 @@ export const apiExtension: PlatformExtension = (router, core) => {
         slug: req.params.slug as string, html: input.html, title: input.title, note: input.note,
         capabilities: checkCapabilities(input.capabilities), userId: userOf(res).id,
       });
-      res.json(describeDeploy(core, result));
+      res.json(describeDeploy(core, userOf(res), result));
     });
 
   router.get('/api/apps', noStore, auth, (_req, res) => {
-    res.json({ apps: core.apps.listApps(userOf(res).id).map((a) => appSummary(core, a)) });
+    const user = userOf(res);
+    res.json({ apps: core.access.appsOf(user).map((a) => appSummary(core, user, a)) });
   });
 
   router.get('/api/apps/:slug', noStore, auth, (req, res) => {
-    res.json(appDetail(core, ownedApp(core, userOf(res), req.params.slug as string)));
+    const user = userOf(res);
+    res.json(appDetail(core, user, readableApp(core, user, req.params.slug as string)));
   });
 
   router.post('/api/instances/:slug/activate', noStore, auth, express.json({ limit: '10kb' }), (req, res) => {
     const user = userOf(res);
     const version = bodyObject(req).version;
     if (typeof version !== 'number' || !Number.isInteger(version)) throw new LagerError('invalid_argument', 'version must be an integer.');
-    const inst = ownedInstance(core, user, req.params.slug as string);
+    const inst = managedInstance(core, user, req.params.slug as string);
     res.json(instanceJson(core, core.apps.activate(inst.id, version, user.id)));
   });
 

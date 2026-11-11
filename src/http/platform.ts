@@ -4,8 +4,7 @@ import express from 'express';
 import type { Core } from '../core.js';
 import { clearCookie, sessionCookieName, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
 import { csrfValid, sessionUser } from './session.js';
-import { forbiddenPage, loginPage, notFoundPage, page } from './pages.js';
-import { levelFor } from './instance.js';
+import { disabledPage, forbiddenPage, loginPage, notFoundPage, page } from './pages.js';
 import { LagerError } from '../errors.js';
 import { safeReturnPath, sendError } from './errors.js';
 import { signToken } from './tokens.js';
@@ -126,7 +125,11 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
       res.status(404).type('html').send(notFoundPage());
       return;
     }
-    if (levelFor(instance, user.id) === 'none') {
+    if (instance.disabled) {
+      res.status(403).type('html').send(disabledPage());
+      return;
+    }
+    if (core.access.levelFor(instance, user) === 'none') {
       res.status(403).type('html').send(forbiddenPage());
       return;
     }

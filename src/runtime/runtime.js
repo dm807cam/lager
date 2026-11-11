@@ -60,7 +60,7 @@
     var code = error && error.code;
     var message = error && typeof error.message === 'string' ? error.message : 'Request failed.';
     if (code === 'forbidden') code = 'not_granted';
-    else if (code !== 'invalid_argument') code = 'unavailable';
+    else if (code !== 'invalid_argument' && code !== 'quota_exceeded') code = 'unavailable';
     return { code: code, message: message };
   }
 

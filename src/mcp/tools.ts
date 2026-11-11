@@ -28,41 +28,58 @@ export function instanceJson(core: Core, i: Instance): { slug: string; url: stri
   return { slug: i.slug, url: instanceUrl(core.config, i.slug), activeVersion: i.activeVersion, visibility: i.visibility };
 }
 
-export function appSummary(core: Core, app: App): object {
+/** Instances of the app that `user` may see: their own and those shared with them (never other users' private ones). */
+function visibleInstances(core: Core, user: User, appId: string): Instance[] {
+  return core.apps.listInstances(appId).filter((i) => core.access.canSeeInstance(i, user));
+}
+
+export function appSummary(core: Core, user: User, app: App): object {
   const versions = core.apps.listVersions(app.id);
   return {
     slug: app.slug, title: app.title, latestVersion: versions.length ? versions[versions.length - 1].number : null,
-    instances: core.apps.listInstances(app.id).map((i) => instanceJson(core, i)),
+    instances: visibleInstances(core, user, app.id).map((i) => instanceJson(core, i)),
   };
 }
 
-export function appDetail(core: Core, app: App): object {
+export function appDetail(core: Core, user: User, app: App): object {
   return {
-    ...appSummary(core, app),
+    ...appSummary(core, user, app),
     versions: core.apps.listVersions(app.id).map((v) => ({ number: v.number, createdAt: v.createdAt, note: v.note, sizeBytes: v.sizeBytes })),
   };
 }
 
-export function describeDeploy(core: Core, r: DeployResult): object {
+export function describeDeploy(core: Core, user: User, r: DeployResult): object {
   return {
     app: r.app.slug, version: r.version.number, createdVersion: r.createdVersion,
-    urls: r.instances.map((i) => instanceUrl(core.config, i.slug)), warnings: r.warnings,
+    urls: r.instances.filter((i) => core.access.canSeeInstance(i, user)).map((i) => instanceUrl(core.config, i.slug)), warnings: r.warnings,
   };
 }
 
-/** The app with this slug, owned by `user`; otherwise not_found / forbidden. */
-export function ownedApp(core: Core, user: User, slug: string): App {
+function appBySlug(core: Core, slug: string): App {
   const app = core.apps.getApp(slug);
   if (!app || app.slug !== slug) throw new LagerError('not_found', `App "${slug}" not found.`);
-  if (app.ownerId !== user.id) throw new LagerError('forbidden', `App "${slug}" belongs to another user.`);
   return app;
 }
 
-/** The instance with this slug, owned by `user`; otherwise not_found / forbidden. */
-export function ownedInstance(core: Core, user: User, slug: string): Instance {
+/** The app with this slug, if `user` owns it or collaborates on it; otherwise not_found / forbidden. */
+export function readableApp(core: Core, user: User, slug: string): App {
+  const app = appBySlug(core, slug);
+  if (!core.access.canReadApp(app, user)) throw new LagerError('forbidden', `You have no access to app "${slug}".`);
+  return app;
+}
+
+/** The app with this slug, if `user` may create an instance of it (deployers, or anyone for self-service apps). */
+export function instantiableApp(core: Core, user: User, slug: string): App {
+  const app = appBySlug(core, slug);
+  if (!core.access.canCreateInstance(app, user)) throw new LagerError('forbidden', `You may not create instances of app "${slug}".`);
+  return app;
+}
+
+/** The instance with this slug, if `user` may manage it (owner or instance admin); otherwise not_found / forbidden. */
+export function managedInstance(core: Core, user: User, slug: string): Instance {
   const inst = core.apps.getInstanceBySlug(slug);
   if (!inst) throw new LagerError('not_found', `Instance "${slug}" not found.`);
-  if (inst.ownerId !== user.id) throw new LagerError('forbidden', `Instance "${slug}" belongs to another user.`);
+  if (!core.access.canManageInstance(inst, user)) throw new LagerError('forbidden', `You may not manage instance "${slug}".`);
   return inst;
 }
 
@@ -112,7 +129,7 @@ function run(fn: () => unknown): CallToolResult {
   }
 }
 
-/** db_read/db_write act as the owner without the app's rules, but `data/users/<other>/…` stays closed. */
+/** db_read/db_write act with full rights (without the app's rules) for those who manage the instance, but `data/users/<other>/…` stays closed. */
 const ownerViewer = (user: User): Viewer => ({ userId: user.id, level: 'owner' });
 
 const slugArg = z.string().describe('Slug (lowercase letters, digits, hyphens)');
@@ -129,36 +146,36 @@ export function buildMcpServer(core: Core, user: User): McpServer {
       slug: slugArg, html: z.string().describe('Complete HTML of the artifact'), title: z.string().optional(),
       capabilities: capabilitiesArg.optional(), note: z.string().optional().describe('Short version note'),
     },
-  }, ({ slug, html, title, capabilities, note }) => run(() => describeDeploy(core, core.apps.deploy({
+  }, ({ slug, html, title, capabilities, note }) => run(() => describeDeploy(core, user, core.apps.deploy({
     slug, html, title, note, capabilities: checkCapabilities(capabilities), userId: user.id,
   }))));
 
   server.registerTool('list_apps', {
-    description: 'List your apps with their instances.',
+    description: 'List your apps (owned or collaborating) with their instances.',
     inputSchema: {},
-  }, () => run(() => ({ apps: core.apps.listApps(user.id).map((a) => appSummary(core, a)) })));
+  }, () => run(() => ({ apps: core.access.appsOf(user).map((a) => appSummary(core, user, a)) })));
 
   server.registerTool('get_app', {
-    description: 'Show one of your apps with instances and all versions.',
+    description: 'Show one of your apps (owned or collaborating) with instances and all versions.',
     inputSchema: { slug: slugArg },
-  }, ({ slug }) => run(() => appDetail(core, ownedApp(core, user, slug))));
+  }, ({ slug }) => run(() => appDetail(core, user, readableApp(core, user, slug))));
 
   server.registerTool('activate_version', {
     description: 'Activate any existing version on an instance (roll back or forward). A snapshot of the instance data is taken first.',
     inputSchema: { instance: slugArg, version: z.number().int().positive() },
-  }, ({ instance, version }) => run(() => instanceJson(core, core.apps.activate(ownedInstance(core, user, instance).id, version, user.id))));
+  }, ({ instance, version }) => run(() => instanceJson(core, core.apps.activate(managedInstance(core, user, instance).id, version, user.id))));
 
   server.registerTool('create_instance', {
     description: 'Create another instance of an app with its own subdomain and its own data.',
     inputSchema: { app: slugArg, slug: slugArg.describe('Slug of the new instance (globally unique)'), visibility: visibilityArg.optional() },
   }, ({ app, slug, visibility }) => run(() => instanceJson(core, core.apps.createInstance({
-    appId: ownedApp(core, user, app).id, slug, ownerId: user.id, visibility,
+    appId: instantiableApp(core, user, app).id, slug, ownerId: user.id, visibility,
   }))));
 
   server.registerTool('set_visibility', {
     description: 'Set who can open an instance: private (only you), users (all signed-in users), public (anyone).',
     inputSchema: { instance: slugArg, visibility: visibilityArg },
-  }, ({ instance, visibility }) => run(() => instanceJson(core, core.apps.setVisibility(ownedInstance(core, user, instance).id, visibility, user.id))));
+  }, ({ instance, visibility }) => run(() => instanceJson(core, core.apps.setVisibility(managedInstance(core, user, instance).id, visibility, user.id))));
 
   server.registerTool('db_read', {
     description: 'Read instance data. A document path (even number of segments, e.g. tasks/t1) returns {doc}; a collection path (odd, e.g. tasks) returns {docs}.',
@@ -170,7 +187,7 @@ export function buildMcpServer(core: Core, user: User): McpServer {
       limit: z.number().int().positive().optional(),
     },
   }, ({ instance, path, where, orderBy, limit }) => run(() => {
-    const inst = ownedInstance(core, user, instance);
+    const inst = managedInstance(core, user, instance);
     const viewer = ownerViewer(user);
     if (!canRead([], viewer, path)) throw new LagerError('forbidden', 'This path belongs to another user\'s private area.');
     if (path.split('/').length % 2 === 0) return { doc: core.data.get(inst.id, path) };
@@ -188,7 +205,7 @@ export function buildMcpServer(core: Core, user: User): McpServer {
       })).min(1).max(MAX_DB_OPS),
     },
   }, ({ instance, ops }) => run(() => {
-    const inst = ownedInstance(core, user, instance);
+    const inst = managedInstance(core, user, instance);
     const viewer = ownerViewer(user);
     // Validate every operation before applying any of them.
     for (const o of ops) {
@@ -211,13 +228,13 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   server.registerTool('list_snapshots', {
     description: 'List the data snapshots of an instance, newest first.',
     inputSchema: { instance: slugArg },
-  }, ({ instance }) => run(() => ({ snapshots: core.data.listSnapshots(ownedInstance(core, user, instance).id) })));
+  }, ({ instance }) => run(() => ({ snapshots: core.data.listSnapshots(managedInstance(core, user, instance).id) })));
 
   server.registerTool('restore_snapshot', {
     description: 'Restore instance data from a snapshot. The current data is saved as a snapshot first.',
     inputSchema: { instance: slugArg, snapshot: z.string().describe('Snapshot id from list_snapshots') },
   }, ({ instance, snapshot }) => run(() => {
-    core.data.restore(ownedInstance(core, user, instance).id, snapshot);
+    core.data.restore(managedInstance(core, user, instance).id, snapshot);
     return { restored: snapshot };
   }));
 

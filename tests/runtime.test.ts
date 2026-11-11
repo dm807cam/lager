@@ -302,10 +302,17 @@ describe('db', () => {
     expect(snap.docs[0].data()).toEqual({ n: 1 });
   });
 
+  it('quota_exceeded is passed through', async () => {
+    const db = await boot().use('db');
+    await expect(db.collection('err').doc('quota_exceeded').set({ a: 1 })).rejects.toMatchObject({ code: 'quota_exceeded' });
+    await expect(db.doc('err/quota_exceeded').get()).rejects.toMatchObject({ code: 'quota_exceeded' });
+  });
+
   it('error codes are mapped', async () => {
     const db = await boot().use('db');
     await expect(db.doc('err/forbidden').get()).rejects.toEqual({ code: 'not_granted', message: 'boom forbidden' });
     await expect(db.doc('err/invalid_argument').set({})).rejects.toEqual({ code: 'invalid_argument', message: 'boom invalid_argument' });
+    await expect(db.doc('err/quota_exceeded').set({})).rejects.toEqual({ code: 'quota_exceeded', message: 'boom quota_exceeded' });
     await expect(db.doc('err/conflict').delete()).rejects.toEqual({ code: 'unavailable', message: 'boom conflict' });
     await expect(db.doc('err/unauthenticated').get()).rejects.toMatchObject({ code: 'unavailable' });
     await expect(db.collection('err').doc('forbidden').get()).rejects.toMatchObject({ code: 'not_granted' });

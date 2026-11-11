@@ -3,8 +3,10 @@ import { Hub } from './data/hub.js';
 import { InstanceData } from './data/store.js';
 import { OAuthStore } from './mcp/oauth.js';
 import { Accounts } from './platform/accounts.js';
+import { Access } from './platform/access.js';
 import { Apps } from './platform/apps.js';
 import { openPlatformDb } from './platform/db.js';
+import { Groups } from './platform/groups.js';
 import { createMailer, type Mailer } from './platform/mail.js';
 import { Settings } from './platform/settings.js';
 import { ApiTokens } from './platform/tokens.js';
@@ -21,6 +23,9 @@ export interface Core {
   mailer: Mailer;
   /** Registration, e-mail verification, password reset and invitations. */
   accounts: Accounts;
+  groups: Groups;
+  /** Every authorization decision on apps and instances. */
+  access: Access;
   close(): void;
 }
 
@@ -33,18 +38,25 @@ export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
       + 'denn Lager ist über https öffentlich erreichbar. Das Admin-Konto wurde nicht angelegt.');
   }
   users.ensureAdmin(config.adminEmail, config.adminPassword);
-  const apps = new Apps(db, config.dataDir, users);
-  const tokens = new ApiTokens(db, users);
-  const oauth = new OAuthStore(db, users);
   const mailer = opts?.mailer ?? createMailer(config);
   const settings = new Settings(db, { registration: mailer.enabled ? 'open' : 'invite' });
+  const apps = new Apps(db, config.dataDir, users, settings);
+  const tokens = new ApiTokens(db, users);
+  const oauth = new OAuthStore(db, users);
   const accounts = new Accounts(db, users, settings, mailer, config);
   const hub = new Hub();
-  const data = new InstanceData(config.dataDir, hub, config.snapshotKeep);
+  const data = new InstanceData(config.dataDir, hub, config.snapshotKeep, config.instanceQuotaBytes);
+  const groups = new Groups(db, users);
+  const access = new Access(db, users, groups, apps);
+  apps.setChecks({
+    canDeploy: (app, userId) => { const u = users.get(userId); return u !== null && access.canDeploy(app, u); },
+    canManage: (instance, userId) => { const u = users.get(userId); return u !== null && access.canManageInstance(instance, u); },
+  });
+  apps.onInstanceDeleted((instance) => { data.trash(instance.id); });
   // Keep a restore point of the instance data whenever its active version changes.
   apps.onBeforeActivate((inst, from, to) => { data.snapshot(inst.id, `v${from}-to-v${to}`); });
   return {
-    config, users, apps, data, hub, tokens, oauth, settings, mailer, accounts,
+    config, users, apps, data, hub, tokens, oauth, settings, mailer, accounts, groups, access,
     close() {
       data.close();
       db.close();

@@ -161,3 +161,51 @@ describe('InstanceData', () => {
     expect(store.hasData('zzz')).toBe(false);
   });
 });
+
+describe('InstanceData quota, usage and trash', () => {
+  const big = { text: 'x'.repeat(2000) };
+
+  it('quota blocks writes but not reads or deletes', () => {
+    store.close();
+    store = new InstanceData(dir, hub, 20, 64 * 1024);
+    let n = 0;
+    while (n < 500) {
+      try { store.set('q1', `docs/d${n}`, big, null); } catch (e) {
+        expect(code(() => { throw e; })).toBe('quota_exceeded');
+        break;
+      }
+      n++;
+    }
+    expect(n).toBeGreaterThan(5);
+    expect(n).toBeLessThan(500);
+    expect(code(() => store.update('q1', 'docs/d0', { a: 1 }, null))).toBe('quota_exceeded');
+    expect(code(() => store.acquire('q1', 'locks/l', { holder: 'h', data: { a: 1 } }, null))).toBe('quota_exceeded');
+    expect(store.get('q1', 'docs/d0')?.data).toEqual(big);
+    expect(store.query('q1', 'docs')).toHaveLength(n);
+    for (let i = 0; i < n; i++) expect(store.delete('q1', `docs/d${i}`)).toBe(true);
+    expect(store.set('q1', 'docs/again', big, null).version).toBe(1);
+
+    store.close();
+    store = new InstanceData(dir, hub, 20, 0);
+    for (let i = 0; i < 60; i++) store.set('q2', `docs/d${i}`, big, null);
+    expect(store.usage('q2')).toBeGreaterThan(64 * 1024);
+  });
+
+  it('usage and trash', () => {
+    expect(store.usage('u1')).toBe(0);
+    expect(store.hasData('u1')).toBe(false);
+    store.trash('u1');
+    expect(fs.existsSync(path.join(dir, 'trash'))).toBe(false);
+    store.set('u1', 'docs/a', big, null);
+    expect(store.usage('u1')).toBeGreaterThan(0);
+    store.trash('u1');
+    expect(store.hasData('u1')).toBe(false);
+    expect(store.get('u1', 'docs/a')).toBeNull();
+    const moved = fs.readdirSync(path.join(dir, 'trash')).filter((f) => f.startsWith('u1-'));
+    expect(moved).toHaveLength(1);
+    expect(fs.existsSync(path.join(dir, 'trash', moved[0], 'data.sqlite'))).toBe(true);
+    store.set('u1', 'docs/b', { n: 1 }, null);
+    expect(store.get('u1', 'docs/a')).toBeNull();
+    expect(store.get('u1', 'docs/b')).not.toBeNull();
+  });
+});

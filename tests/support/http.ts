@@ -20,13 +20,14 @@ export interface Harness {
   enter(slug: string, platformCookie: string): Promise<string>;
 }
 
-export interface HarnessOptions { publicUrl?: string; extensions?: PlatformExtension[]; trustProxy?: number | false }
+export interface HarnessOptions { publicUrl?: string; extensions?: PlatformExtension[]; trustProxy?: number | false; instanceQuotaBytes?: number }
 
 export function makeHarness(opts: HarnessOptions = {}): Harness {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-http-'));
   const config: Config = {
     dataDir, port: 0, publicUrl: new URL(opts.publicUrl ?? 'http://lager.localhost:8080'), appsDomain: 'apps.localhost',
     adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 'test-secret', snapshotKeep: 20, trustProxy: opts.trustProxy ?? false,
+    instanceQuotaBytes: opts.instanceQuotaBytes ?? 50 * 1024 * 1024,
   };
   const core = createCore(config);
   const app = createHttpApp(core, opts.extensions ?? []);

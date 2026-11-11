@@ -11,7 +11,7 @@ import type { User } from '../platform/users.js';
 import { instanceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
 import { safeReturnPath, sendError } from './errors.js';
 import { injectRuntime } from './inject.js';
-import { badCodePage, forbiddenPage, notFoundPage } from './pages.js';
+import { badCodePage, disabledPage, forbiddenPage, notFoundPage } from './pages.js';
 import { signToken, verifyToken } from './tokens.js';
 
 const RUNTIME_FILE = new URL('../runtime/runtime.js', import.meta.url);
@@ -19,18 +19,11 @@ const MAX_PROFILE_IDS = 100;
 const PING_MS = 25_000;
 const RANK: Record<Level, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
 
-/** Access level of a (possibly anonymous) user on an instance. */
-export function levelFor(instance: Instance, userId: string | null): Level {
-  if (userId !== null && userId === instance.ownerId) return 'owner';
-  if (instance.visibility === 'users' && userId !== null) return 'interact';
-  if (instance.visibility === 'public') return 'view';
-  return 'none';
-}
-
 function instanceUser(core: Core, req: Request, instance: Instance): User | null {
   const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown }>(readCookie(req, instanceCookieName(core.config)), core.config.secret);
   if (!t || t.k !== 'inst' || t.iid !== instance.id || typeof t.uid !== 'string') return null;
-  return core.users.get(t.uid);
+  const user = core.users.get(t.uid);
+  return user && !user.disabled ? user : null;
 }
 
 function activeCapabilities(core: Core, instance: Instance): Capabilities {
@@ -55,7 +48,7 @@ function context(core: Core, req: Request, instance: Instance): Ctx {
   const caps = activeCapabilities(core, instance);
   return {
     instance, user, caps, rules: caps.db?.rules,
-    viewer: { userId: user?.id ?? null, level: levelFor(instance, user?.id ?? null) },
+    viewer: { userId: user?.id ?? null, level: core.access.levelFor(instance, user) },
   };
 }
 
@@ -81,6 +74,11 @@ export function createInstanceRouter(core: Core): express.Router {
     const instance = core.apps.getInstanceBySlug(res.locals.slug as string);
     if (!instance) {
       res.status(404).type('html').send(notFoundPage());
+      return;
+    }
+    if (instance.disabled) {
+      if (req.path.startsWith('/__lager/')) sendError(res, new LagerError('forbidden', 'Diese Instanz wurde deaktiviert.'));
+      else res.status(403).type('html').send(disabledPage());
       return;
     }
     res.locals.ctx = context(core, req, instance);
@@ -255,7 +253,8 @@ export function createInstanceRouter(core: Core): express.Router {
     unsubscribe = core.hub.subscribe(first.instance.id, (e: HubEvent) => {
       // Re-resolve access on every event so revoked visibility or changed rules take effect immediately.
       const inst = core.apps.getInstance(first.instance.id);
-      const level = inst ? levelFor(inst, userId) : 'none';
+      const viewer = userId === null ? null : core.users.get(userId);
+      const level = inst ? core.access.levelFor(inst, viewer) : 'none';
       if (!inst || RANK[level] < RANK.view) { stop(); return; }
       if (e.type === 'reset') { send('reset'); return; }
       const rules = activeCapabilities(core, inst).db?.rules;
