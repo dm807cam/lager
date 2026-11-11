@@ -10,7 +10,7 @@ import type { User, Users } from './users.js';
 
 export type RuleLevel = 'view' | 'interact' | 'admin' | 'owner' | 'self';
 export interface DbRule { path: string; read?: RuleLevel; write?: RuleLevel }
-export interface Capabilities { db?: { rules?: DbRule[] }; user?: { scopes?: string[] }; assets?: { upload?: 'interact' }; [k: string]: unknown }
+export interface Capabilities { db?: { rules?: DbRule[] }; user?: { scopes?: string[] }; assets?: { upload?: 'interact' }; room?: { topics?: Record<string, 'interact'> }; [k: string]: unknown }
 export type Visibility = 'private' | 'users' | 'public';
 export type SelfInstances = 'off' | 'users';
 export type UsersLevel = 'view' | 'interact';

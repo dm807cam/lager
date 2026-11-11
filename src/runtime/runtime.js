@@ -1,4 +1,4 @@
-/* Lager browser runtime: provides window.claude.use("db" | "user" | "assets" | "permissions") and window.storage
+/* Lager browser runtime: provides window.claude.use("db" | "user" | "assets" | "room" | "permissions") and window.storage
    on top of the /__lager/* endpoints. Plain ES2020, no dependencies. */
 (function () {
   'use strict';
@@ -573,12 +573,456 @@
     return Object.freeze({ upload: upload, list: list, delete: remove });
   }
 
+  // ------------------------------------------------------------------ room
+
+  var ROOM_URL = '/__lager/room';
+  var ROOM_EVENTS_URL = '/__lager/room/events';
+  var TOPIC_RE = /^[a-z][a-z0-9_.-]{0,47}$/;
+  var ROOM_NAME_RE = /^[a-z0-9][a-z0-9_.-]{0,47}$/;
+  var PRESENCE_KEY_RE = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+  var ROOM_MAX_BYTES = 4096;
+  var ROOM_MAX_DEPTH = 8;
+  var ROOM_MAX_JOINED = 16;
+  var PRESENCE_FLUSH_MS = 50;
+  var PRESENCE_RETRY_MS = 1000;
+  var FIRST_CONNECT_WAIT_MS = 5000;
+  var JOIN_TIMEOUT_MS = 10000;
+
+  function roomError(code, message) { return { code: code, message: message }; }
+
+  function roomAvailable(session) {
+    var decl = session && session.capabilities && session.capabilities.room;
+    return !!decl && typeof decl === 'object' && !!levelOf(session);
+  }
+
+  /** The server decides; this mirrors its rule so a refused emit rejects without a request. */
+  function roomMayEmit(session, topic) {
+    var level = levelOf(session);
+    if (level === 'admin' || level === 'owner') return true;
+    var topics = session.capabilities.room.topics;
+    return level === 'interact' && !!topics && typeof topics === 'object'
+      && Object.prototype.hasOwnProperty.call(topics, topic) && topics[topic] === 'interact';
+  }
+
+  function jsonDepth(v) {
+    if (v === null || typeof v !== 'object') return 0;
+    var max = 0;
+    Object.keys(v).forEach(function (k) { max = Math.max(max, jsonDepth(v[k])); });
+    return max + 1;
+  }
+
+  /** Throws a room error unless `value` is plain JSON within the 4 KiB / depth bounds. */
+  function checkRoomJson(value, what) {
+    var text;
+    try { text = JSON.stringify(value); } catch (e) { text = undefined; }
+    if (text === undefined) throw roomError('invalid_argument', what + ' is not serializable as JSON.');
+    if (byteLength(text) > ROOM_MAX_BYTES) throw roomError('invalid_argument', what + ' has at most ' + ROOM_MAX_BYTES + ' bytes of JSON text.');
+    if (jsonDepth(JSON.parse(text)) > ROOM_MAX_DEPTH) throw roomError('invalid_argument', what + ' is nested too deeply.');
+  }
+
+  function roomFailure(res, json) {
+    var error = json && json.error;
+    var message = error && typeof error.message === 'string' ? error.message : 'Request failed (' + res.status + ').';
+    var code = 'upstream_error';
+    if (res.status === 429) code = 'rate_limited';
+    else if (res.status === 403) code = 'not_permitted';
+    else if (res.status === 401) code = 'not_granted';
+    else if (res.status === 400 || res.status === 413) code = 'invalid_argument';
+    return roomError(code, message);
+  }
+
+  function roomPost(body) {
+    var payload;
+    try { payload = JSON.stringify(body); } catch (e) { return Promise.reject(roomError('invalid_argument', 'Not serializable as JSON.')); }
+    return fetch(ROOM_URL, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Lager-Request': '1' },
+      body: payload,
+    }).then(
+      function (res) {
+        return res.json().catch(function () { return null; }).then(function (json) {
+          if (!res.ok) throw roomFailure(res, json);
+        });
+      },
+      function (e) { throw roomError('upstream_error', e && e.message ? String(e.message) : 'Network error.'); }
+    );
+  }
+
+  var scheduleFrame = function (fn) {
+    return typeof requestAnimationFrame === 'function' ? requestAnimationFrame(fn) : setTimeout(fn, 16);
+  };
+
+  /**
+   * One room (the lobby or a named one): one EventSource, opened lazily and re-opened with backoff after an error,
+   * its peer snapshot, listeners and own presence. `named` rooms report a failed first connect to `onFirstFailure`.
+   */
+  function createRoom(session, roomName, named) {
+    var userDeclared = !!(session.capabilities && session.capabilities.user && typeof session.capabilities.user === 'object');
+    var myUserId = viewerId(session);
+    var es = null;
+    var peerId = null;
+    var secret = null;
+    var connected = false;
+    var everConnected = false;
+    var left = false;
+    var retryTimer = null;
+    var retryDelay = RETRY_MIN_MS;
+    var onFirstFailure = null;
+    var helloWaiters = [];
+    var peerMap = new Map();
+    var peerKeys = new Map();
+    var rawPeers = new Map();
+    var snapshot = Object.freeze([]);
+    var myPresence = {};
+    var pending = null;
+    var flushTimer = null;
+    var frameQueued = false;
+    var topicListeners = new Map();
+    var peerListeners = new Set();
+    var connListeners = new Set();
+
+    function guard(fn) { try { fn(); } catch (cbErr) { reportError(cbErr); } }
+
+    // -- peers
+
+    function makePeer(info) {
+      var mine = info.peer === peerId;
+      var presence = mine ? myPresence : (info.presence && typeof info.presence === 'object' ? info.presence : {});
+      return Object.freeze({
+        peer: info.peer,
+        by: userDeclared && typeof info.by === 'string' ? info.by : null,
+        isMe: mine || (myUserId !== null && info.by === myUserId),
+        sameTab: mine,
+        kind: 'viewer',
+        guest: info.guest === true,
+        presence: deepFreeze(JSON.parse(JSON.stringify(presence))),
+        updatedAt: Date.now(),
+      });
+    }
+
+    function peerKey(info) {
+      var mine = info.peer === peerId;
+      return JSON.stringify([mine, info.by, info.guest === true, mine ? myPresence : info.presence]);
+    }
+
+    /** Rebuilds the peer map from a full list, keeping the object of every peer that did not change. */
+    function reconcile(list) {
+      var next = new Map();
+      var keys = new Map();
+      var raw = new Map();
+      var changed = false;
+      (Array.isArray(list) ? list : []).forEach(function (info) {
+        if (!info || typeof info.peer !== 'string') return;
+        var key = peerKey(info);
+        var prev = peerMap.get(info.peer);
+        if (prev && peerKeys.get(info.peer) === key) next.set(info.peer, prev);
+        else { next.set(info.peer, makePeer(info)); changed = true; }
+        keys.set(info.peer, key);
+        raw.set(info.peer, info);
+      });
+      if (next.size !== peerMap.size) changed = true;
+      peerMap = next;
+      peerKeys = keys;
+      rawPeers = raw;
+      if (changed) {
+        snapshot = Object.freeze(Array.from(next.values()));
+        queueFrame();
+      }
+    }
+
+    function deliverPeers(entry) {
+      if (!entry.active) return;
+      var joined = [];
+      var updated = [];
+      var gone = [];
+      peerMap.forEach(function (p, id) {
+        var old = entry.last.get(id);
+        if (!old) joined.push(p);
+        else if (old !== p) updated.push(p);
+      });
+      entry.last.forEach(function (p, id) { if (!peerMap.has(id)) gone.push(p); });
+      if (joined.length === 0 && updated.length === 0 && gone.length === 0) return;
+      entry.last = new Map(peerMap);
+      var change = Object.freeze({ peers: snapshot, joined: Object.freeze(joined), left: Object.freeze(gone), updated: Object.freeze(updated) });
+      guard(function () { entry.fn(change); });
+    }
+
+    function queueFrame() {
+      if (frameQueued || peerListeners.size === 0) return;
+      frameQueued = true;
+      scheduleFrame(function () {
+        frameQueued = false;
+        Array.from(peerListeners).forEach(deliverPeers);
+      });
+    }
+
+    // -- connection
+
+    function setConnected(value) {
+      if (connected === value) return;
+      connected = value;
+      Array.from(connListeners).forEach(function (entry) { if (entry.active) guard(function () { entry.fn(value); }); });
+    }
+
+    function flushPresence() {
+      flushTimer = null;
+      if (!pending || !connected) return;
+      var patch = pending;
+      pending = null;
+      sendPresence(patch);
+    }
+
+    function sendPresence(patch) {
+      roomPost(withIdentity({ op: 'presence', patch: patch })).catch(function (e) {
+        // Rate limits and network trouble are transient: keep the state and try again. Anything else is a bug or a stale peer.
+        if (left || (e.code !== 'rate_limited' && e.code !== 'upstream_error')) return;
+        pending = Object.assign({}, patch, pending || {});
+        queuePresence(PRESENCE_RETRY_MS);
+      });
+    }
+
+    function queuePresence(delay) {
+      if (flushTimer === null) flushTimer = setTimeout(flushPresence, delay === undefined ? PRESENCE_FLUSH_MS : delay);
+    }
+
+    function withIdentity(body) {
+      body.room = roomName;
+      body.peer = peerId;
+      if (secret !== null) body.secret = secret;
+      return body;
+    }
+
+    function onHello(e) {
+      var d;
+      try { d = JSON.parse(e.data); } catch (_) { return; }
+      if (!d || typeof d.peer !== 'string') return;
+      peerId = d.peer;
+      secret = typeof d.secret === 'string' ? d.secret : null;
+      everConnected = true;
+      retryDelay = RETRY_MIN_MS;
+      reconcile(d.peers);
+      setConnected(true);
+      // A new connection is a new peer: assert the whole presence state again.
+      pending = null;
+      if (Object.keys(myPresence).length > 0) sendPresence(Object.assign({}, myPresence));
+      helloWaiters.splice(0).forEach(function (w) { w(); });
+    }
+
+    function onMessage(e) {
+      var d;
+      try { d = JSON.parse(e.data); } catch (_) { return; }
+      if (!d || typeof d.topic !== 'string' || !d.from || typeof d.from.peer !== 'string') return;
+      var set = topicListeners.get(d.topic);
+      if (!set || set.size === 0) return;
+      var from = d.from;
+      var msg = {
+        topic: d.topic, peer: from.peer, by: userDeclared && typeof from.by === 'string' ? from.by : null,
+        isMe: from.peer === peerId || (myUserId !== null && from.by === myUserId), sameTab: from.peer === peerId,
+        kind: 'viewer', guest: from.guest === true,
+      };
+      if (d.data !== undefined) msg.data = deepFreeze(d.data);
+      Object.freeze(msg);
+      Array.from(set).forEach(function (entry) { if (entry.active) guard(function () { entry.fn(msg); }); });
+    }
+
+    function onPeers(e) {
+      var d;
+      try { d = JSON.parse(e.data); } catch (_) { return; }
+      if (d && Array.isArray(d.peers)) reconcile(d.peers);
+    }
+
+    function onStreamError() {
+      if (!es) return;
+      es.close();
+      es = null;
+      peerId = null;
+      secret = null;
+      setConnected(false);
+      if (left) return;
+      if (named && !everConnected) {
+        if (onFirstFailure) onFirstFailure(roomError('upstream_error', 'Could not join the room.'));
+        return;
+      }
+      retryTimer = setTimeout(function () { retryTimer = null; open(); }, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
+    }
+
+    function open() {
+      if (es || left || retryTimer !== null || typeof EventSource === 'undefined') return;
+      var source = new EventSource(ROOM_EVENTS_URL + (roomName ? '?room=' + encodeURIComponent(roomName) : ''));
+      es = source;
+      source.addEventListener('hello', onHello);
+      source.addEventListener('message', onMessage);
+      source.addEventListener('peers', onPeers);
+      source.addEventListener('error', function () { if (es === source) onStreamError(); });
+    }
+
+    /** Opens the stream; the very first send waits briefly for it, as there is nobody to tell before that. */
+    function ready() {
+      open();
+      if (connected || everConnected || !es) return Promise.resolve();
+      return new Promise(function (resolve) {
+        var timer = setTimeout(resolve, FIRST_CONNECT_WAIT_MS);
+        helloWaiters.push(function () { clearTimeout(timer); resolve(); });
+      });
+    }
+
+    function destroy() {
+      if (left) return;
+      left = true;
+      if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
+      if (flushTimer !== null) { clearTimeout(flushTimer); flushTimer = null; }
+      if (es) { es.close(); es = null; }
+      peerId = null;
+      connected = false;
+      topicListeners.forEach(function (set) { set.forEach(function (entry) { entry.active = false; }); });
+      [peerListeners, connListeners].forEach(function (set) { set.forEach(function (entry) { entry.active = false; }); });
+      topicListeners.clear();
+      peerListeners.clear();
+      connListeners.clear();
+      helloWaiters.splice(0).forEach(function (w) { w(); });
+    }
+
+    // -- verbs
+
+    function ensureLive() {
+      if (left) throw roomError('invalid_argument', 'This room was left.');
+    }
+
+    function addListener(set, entry) {
+      set.add(entry);
+      return function unsubscribe() { entry.active = false; set.delete(entry); };
+    }
+
+    var verbs = {
+      emit: function (topic, data) {
+        return Promise.resolve().then(function () {
+          ensureLive();
+          if (typeof topic !== 'string' || !TOPIC_RE.test(topic)) throw roomError('invalid_argument', 'A topic matches ^[a-z][a-z0-9_.-]{0,47}$.');
+          if (data !== undefined) checkRoomJson(data, 'data');
+          if (!roomMayEmit(session, topic)) throw roomError('not_permitted', 'This viewer may not send on this topic.');
+          return ready();
+        }).then(function () {
+          // Not connected: the moment is dropped, never queued.
+          if (!connected || left) return undefined;
+          return roomPost(withIdentity({ op: 'emit', topic: topic, data: data }));
+        });
+      },
+      on: function (topic, handler, error) {
+        if (typeof handler !== 'function') throw new TypeError('The handler must be a function.');
+        if (typeof topic !== 'string' || !TOPIC_RE.test(topic)) {
+          Promise.resolve().then(function () {
+            if (typeof error === 'function') guard(function () { error(roomError('invalid_argument', 'A topic matches ^[a-z][a-z0-9_.-]{0,47}$.')); });
+          });
+          return function () {};
+        }
+        var set = topicListeners.get(topic);
+        if (!set) topicListeners.set(topic, (set = new Set()));
+        open();
+        return addListener(set, { fn: handler, active: true });
+      },
+      presence: function (patch) {
+        return Promise.resolve().then(function () {
+          ensureLive();
+          if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) throw roomError('invalid_argument', 'presence expects an object.');
+          var merged = Object.assign({}, myPresence);
+          Object.keys(patch).forEach(function (k) {
+            if (!PRESENCE_KEY_RE.test(k) || k === 'prototype' || k in Object.prototype) {
+              throw roomError('invalid_argument', 'Presence key "' + k + '" is not a plain identifier.');
+            }
+            var v = patch[k];
+            if (v === null) delete merged[k];
+            else { checkRoomJson(v, 'Presence field "' + k + '"'); merged[k] = v; }
+          });
+          checkRoomJson(merged, 'Presence');
+          myPresence = merged;
+          pending = Object.assign(pending || {}, patch);
+          if (peerId !== null && rawPeers.has(peerId)) reconcile(Array.from(rawPeers.values()));
+          open();
+          queuePresence();
+        });
+      },
+      peers: function () { open(); return snapshot; },
+      onPeers: function (handler, error) {
+        if (typeof handler !== 'function') throw new TypeError('The handler must be a function.');
+        void error;
+        var entry = { fn: handler, active: true, last: new Map() };
+        open();
+        // The first delivery presents the room so far as `joined`; later ones carry the net change.
+        Promise.resolve().then(function () { deliverPeers(entry); });
+        return addListener(peerListeners, entry);
+      },
+      connected: function () { return connected; },
+      onConnection: function (handler, error) {
+        if (typeof handler !== 'function') throw new TypeError('The handler must be a function.');
+        void error;
+        var entry = { fn: handler, active: true };
+        open();
+        Promise.resolve().then(function () { if (entry.active) guard(function () { handler(connected); }); });
+        return addListener(connListeners, entry);
+      },
+    };
+
+    return {
+      verbs: verbs,
+      open: open,
+      destroy: destroy,
+      /** Resolves once admitted (the hello arrived), or rejects like `join`. */
+      admit: function () {
+        return new Promise(function (resolve, reject) {
+          var timer = setTimeout(function () { onFirstFailure = null; destroy(); reject(roomError('upstream_error', 'The room did not answer in time.')); }, JOIN_TIMEOUT_MS);
+          onFirstFailure = function (e) { clearTimeout(timer); onFirstFailure = null; destroy(); reject(e); };
+          helloWaiters.push(function () { if (!connected) return; clearTimeout(timer); onFirstFailure = null; resolve(); });
+          open();
+        });
+      },
+    };
+  }
+
+  function buildRoom(session) {
+    var lobby = createRoom(session, '', false);
+    var joined = new Map();
+
+    function join(name) {
+      return Promise.resolve().then(function () {
+        if (typeof name !== 'string' || !ROOM_NAME_RE.test(name)) throw roomError('invalid_argument', 'A room name matches ^[a-z0-9][a-z0-9_.-]{0,47}$.');
+        if (joined.has(name)) return joined.get(name);
+        if (joined.size >= ROOM_MAX_JOINED) throw roomError('limit_reached', 'At most ' + ROOM_MAX_JOINED + ' named rooms at once.');
+        var room = createRoom(session, name, true);
+        var handle = null;
+        var promise = room.admit().then(function () {
+          handle = Object.freeze({
+            name: name,
+            emit: room.verbs.emit, on: room.verbs.on, presence: room.verbs.presence, peers: room.verbs.peers, onPeers: room.verbs.onPeers,
+            connected: room.verbs.connected, onConnection: room.verbs.onConnection,
+            leave: function () { room.destroy(); if (joined.get(name) === promise) joined.delete(name); return Promise.resolve(); },
+          });
+          return handle;
+        });
+        joined.set(name, promise);
+        promise.catch(function () { if (joined.get(name) === promise) joined.delete(name); });
+        return promise;
+      });
+    }
+
+    var v = lobby.verbs;
+    return Object.freeze({
+      emit: v.emit, on: v.on, presence: v.presence, peers: v.peers, onPeers: v.onPeers,
+      connected: v.connected, onConnection: v.onConnection, join: join,
+      // Lager has no conversation with Claude beside the page.
+      sendToClaudeSession: function () { return Promise.reject(roomError('claude_unavailable', 'Sending to Claude is not available on this Lager server.')); },
+      canSendToClaudeSession: function () { return Promise.resolve('off'); },
+    });
+  }
+
   // ------------------------------------------------------------------ permissions
 
   function buildPermissions(session) {
     var states = { user: 'granted' };
     if (levelOf(session)) states.db = 'granted';
     if (assetsAllowed(session)) states.assets = 'granted';
+    if (roomAvailable(session)) states.room = 'granted';
     var one = function (name) { return typeof name === 'string' && Object.prototype.hasOwnProperty.call(states, name) ? states[name] : 'unavailable'; };
     var all = function () { var o = {}; Object.keys(states).sort().forEach(function (k) { o[k] = states[k]; }); return o; };
     return Object.freeze({
@@ -602,6 +1046,7 @@
       if (name === 'db') return levelOf(session) ? db : null;
       if (name === 'user') return buildUser(session);
       if (name === 'assets') return assetsAllowed(session) ? buildAssets() : null;
+      if (name === 'room') return roomAvailable(session) ? buildRoom(session) : null;
       if (name === 'permissions') return buildPermissions(session);
       return null;
     });

@@ -1,6 +1,7 @@
 import { ADMIN_PASSWORD_PLACEHOLDER, type Config } from './config.js';
 import { InstanceAssets } from './data/assets.js';
 import { Hub } from './data/hub.js';
+import { Rooms } from './data/rooms.js';
 import { InstanceData } from './data/store.js';
 import { OAuthStore } from './mcp/oauth.js';
 import { Accounts } from './platform/accounts.js';
@@ -17,6 +18,8 @@ export interface Core {
   config: Config; users: Users; apps: Apps; data: InstanceData; hub: Hub;
   /** Uploaded files per instance (the `assets` capability). */
   assets: InstanceAssets;
+  /** Ephemeral events and presence between the viewers of an instance (the `room` capability); memory only. */
+  rooms: Rooms;
   /** Static API tokens (`lgr_…`). */
   tokens: ApiTokens;
   /** OAuth clients, codes and tokens for the MCP connector. */
@@ -66,7 +69,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
   // Keep a restore point of the instance data whenever its active version changes.
   apps.onBeforeActivate((inst, from, to) => { data.snapshot(inst.id, `v${from}-to-v${to}`); });
   return {
-    config, users, apps, data, assets, hub, tokens, oauth, settings, mailer, accounts, groups, access,
+    config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, accounts, groups, access,
     close() {
       assets.close();
       data.close();

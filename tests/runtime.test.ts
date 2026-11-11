@@ -36,6 +36,7 @@ let docs: Map<string, StoredDoc>;
 let session: { status: number; body: unknown } | 'network-error';
 let users: Record<string, { id: string; name: string; email: string | null; isMe: boolean }>;
 let clock: number;
+let roomReply: (body: any) => Response;
 
 const parentOf = (path: string): string => path.split('/').slice(0, -1).join('/');
 const dbCalls = (): any[] => calls.filter(([u]) => u === '/__lager/db').map(([, init]) => JSON.parse(init.body));
@@ -104,6 +105,7 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
       default: return json({ error: { code: 'invalid_argument', message: 'op' } }, 400);
     }
   }
+  if (url === '/__lager/room') return roomReply(JSON.parse(init.body));
   if (url === '/__lager/assets' || url.startsWith('/__lager/assets/')) {
     const type = init?.headers?.['Content-Type'] as string | undefined;
     if (init?.method === 'POST') {
@@ -135,6 +137,7 @@ function boot(): any {
 
 beforeEach(() => {
   calls = []; docs = new Map(); users = {}; clock = 0;
+  roomReply = () => json({ ok: true });
   session = sessionOf(OWNER);
   FakeEventSource.instances = [];
   g.fetch = fakeFetch;
@@ -879,5 +882,296 @@ describe('path parity with the server validators', () => {
       else expect(() => parseDocPath(c.path), c.path).not.toThrow();
     }
     expect(sent.filter((c) => c.op === 'query').map((c) => c.path)).toEqual(['data/users/u1/storage/kv', 'kv', 'tasks']);
+  });
+});
+
+describe('room', () => {
+  const ME = { peer: 'p1', by: 'u1', guest: false, kind: 'viewer', presence: {}, updatedAt: 1 };
+  const withRoom = (viewer: Record<string, unknown> = OWNER, caps: Record<string, unknown> = { room: {}, user: {} }): void => {
+    session = { status: 200, body: { ...(sessionOf(viewer).body as object), capabilities: caps } };
+  };
+  const roomPosts = (): any[] => calls.filter(([u]) => u === '/__lager/room').map(([, init]) => JSON.parse(init.body));
+  const tick = (ms = 60): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  const code = (p: Promise<unknown>): Promise<string> => p.then(() => 'resolved', (e: { code: string }) => e.code);
+  // A runtime of this test may still hold a coalescing timer; let it fire before the next test's calls start.
+  afterEach(() => tick(70));
+  /** Boots, takes the namespace and connects the lobby as peer p1. */
+  async function connect(): Promise<any> {
+    const room = await boot().use('room');
+    room.peers(); // opens the stream
+    es().emit('hello', { peer: 'p1', peers: [ME] });
+    return room;
+  }
+
+  it('room is null when not declared, or without a level', async () => {
+    withRoom(OWNER, {});
+    expect(await boot().use('room')).toBeNull();
+    withRoom(OWNER, { room: {} });
+    expect(await boot().use('room')).not.toBeNull();
+    withRoom({ id: null, name: '', email: null }, { room: {} });
+    expect(await boot().use('room')).toBeNull();
+    session = 'network-error';
+    expect(await boot().use('room')).toBeNull();
+    expect(FakeEventSource.instances).toHaveLength(0);
+  });
+
+  it('is frozen, lazy, and shows up in permissions', async () => {
+    withRoom();
+    const claude = boot();
+    const room = await claude.use('room');
+    expect(Object.isFrozen(room)).toBe(true);
+    expect(FakeEventSource.instances).toHaveLength(0);
+    expect(await (await claude.use('permissions')).state('room')).toBe('granted');
+    withRoom(OWNER, {});
+    expect(await (await boot().use('permissions')).state('room')).toBe('unavailable');
+  });
+
+  it('room emit/on roundtrip through stubbed transport', async () => {
+    withRoom();
+    const room = await boot().use('room');
+    const got: any[] = [];
+    const off = room.on('hi', (m: any) => got.push(m));
+    expect(es().url).toBe('/__lager/room/events');
+    // the very first emit waits for the stream instead of being dropped
+    const sent = room.emit('hi', { a: 1 });
+    await tick(5);
+    expect(roomPosts()).toEqual([]);
+    es().emit('hello', { peer: 'p1', peers: [ME] });
+    await sent;
+    expect(roomPosts()).toEqual([{ room: '', peer: 'p1', op: 'emit', topic: 'hi', data: { a: 1 } }]);
+    const post = calls.find(([u]) => u === '/__lager/room')!;
+    expect(post[1].headers).toEqual({ 'Content-Type': 'application/json', 'X-Lager-Request': '1' });
+    expect(post[1].credentials).toBe('same-origin');
+    es().emit('message', { topic: 'hi', data: { a: 1 }, from: { peer: 'p1', by: 'u1', guest: false } });
+    es().emit('message', { topic: 'hi', data: 2, from: { peer: 'p9', by: 'u1', guest: false } });
+    es().emit('message', { topic: 'hi', from: { peer: 'p7', by: 'u2', guest: true } });
+    es().emit('message', { topic: 'other', data: 3, from: { peer: 'p7', by: 'u2', guest: true } });
+    expect(got).toEqual([
+      { topic: 'hi', data: { a: 1 }, peer: 'p1', by: 'u1', isMe: true, sameTab: true, kind: 'viewer', guest: false },
+      { topic: 'hi', data: 2, peer: 'p9', by: 'u1', isMe: true, sameTab: false, kind: 'viewer', guest: false },
+      { topic: 'hi', peer: 'p7', by: 'u2', isMe: false, sameTab: false, kind: 'viewer', guest: true },
+    ]);
+    expect(Object.isFrozen(got[0])).toBe(true);
+    expect('data' in got[2]).toBe(false);
+    off();
+    es().emit('message', { topic: 'hi', data: 4, from: { peer: 'p9', by: 'u1', guest: false } });
+    expect(got).toHaveLength(3);
+  });
+
+  it('by is null unless the app declares user, and guests carry the secret', async () => {
+    withRoom(OWNER, { room: {} });
+    const room = await boot().use('room');
+    const got: any[] = [];
+    room.on('hi', (m: any) => got.push(m));
+    es().emit('hello', { peer: 'p1', secret: 's3cret', peers: [ME] });
+    es().emit('message', { topic: 'hi', data: 1, from: { peer: 'p2', by: 'u2', guest: false } });
+    expect(got[0].by).toBeNull();
+    expect(room.peers()[0].by).toBeNull();
+    await room.emit('hi', 1);
+    expect(roomPosts()[0]).toEqual({ room: '', peer: 'p1', op: 'emit', topic: 'hi', data: 1, secret: 's3cret' });
+  });
+
+  it('emit validates and respects the topics the viewer may send on', async () => {
+    withRoom({ ...OWNER, level: 'view', isOwner: false, canEdit: false }, { room: { topics: { move: 'interact' } } });
+    const room = await connect();
+    expect(await code(room.emit('move', 1))).toBe('not_permitted');
+    withRoom({ ...OWNER, level: 'interact', isOwner: false, canEdit: false }, { room: { topics: { move: 'interact', constructor: 'x' } } });
+    const room2 = await connect();
+    expect(await code(room2.emit('move', 1))).toBe('resolved');
+    expect(await code(room2.emit('reset', 1))).toBe('not_permitted');
+    expect(await code(room2.emit('toString', 1))).toBe('invalid_argument');
+    withRoom();
+    const room3 = await connect();
+    expect(await code(room3.emit('Bad Topic', 1))).toBe('invalid_argument');
+    expect(await code(room3.emit('', 1))).toBe('invalid_argument');
+    expect(await code(room3.emit('t', 'x'.repeat(5000)))).toBe('invalid_argument');
+    expect(await code(room3.emit('t', () => 1))).toBe('invalid_argument');
+    expect(() => room3.on('t', 'nope')).toThrow(TypeError);
+    const errors: any[] = [];
+    room3.on('Bad', () => undefined, (e: any) => errors.push(e));
+    expect(errors).toEqual([]);
+    await tick(0);
+    expect(errors).toEqual([{ code: 'invalid_argument', message: expect.any(String) }]);
+    expect(roomPosts().map((b) => b.topic)).toEqual(['move']);
+  });
+
+  it('server failures map to the contract codes; a dropped emit while disconnected sends nothing', async () => {
+    withRoom();
+    const room = await connect();
+    for (const [status, expected] of [[403, 'not_permitted'], [429, 'rate_limited'], [400, 'invalid_argument'], [500, 'upstream_error']] as const) {
+      roomReply = () => json({ error: { code: 'x', message: 'm' } }, status);
+      expect(await code(room.emit('t', 1))).toBe(expected);
+    }
+    roomReply = () => json({ ok: true });
+    const before = roomPosts().length;
+    es().emit('error');
+    expect(room.connected()).toBe(false);
+    expect(await code(room.emit('t', 1))).toBe('resolved');
+    expect(roomPosts()).toHaveLength(before);
+  });
+
+  it('onPeers reports joined, left and updated', async () => {
+    withRoom();
+    const room = await boot().use('room');
+    const changes: any[] = [];
+    room.onPeers((c: any) => changes.push(c));
+    es().emit('hello', { peer: 'p1', peers: [ME] });
+    await tick();
+    expect(changes).toHaveLength(1);
+    expect(changes[0].joined.map((p: any) => p.peer)).toEqual(['p1']);
+    expect(changes[0].joined[0]).toMatchObject({ isMe: true, sameTab: true, kind: 'viewer', guest: false, by: 'u1' });
+    expect(changes[0].peers).toBe(room.peers());
+    expect(Object.isFrozen(changes[0].peers)).toBe(true);
+    const p2 = { peer: 'p2', by: 'u2', guest: true, kind: 'viewer', presence: { cursor: [1, 2] }, updatedAt: 5 };
+    es().emit('peers', { peers: [ME, p2], joined: [p2], left: [], updated: [] });
+    await tick();
+    expect(changes[1].joined).toEqual([expect.objectContaining({ peer: 'p2', isMe: false, guest: true, presence: { cursor: [1, 2] } })]);
+    expect(changes[1].updated).toEqual([]);
+    expect(Object.isFrozen(changes[1].joined[0].presence)).toBe(true);
+    const unchanged = room.peers()[0];
+    es().emit('peers', { peers: [ME, { ...p2, presence: { cursor: [3, 4] } }], joined: [], left: [], updated: [] });
+    await tick();
+    expect(changes[2].updated).toEqual([expect.objectContaining({ peer: 'p2', presence: { cursor: [3, 4] } })]);
+    expect(room.peers()[0]).toBe(unchanged); // a peer that did not change keeps its object
+    es().emit('peers', { peers: [ME], joined: [], left: [p2], updated: [] });
+    await tick();
+    expect(changes[3].left).toEqual([expect.objectContaining({ peer: 'p2' })]);
+    // joined and left within one frame is neither
+    const p3 = { ...p2, peer: 'p3' };
+    es().emit('peers', { peers: [ME, p3], joined: [p3], left: [], updated: [] });
+    es().emit('peers', { peers: [ME], joined: [], left: [p3], updated: [] });
+    await tick();
+    expect(changes).toHaveLength(4);
+  });
+
+  it('presence applies locally at once, is coalesced and merged, and is re-sent after a reconnect', async () => {
+    withRoom();
+    const room = await connect();
+    await room.presence({ cursor: { x: 1 }, mode: 'draw' });
+    await room.presence({ mode: null, color: 'red' });
+    expect(room.peers()[0].presence).toEqual({ cursor: { x: 1 }, color: 'red' });
+    expect(Object.isFrozen(room.peers()[0].presence)).toBe(true);
+    expect(roomPosts()).toEqual([]);
+    await tick();
+    expect(roomPosts()).toEqual([{ room: '', peer: 'p1', op: 'presence', patch: { cursor: { x: 1 }, mode: null, color: 'red' } }]);
+    // the server echoes our own state; our local state stays authoritative
+    es().emit('peers', { peers: [{ ...ME, presence: {} }], joined: [], left: [], updated: [] });
+    expect(room.peers()[0].presence).toEqual({ cursor: { x: 1 }, color: 'red' });
+    // errors, then a retry with backoff opens a new stream, whose hello brings the full state again
+    vi.useFakeTimers();
+    try {
+      const first = es();
+      first.emit('error');
+      expect(first.closed).toBe(true);
+      expect(room.connected()).toBe(false);
+      const n = FakeEventSource.instances.length;
+      await vi.advanceTimersByTimeAsync(999);
+      expect(FakeEventSource.instances).toHaveLength(n);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(FakeEventSource.instances).toHaveLength(n + 1);
+      calls.length = 0;
+      es().emit('hello', { peer: 'p2', peers: [{ ...ME, peer: 'p2' }] });
+      await vi.advanceTimersByTimeAsync(5);
+      expect(roomPosts()).toEqual([{ room: '', peer: 'p2', op: 'presence', patch: { cursor: { x: 1 }, color: 'red' } }]);
+      expect(room.connected()).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('presence validates its input', async () => {
+    withRoom();
+    const room = await connect();
+    expect(await code(room.presence([1] as never))).toBe('invalid_argument');
+    expect(await code(room.presence(null as never))).toBe('invalid_argument');
+    expect(await code(room.presence({ 'bad key': 1 }))).toBe('invalid_argument');
+    expect(await code(room.presence({ constructor: 1 }))).toBe('invalid_argument');
+    expect(await code(room.presence({ a: undefined as never }))).toBe('invalid_argument');
+    expect(await code(room.presence({ a: 'x'.repeat(3000) }))).toBe('resolved');
+    expect(await code(room.presence({ b: 'x'.repeat(3000) }))).toBe('invalid_argument');
+    expect(Object.keys(room.peers()[0].presence)).toEqual(['a']);
+  });
+
+  it('onConnection fires with the current state and then on changes', async () => {
+    withRoom();
+    const room = await boot().use('room');
+    const seen: boolean[] = [];
+    const off = room.onConnection((c: boolean) => seen.push(c));
+    await tick(0);
+    expect(seen).toEqual([false]);
+    es().emit('hello', { peer: 'p1', peers: [ME] });
+    es().emit('error');
+    expect(seen).toEqual([false, true, false]);
+    off();
+    expect(room.connected()).toBe(false);
+  });
+
+  it('join(name) opens its own stream and leave() closes it', async () => {
+    withRoom();
+    const room = await boot().use('room');
+    expect(await code(room.join('Bad Name'))).toBe('invalid_argument');
+    expect(await code(room.join('x'.repeat(49)))).toBe('invalid_argument');
+    expect(FakeEventSource.instances).toHaveLength(0);
+    const joining = room.join('game-1');
+    await tick(0);
+    expect(FakeEventSource.instances).toHaveLength(1); // the lobby is not opened by join
+    const stream = es();
+    expect(stream.url).toBe('/__lager/room/events?room=game-1');
+    let settled = false;
+    void joining.then(() => { settled = true; });
+    await tick(0);
+    expect(settled).toBe(false); // not admitted before the hello
+    stream.emit('hello', { peer: 'g1', peers: [{ ...ME, peer: 'g1' }] });
+    const game = await joining;
+    expect(game.name).toBe('game-1');
+    expect(Object.isFrozen(game)).toBe(true);
+    expect(await room.join('game-1')).toBe(game);
+    expect(game.connected()).toBe(true);
+    expect(game.peers().map((p: any) => p.peer)).toEqual(['g1']);
+    await game.emit('t', 1);
+    await game.presence({ at: 1 });
+    await tick();
+    expect(roomPosts()).toEqual([
+      { room: 'game-1', peer: 'g1', op: 'emit', topic: 't', data: 1 },
+      { room: 'game-1', peer: 'g1', op: 'presence', patch: { at: 1 } },
+    ]);
+    const got: any[] = [];
+    game.on('t', (m: any) => got.push(m));
+    await game.leave();
+    expect(stream.closed).toBe(true);
+    await game.leave();
+    stream.emit('message', { topic: 't', data: 1, from: { peer: 'g2', by: null, guest: true } });
+    expect(got).toEqual([]);
+    expect(await code(game.emit('t', 1))).toBe('invalid_argument');
+    expect(await code(game.presence({ a: 1 }))).toBe('invalid_argument');
+    // joining the name again comes back with a fresh stream
+    const again = room.join('game-1');
+    await tick(0);
+    expect(FakeEventSource.instances).toHaveLength(2);
+    es().emit('hello', { peer: 'g3', peers: [{ ...ME, peer: 'g3' }] });
+    expect(await again).not.toBe(game);
+  });
+
+  it('join rejects when the room cannot be opened, and is limited to 16 rooms', async () => {
+    withRoom();
+    const room = await boot().use('room');
+    const failing = room.join('nope');
+    await tick(0);
+    es().emit('error');
+    expect(await code(failing)).toBe('upstream_error');
+    expect(es().closed).toBe(true);
+    for (let i = 0; i < 16; i++) {
+      const p = room.join('r' + i);
+      await tick(0);
+      es().emit('hello', { peer: 'x' + i, peers: [] });
+      await p;
+    }
+    expect(await code(room.join('r16'))).toBe('limit_reached');
+  });
+
+  it('sending to Claude is not available', async () => {
+    withRoom();
+    const room = await boot().use('room');
+    expect(await room.canSendToClaudeSession()).toBe('off');
+    expect(await code(room.sendToClaudeSession({ a: 1 }))).toBe('claude_unavailable');
+    expect(FakeEventSource.instances).toHaveLength(0);
   });
 });

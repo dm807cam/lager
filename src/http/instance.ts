@@ -12,6 +12,7 @@ import { instanceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from '
 import { safeReturnPath, sendError } from './errors.js';
 import { injectRuntime } from './inject.js';
 import { mountAssetRoutes } from './instance-assets.js';
+import { mountRoomRoutes } from './instance-room.js';
 import { badCodePage, disabledPage, forbiddenPage, notFoundPage } from './pages.js';
 import { epochValid } from './session.js';
 import { signToken, verifyToken } from './tokens.js';
@@ -293,6 +294,7 @@ export function createInstanceRouter(core: Core): express.Router {
   });
 
   mountAssetRoutes(router, core, ctxOf, requireAccess);
+  mountRoomRoutes(router, core, ctxOf, requireAccess, activeCapabilities);
 
   router.use((_req, res) => { res.status(404).type('text/plain').send('Nicht gefunden'); });
   return router;
