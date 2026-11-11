@@ -85,6 +85,11 @@ export class Access {
     return level === 'admin' || level === 'owner';
   }
 
+  /** The owner may delete their instance in every state, also after an administrator disabled it. */
+  canDeleteInstance(instance: Instance, user: User): boolean {
+    return !user.disabled && instance.ownerId === user.id;
+  }
+
   /** Active admin or publisher who owns the app or collaborates on it. */
   canDeploy(app: App, user: User): boolean {
     if (user.disabled || (user.role !== 'admin' && user.role !== 'publisher')) return false;

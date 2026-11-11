@@ -20,6 +20,8 @@ export interface Config {
   mailFrom?: string;
   /** Maximum size of one instance's data (LAGER_INSTANCE_QUOTA_MB, default 50 MiB). */
   instanceQuotaBytes: number;
+  /** Days deleted instance data and app versions stay in `<dataDir>/trash` (LAGER_TRASH_DAYS, default 30; 0 = keep forever). */
+  trashDays?: number;
 }
 
 export const SLUG_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -93,6 +95,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     smtpUrl: env.LAGER_SMTP_URL?.trim() || undefined,
     mailFrom: env.LAGER_MAIL_FROM?.trim() || `Lager <no-reply@${publicUrl.hostname}>`,
     instanceQuotaBytes: quotaMb * 1024 * 1024,
+    trashDays: parseIntEnv(env, 'LAGER_TRASH_DAYS', 30),
   };
 }
 

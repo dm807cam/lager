@@ -6,6 +6,7 @@ import { authExtension } from './http/auth.js';
 import { dashboardExtension } from './http/dashboard.js';
 import { manageExtension } from './http/manage.js';
 import { createHttpApp } from './http/app.js';
+import { startTrashPurge } from './data/trash.js';
 import { mcpExtension } from './mcp/http.js';
 
 const config = loadConfig(process.env);
@@ -21,7 +22,10 @@ const server = app.listen(config.port, () => {
   console.log(`Lager listening on port ${config.port}, platform at ${config.publicUrl.origin}`);
 });
 
+const stopTrashPurge = startTrashPurge(config.dataDir, config.trashDays ?? 30);
+
 function shutdown(): void {
+  stopTrashPurge();
   server.close(() => {
     core.close();
     process.exit(0);

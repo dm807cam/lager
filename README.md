@@ -43,6 +43,7 @@ Konfiguration (nur Umgebungsvariablen, Vorlage in `.env.example`):
 | `LAGER_PORT` | Port des Servers | `8080` |
 | `LAGER_SECRET` | Schlüssel für Sitzungen; sonst erzeugt und in `secret.key` gespeichert | erzeugt |
 | `LAGER_SNAPSHOT_KEEP` | Aufbewahrte Daten-Schnappschüsse pro Instanz | `20` |
+| `LAGER_TRASH_DAYS` | Tage, die gelöschte Instanzen und Apps im Papierkorb bleiben (`0` = nie aufräumen) | `30` |
 | `LAGER_SMTP_URL` | SMTP-Zugang für ausgehende Mails, zum Beispiel `smtps://user:passwort@smtp.example.com:465`; ohne Wert kein Mailversand | keins |
 | `LAGER_MAIL_FROM` | Absender der Mails | `Lager <no-reply@<Host von LAGER_PUBLIC_URL>>` |
 | `LAGER_INSTANCE_QUOTA_MB` | Größe der Daten einer Instanz in MiB, ganze Zahl ab 1 | `50` |
@@ -70,7 +71,7 @@ Einladungen erstellt ein Administrator unter „Verwaltung → Einladungen“, m
 
 Den ersten Administrator legt Lager beim Start aus `LAGER_ADMIN_EMAIL` und `LAGER_ADMIN_PASSWORD` an, aber nur, solange es noch gar kein Konto gibt. Weitere Administratoren ernennst du über die Rolle eines bestehenden Kontos. Der letzte aktive Administrator lässt sich weder herabstufen noch deaktivieren. Ein deaktiviertes Konto kann sich nicht mehr anmelden, und seine Sitzungen auf Plattform und Instanzen enden sofort.
 
-Administratoren haben keinen Zugriff auf die Daten fremder Instanzen. Sie sehen in der Verwaltung, welche Apps und Instanzen es gibt, wem sie gehören und wie viel Speicher sie belegen, und können eine Instanz deaktivieren. Eine private Instanz eines anderen Kontos öffnen sie nicht, und Daten lesen sie nur, wenn man ihnen eine Stufe freigegeben hat wie jedem anderen Konto.
+Die Oberfläche zeigt Administratoren nur Metadaten: welche Apps und Instanzen es gibt, wem sie gehören und wie viel Speicher sie belegen. Sie können eine Instanz deaktivieren, aber die Oberfläche bietet ihnen keinen Weg, die Daten einer fremden Instanz zu öffnen; eine private Instanz eines anderen Kontos öffnen sie nicht, und Daten lesen sie nur, wenn man ihnen eine Stufe freigegeben hat wie jedem anderen Konto. Das ist eine Voreinstellung der Oberfläche, keine technische Garantie gegen einen böswilligen Administrator: Administratoren steuern die Konten (Links zum Zurücksetzen von Passwörtern, Gruppenmitgliedschaften) und haben Zugriff auf den Server und das Datenverzeichnis. Vergib die Administrator-Rolle nur an Menschen, denen du die Daten aller Instanzen anvertrauen würdest.
 
 ## Mailversand
 
@@ -117,10 +118,12 @@ Eine App selbst, also ihre Versionen, sehen und verändern nur ihr Besitzer und 
 
 - **Speicher pro Instanz:** Die Daten einer Instanz sind auf `LAGER_INSTANCE_QUOTA_MB` begrenzt (Standard 50 MiB). Ist die Grenze erreicht, lehnt Lager weitere Schreibzugriffe mit dem Fehler `quota_exceeded` (HTTP 507) ab; Lesen und Löschen funktionieren weiter. Die Grenze gilt für die Daten, nicht für die Versionen der App.
 - **Instanzen pro Nutzer:** Jedes Konto, das kein Administrator ist, darf höchstens so viele Instanzen besitzen, wie ein Administrator unter „Verwaltung → Einstellungen“ festlegt (1 bis 1000, Standard 20). Das gilt beim Anlegen weiterer Instanzen, auch bei Selbstbedienung.
+- **Neue Instanzen pro Tag:** Konten, die keine Administratoren sind, dürfen höchstens 10 Instanzen innerhalb von 24 Stunden anlegen; gelöschte Instanzen zählen mit, ebenso die Instanz, die beim ersten Deploy einer App entsteht. So lässt sich der Speicher nicht durch Anlegen, Füllen und Löschen in Schleife füllen.
+- **Gesperrte Namen:** Der Name einer gelöschten Instanz bleibt für ihren früheren Besitzer reserviert. Andere Konten können ihn nicht übernehmen, weil sonst gespeicherte Browserdaten und Service Worker der alten Instanz auf die neue übergingen.
 
 ## Löschen und Papierkorb
 
-Löscht der Besitzer eine Instanz oder eine App im Dashboard, entfernt Lager sie aus der Plattform, verschiebt die Dateien aber nur in `<Datenverzeichnis>/trash` (im Container `/data/trash`): die Daten einer Instanz als `<Instanz-ID>-<Zeitstempel>`, die Versionen einer App als `app-<App-ID>-<Zeitstempel>`. Lager räumt dieses Verzeichnis nie auf und bietet keine Wiederherstellung dafür. Du leerst es von Hand, sobald du die Daten nicht mehr brauchst; ein Rückholen geht nur durch Kopieren der Dateien. Eine App lässt sich nur löschen, solange keine fremden Instanzen von ihr existieren.
+Löscht der Besitzer eine Instanz oder eine App im Dashboard, entfernt Lager sie aus der Plattform, verschiebt die Dateien aber nur in `<Datenverzeichnis>/trash` (im Container `/data/trash`): die Daten einer Instanz als `<Instanz-ID>-<Zeitstempel>`, die Versionen einer App als `app-<App-ID>-<Zeitstempel>`. Lager bietet keine Wiederherstellung dafür; ein Rückholen geht nur durch Kopieren der Dateien. Beim Start und danach alle 24 Stunden entfernt Lager Einträge, die älter als `LAGER_TRASH_DAYS` Tage sind (Standard 30; `0` schaltet das Aufräumen ab, dann leerst du das Verzeichnis von Hand). Das Alter ergibt sich aus dem Zeitstempel im Namen. Pro Durchlauf schreibt Lager eine Zeile ins Log. Eine App lässt sich nur löschen, solange keine fremden Instanzen von ihr existieren. Instanzen, die ein Administrator deaktiviert hat, kann ihr Besitzer trotzdem löschen.
 
 ## Lokal ausprobieren
 
@@ -225,8 +228,8 @@ Zum Wiederherstellen den Inhalt zurückkopieren (beziehungsweise das Archiv in e
 ## Was Lager nicht kann
 
 - Keine Anmeldung über externe Anbieter (Single Sign-on); Konten haben E-Mail und Passwort.
-- Der Quota gilt nur für die Daten einer Instanz, nicht für Versionen, Schnappschüsse oder den Papierkorb. Eine Begrenzung für die Gesamtgröße gibt es nicht.
-- Der Papierkorb wird nicht automatisch geleert und lässt sich nicht über Lager wiederherstellen.
+- Der Quota gilt nur für die Daten einer Instanz, nicht für Versionen, Schnappschüsse oder den Papierkorb (der nach der Aufbewahrungszeit geleert wird). Eine Begrenzung für die Gesamtgröße gibt es nicht.
+- Der Papierkorb wird nach `LAGER_TRASH_DAYS` Tagen geleert (Standard 30) und lässt sich nicht über Lager wiederherstellen.
 - Keine Capabilities außer `db` und `user`; alle anderen liefern `null`.
 - Kein eigenes TLS: HTTPS übernimmt der vorgeschaltete Proxy.
 - Keine automatische Datensicherung und keine Replikation.

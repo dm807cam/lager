@@ -38,6 +38,9 @@ const MAX_HTML_BYTES = 16 * 1024 * 1024;
 const VISIBILITIES: Visibility[] = ['private', 'users', 'public'];
 const USERS_LEVELS: UsersLevel[] = ['view', 'interact'];
 const SELF_INSTANCES: SelfInstances[] = ['off', 'users'];
+/** Non-administrators may create this many instances per rolling window, deleted ones included (create-fill-delete loops fill the disk). */
+export const CREATIONS_PER_WINDOW = 10;
+const CREATION_WINDOW_MS = 24 * 3600_000;
 
 interface AppRow { id: string; slug: string; title: string; owner_id: string; created_at: string; self_instances: SelfInstances }
 interface VersionRow {
@@ -116,6 +119,28 @@ export class Apps {
     fs.renameSync(tmp, file);
   }
 
+  /**
+   * A slug that belonged to a deleted instance stays reserved for its former owner: a new owner would inherit the browser state
+   * (storage, service workers) that visitors built up on that origin. Reclaiming it lifts the reservation.
+   */
+  private claimSlug(slug: string, ownerId: string): void {
+    const retired = this.db.prepare('SELECT owner_id FROM retired_slugs WHERE slug = ?').get(slug) as { owner_id: string } | undefined;
+    if (!retired) return;
+    if (retired.owner_id !== ownerId) throw new LagerError('conflict', 'Dieser Name wurde bereits verwendet und ist gesperrt.');
+    this.db.prepare('DELETE FROM retired_slugs WHERE slug = ?').run(slug);
+  }
+
+  /** Enforces and records the creation rate of a new instance for `owner`; platform administrators are exempt. */
+  private countCreation(owner: User): void {
+    if (owner.role === 'admin') return;
+    const now = Date.now();
+    const since = new Date(now - CREATION_WINDOW_MS).toISOString();
+    this.db.prepare('DELETE FROM instance_creations WHERE created_at <= ?').run(since);
+    const recent = (this.db.prepare('SELECT COUNT(*) AS c FROM instance_creations WHERE user_id = ? AND created_at > ?').get(owner.id, since) as { c: number }).c;
+    if (recent >= CREATIONS_PER_WINDOW) throw new LagerError('conflict', 'Du hast heute zu viele Instanzen angelegt. Versuche es morgen wieder.');
+    this.db.prepare('INSERT INTO instance_creations (user_id, created_at) VALUES (?, ?)').run(owner.id, new Date(now).toISOString());
+  }
+
   private fireHooks(instance: Instance, from: number, to: number): void {
     for (const hook of this.hooks) hook(instance, from, to);
   }
@@ -159,6 +184,8 @@ export class Apps {
         if (this.db.prepare('SELECT 1 FROM instances WHERE slug = ?').get(input.slug)) {
           throw new LagerError('conflict', `Instance slug "${input.slug}" is already taken.`);
         }
+        this.claimSlug(input.slug, user.id);
+        this.countCreation(user);
         app = { id: crypto.randomUUID(), slug: input.slug, title: input.title || input.slug, ownerId: user.id, createdAt: now, selfInstances: 'off' };
         this.db
           .prepare('INSERT INTO apps (id, slug, title, owner_id, created_at) VALUES (?, ?, ?, ?, ?)')
@@ -265,6 +292,8 @@ export class Apps {
       if (this.db.prepare('SELECT 1 FROM instances WHERE slug = ?').get(input.slug)) {
         throw new LagerError('conflict', `Instance slug "${input.slug}" is already taken.`);
       }
+      this.claimSlug(input.slug, owner.id);
+      this.countCreation(owner);
       const latest = this.db.prepare('SELECT MAX(number) AS n FROM versions WHERE app_id = ?').get(input.appId) as { n: number | null };
       if (latest.n === null) throw new LagerError('not_found', 'App has no versions.');
       const id = crypto.randomUUID();
@@ -407,15 +436,18 @@ export class Apps {
   deleteInstance(instanceId: string, userId: string): void {
     const instance = this.transaction(() => {
       const inst = this.ownedInstance(instanceId, userId);
-      this.removeInstanceRows(inst.id);
+      this.removeInstanceRows(inst);
       return inst;
     });
     for (const hook of this.deleteHooks) hook(instance);
   }
 
-  private removeInstanceRows(instanceId: string): void {
-    this.db.prepare('DELETE FROM grants WHERE instance_id = ?').run(instanceId);
-    this.db.prepare('DELETE FROM instances WHERE id = ?').run(instanceId);
+  /** Removes the rows of the instance and reserves its slug for the owner (see `claimSlug`). */
+  private removeInstanceRows(instance: Instance): void {
+    this.db.prepare('DELETE FROM grants WHERE instance_id = ?').run(instance.id);
+    this.db.prepare('DELETE FROM instances WHERE id = ?').run(instance.id);
+    this.db.prepare('INSERT OR REPLACE INTO retired_slugs (slug, owner_id, retired_at) VALUES (?, ?, ?)')
+      .run(instance.slug, instance.ownerId, new Date().toISOString());
   }
 
   /** Owner only. Refused while someone else owns an instance of the app. Files move to `<dataDir>/trash`. */
@@ -426,7 +458,7 @@ export class Apps {
       if (all.some((i) => i.ownerId !== userId)) {
         throw new LagerError('conflict', 'Andere Nutzer haben Instanzen dieser App. Sie müssen zuerst gelöscht werden.');
       }
-      for (const i of all) this.removeInstanceRows(i.id);
+      for (const i of all) this.removeInstanceRows(i);
       this.db.prepare('DELETE FROM app_collaborators WHERE app_id = ?').run(a.id);
       this.db.prepare('DELETE FROM versions WHERE app_id = ?').run(a.id);
       this.db.prepare('DELETE FROM apps WHERE id = ?').run(a.id);

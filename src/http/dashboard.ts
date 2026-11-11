@@ -27,7 +27,7 @@ function ownSection(core: Core, user: User): string {
     cells: instance.disabled
       ? '<td>v' + instance.activeVersion + '</td><td><span class="err">deaktiviert</span></td>'
       : `<td>v${instance.activeVersion}</td><td>${esc(visibilityLabel(instance.visibility))}</td>`,
-    manage: core.access.canManageInstance(instance, user),
+    manage: core.access.canManageInstance(instance, user) || core.access.canDeleteInstance(instance, user),
   })));
   return `<div class="scroll"><table><thead><tr><th>App</th><th>Instanz</th><th>Version</th><th>Sichtbarkeit</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }

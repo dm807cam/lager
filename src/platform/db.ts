@@ -133,6 +133,18 @@ const MIGRATIONS: string[] = [
   ALTER TABLE instances ADD COLUMN users_level TEXT NOT NULL DEFAULT 'interact';
   ALTER TABLE instances ADD COLUMN disabled_at TEXT;
   `,
+  `
+  CREATE TABLE retired_slugs (
+    slug TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    retired_at TEXT NOT NULL
+  );
+  CREATE TABLE instance_creations (
+    user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX instance_creations_user ON instance_creations(user_id, created_at);
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

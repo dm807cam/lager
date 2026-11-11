@@ -25,6 +25,8 @@ const NOTICES: Array<[RegExp, string]> = [
   [/^Instanz-Limit erreicht$/, 'Instanz-Limit erreicht'],
   [/^Andere Nutzer haben Instanzen/, 'Andere Nutzer haben Instanzen dieser App. Sie müssen zuerst gelöscht werden.'],
   [/already taken/, 'Dieser Name ist schon vergeben.'],
+  [/^Dieser Name wurde bereits verwendet und ist gesperrt\.$/, 'Dieser Name wurde bereits verwendet und ist gesperrt.'],
+  [/^Du hast heute zu viele Instanzen angelegt\./, 'Du hast heute zu viele Instanzen angelegt. Versuche es morgen wieder.'],
   [/Invalid slug|is reserved/, 'Ungültiger Name: Kleinbuchstaben, Ziffern und Bindestriche, höchstens 63 Zeichen.'],
   [/Collaborators must be/, 'Mitarbeiter müssen aktive Administratoren oder Publisher sein.'],
   [/owner is already in charge/, 'Der Besitzer ist bereits für die App zuständig.'],
@@ -78,9 +80,14 @@ function instancePage(core: Core, user: User, inst: Instance, flash: Flash): str
 <td>${form(`${base}/restore`, csrf, hiddenField('snapshot', s.id), 'Wiederherstellen', true)}</td></tr>`).join('');
   const level = inst.visibility === 'users'
     ? `<label for="users-level">Stufe für Angemeldete</label><select id="users-level" name="users_level">${optionList(USERS_LEVELS, inst.usersLevel)}</select>` : '';
-  const owner = core.access.levelFor(inst, user) === 'owner';
+  const owner = core.access.canDeleteInstance(inst, user);
   const del = owner ? `<h2>Instanz löschen</h2><div class="card"><p>Die Instanz und ihre Daten werden entfernt. Die Daten landen im Papierkorb des Servers.</p>
 ${form(`${base}/delete`, csrf, `<label for="confirm">Zur Bestätigung den Namen „${esc(inst.slug)}“ eingeben</label><input id="confirm" name="confirm" required autocomplete="off">`, 'Instanz löschen')}</div>` : '';
+  if (inst.disabled) {
+    return shell(user, csrf, `Instanz ${inst.slug}`, `<p><a href="/">Zurück zur Übersicht</a></p>
+<h1>${esc(app.title)} <span class="muted mono">${esc(inst.slug)}</span></h1>
+<p class="err">Diese Instanz wurde von einem Administrator deaktiviert. Du kannst sie nur noch löschen.</p>${del}`, flash);
+  }
   return shell(user, csrf, `Instanz ${inst.slug}`, `<p><a href="/">Zurück zur Übersicht</a></p>
 <h1>${esc(app.title)} <span class="muted mono">${esc(inst.slug)}</span></h1>
 <p><a href="${esc(url)}">${esc(url)}</a></p>
@@ -191,7 +198,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const user = userOf(res);
     const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
     if (!inst) { send(res, 404, notFoundPage('Diese Instanz gibt es nicht.')); return; }
-    if (!core.access.canManageInstance(inst, user)) { send(res, 403, forbiddenInstancePage()); return; }
+    if (!core.access.canManageInstance(inst, user) && !core.access.canDeleteInstance(inst, user)) { send(res, 403, forbiddenInstancePage()); return; }
     send(res, 200, instancePage(core, user, inst, readFlash(core, user, req.query.flash)));
   });
 
@@ -231,9 +238,9 @@ export const manageExtension: PlatformExtension = (router, core) => {
   }));
 
   router.post('/ui/instances/:slug/delete', ...action(instBack, (req, user) => {
-    const inst = managed(user, param(req, 'slug'));
-    // Deleting stays with the owner; the Apps method refuses everyone else with `forbidden`.
-    if (core.access.levelFor(inst, user) !== 'owner') throw new LagerError('forbidden', 'Nur die Besitzerin oder der Besitzer darf das.');
+    const inst = instanceOf(param(req, 'slug'));
+    // Deleting stays with the owner, also while an administrator has disabled the instance.
+    if (!core.access.canDeleteInstance(inst, user)) throw new LagerError('forbidden', 'Nur die Besitzerin oder der Besitzer darf das.');
     if (field(req, 'confirm') !== inst.slug) throw new Notice(CONFIRM);
     core.apps.deleteInstance(inst.id, user.id);
     return '/';
