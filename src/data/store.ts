@@ -119,7 +119,8 @@ export class InstanceData {
     this.extraUsage = fn;
   }
 
-  private assertQuota(instanceId: string): void {
+  /** Throws `quota_exceeded` when the instance's storage is already full. */
+  assertQuota(instanceId: string): void {
     if (this.quotaBytes > 0 && this.usage(instanceId) + this.extraUsage(instanceId) >= this.quotaBytes) {
       throw new LagerError('quota_exceeded', 'This instance\'s storage is full.');
     }
@@ -278,7 +279,7 @@ export class InstanceData {
    * All documents ordered by path, read in keyset-paged batches so an export never holds the instance in memory.
    * Everything under `data/users/` is left out except the area of `includePrivateOf`.
    */
-  *exportDocs(instanceId: string, opts: { includePrivateOf?: string } = {}): Generator<{ path: string; data: Record<string, unknown> }> {
+  *exportDocs(instanceId: string, opts: { includePrivateOf?: string; filter?: (path: string) => boolean } = {}): Generator<{ path: string; data: Record<string, unknown> }> {
     const db = this.open(instanceId, false);
     if (!db) return;
     let after = '';
@@ -286,7 +287,8 @@ export class InstanceData {
       const rows = db.prepare('SELECT path, data FROM docs WHERE path > ? ORDER BY path LIMIT ?').all(after, EXPORT_BATCH) as unknown as Array<{ path: string; data: string }>;
       for (const r of rows) {
         const owner = privateAreaOwner(r.path.split('/'));
-        if (owner === undefined || (opts.includePrivateOf !== undefined && owner === opts.includePrivateOf)) {
+        // The filter runs before the JSON is parsed, so skipped documents cost no parsing.
+        if ((owner === undefined || (opts.includePrivateOf !== undefined && owner === opts.includePrivateOf)) && (opts.filter?.(r.path) ?? true)) {
           yield { path: r.path, data: JSON.parse(r.data) as Record<string, unknown> };
         }
       }

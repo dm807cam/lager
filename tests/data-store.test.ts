@@ -76,6 +76,10 @@ describe('InstanceData', () => {
     const deep = Array.from({ length: 18 }, (_, i) => `s${i}`).join('/');
     expect(code(() => store.set('i1', deep, {}, null))).toBe('invalid_argument');
     expect(code(() => store.set('i1', `a/${'x'.repeat(201)}`, {}, null))).toBe('invalid_argument');
+    // 8 segments of 150 bytes pass the segment rules but exceed 1000 bytes in total; 6 fit.
+    const seg = 'y'.repeat(150);
+    expect(code(() => store.set('i1', Array.from({ length: 8 }, () => seg).join('/'), {}, null))).toBe('invalid_argument');
+    expect(store.set('i1', Array.from({ length: 6 }, () => seg).join('/'), {}, null).path).toHaveLength(6 * 150 + 5);
     expect(code(() => store.set('i1', 'a/b', 'x'.repeat(300 * 1024) as never, null))).toBe('invalid_argument');
     expect(code(() => store.set('i1', 'a/b', { big: 'x'.repeat(300 * 1024) }, null))).toBe('invalid_argument');
     let nested: Record<string, unknown> = {};
@@ -212,6 +216,12 @@ describe('InstanceData quota, usage and trash', () => {
 
 describe('InstanceData export and import', () => {
   const paths = (gen: Iterable<{ path: string }>): string[] => [...gen].map((d) => d.path);
+
+  it('exportDocs applies a path filter', () => {
+    store.set('f1', 'a/1', { n: 1 }, null);
+    store.set('f1', 'b/1', { n: 2 }, null);
+    expect(paths(store.exportDocs('f1', { filter: (p) => p.startsWith('b/') }))).toEqual(['b/1']);
+  });
 
   it('exportDocs yields nothing for an instance without data and orders by path', () => {
     expect(paths(store.exportDocs('none'))).toEqual([]);

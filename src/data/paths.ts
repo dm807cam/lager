@@ -2,11 +2,13 @@ import { LagerError } from '../errors.js';
 
 const MAX_SEGMENTS = 16;
 const MAX_SEGMENT_BYTES = 200;
+const MAX_PATH_BYTES = 1000;
 const MAX_DOC_BYTES = 256 * 1024;
 const MAX_DEPTH = 32;
 
 function segments(path: unknown): string[] {
   if (typeof path !== 'string' || path === '') throw new LagerError('invalid_argument', 'Path must be a non-empty string.');
+  if (Buffer.byteLength(path) > MAX_PATH_BYTES) throw new LagerError('invalid_argument', `Path is limited to ${MAX_PATH_BYTES} bytes.`);
   const segs = path.split('/');
   if (segs.length > MAX_SEGMENTS) throw new LagerError('invalid_argument', `Path has more than ${MAX_SEGMENTS} segments.`);
   for (const s of segs) {

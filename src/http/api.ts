@@ -1,21 +1,26 @@
 import { once } from 'node:events';
+import { StringDecoder } from 'node:string_decoder';
 import express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
 import type { Core } from '../core.js';
+import { assertDocData, parseDocPath } from '../data/paths.js';
 import { LagerError } from '../errors.js';
 import {
-  addDomainTo, appDetail, downloadableVersion, runArtifactCheck, appSummary, checkCapabilities, createInstanceFor, domainsJson, removeDomainFrom, describeDeploy, grantPrincipal, grantsJson, instanceJson, managedInstance, readableApp,
+  addDomainTo, appDetail, downloadableVersion, runArtifactCheck, appSummary, checkCapabilities, createInstanceFor, domainsJson, removeDomainFrom, describeDeploy, grantPrincipal, grantsJson, instanceJson, managedInstance, readableApp, transferAccess,
 } from '../mcp/tools.js';
 import type { GrantLevel } from '../platform/access.js';
 import type { Instance, Visibility } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 import type { PlatformExtension } from './app.js';
+import { sendError } from './errors.js';
 import { sessionUser } from './session.js';
 
 const MAX_HTML = '16mb';
 // JSON escaping inflates HTML; Apps.deploy enforces the 16 MiB limit on the HTML itself.
 const MAX_JSON = '24mb';
-const MAX_IMPORT = '50mb';
+const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
+/** A JSON array has to be held whole to be parsed, so it gets a smaller limit. */
+const MAX_IMPORT_JSON_BYTES = 5 * 1024 * 1024;
 export const MAX_IMPORT_DOCS = 100_000;
 
 /** API token (`lgr_…`) or OAuth access token from `Authorization: Bearer …`. */
@@ -111,12 +116,14 @@ export async function streamExport(core: Core, user: User, inst: Instance, res: 
     'Content-Type': 'application/x-ndjson; charset=utf-8', 'Content-Disposition': `attachment; filename="${inst.slug}-${stamp}.ndjson"`,
     'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store',
   });
+  const access = transferAccess(core, user, inst);
   let closed = false;
-  res.on('close', () => { closed = true; });
+  // An aborted download never emits `drain`; racing it against `close` lets the generator end instead of hanging.
+  const closeSignal = new Promise<void>((resolve) => { res.on('close', () => { closed = true; resolve(); }); });
   try {
-    for (const doc of core.data.exportDocs(inst.id, { includePrivateOf: user.id })) {
+    for (const doc of core.data.exportDocs(inst.id, { includePrivateOf: user.id, filter: access.readable })) {
       if (closed) return;
-      if (!res.write(`${JSON.stringify(doc)}\n`)) await once(res, 'drain').catch(() => undefined);
+      if (!res.write(`${JSON.stringify(doc)}\n`)) await Promise.race([once(res, 'drain'), closeSignal]).catch(() => undefined);
     }
     res.end();
   } catch (e) {
@@ -150,29 +157,63 @@ function importEntry(value: unknown, where: string): ImportDoc {
   return { path: v.path, data: v.data as Record<string, unknown> };
 }
 
-/** The documents of an import body: NDJSON (one `{path,data}` per line) or a JSON array. */
-function importDocsOf(req: Request): ImportDoc[] {
-  const body: unknown = req.body;
-  if (typeof body !== 'string') throw new LagerError('invalid_argument', 'Send application/x-ndjson (one {path,data} per line) or a JSON array.');
+class ImportTooLarge extends Error {}
+
+/** Longest NDJSON line: a document is at most 256 KiB, plus its path and the wrapper. */
+const MAX_IMPORT_LINE = 300 * 1024;
+
+/**
+ * Reads the documents of an import body from the request stream: NDJSON (one `{path,data}` per line, validated line by line
+ * while it arrives) or a JSON array. Bytes and documents are counted as they come; the first violation aborts the read.
+ * `writable` is the caller's rule check (everything must be writable, else the whole import is refused).
+ */
+async function readImportDocs(req: Request, json: boolean, writable: (path: string) => boolean): Promise<ImportDoc[]> {
+  const limit = json ? MAX_IMPORT_JSON_BYTES : MAX_IMPORT_BYTES;
   const tooMany = (): LagerError => new LagerError('invalid_argument', `At most ${MAX_IMPORT_DOCS} documents per import.`);
-  if (req.is('application/json')) {
-    let parsed: unknown;
-    try { parsed = JSON.parse(body); } catch { throw new LagerError('invalid_argument', 'The body is not valid JSON.'); }
-    if (!Array.isArray(parsed)) throw new LagerError('invalid_argument', 'The JSON body must be an array of {path, data}.');
-    if (parsed.length > MAX_IMPORT_DOCS) throw tooMany();
-    return parsed.map((v, i) => importEntry(v, `Entry ${i + 1}`));
-  }
+  const check = (value: unknown, where: string): ImportDoc => {
+    const doc = importEntry(value, where);
+    parseDocPath(doc.path);
+    assertDocData(doc.data);
+    if (!writable(doc.path)) throw new LagerError('forbidden', `You may not write "${doc.path}" (another user's private area or a rule of the app).`);
+    return doc;
+  };
+  const decoder = new StringDecoder('utf8');
   const docs: ImportDoc[] = [];
+  let bytes = 0;
+  let buffered = '';
   let n = 0;
-  for (const line of body.split('\n')) {
+  const line = (text: string): void => {
     n++;
-    if (line.trim() === '') continue;
+    if (text.trim() === '') return;
     if (docs.length >= MAX_IMPORT_DOCS) throw tooMany();
     let parsed: unknown;
-    try { parsed = JSON.parse(line); } catch { throw new LagerError('invalid_argument', `Line ${n} is not valid JSON.`); }
-    docs.push(importEntry(parsed, `Line ${n}`));
+    try { parsed = JSON.parse(text); } catch { throw new LagerError('invalid_argument', `Line ${n} is not valid JSON.`); }
+    docs.push(check(parsed, `Line ${n}`));
+  };
+  // destroyOnReturn: false, so a refusal can still be answered instead of the socket being torn down.
+  for await (const chunk of req.iterator({ destroyOnReturn: false }) as AsyncIterable<Buffer>) {
+    bytes += chunk.length;
+    if (bytes > limit) throw new ImportTooLarge();
+    buffered += decoder.write(chunk);
+    if (json) continue;
+    let from = 0;
+    for (let i = buffered.indexOf('\n', from); i >= 0; i = buffered.indexOf('\n', from)) {
+      line(buffered.slice(from, i));
+      from = i + 1;
+    }
+    buffered = buffered.slice(from);
+    if (buffered.length > MAX_IMPORT_LINE) throw new LagerError('invalid_argument', `Line ${n + 1} is too long.`);
   }
-  return docs;
+  buffered += decoder.end();
+  if (!json) {
+    line(buffered);
+    return docs;
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(buffered); } catch { throw new LagerError('invalid_argument', 'The body is not valid JSON.'); }
+  if (!Array.isArray(parsed)) throw new LagerError('invalid_argument', 'The JSON body must be an array of {path, data}.');
+  if (parsed.length > MAX_IMPORT_DOCS) throw tooMany();
+  return parsed.map((v, i) => check(v, `Entry ${i + 1}`));
 }
 
 export const apiExtension: PlatformExtension = (router, core) => {
@@ -238,13 +279,41 @@ export const apiExtension: PlatformExtension = (router, core) => {
     streamExport(core, user, managedInstance(core, user, req.params.slug as string), res).catch(next);
   });
 
-  router.post('/api/instances/:slug/import', noStore, auth,
-    // Authorize before the body is read, so refused callers cannot make the server buffer 50 MiB.
-    (req, res, next) => { res.locals.instance = managedInstance(core, userOf(res), req.params.slug as string); next(); },
-    express.text({ type: ['application/x-ndjson', 'application/json'], limit: MAX_IMPORT }),
-    (req, res) => {
-      res.json(core.data.importDocs((res.locals.instance as Instance).id, importDocsOf(req), userOf(res).id, { allowPrivateOf: userOf(res).id }));
-    });
+  const importing = new Set<string>();
+  router.post('/api/instances/:slug/import', noStore, auth, async (req, res) => {
+    const user = userOf(res);
+    // Every refusal below happens before the body is read; the connection is not reused for the unread rest.
+    const refuse = (e: unknown): void => { res.set('Connection', 'close'); sendError(res, e); };
+    let inst: Instance;
+    try {
+      inst = managedInstance(core, user, req.params.slug as string);
+      const json = Boolean(req.is('application/json'));
+      if (!json && !req.is('application/x-ndjson')) throw new LagerError('invalid_argument', 'Send application/x-ndjson (one {path,data} per line) or a JSON array.');
+      core.data.assertQuota(inst.id);
+      const declared = Number(req.get('content-length'));
+      if (Number.isFinite(declared) && declared > (json ? MAX_IMPORT_JSON_BYTES : MAX_IMPORT_BYTES)) throw new ImportTooLarge();
+      if (importing.has(inst.id)) throw new LagerError('conflict', 'Another import into this instance is still running.');
+    } catch (e) {
+      if (e instanceof ImportTooLarge) { res.set('Connection', 'close').status(413).json({ error: { code: 'invalid_argument', message: 'Request body too large.' } }); return; }
+      refuse(e);
+      return;
+    }
+    importing.add(inst.id);
+    try {
+      const json = Boolean(req.is('application/json'));
+      const access = transferAccess(core, user, inst);
+      const docs = await readImportDocs(req, json, access.writable);
+      res.json(core.data.importDocs(inst.id, docs, user.id, { allowPrivateOf: user.id }));
+    } catch (e) {
+      // The rest of the body is read and thrown away, so the client still receives the answer instead of a reset.
+      req.resume();
+      setTimeout(() => req.destroy(), 10_000).unref();
+      if (e instanceof ImportTooLarge) res.status(413).json({ error: { code: 'invalid_argument', message: 'Request body too large.' } });
+      else sendError(res, e);
+    } finally {
+      importing.delete(inst.id);
+    }
+  });
 
   router.get('/api/apps/:slug/versions/:number', noStore, auth, (req, res) => {
     const slug = req.params.slug as string;

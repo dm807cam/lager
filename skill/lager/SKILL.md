@@ -65,7 +65,7 @@ Example sign-off – everyone signs off only for themselves, and even the owner 
 
 ## Limits
 
-- Path: at most 16 segments, each at most 200 bytes, no empty segments.
+- Path: at most 16 segments and 1000 bytes in total, each segment at most 200 bytes, no empty segments.
 - Document paths have an even number of segments (`tasks/t1`), collection paths an odd number (`tasks`).
 - Document: at most 256 KiB as JSON and 32 levels deep; numbers must be finite.
 - Queries: at most 1000 results.

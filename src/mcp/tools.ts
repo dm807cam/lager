@@ -232,12 +232,21 @@ function run(fn: () => unknown): CallToolResult {
  * db_read/db_write act with the caller's own level on the instance. The owner ignores the app's rules (to seed data); an instance
  * administrator ("Verwalter") is held to them like at runtime, so rules that require `owner` stay closed. `data/users/<other>/…` is closed for everyone.
  */
-function dbAccess(core: Core, user: User, inst: Instance): { viewer: Viewer; rules: DbRule[] | undefined } {
+export function dbAccess(core: Core, user: User, inst: Instance): { viewer: Viewer; rules: DbRule[] | undefined } {
   const level = core.access.levelFor(inst, user);
   const viewer: Viewer = { userId: user.id, level };
   if (level === 'owner') return { viewer, rules: [] };
   const caps = core.apps.listVersions(inst.appId).find((v) => v.number === inst.activeVersion)?.capabilities;
   return { viewer, rules: caps?.db?.rules };
+}
+
+/**
+ * What `user` may export from and import into an instance: the owner is unrestricted, everyone else is held to the
+ * active version's `db.rules` at their real level. Private areas of other users are excluded by the data store itself.
+ */
+export function transferAccess(core: Core, user: User, inst: Instance): { readable(path: string): boolean; writable(path: string): boolean } {
+  const { viewer, rules } = dbAccess(core, user, inst);
+  return { readable: (path) => canRead(rules, viewer, path), writable: (path) => canWrite(rules, viewer, path) };
 }
 
 const slugArg = z.string().describe('Slug (lowercase letters, digits, hyphens)');
@@ -383,10 +392,10 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     },
   }, ({ instance, docs }) => run(() => {
     const inst = managedInstance(core, user, instance);
-    const { viewer, rules } = dbAccess(core, user, inst);
+    const access = transferAccess(core, user, inst);
     for (const d of docs) {
       parseDocPath(d.path);
-      if (!canWrite(rules, viewer, d.path)) throw new LagerError('forbidden', `You may not write "${d.path}" (another user's private area or a rule of the app).`);
+      if (!access.writable(d.path)) throw new LagerError('forbidden', `You may not write "${d.path}" (another user's private area or a rule of the app).`);
     }
     return core.data.importDocs(inst.id, docs, user.id, { allowPrivateOf: user.id });
   }));
@@ -396,15 +405,14 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     inputSchema: { instance: slugArg, prefix: z.string().optional(), limit: z.number().int().min(1).max(MAX_IMPORT_DOCS_MCP).optional() },
   }, ({ instance, prefix, limit }) => run(() => {
     const inst = managedInstance(core, user, instance);
-    const { viewer, rules } = dbAccess(core, user, inst);
+    const access = transferAccess(core, user, inst);
     const base = (prefix ?? '').replace(/\/+$/, '');
     const max = limit ?? EXPORT_DEFAULT_LIMIT;
     const docs: Array<{ path: string; data: Record<string, unknown> }> = [];
     let bytes = 0;
     let truncated = false;
-    for (const d of core.data.exportDocs(inst.id, { includePrivateOf: user.id })) {
-      if (base !== '' && d.path !== base && !d.path.startsWith(`${base}/`)) continue;
-      if (!canRead(rules, viewer, d.path)) continue;
+    const wanted = (path: string): boolean => (base === '' || path === base || path.startsWith(`${base}/`)) && access.readable(path);
+    for (const d of core.data.exportDocs(inst.id, { includePrivateOf: user.id, filter: wanted })) {
       bytes += Buffer.byteLength(JSON.stringify(d.data));
       if (docs.length >= max || (docs.length > 0 && bytes > EXPORT_MAX_BYTES)) { truncated = true; break; }
       docs.push(d);

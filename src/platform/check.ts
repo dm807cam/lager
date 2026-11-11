@@ -29,7 +29,10 @@ export function storageWarnings(html: string): string[] {
 export function checkArtifact(html: string, capabilities: Capabilities = {}): ArtifactCheck {
   const used = [...new Set([...html.matchAll(USE_RE)].map((m) => m[2]))].sort();
   const unsupported = used.filter((n) => !SUPPORTED_CAPABILITIES.includes(n));
-  const declared = (n: string): boolean => (ALIASES.includes(n) ? ALIASES : [n]).some((k) => Object.prototype.hasOwnProperty.call(capabilities, k));
+  const declared = (n: string): boolean => (ALIASES.includes(n) ? ALIASES : [n]).some((k) => {
+    const v = Object.prototype.hasOwnProperty.call(capabilities, k) ? (capabilities as Record<string, unknown>)[k] : undefined;
+    return v !== null && typeof v === 'object';
+  });
   const undeclared = used.filter((n) => SUPPORTED_CAPABILITIES.includes(n) && n !== 'permissions' && !declared(n));
   const warnings = [
     ...storageWarnings(html),

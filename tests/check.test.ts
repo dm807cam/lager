@@ -23,6 +23,11 @@ describe('checkArtifact', () => {
     expect(checkArtifact(html, { db: {}, room: {}, assets: {} }).used).toEqual(['assets', 'db', 'room']);
   });
 
+  it('treats a capability as declared only when its value is an object', () => {
+    const html = '<script>claude.use("db"); claude.use("room"); claude.use("assets")</script>';
+    expect(checkArtifact(html, { db: {}, room: true, assets: null } as never).undeclared).toEqual(['assets', 'room']);
+  });
+
   it('ignores calls whose argument is not a string literal', () => {
     expect(checkArtifact('<script>claude.use(name); claude.use(`x${y}`)</script>').used).toEqual([]);
   });
