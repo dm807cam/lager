@@ -1,0 +1,64 @@
+import express from 'express';
+import type { Request, RequestHandler } from 'express';
+import type { Core } from '../core.js';
+import { LagerError } from '../errors.js';
+import type { User } from '../platform/users.js';
+import { sendError } from './errors.js';
+import { createInstanceRouter } from './instance.js';
+import { createPlatformRouter } from './platform.js';
+import { sessionUser } from './session.js';
+
+export { sessionUser };
+export interface PlatformExtension { (router: express.Router, core: Core): void }
+
+/** Platform routes: 401 JSON for /api paths, redirect to /login for pages. Sets `res.locals.user`. */
+export function requireUser(core: Core): RequestHandler {
+  return (req, res, next) => {
+    const user: User | null = sessionUser(core, req);
+    if (user) {
+      res.locals.user = user;
+      next();
+    } else if (req.originalUrl.startsWith('/api')) {
+      sendError(res, new LagerError('unauthenticated', 'Sign in required.'));
+    } else {
+      res.redirect('/login?return=' + encodeURIComponent(req.originalUrl));
+    }
+  };
+}
+
+export function createHttpApp(core: Core, extensions: PlatformExtension[] = []): express.Express {
+  const { config } = core;
+  const app = express();
+  app.disable('x-powered-by');
+  app.set('trust proxy', config.trustProxy);
+
+  const platformHost = config.publicUrl.hostname.toLowerCase();
+  const suffix = '.' + config.appsDomain.toLowerCase();
+  const platform = createPlatformRouter(core, extensions);
+  const instances = createInstanceRouter(core);
+
+  app.use((req: Request, res, next) => {
+    const host = req.hostname.toLowerCase();
+    if (host === platformHost) {
+      platform(req, res, next);
+    } else if (host.endsWith(suffix) && host.length > suffix.length && !host.slice(0, -suffix.length).includes('.')) {
+      res.locals.slug = host.slice(0, -suffix.length);
+      instances(req, res, next);
+    } else {
+      res.status(404).type('text/plain').send('Not found');
+    }
+  });
+
+  app.use((err: unknown, _req: Request, res: express.Response, next: express.NextFunction) => {
+    if (res.headersSent) { next(err); return; }
+    const e = err as { type?: string; status?: number };
+    if (e?.type === 'entity.too.large') {
+      res.status(413).json({ error: { code: 'invalid_argument', message: 'Request body too large.' } });
+    } else if (typeof e?.type === 'string' && e.type.startsWith('entity.') && e.status === 400) {
+      res.status(400).json({ error: { code: 'invalid_argument', message: 'Malformed request body.' } });
+    } else {
+      sendError(res, err);
+    }
+  });
+  return app;
+}
