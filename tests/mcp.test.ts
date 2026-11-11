@@ -296,6 +296,18 @@ describe('mcp endpoint', () => {
     expect(r.h.core.domains.list(r.h.core.apps.getInstanceBySlug('mine')!.id)).toEqual(['a.example.test']);
   });
 
+  it('a platform administrator may add and remove domains of other people\'s instances', async () => {
+    const r = await start();
+    const { client } = await asUser(r, 'pub@x.y', 'publisher');
+    await call(client, 'deploy_app', { slug: 'mine', html: '<p>1</p>' });
+    const admin = await connect(r);
+    expect((await call(admin, 'add_domain', { instance: 'mine', host: 'adm.example.test' })).json.domains).toHaveLength(1);
+    expect((await call(admin, 'remove_domain', { instance: 'mine', host: 'adm.example.test' })).json.domains).toEqual([]);
+    expect((await call(admin, 'add_domain', { instance: 'nope', host: 'adm.example.test' })).json.error.code).toBe('not_found');
+    const other = await asUser(r, 'other@x.y', 'user');
+    expect((await call(other.client, 'add_domain', { instance: 'mine', host: 'o.example.test' })).json.error.code).toBe('forbidden');
+  });
+
   it('create_instance with owner_email', async () => {
     const r = await start();
     const client = await connect(r);

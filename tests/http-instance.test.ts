@@ -91,7 +91,7 @@ describe('instance host', () => {
 
   it('callback return must be a local path', async () => {
     const { h, inst } = setup();
-    const code = signToken({ uid: h.adminId, iid: inst.id, k: 'code', jti: 'j1', ep: 0 }, 'test-secret', 60);
+    const code = signToken({ uid: h.adminId, iid: inst.id, k: 'code', jti: 'j1', ep: 0, h: W }, 'test-secret', 60);
     const cb = await request(h.app).get('/__lager/callback').query({ code, return: '//evil.example' }).set('Host', W);
     expect(cb.status).toBe(302);
     expect(cb.headers.location).toBe('/');

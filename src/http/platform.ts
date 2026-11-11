@@ -187,7 +187,7 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
       res.status(403).type('html').send(forbiddenPage(locale));
       return;
     }
-    const code = signToken({ uid: user.id, iid: instance.id, k: 'code', jti: crypto.randomUUID(), ep: user.sessionEpoch }, config.secret, 60);
+    const code = signToken({ uid: user.id, iid: instance.id, k: 'code', jti: crypto.randomUUID(), ep: user.sessionEpoch, h: customHost ?? `${instance.slug}.${config.appsDomain}`.toLowerCase() }, config.secret, 60);
     const back = safeReturnPath(req.query.return);
     res.redirect(`${customHost ? hostUrl(config, customHost) : instanceUrl(config, instance.slug)}/__lager/callback?code=${encodeURIComponent(code)}&return=${encodeURIComponent(back)}`);
   });

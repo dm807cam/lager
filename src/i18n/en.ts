@@ -165,6 +165,7 @@ export const en = {
   'notice.hostInvalid': 'This is not a valid hostname.',
   'notice.hostTaken': 'This domain is already taken.',
   'notice.hostUnavailable': 'This domain cannot be used.',
+  'notice.domainLimit': 'An instance can have at most 10 custom domains.',
   'notice.instanceMissing': 'This instance does not exist.',
   'notice.appMissing': 'This app does not exist.',
   'notice.versionMissing': 'This version does not exist.',
@@ -297,6 +298,7 @@ export const en = {
   'admin.domains.admins': 'Administrators only',
   'admin.domains.publishers': 'Publishers too',
   'admin.apps.data': 'Data',
+  'admin.apps.domains': 'Domains',
   'admin.apps.none': 'No apps yet.',
   'admin.instances.notFound': 'Instance not found.',
 } as const;

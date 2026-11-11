@@ -1,11 +1,12 @@
 import express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
-import { instanceUrl } from '../config.js';
+import { hostUrl, instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { localeOf, requestLocale } from './locale.js';
 import type { CustomDomainsMode, RegistrationMode } from '../platform/settings.js';
+import type { Instance } from '../platform/apps.js';
 import type { Role, User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
 import { backLink, dateText, esc, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, signedInHeader, sizeText, visibilityLabel, type Option } from './pages.js';
@@ -110,12 +111,31 @@ function appsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string
       const url = instanceUrl(core.config, i.slug);
       return `<tr><td><a href="${esc(url)}">${esc(i.slug)}</a></td><td>${esc(emailOf.get(i.ownerId) ?? '–')}</td><td>v${i.activeVersion}</td><td>${esc(visibilityLabel(locale, i.visibility))}</td>
 <td>${sizeText(locale, core.data.usage(i.id))}</td><td>${i.disabled ? `<span class="err">${esc(t(locale, 'common.disabled'))}</span>` : esc(t(locale, 'common.active'))}</td>
-<td>${form(`/admin/instances/${encodeURIComponent(i.slug)}/disabled`, csrf, hiddenField('disabled', i.disabled ? '0' : '1'), esc(t(locale, i.disabled ? 'common.activate' : 'common.deactivate')), true)}</td></tr>`;
+<td><div class="row">${form(`/admin/instances/${encodeURIComponent(i.slug)}/disabled`, csrf, hiddenField('disabled', i.disabled ? '0' : '1'), esc(t(locale, i.disabled ? 'common.activate' : 'common.deactivate')), true)}
+<a href="/admin/instances/${encodeURIComponent(i.slug)}/domains">${esc(t(locale, 'admin.apps.domains'))}</a></div></td></tr>`;
     }).join('');
     return `<section><h3>${esc(app.title)} <span class="muted mono">${esc(app.slug)}</span> <span class="muted">· ${esc(emailOf.get(app.ownerId) ?? '–')}</span></h3>
 ${rows ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.instance'))}</th><th>${esc(t(locale, 'common.owner'))}</th><th>${esc(t(locale, 'common.version'))}</th><th>${esc(t(locale, 'common.visibility'))}</th><th>${esc(t(locale, 'admin.apps.data'))}</th><th>${esc(t(locale, 'common.status'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${esc(t(locale, 'app.noInstances'))}</p>`}</section>`;
   }).join('');
   return shell(core, locale, admin, 'apps', t(locale, 'admin.section.apps'), html || `<p class="muted">${esc(t(locale, 'admin.apps.none'))}</p>`, msg);
+}
+
+const DOMAIN_NOTICES: Record<string, MessageKey> = {
+  host_invalid: 'notice.hostInvalid', host_taken: 'notice.hostTaken', host_unavailable: 'notice.hostUnavailable', domain_limit: 'notice.domainLimit',
+};
+
+/** Custom domains of one instance, handled by an administrator who has no access to the instance itself. */
+function domainsPage(core: Core, locale: Locale, admin: User, inst: Instance, msg?: Msg): string {
+  const csrf = csrfToken(core, admin);
+  const base = `/admin/instances/${encodeURIComponent(inst.slug)}/domains`;
+  const rows = core.domains.list(inst.id).map((host) => `<tr><td><a href="${esc(hostUrl(core.config, host))}">${esc(host)}</a></td>
+<td>${form(`${base}/remove`, csrf, hiddenField('host', host), esc(t(locale, 'common.remove')), true)}</td></tr>`).join('');
+  const body = `${backLink(locale, '/admin/apps', t(locale, 'admin.section.apps'))}
+${rows ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'instance.domains.domain'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<p class="muted">${esc(t(locale, 'instance.domains.none'))}</p>`}
+<div class="card">${form(base, csrf, `<label for="domain-host">${esc(t(locale, 'instance.domains.host'))}</label><input id="domain-host" name="host" required maxlength="253" autocomplete="off" placeholder="notes.example.com">
+<p class="muted">${esc(t(locale, 'instance.domains.hint'))}</p>`, esc(t(locale, 'common.add')))}</div>`;
+  return shell(core, locale, admin, 'apps', `${t(locale, 'instance.domains.title')}: ${inst.slug}`, body, msg, base);
 }
 
 /** Platform administrators only: no session goes to /login, any other role gets a 403 page. */
@@ -186,6 +206,33 @@ export const adminExtension: PlatformExtension = (router, core) => {
   });
   router.get('/admin/settings', noStore, admin, (_req, res) => { send(res, 200, settingsSection(core, localeOf(res), adminOf(res))); });
   router.get('/admin/apps', noStore, admin, (_req, res) => { send(res, 200, appsSection(core, localeOf(res), adminOf(res))); });
+
+  const domainInstanceOf = (req: Request): Instance => {
+    const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
+    if (!inst) throw new LagerError('not_found', 'Instance not found.');
+    return inst;
+  };
+  const showDomains = (res: Response, inst: Instance, status = 200, msg?: Msg): void => send(res, status, domainsPage(core, localeOf(res), adminOf(res), inst, msg));
+  router.get('/admin/instances/:slug/domains', noStore, admin, (req, res) => {
+    const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
+    if (!inst) send(res, 404, missingPage(localeOf(res), 'admin.instances.notFound', backLink(localeOf(res), '/admin/apps', t(localeOf(res), 'admin.section.apps'))));
+    else showDomains(res, inst);
+  });
+  for (const [route, change] of [['', 'add'], ['/remove', 'remove']] as const) {
+    router.post(`/admin/instances/:slug/domains${route}`, ...action((req, res, user) => {
+      try {
+        const inst = domainInstanceOf(req);
+        core.domains[change](inst, field(req, 'host', MAX_FIELD), user, false);
+        res.redirect(`/admin/instances/${encodeURIComponent(inst.slug)}/domains`);
+      } catch (e) {
+        if (!(e instanceof LagerError)) throw e;
+        const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
+        const key = (e.reason !== undefined ? DOMAIN_NOTICES[e.reason] : undefined) ?? (e.code === 'not_found' ? 'admin.instances.notFound' : 'validation.generic');
+        if (!inst) send(res, 404, missingPage(localeOf(res), 'admin.instances.notFound', backLink(localeOf(res), '/admin/apps', t(localeOf(res), 'admin.section.apps'))));
+        else showDomains(res, inst, e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400, { error: t(localeOf(res), key) });
+      }
+    }));
+  }
 
   // --- users ---
 

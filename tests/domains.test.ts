@@ -34,6 +34,16 @@ describe('normalizeHost', () => {
     for (const bad of ['localhost', 'a', 'ex ample.com', '1.2.3.4', '[::1]', 'a.com:8080', '-a.com', 'a-.com', 'a..com', '', '.a.com', 'a.com/x', 'a_b.com', `${'a'.repeat(63)}.${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(63)}.com`, `${'a'.repeat(64)}.com`]) {
       expect(() => normalizeHost(bad), bad).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
     }
+    // A last label that does not start with a letter covers hex, octal and all-numeric IPv4 forms.
+    for (const bad of ['0x7f.0x1', '127.1', '10.0.0.1', 'a.1b', 'a.123', 'a.0x7f', '*.example.com', 'a.*', '[2001:db8::1]', 'a_b.example.com', '::1']) {
+      expect(() => normalizeHost(bad), bad).toThrow(expect.objectContaining({ code: 'invalid_argument', reason: 'host_invalid' }));
+    }
+    // Names that browsers or resolvers send to the local machine or network.
+    for (const bad of ['localhost.', 'x.localhost', 'a.b.localhost', 'printer.local', 'a.b.local', 'db.internal', 'a.corp.internal', 'LOCALHOST.local']) {
+      expect(() => normalizeHost(bad), bad).toThrow(expect.objectContaining({ code: 'invalid_argument', reason: 'host_invalid' }));
+    }
+    // Look-alikes and test names stay allowed.
+    for (const ok of ['a.example', 'a.test', 'localhost.example.com', 'my-local.example.com', 'internal.example.com', 'a.xn--p1ai']) expect(normalizeHost(ok)).toBe(ok);
     expect(() => normalizeHost(undefined as never)).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
   });
 
@@ -65,6 +75,26 @@ describe('Domains', () => {
       expect(() => core.domains.add(notes, bad, admin, true), bad).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
     }
     expect(core.domains.list(notes.id)).toEqual([]);
+  });
+
+  it('refuses the platform host and the apps domain with host_unavailable', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-domains-'));
+    const c = createCore({ ...core.config, dataDir: dir, publicUrl: new URL('https://lager.example.test'), appsDomain: 'apps.example.test' });
+    try {
+      const a = c.users.getByEmail('a@x.y')!;
+      const inst = c.apps.deploy({ slug: 'n', html: '<p>1</p>', userId: a.id }).instances[0];
+      for (const bad of ['lager.example.test', 'apps.example.test', 'x.apps.example.test']) {
+        expect(() => c.domains.add(inst, bad, a, true), bad).toThrow(expect.objectContaining({ reason: 'host_unavailable' }));
+      }
+    } finally { c.close(); }
+  });
+
+  it('allows at most 10 domains per instance', () => {
+    for (let i = 0; i < 10; i++) core.domains.add(notes, `d${i}.example.com`, admin, true);
+    expect(() => core.domains.add(notes, 'd10.example.com', admin, true)).toThrow(expect.objectContaining({ code: 'conflict', reason: 'domain_limit' }));
+    core.domains.add(other, 'o.example.com', admin, true);
+    core.domains.remove(notes, 'd0.example.com', admin, true);
+    expect(core.domains.add(notes, 'd10.example.com', admin, true)).toBe('d10.example.com');
   });
 
   it('a host can be attached only once platform-wide', () => {

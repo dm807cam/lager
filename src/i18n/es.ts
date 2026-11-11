@@ -167,6 +167,7 @@ export const es: Record<MessageKey, string> = {
   'notice.hostInvalid': 'Este nombre de host no es válido.',
   'notice.hostTaken': 'Este dominio ya está en uso.',
   'notice.hostUnavailable': 'Este dominio no se puede usar.',
+  'notice.domainLimit': 'Una instancia puede tener como máximo 10 dominios propios.',
   'notice.instanceMissing': 'Esta instancia no existe.',
   'notice.appMissing': 'Esta aplicación no existe.',
   'notice.versionMissing': 'Esta versión no existe.',
@@ -299,6 +300,7 @@ export const es: Record<MessageKey, string> = {
   'admin.domains.admins': 'Solo administradores',
   'admin.domains.publishers': 'También publicadores',
   'admin.apps.data': 'Datos',
+  'admin.apps.domains': 'Dominios',
   'admin.apps.none': 'Todavía no hay aplicaciones.',
   'admin.instances.notFound': 'Instancia no encontrada.',
 };

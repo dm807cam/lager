@@ -169,15 +169,25 @@ export function createInstanceFor(core: Core, user: User, input: { app: string; 
 
 // ---- custom domains (REST and MCP) -------------------------------------------
 
-/** Attaches `host` to the instance if `user` manages it and may set domains; returns the instance. */
+/** The instance whose domains `user` may handle: the ones they manage, and every instance for a platform administrator. */
+export function domainInstance(core: Core, user: User, slug: string): Instance {
+  if (user.role === 'admin' && !user.disabled) {
+    const inst = core.apps.getInstanceBySlug(slug);
+    if (!inst) throw new LagerError('not_found', `Instance "${slug}" not found.`);
+    return inst;
+  }
+  return managedInstance(core, user, slug);
+}
+
+/** Attaches `host` to the instance if `user` may handle its domains; returns the instance. */
 export function addDomainTo(core: Core, user: User, slug: string, host: string): Instance {
-  const inst = managedInstance(core, user, slug);
+  const inst = domainInstance(core, user, slug);
   core.domains.add(inst, host, user, true);
   return inst;
 }
 
 export function removeDomainFrom(core: Core, user: User, slug: string, host: string): Instance {
-  const inst = managedInstance(core, user, slug);
+  const inst = domainInstance(core, user, slug);
   core.domains.remove(inst, host, user, true);
   return inst;
 }

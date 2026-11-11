@@ -6,6 +6,10 @@ import type { Settings } from './settings.js';
 import type { User } from './users.js';
 
 const MAX_HOST = 253;
+/** Names that never belong to a public site. */
+const LOCAL_SUFFIXES = ['localhost', 'local', 'internal'];
+/** At most this many custom domains per instance. */
+export const MAX_DOMAINS_PER_INSTANCE = 10;
 const LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /**
@@ -21,8 +25,10 @@ export function normalizeHost(input: string): string {
   host = host.toLowerCase();
   const labels = host.split('.');
   if (labels.length < 2 || !labels.every((l) => LABEL_RE.test(l))) return bad();
-  // An all-numeric last label is an IPv4 address (or a malformed one), never a registrable name.
-  if (/^[0-9]+$/.test(labels[labels.length - 1])) return bad();
+  // A real top-level domain starts with a letter; this also refuses IPv4 forms such as 127.1, 0x7f.0x1 and all-numeric names.
+  if (!/^[a-z]/.test(labels[labels.length - 1])) return bad();
+  // Browsers and resolvers map these to the local machine or network.
+  if (LOCAL_SUFFIXES.some((x) => host === x || host.endsWith(`.${x}`))) return bad();
   return host;
 }
 
@@ -52,6 +58,9 @@ export class Domains {
     const apps = this.config.appsDomain.toLowerCase();
     if (normalized === this.config.publicUrl.hostname.toLowerCase() || normalized === apps || normalized.endsWith('.' + apps)) {
       throw new LagerError('invalid_argument', 'This domain cannot be used.', 'host_unavailable');
+    }
+    if (this.list(instance.id).length >= MAX_DOMAINS_PER_INSTANCE) {
+      throw new LagerError('conflict', `An instance can have at most ${MAX_DOMAINS_PER_INSTANCE} custom domains.`, 'domain_limit');
     }
     try {
       this.db.prepare('INSERT INTO instance_domains (host, instance_id, created_by, created_at) VALUES (?, ?, ?, ?)')

@@ -102,10 +102,12 @@ export function createInstanceRouter(core: Core): express.Router {
   router.get('/__lager/callback', (req, res) => {
     const { instance } = ctxOf(res);
     const locale = requestLocale(core, req, null);
-    const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown; jti?: unknown; ep?: unknown; exp: number }>(
+    const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown; jti?: unknown; ep?: unknown; h?: unknown; exp: number }>(
       typeof req.query.code === 'string' ? req.query.code : undefined, config.secret);
     const user = t && typeof t.uid === 'string' ? core.users.get(t.uid) : null;
-    if (!t || t.k !== 'code' || t.iid !== instance.id || typeof t.jti !== 'string' || !epochValid(user, t.ep)) {
+    // The code names the host it was issued for and is only good there: a code for the custom domain is not valid on the default host.
+    const host = req.hostname.toLowerCase().replace(/\.$/, '');
+    if (!t || t.k !== 'code' || t.iid !== instance.id || t.h !== host || typeof t.jti !== 'string' || !epochValid(user, t.ep)) {
       res.status(400).type('html').send(badCodePage(locale, NO_SWITCHER));
       return;
     }

@@ -167,6 +167,7 @@ export const fr: Record<MessageKey, string> = {
   'notice.hostInvalid': "Ce nom d’hôte n’est pas valide.",
   'notice.hostTaken': 'Ce domaine est déjà utilisé.',
   'notice.hostUnavailable': 'Ce domaine ne peut pas être utilisé.',
+  'notice.domainLimit': 'Une instance peut avoir au plus 10 domaines personnalisés.',
   'notice.instanceMissing': "Cette instance n’existe pas.",
   'notice.appMissing': "Cette application n’existe pas.",
   'notice.versionMissing': "Cette version n’existe pas.",
@@ -299,6 +300,7 @@ export const fr: Record<MessageKey, string> = {
   'admin.domains.admins': 'Administrateurs uniquement',
   'admin.domains.publishers': 'Éditeurs également',
   'admin.apps.data': 'Données',
+  'admin.apps.domains': 'Domaines',
   'admin.apps.none': "Pas encore d’application.",
   'admin.instances.notFound': 'Instance introuvable.',
 };

@@ -42,7 +42,7 @@ export function createHttpApp(core: Core, extensions: PlatformExtension[] = []):
   const instances = createInstanceRouter(core);
 
   app.use((req: Request, res, next) => {
-    const host = req.hostname.toLowerCase();
+    const host = req.hostname.toLowerCase().replace(/\.$/, '');
     if (host === platformHost) {
       platform(req, res, next);
     } else if (host.endsWith(suffix) && host.length > suffix.length && !host.slice(0, -suffix.length).includes('.')) {

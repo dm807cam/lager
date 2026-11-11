@@ -36,6 +36,7 @@ const NOTICES: Record<string, MessageKey> = {
   host_invalid: 'notice.hostInvalid',
   host_taken: 'notice.hostTaken',
   host_unavailable: 'notice.hostUnavailable',
+  domain_limit: 'notice.domainLimit',
 };
 
 /** A message for the user that is not a domain error (unknown address, wrong confirmation); carries a catalog key. */

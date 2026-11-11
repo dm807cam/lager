@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { adminExtension } from '../src/http/admin.js';
+import { apiExtension } from '../src/http/api.js';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { manageExtension } from '../src/http/manage.js';
 import { csrfToken } from '../src/http/session.js';
@@ -18,7 +19,7 @@ const CUSTOM_HOST = `${CUSTOM}:8080`;
 const DEFAULT_HOST = 'notes.apps.localhost:8080';
 
 function setup() {
-  h = makeHarness({ extensions: [dashboardExtension, manageExtension, adminExtension] });
+  h = makeHarness({ extensions: [dashboardExtension, manageExtension, adminExtension, apiExtension] });
   const hh = h;
   const pub = hh.core.users.create({ email: 'p@x.y', name: 'P', password: 'password-123', role: 'publisher' });
   const inst = hh.core.apps.deploy({ slug: 'notes', html: '<html><head></head><body>notes</body></html>', userId: pub.id }).instances[0];
@@ -185,8 +186,9 @@ describe('custom domains on the management page', () => {
     expect((await follow(await post(ac, admin, '/ui/instances/notes/domains', { host: 'nonsense' }))).text).toContain(en('notice.hostInvalid'));
     hh.core.domains.add(other, 'other.example.test', admin, true);
     expect((await follow(await post(ac, admin, '/ui/instances/notes/domains', { host: 'other.example.test' }))).text).toContain(en('notice.hostTaken'));
-    for (const bad of ['lager.localhost', 'x.apps.localhost']) {
-      expect((await follow(await post(ac, admin, '/ui/instances/notes/domains', { host: bad }))).text, bad).toContain(en('notice.hostUnavailable'));
+    // The harness' own hosts end in .localhost, which is refused as a name for the local machine before it can be "unavailable".
+    for (const bad of ['lager.localhost', 'x.apps.localhost', 'a.local', 'b.internal', '0x7f.0x1']) {
+      expect((await follow(await post(ac, admin, '/ui/instances/notes/domains', { host: bad }))).text, bad).toContain(en('notice.hostInvalid'));
     }
     // CSRF is required.
     const noCsrf = await request(h!.app).post('/ui/instances/notes/domains/remove').set('Host', hh.host).set('Cookie', ac).type('form').send({ host: CUSTOM });
@@ -223,5 +225,105 @@ describe('custom domains on the management page', () => {
     expect(bad.status).toBe(400);
     expect(hh.core.settings.maxInstancesPerUser).toBe(6);
     expect(hh.core.settings.customDomains).toBe('publishers');
+  });
+});
+
+describe('handshake code is bound to its host', () => {
+  it('a code for the custom host is refused on the default host, and vice versa', async () => {
+    const { hh, inst, admin } = setup();
+    hh.core.domains.add(inst, CUSTOM, admin, true);
+    const cookie = await hh.login();
+    const issue = async (query: Record<string, string>) => {
+      const auth = await request(hh.app).get('/auth/instance').query({ slug: 'notes', ...query }).set('Host', hh.host).set('Cookie', cookie);
+      const loc = new URL(auth.headers.location);
+      return loc.pathname + loc.search;
+    };
+    const forCustom = await issue({ host: CUSTOM });
+    expect((await request(hh.app).get(forCustom).set('Host', DEFAULT_HOST)).status).toBe(400);
+    expect((await request(hh.app).get(forCustom).set('Host', CUSTOM_HOST)).status).toBe(302);
+    const forDefault = await issue({});
+    expect((await request(hh.app).get(forDefault).set('Host', CUSTOM_HOST)).status).toBe(400);
+    expect((await request(hh.app).get(forDefault).set('Host', DEFAULT_HOST)).status).toBe(302);
+  });
+});
+
+describe('request host forms', () => {
+  it('resolves the same instance for case and a trailing dot', async () => {
+    const { hh, inst, admin } = setup();
+    hh.core.domains.add(inst, CUSTOM, admin, true);
+    for (const host of ['Notes.Example.Test.', 'NOTES.example.test', 'notes.example.test.:8080']) {
+      expect((await request(hh.app).get('/').set('Host', host)).status, host).toBe(302);
+    }
+    for (const host of ['[::1]', 'other.example.test', '127.0.0.1']) {
+      expect((await request(hh.app).get('/').set('Host', host)).status, host).toBe(404);
+    }
+  });
+
+  it('refuses IPv6 literals, wildcards, underscores and local names as domains over REST', async () => {
+    const { hh, admin } = setup();
+    const token = hh.core.tokens.create(admin.id, 't').token;
+    for (const host of ['[::1]', '::1', '*.example.test', 'a_b.example.test', 'x.localhost', '0x7f.0x1']) {
+      const res = await request(hh.app).put('/api/instances/notes/domains').set('Host', hh.host).set('Authorization', `Bearer ${token}`).send({ host });
+      expect(res.status, host).toBe(400);
+    }
+  });
+});
+
+describe('administrators and other people\'s instances', () => {
+  it('REST: a platform administrator lists, adds and removes domains of any instance; a publisher still needs the setting', async () => {
+    const { hh, other, pub, admin } = setup();
+    const token = hh.core.tokens.create(admin.id, 't').token;
+    const call = (method: 'get' | 'put' | 'delete', body?: object) => {
+      const r = request(hh.app)[method]('/api/instances/other/domains').set('Host', hh.host).set('Authorization', `Bearer ${token}`);
+      return body ? r.send(body) : r;
+    };
+    expect((await call('put', { host: 'o.example.test' })).body.domains).toEqual([{ host: 'o.example.test', url: 'http://o.example.test:8080' }]);
+    expect(hh.core.domains.list(other.id)).toEqual(['o.example.test']);
+    expect((await call('get')).body.domains).toHaveLength(1);
+    expect((await call('delete', { host: 'o.example.test' })).body.domains).toEqual([]);
+    expect((await request(hh.app).put('/api/instances/nope/domains').set('Host', hh.host).set('Authorization', `Bearer ${token}`).send({ host: 'a.example.test' })).status).toBe(404);
+    // A publisher who owns the instance is refused while the setting is on "admins".
+    const ptoken = hh.core.tokens.create(pub.id, 'p').token;
+    expect((await request(hh.app).put('/api/instances/other/domains').set('Host', hh.host).set('Authorization', `Bearer ${ptoken}`).send({ host: 'p.example.test' })).status).toBe(403);
+    // A plain user without rights on the instance is refused as before.
+    const plain = hh.core.users.create({ email: 'u@x.y', name: 'U', password: 'password-123', role: 'user' });
+    const utoken = hh.core.tokens.create(plain.id, 'u').token;
+    expect((await request(hh.app).put('/api/instances/other/domains').set('Host', hh.host).set('Authorization', `Bearer ${utoken}`).send({ host: 'u.example.test' })).status).toBe(403);
+  });
+
+  it('REST: the 11th domain of an instance is a conflict', async () => {
+    const { hh, other, admin } = setup();
+    const token = hh.core.tokens.create(admin.id, 't').token;
+    for (let i = 0; i < 10; i++) hh.core.domains.add(other, `d${i}.example.test`, admin, true);
+    const res = await request(hh.app).put('/api/instances/other/domains').set('Host', hh.host).set('Authorization', `Bearer ${token}`).send({ host: 'd10.example.test' });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('conflict');
+  });
+
+  it('admin page: list, add, remove with csrf and notices, for an instance the administrator has no access to', async () => {
+    const { hh, other, admin } = setup();
+    const ac = await hh.login();
+    const csrf = csrfToken(hh.core, admin);
+    const get = (path: string) => request(hh.app).get(path).set('Host', hh.host).set('Cookie', ac);
+    const post = (path: string, body: Record<string, string>) => request(hh.app).post(path).set('Host', hh.host).set('Cookie', ac).type('form').send({ csrf, ...body });
+    expect((await get('/admin/apps')).text).toContain('/admin/instances/other/domains');
+    expect((await get('/admin/instances/other/domains')).status).toBe(200);
+    expect((await get('/admin/instances/nope/domains')).status).toBe(404);
+    const added = await post('/admin/instances/other/domains', { host: 'Admin.Example.test' });
+    expect(added.status).toBe(302);
+    expect(hh.core.domains.list(other.id)).toEqual(['admin.example.test']);
+    expect((await get('/admin/instances/other/domains')).text).toContain('admin.example.test');
+    expect((await post('/admin/instances/other/domains', { host: 'x.localhost' })).text).toContain(en('notice.hostInvalid'));
+    expect((await request(hh.app).post('/admin/instances/other/domains/remove').set('Host', hh.host).set('Cookie', ac).type('form').send({ host: 'admin.example.test' })).status).toBe(403);
+    expect(hh.core.domains.list(other.id)).toEqual(['admin.example.test']);
+    for (let i = 0; i < 9; i++) hh.core.domains.add(other, `d${i}.example.test`, admin, true);
+    const full = await post('/admin/instances/other/domains', { host: 'more.example.test' });
+    expect(full.status).toBe(409);
+    expect(full.text).toContain(en('notice.domainLimit'));
+    expect((await post('/admin/instances/other/domains/remove', { host: 'admin.example.test' })).status).toBe(302);
+    expect(hh.core.domains.list(other.id)).not.toContain('admin.example.test');
+    // Other roles are kept out.
+    const pc = await hh.login('p@x.y', 'password-123');
+    expect((await request(hh.app).get('/admin/instances/other/domains').set('Host', hh.host).set('Cookie', pc)).status).toBe(403);
   });
 });
