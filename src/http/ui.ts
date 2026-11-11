@@ -29,6 +29,7 @@ const ICONS: Record<string, string> = {
   shield: '<path d="M12 3L5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6z"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/>',
 };
 export type IconName = keyof typeof ICONS;
 
@@ -148,14 +149,14 @@ ${desc}${p.badges.length ? `<div class="badges">${p.badges.join('')}</div>` : ''
 
 // --- the signed-in shell ---
 
-export type NavItem = 'apps' | 'catalog' | 'admin';
+export type NavItem = 'apps' | 'catalog' | 'publish' | 'admin';
 
 /** Shell options of a signed-in page: the account menu, the navigation and whether the viewer has a catalog to jump to. */
 export function signedIn(core: Core, user: User, current: NavItem | null, returnPath: string): PageOpts {
   const { instances, apps } = core.access.catalog(user);
   return {
     returnPath,
-    user: { id: user.id, name: user.name, email: user.email, admin: user.role === 'admin' },
+    user: { id: user.id, name: user.name, email: user.email, admin: user.role === 'admin', publisher: user.role === 'admin' || user.role === 'publisher' },
     csrf: csrfToken(core, user),
     current,
     catalog: instances.length + apps.length > 0,

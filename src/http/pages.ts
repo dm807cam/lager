@@ -20,7 +20,7 @@ export interface PageOpts {
   /** Instance hosts do not share the platform's language cookie, so their pages carry no switcher. */
   switcher?: boolean;
   /** The signed-in account: the page gets the top bar with navigation and account menu. Without it, the signed-out layout. */
-  user?: { id: string; name: string; email: string; admin: boolean };
+  user?: { id: string; name: string; email: string; admin: boolean; publisher?: boolean };
   /** CSRF token for the sign-out form of the account menu. */
   csrf?: string;
   /** The navigation item this page belongs to. */
@@ -53,13 +53,14 @@ function footer(locale: Locale, returnPath: string | null): string {
 const NAV: Array<{ id: NavItem; href: string; key: MessageKey; icon: IconName }> = [
   { id: 'apps', href: '/', key: 'nav.apps', icon: 'grid' },
   { id: 'catalog', href: '/#catalog', key: 'dash.catalog', icon: 'compass' },
+  { id: 'publish', href: '/publish', key: 'nav.publish', icon: 'upload' },
   { id: 'admin', href: '/admin', key: 'nav.admin', icon: 'shield' },
 ];
 
 /** The top bar of signed-in pages: brand, primary navigation (a tab bar on phones), language and account menus. */
 function topBar(locale: Locale, opts: PageOpts, returnPath: string): { html: string; tabbar: boolean } {
   const user = opts.user!;
-  const items = NAV.filter((n) => n.id === 'apps' || (n.id === 'catalog' && opts.catalog) || (n.id === 'admin' && user.admin));
+  const items = NAV.filter((n) => n.id === 'apps' || (n.id === 'catalog' && opts.catalog) || (n.id === 'publish' && user.publisher) || (n.id === 'admin' && user.admin));
   // A navigation with a single destination is noise: the brand already links home.
   const nav = items.length > 1 ? `<nav class="primary" aria-label="${esc(t(locale, 'nav.main'))}">${items.map((n) =>
     `<a href="${n.href}"${n.id === opts.current ? ' aria-current="page"' : ''}>${icon(n.icon)}<span>${esc(t(locale, n.key))}</span></a>`).join('')}</nav>` : '';
@@ -140,8 +141,9 @@ ${opts.resendEmail !== undefined ? resendForm(locale, opts.resendEmail) : ''}</d
 <p class="pitch">${esc(t(locale, 'brand.pitch'))}</p>`, { hero: true, returnPath: returnPath === '/' ? '/login' : `/login?return=${encodeURIComponent(returnPath)}` });
 }
 
+/** On the platform host the page offers a way back; on instance hosts the brand link leads to the platform. */
 export const notFoundPage = (locale: Locale, opts: PageOpts = {}): string =>
-  messagePage(locale, t(locale, 'error.notFound.title'), t(locale, 'error.notFound.text'), '', opts);
+  messagePage(locale, t(locale, 'error.notFound.title'), t(locale, 'error.notFound.text'), opts.origin ? '' : backLink(locale), opts);
 export const forbiddenPage = (locale: Locale, opts: PageOpts = {}): string =>
   messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'error.forbidden.text'), '', opts, 'danger');
 export const disabledPage = (locale: Locale, opts: PageOpts = {}): string =>

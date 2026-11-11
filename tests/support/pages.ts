@@ -96,6 +96,8 @@ export function pageVisits(s: Showcase): PageVisit[] {
     { name: 'home (administrator)', path: '/', as: 'admin' },
     { name: 'home (publisher)', path: '/', as: 'pia' },
     { name: 'home (user)', path: '/', as: 'uwe' },
+    { name: 'publish (administrator)', path: '/publish', as: 'admin' },
+    { name: 'publish (publisher)', path: '/publish', as: 'pia' },
     { name: 'instance', path: '/instances/notes', as: 'admin' },
     { name: 'instance (disabled)', path: '/instances/old-notes', as: 'admin' },
     { name: 'instance (publisher)', path: '/instances/tasks', as: 'pia' },

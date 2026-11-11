@@ -225,7 +225,8 @@ const bodyOf = (html: string): string => html.replace(/<script id="theme-init">[
 
 describe('signed-in pages in every locale', () => {
   const SENTINELS: Record<string, MessageKey[]> = {
-    home: ['dash.ownInstances', 'dash.createOwn', 'dash.tokens.create', 'dash.latestVersion', 'dash.connect', 'home.title', 'nav.main', 'nav.skip', 'theme.label', 'common.copy', 'common.copied', 'dash.getOwn'],
+    home: ['dash.ownInstances', 'dash.createOwn', 'home.title', 'nav.main', 'nav.skip', 'theme.label', 'nav.publish', 'dash.getOwn'],
+    publish: ['dash.tokens.create', 'dash.latestVersion', 'dash.connect', 'publish.lede', 'common.copy', 'common.copied', 'nav.publish'],
     instance: ['instance.delete.title', 'instance.grants.title', 'instance.snapshots.title', 'instance.visibility.who', 'instance.autoUpdate.label', 'common.dangerZone', 'instance.storage', 'instance.autoUpdate.title'],
     app: ['app.collaborators', 'app.self.title', 'app.delete.title', 'app.newInstance', 'app.collaboratorEmail'],
     users: ['admin.section.settings', 'admin.users.resetLink', 'admin.users.role'],
@@ -237,7 +238,7 @@ describe('signed-in pages in every locale', () => {
     account: ['account.password.title', 'account.locale.label', 'nav.signOut'],
   };
   const PAGES: Array<[string, string]> = [
-    ['home', '/'], ['instance', '/instances/notes'], ['app', '/apps/notes'], ['users', '/admin/users'], ['invites', '/admin/invites'],
+    ['home', '/'], ['publish', '/publish'], ['instance', '/instances/notes'], ['app', '/apps/notes'], ['users', '/admin/users'], ['invites', '/admin/invites'],
     ['groups', '/admin/groups'], ['group', '/admin/groups/GROUP'], ['settings', '/admin/settings'], ['adminApps', '/admin/apps'], ['account', '/account'],
   ];
 
@@ -314,7 +315,7 @@ describe('signed-in pages in every locale', () => {
     h = makeHarness({ extensions: [dashboardExtension, manageExtension, adminExtension] });
     const groupId = await seed(h);
     const cookie = await h.login();
-    for (const route of ['/', '/instances/notes', '/apps/notes', '/admin/invites', '/admin/settings', `/admin/groups/${groupId}`]) {
+    for (const route of ['/', '/publish', '/instances/notes', '/apps/notes', '/admin/invites', '/admin/settings', `/admin/groups/${groupId}`]) {
       const res = await request(h.app).get(route).set('Host', h.host).set('Cookie', cookie);
       expect(res.text, route).toContain(`href="/lang/de?return=${encodeURIComponent(route)}"`);
     }

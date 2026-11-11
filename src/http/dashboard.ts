@@ -19,7 +19,7 @@ const plural = (count: number, one: MessageKey, other: MessageKey): MessageKey =
 /** Open (for everyone who reaches the card) and Manage (only for those who may manage or delete the instance). */
 function instanceActions(core: Core, locale: Locale, i: Instance, manage: boolean): string {
   const open = i.disabled ? '' : linkButton(instanceUrl(core.config, i.slug), `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary', true);
-  const admin = manage ? linkButton(`/instances/${encodeURIComponent(i.slug)}`, `${icon('settings')}${esc(t(locale, 'common.manage'))}`, 'quiet', true) : '';
+  const admin = manage ? linkButton(`/instances/${encodeURIComponent(i.slug)}`, `${icon('settings')}<span class="btn-label">${esc(t(locale, 'common.manage'))}</span>`, 'quiet', true) : '';
   return open + admin;
 }
 
@@ -116,36 +116,39 @@ function tokenSection(core: Core, locale: Locale, user: User, csrf: string): str
   return section('tokens', t(locale, 'dash.tokens'), `<div class="card">${list}<div class="subsection">${create}</div></div>`, { count: tokens.length || undefined });
 }
 
-function homePage(core: Core, locale: Locale, user: User, flash: Flash = {}, newToken?: { name: string; token: string }): string {
+function homePage(core: Core, locale: Locale, user: User, flash: Flash = {}): string {
   const csrf = csrfToken(core, user);
   const publisher = deploys(user);
-  const connector = new URL('/mcp', core.config.publicUrl).href;
   const own = core.apps.listInstancesOwnedBy(user.id);
   const shared = core.access.sharedWith(user);
   const catalog = core.access.catalog(user);
-  const apps = publisher ? core.access.appsOf(user) : [];
-  const created = newToken ? callout(locale, t(locale, 'dash.tokens.created', { name: newToken.name }), newToken.token, t(locale, 'dash.tokens.copyNow')) : '';
   const opts = signedIn(core, user, 'apps', '/');
-  const empty = !own.length && !shared.length && !catalog.instances.length && !catalog.apps.length && !apps.length;
-  if (empty) {
+  if (!own.length && !shared.length && !catalog.instances.length && !catalog.apps.length) {
     const next = publisher
-      ? steps(locale, connector, 'steps-cards')
+      ? `${steps(locale, new URL('/mcp', core.config.publicUrl).href, 'steps-cards')}<div class="empty-cta">${linkButton('/publish', `${icon('upload')}${esc(t(locale, 'nav.publish'))}`, 'primary')}</div>`
       : `<p class="hint-line">${esc(t(locale, 'dash.noInstances'))} ${esc(t(locale, 'home.empty.user'))}</p>`;
-    return page(locale, 'Lager', `${noticeHtml(locale, flash)}${created}<div class="empty-hero"><img src="/icon.webp" alt="" width="96" height="96">
-<h1 class="display">${esc(t(locale, 'brand.tagline'))}</h1><p class="lede">${esc(t(locale, 'brand.pitch'))}</p>${next}</div>
-${publisher ? `${tokenSection(core, locale, user, csrf)}` : ''}`, opts);
+    return page(locale, 'Lager', `${noticeHtml(locale, flash)}<div class="empty-hero"><img src="/icon.webp" alt="" width="96" height="96">
+<h1 class="display">${esc(t(locale, 'brand.tagline'))}</h1><p class="lede">${esc(t(locale, 'brand.pitch'))}</p>${next}</div>`, opts);
   }
   const parts = [
     own.length ? t(locale, plural(own.length, 'home.summary.apps.one', 'home.summary.apps.other'), { count: own.length }) : '',
     shared.length ? t(locale, plural(shared.length, 'home.summary.shared.one', 'home.summary.shared.other'), { count: shared.length }) : '',
   ].filter(Boolean);
   return page(locale, 'Lager', `<div class="page-head"><h1 class="display">${esc(t(locale, 'home.title'))}</h1>${parts.length ? `<p class="lede">${esc(parts.join(' · '))}</p>` : ''}</div>
-${noticeHtml(locale, flash)}${created}
-${ownSection(core, locale, user, own)}${sharedSection(core, locale, user, shared)}${catalogSection(core, locale, csrf, catalog)}
-${publisher ? `${appsSection(core, locale, apps)}${connectPanel(locale, connector)}${tokenSection(core, locale, user, csrf)}` : ''}`, opts);
+${noticeHtml(locale, flash)}
+${ownSection(core, locale, user, own)}${sharedSection(core, locale, user, shared)}${catalogSection(core, locale, csrf, catalog)}`, opts);
 }
 
-/** Home page (overview, shared instances, catalog) and the API-token forms. */
+/** Everything about publishing: the apps the viewer deploys, the connector for Claude and the API tokens. */
+function publishPage(core: Core, locale: Locale, user: User, newToken?: { name: string; token: string }): string {
+  const csrf = csrfToken(core, user);
+  const created = newToken ? callout(locale, t(locale, 'dash.tokens.created', { name: newToken.name }), newToken.token, t(locale, 'dash.tokens.copyNow')) : '';
+  return page(locale, t(locale, 'nav.publish'), `<div class="page-head"><h1 class="display">${esc(t(locale, 'nav.publish'))}</h1><p class="lede">${esc(t(locale, 'publish.lede'))}</p></div>
+${created}${appsSection(core, locale, core.access.appsOf(user))}${connectPanel(locale, new URL('/mcp', core.config.publicUrl).href)}${tokenSection(core, locale, user, csrf)}`,
+  signedIn(core, user, 'publish', '/publish'));
+}
+
+/** Home page (own and shared instances, catalog), the publish page (apps, connector, API tokens) and the API-token forms. */
 export const dashboardExtension: PlatformExtension = (router, core) => {
   const auth = requireUser(core);
   const noStore: RequestHandler = (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); };
@@ -184,15 +187,22 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
     res.type('html').send(homePage(core, localeOf(res), user, readFlash(core, user, req.query.flash)));
   });
 
+  // Only those who deploy have anything to publish; everyone else goes home.
+  router.get('/publish', noStore, auth, (_req, res) => {
+    const user = userOf(res);
+    if (!deploys(user)) { res.redirect('/'); return; }
+    res.type('html').send(publishPage(core, localeOf(res), user));
+  });
+
   // The new token is shown on the response to the creating request itself and is never stored in plain text.
   router.post('/ui/tokens', ...action((req, res, user) => {
     const name = field(req, 'name').trim();
     const { token } = core.tokens.create(user.id, name);
-    res.type('html').send(homePage(core, localeOf(res), user, {}, { name, token }));
+    res.type('html').send(publishPage(core, localeOf(res), user, { name, token }));
   }));
 
   router.post('/ui/tokens/:id/revoke', ...action((req, res, user) => {
     if (!core.tokens.revoke(user.id, req.params.id as string)) throw new LagerError('not_found', 'Token not found.');
-    res.redirect('/');
+    res.redirect('/publish');
   }));
 };

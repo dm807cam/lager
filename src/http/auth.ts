@@ -79,12 +79,11 @@ function accountPage(core: Core, locale: Locale, user: User, msg: { ok?: string;
   const save = `<button type="submit" class="${btn('secondary')}">${esc(t(locale, 'common.save'))}</button>`;
   return page(locale, t(locale, 'account.title'), `<div class="narrow"><div class="page-head account-head">${avatar(user, 'lg')}<div><h1>${esc(t(locale, 'account.title'))}</h1><p class="lede">${esc(user.email)}</p></div></div>
 ${msg.ok ? noticeBox('success', msg.ok) : ''}${errorLine(msg.error)}
-<section class="card"><h2>${esc(t(locale, 'common.name'))}</h2>
+<section class="card"><h2>${esc(t(locale, 'account.profile'))}</h2>
 <form method="post" action="/account/name" class="form-row"><input type="hidden" name="csrf" value="${csrf}">
 ${field('name', t(locale, 'common.name'), `<input id="name" name="name" required maxlength="${MAX_NAME_LENGTH}" value="${esc(user.name)}" autocomplete="name">`)}
-${save}</form></section>
-<section class="card"><h2>${esc(t(locale, 'account.locale.title'))}</h2>
-<form method="post" action="/account/locale" class="form-row"><input type="hidden" name="csrf" value="${csrf}">
+${save}</form>
+<form method="post" action="/account/locale" class="form-row gap-top"><input type="hidden" name="csrf" value="${csrf}">
 ${field('locale', t(locale, 'account.locale.label'), `<select id="locale" name="locale">${options}</select>`)}
 ${save}</form></section>
 <section class="card"><h2>${esc(t(locale, 'account.password.title'))}</h2>
@@ -132,8 +131,8 @@ export const authExtension: PlatformExtension = (router, core) => {
 
   // --- registration ---
 
-  const closedPage = (locale: Locale): string => notice(locale, t(locale, 'auth.register.pageTitle'), t(locale, 'auth.register.closed'));
-  const inviteOnlyPage = (locale: Locale): string => notice(locale, t(locale, 'auth.register.pageTitle'), t(locale, 'auth.register.inviteOnly'));
+  const closedPage = (locale: Locale): string => notice(locale, t(locale, 'auth.register.pageTitle'), t(locale, 'auth.register.closed'), toLogin(locale));
+  const inviteOnlyPage = (locale: Locale): string => notice(locale, t(locale, 'auth.register.pageTitle'), t(locale, 'auth.register.inviteOnly'), toLogin(locale));
 
   router.get('/register', hardened, (req, res) => {
     const locale = localeOf(req);
@@ -164,7 +163,7 @@ export const authExtension: PlatformExtension = (router, core) => {
         name: values.name, email: values.email, password: field(req, 'password'), inviteToken: token || undefined, locale,
       });
       if (needsVerification) {
-        html(res, 200, notice(locale, t(locale, 'auth.register.sent.title'), t(locale, 'auth.register.sent.text')));
+        html(res, 200, notice(locale, t(locale, 'auth.register.sent.title'), t(locale, 'auth.register.sent.text'), toLogin(locale)));
         return;
       }
       issueSession(core, res, user);
@@ -201,7 +200,7 @@ export const authExtension: PlatformExtension = (router, core) => {
     const locale = localeOf(req);
     if (!resendIp.hit(ipOf(req))) { tooMany(req, res); return; }
     if (resendEmail.hit(emailKey(req))) await core.accounts.resendVerification(field(req, 'email', 254), locale);
-    html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.resend.sent.text')));
+    html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.resend.sent.text'), toLogin(locale)));
   });
 
   // --- password reset ---
@@ -213,7 +212,7 @@ export const authExtension: PlatformExtension = (router, core) => {
     if (!forgotIp.hit(ipOf(req))) { tooMany(req, res); return; }
     // Over the per-address budget the request is skipped without any visible difference.
     if (forgotEmail.hit(emailKey(req))) await core.accounts.requestPasswordReset(field(req, 'email', 254), locale);
-    html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.forgot.sent')));
+    html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.forgot.sent'), toLogin(locale)));
   });
 
   // Showing the form consumes nothing, so link scanners that open the URL do not burn the token.

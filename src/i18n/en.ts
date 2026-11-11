@@ -77,7 +77,6 @@ export const en = {
   'account.title': 'Account',
   'account.back': 'Back to account',
   'account.name.saved': 'Name saved.',
-  'account.locale.title': 'Language',
   'account.locale.label': 'Language',
   'account.locale.browser': 'Browser default',
   'account.locale.saved': 'Language saved.',
@@ -329,4 +328,7 @@ export const en = {
   'admin.settings.registration.hint': 'Who can create an account on this server.',
   'admin.settings.maxInstances.hint': 'How many instances a single account may own.',
   'admin.settings.customDomains.hint': 'Who may let instances answer on their own domain names.',
+  'nav.publish': 'Publish',
+  'publish.lede': 'The apps you build with Claude, the connector that links Claude to Lager, and your API tokens.',
+  'account.profile': 'Profile',
 } as const;

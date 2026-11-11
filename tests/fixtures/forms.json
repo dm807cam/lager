@@ -15,21 +15,6 @@
         "from",
         "slug"
       ]
-    },
-    {
-      "action": "/ui/tokens",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "name"
-      ]
-    },
-    {
-      "action": "/ui/tokens/{token:laptop}/revoke",
-      "method": "post",
-      "fields": [
-        "csrf"
-      ]
     }
   ],
   "home (publisher)": [
@@ -48,14 +33,6 @@
         "from",
         "slug"
       ]
-    },
-    {
-      "action": "/ui/tokens",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "name"
-      ]
     }
   ],
   "home (user)": [
@@ -73,6 +50,47 @@
         "csrf",
         "from",
         "slug"
+      ]
+    }
+  ],
+  "publish (administrator)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        "csrf"
+      ]
+    },
+    {
+      "action": "/ui/tokens",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "name"
+      ]
+    },
+    {
+      "action": "/ui/tokens/{token:laptop}/revoke",
+      "method": "post",
+      "fields": [
+        "csrf"
+      ]
+    }
+  ],
+  "publish (publisher)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        "csrf"
+      ]
+    },
+    {
+      "action": "/ui/tokens",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "name"
       ]
     }
   ],

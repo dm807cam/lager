@@ -45,11 +45,14 @@ class Notice extends Error {
   constructor(public key: MessageKey) { super(key); }
 }
 
-function shell(core: Core, locale: Locale, user: User, title: string, body: string, flash: Flash, returnPath: string): string {
-  return page(locale, title, `${backTo(locale)}${noticeHtml(locale, flash)}${body}`, signedIn(core, user, 'apps', returnPath));
+/** Instance pages belong to "Apps", app pages to "Publish"; the back link leads there. */
+function shell(core: Core, locale: Locale, user: User, title: string, body: string, flash: Flash, returnPath: string, section: 'apps' | 'publish' = 'apps'): string {
+  const back = section === 'publish' && (user.role === 'admin' || user.role === 'publisher')
+    ? backTo('/publish', t(locale, 'nav.publish')) : backTo('/', t(locale, 'common.backToOverview'));
+  return page(locale, title, `${back}${noticeHtml(locale, flash)}${body}`, signedIn(core, user, section, returnPath));
 }
 
-const backTo = (locale: Locale): string => `<a class="back" href="/">${icon('chevron', 'i-sm')}${esc(t(locale, 'common.backToOverview'))}</a>`;
+const backTo = (href: string, label: string): string => `<a class="back" href="${esc(href)}">${icon('chevron', 'i-sm')}${esc(label)}</a>`;
 
 /** The band at the top of an instance or app page: icon, title, address and badges; `actions` and `badges` are trusted markup. */
 function hero(app: App, title: string, sub: string, badges: string[], actions: string, description = ''): string {
@@ -220,7 +223,7 @@ function appPage(core: Core, locale: Locale, user: User, app: App, flash: Flash)
 <div class="subsection"><h3>${esc(t(locale, 'app.newInstance'))}</h3>${form(`${base}/instances`, csrf,
     `${field('new-slug', t(locale, 'instance.slugLabel'), `<input id="new-slug" name="slug" required maxlength="${MAX_SLUG_LENGTH}" autocomplete="off" spellcheck="false">`)}${ownerField}`,
     `${icon('plus')}${esc(t(locale, 'app.newInstance'))}`, 'primary', 'form-row')}</div></section>
-${collaborators}${del}</div><aside class="side-col" aria-label="${esc(t(locale, 'instance.details'))}">${details}</aside></div>`, flash, `/apps/${encodeURIComponent(app.slug)}`);
+${collaborators}${del}</div><aside class="side-col" aria-label="${esc(t(locale, 'instance.details'))}">${details}</aside></div>`, flash, `/apps/${encodeURIComponent(app.slug)}`, 'publish');
 }
 
 /** Pages and forms for one instance (sharing, versions, snapshots, deletion) and for one app (instances, collaborators). */

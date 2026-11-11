@@ -207,10 +207,30 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .getown { width: 100%; }
 .getown > summary { list-style: none; }
 .getown > summary::-webkit-details-marker { display: none; }
-.getown[open] > summary { margin-bottom: var(--s3); }
+.getown[open] > summary { margin-bottom: var(--s3); background: transparent; border-color: var(--line); color: var(--ink-2); }
 .getown[open] > summary .i { transform: rotate(90deg); }
 .getown > summary .i { transition: transform var(--ease); }
 .getown form { display: flex; flex-direction: column; gap: var(--s3); }
+
+/* Phones: a compact row per app, so a handful of apps fit on one screen like a launcher. */
+@media (max-width: 520px) {
+  .grid { gap: var(--s3); }
+  .app-card { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; padding: 12px 14px; }
+  .app-card:hover { transform: none; }
+  .app-card-head { display: contents; }
+  .app-card-head > div { grid-column: 2 / -1; }
+  .app-card .tile { width: 48px; height: 48px; font-size: 1.1rem; }
+  .app-title { -webkit-line-clamp: 1; line-clamp: 1; font-size: 0.98rem; }
+  .app-desc { grid-column: 1 / -1; -webkit-line-clamp: 1; line-clamp: 1; font-size: 0.88rem; }
+  .app-card .badges { grid-column: 1 / 3; gap: 4px; }
+  .app-card .badge { height: 22px; padding: 0 7px; font-size: 0.72rem; }
+  .app-card .card-actions { grid-column: 3; padding-top: 0; margin-top: 0; flex-wrap: nowrap; justify-self: end; }
+  .app-card .card-actions > .btn-primary { flex: none; }
+  .app-card .card-actions .btn-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .app-card .card-actions .btn-quiet { width: 44px; padding: 0; }
+  .app-card .card-actions:has(details) { grid-column: 1 / -1; justify-self: stretch; }
+}
+.empty-cta { margin-top: var(--s5); display: flex; justify-content: center; }
 
 /* App icon tile: the initial shows when the image cannot load. */
 .tile {
@@ -431,6 +451,12 @@ td.actions .btn-row { justify-content: flex-end; flex-wrap: nowrap; }
 .layout > * { min-width: 0; }
 .main-col { display: flex; flex-direction: column; gap: var(--s5); }
 .side-col { display: flex; flex-direction: column; gap: var(--s5); }
+/* Narrow: the details come after the main sections and the danger zone stays last. */
+@media (max-width: 959px) {
+  .layout > .main-col { display: contents; }
+  .layout > .side-col { order: 1; }
+  .layout .card-danger { order: 2; }
+}
 @media (min-width: 960px) {
   .layout { grid-template-columns: minmax(0, 1fr) 340px; }
   .side-col { position: sticky; top: calc(var(--bar) + var(--s5)); }
@@ -480,6 +506,7 @@ td.actions .btn-row { justify-content: flex-end; flex-wrap: nowrap; }
 @media (min-width: 720px) { .settings-row { grid-template-columns: minmax(0, 1fr) minmax(0, 320px); align-items: start; } }
 .settings-row .hint { margin-top: 4px; }
 .app-group + .app-group { margin-top: var(--s5); }
+.card > h2 + .app-group { margin-top: 0; padding-top: 0; border-top: 0; }
 .app-group-head { display: flex; align-items: center; gap: var(--s3); margin-bottom: var(--s4); min-width: 0; }
 .app-group-head > div { min-width: 0; }
 .app-group-head h3 { overflow-wrap: anywhere; }

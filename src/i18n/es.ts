@@ -79,7 +79,6 @@ export const es: Record<MessageKey, string> = {
   'account.title': 'Cuenta',
   'account.back': 'Volver a la cuenta',
   'account.name.saved': 'Nombre guardado.',
-  'account.locale.title': 'Idioma',
   'account.locale.label': 'Idioma',
   'account.locale.browser': 'Idioma del navegador',
   'account.locale.saved': 'Idioma guardado.',
@@ -331,4 +330,7 @@ export const es: Record<MessageKey, string> = {
   'admin.settings.registration.hint': 'Quién puede crear una cuenta en este servidor.',
   'admin.settings.maxInstances.hint': 'Cuántas instancias puede tener una sola cuenta.',
   'admin.settings.customDomains.hint': 'Quién puede hacer que las instancias respondan en sus propios dominios.',
+  'nav.publish': 'Publicar',
+  'publish.lede': 'Las aplicaciones que creas con Claude, el conector que une Claude con Lager y tus tokens de API.',
+  'account.profile': 'Perfil',
 };

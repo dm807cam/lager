@@ -64,13 +64,18 @@ describe('static assets', () => {
     expect(ghost.status).toBe(404);
     expect(ghost.text).toContain(`<link rel="stylesheet" href="http://localhost:8080${css}">`);
     expect(ghost.text).not.toContain('<script');
+    // Nothing on such a page refers to the instance host itself: no platform manifest or touch icon, every asset absolute.
+    expect(ghost.text).not.toContain('manifest');
+    expect(ghost.text).not.toContain('apple-touch-icon');
+    expect(ghost.text).not.toMatch(/(?:src|href)="\/(?!\/)/);
+    expect(ghost.text).toContain('<link rel="icon" type="image/webp" href="http://localhost:8080/icon.webp">');
   });
 });
 
 describe('shell', () => {
   it('shell has a skip link, one <main>, one <h1>, and landmarks for banner and navigation', async () => {
     s = await showcase();
-    const wanted = new Set(['home (administrator)', 'instance', 'app (owner)', 'admin users', 'admin settings', 'login', 'account']);
+    const wanted = new Set(['home (administrator)', 'publish (publisher)', 'instance', 'app (owner)', 'admin users', 'admin settings', 'login', 'account']);
     for (const { name, html } of await pages(s, (v) => wanted.has(v.name))) {
       if (name === 'consent') continue;
       const doc = dom(html);
@@ -94,11 +99,15 @@ describe('shell', () => {
     const nav = async (who: PageVisit['as'], path: string): Promise<Element | null> =>
       dom((await visit(s!, { name: path, path, as: who }, cookieOf)).text).querySelector('nav.primary');
     const home = await nav('admin', '/');
-    expect([...home!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/', '/#catalog', '/admin']);
+    expect([...home!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/', '/#catalog', '/publish', '/admin']);
     expect(home!.querySelector('[aria-current="page"]')!.getAttribute('href')).toBe('/');
     expect((await nav('admin', '/admin/users'))!.querySelector('[aria-current="page"]')!.getAttribute('href')).toBe('/admin');
     const user = await nav('uwe', '/');
     expect([...user!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/', '/#catalog']);
+    const publisher = await nav('pia', '/publish');
+    expect([...publisher!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/', '/#catalog', '/publish']);
+    expect(publisher!.querySelector('[aria-current="page"]')!.getAttribute('href')).toBe('/publish');
+    expect(publisher!.querySelector('a[href="/publish"]')!.textContent).toBe(t('en', 'nav.publish'));
   });
 
   it('account menu and language menu are <details> and work as plain links/forms without script', async () => {
@@ -173,8 +182,11 @@ describe('home', () => {
     expect(tasks.querySelector('.app-desc')).toBeNull();
     const shared = doc.querySelector('#shared .app-card')!;
     expect([...shared.querySelectorAll('.badge')].map((b) => b.textContent)).toContain(t('en', 'badge.shared', { level: t('en', 'level.interact') }));
-    // My apps: same card shape with latest version and instance count.
-    const mine = doc.querySelector('#apps .app-card')!;
+    // Publishing lives on its own page: the home page shows no apps section, connector or tokens.
+    for (const id of ['apps', 'connect', 'tokens']) expect(doc.getElementById(id), id).toBeNull();
+    // My apps on the publish page: same card shape with latest version and instance count.
+    const publish = dom((await visit(s, { name: 'publish', path: '/publish', as: 'admin' }, cookies(s))).text);
+    const mine = publish.querySelector('#apps .app-card')!;
     expect(mine.querySelector('.badges')!.textContent).toContain('v2');
     expect(mine.querySelector('.badges')!.textContent).toContain(t('en', 'dash.instanceCount.other', { count: 2 }));
     expect(mine.querySelector('a[href="/apps/notes"]')).not.toBeNull();
@@ -198,6 +210,8 @@ describe('home', () => {
     // Each card is two explicit actions, never one big link.
     const card = await cardOf('admin', 'mine', 'notes');
     expect(card.closest('a')).toBeNull();
+    // On phones Manage shows only its icon; its text stays for assistive technology.
+    expect(card.querySelector('a[href="/instances/notes"] .btn-label')!.textContent).toBe(t('en', 'common.manage'));
     // Self-service apps in the catalog reveal the create form in place.
     const doc = dom((await visit(s, { name: 'home', path: '/', as: 'uwe' }, cookieOf)).text);
     const own = [...doc.querySelectorAll('#catalog details.getown')];
@@ -217,14 +231,23 @@ describe('home', () => {
     expect(steps.map((li) => li.querySelector('strong')!.textContent)).toEqual([t('en', 'dash.connect'), t('en', 'home.step.ask'), t('en', 'home.step.appears')]);
     expect(steps[0].querySelector('code')!.textContent).toBe('http://lager.localhost:8080/mcp');
     expect(steps[0].querySelector('button[data-copy="http://lager.localhost:8080/mcp"]')).not.toBeNull();
-    // Publishers still find their API tokens below.
-    expect(doc.querySelector('#tokens form[action="/ui/tokens"]')).not.toBeNull();
+    // Publishers are pointed to the publish page, which holds the connector and the API tokens.
+    expect(hero.querySelector('a[href="/publish"]')!.textContent).toBe(t('en', 'nav.publish'));
+    expect(doc.querySelector('form[action="/ui/tokens"]')).toBeNull();
+    const publish = dom((await request(h.app).get('/publish').set('Host', h.host).set('Cookie', await h.login())).text);
+    expect(publish.querySelector('#tokens form[action="/ui/tokens"]')).not.toBeNull();
+    expect(publish.querySelector('#apps .empty')!.textContent).toBe(t('en', 'dash.noApps'));
     // Plain users get the tagline without the steps they cannot take.
     h.core.users.create({ email: 'plain@x.y', name: 'Plain', password: PASSWORD, role: 'user' });
     const plain = dom((await request(h.app).get('/').set('Host', h.host).set('Cookie', await h.login('plain@x.y', PASSWORD))).text);
     expect(plain.querySelector('.empty-hero h1')!.textContent).toBe(t('en', 'brand.tagline'));
     expect(plain.querySelector('.empty-hero ol.steps')).toBeNull();
     expect(plain.querySelector('.empty-hero')!.textContent).toContain(t('en', 'home.empty.user'));
+    expect(plain.querySelector('a[href="/publish"]')).toBeNull();
+    // The publish page sends people who do not deploy home.
+    const away = await request(h.app).get('/publish').set('Host', h.host).set('Cookie', await h.login('plain@x.y', PASSWORD));
+    expect(away.status).toBe(302);
+    expect(away.headers.location).toBe('/');
   });
 
   it('the connector panel and a new token offer copy buttons with the catalog labels', async () => {

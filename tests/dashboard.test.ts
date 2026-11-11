@@ -16,7 +16,7 @@ afterEach(() => { h?.core.close(); h = undefined; });
 const setup = (): Harness => (h = makeHarness({ extensions: [dashboardExtension, manageExtension] }));
 const csrfOf = (hh: Harness, userId: string): string => signToken({ uid: userId, k: 'ui' }, hh.core.config.secret, 3600);
 const csrfFor = (hh: Harness): string => csrfOf(hh, hh.adminId);
-const get = (hh: Harness, cookie: string) => request(hh.app).get('/').set('Host', hh.host).set('Cookie', cookie);
+const get = (hh: Harness, cookie: string, path = '/') => request(hh.app).get(path).set('Host', hh.host).set('Cookie', cookie);
 const post = (hh: Harness, cookie: string, path: string, body: Record<string, string>) =>
   request(hh.app).post(path).set('Host', hh.host).set('Cookie', cookie).type('form').send(body);
 
@@ -76,7 +76,12 @@ describe('home page', () => {
     const h = setup();
     const { p } = scenario(h);
     h.core.apps.deploy({ slug: 'notes', html: '<p>2</p>', userId: p.id });
-    const res = await get(h, await loginAs(h, p));
+    const cookie = await loginAs(h, p);
+    // Publishing has its own page; the home page keeps the instances.
+    const home = await get(h, cookie);
+    expect(home.text).toContain('href="/publish"');
+    for (const text of [en('dash.apps'), en('dash.tokens'), en('dash.connect'), '/mcp']) expect(home.text).not.toContain(text);
+    const res = await get(h, cookie, '/publish');
     expect(res.text).toContain(en('dash.apps'));
     expect(res.text).toContain('Notes');
     expect(res.text).toContain('href="/apps/notes"');
@@ -84,19 +89,21 @@ describe('home page', () => {
     expect(res.text).toContain(en('dash.connect'));
     expect(res.text).toContain('http://lager.localhost:8080/mcp');
     expect(res.text).toContain(en('dash.tokens'));
-    expect(res.text).toContain(en('dash.ownInstances'));
-    expect(res.text).toContain('href="http://notes.apps.localhost:8080"');
-    expect(res.text).toContain('href="/instances/notes"');
-    expect(res.text).toContain(en('visibility.private'));
+    expect(home.text).toContain(en('dash.ownInstances'));
+    expect(home.text).toContain('href="http://notes.apps.localhost:8080"');
+    expect(home.text).toContain('href="/instances/notes"');
+    expect(home.text).toContain(en('visibility.private'));
   });
 
   it('administrators see the same sections and the Administration link', async () => {
     const h = setup();
     h.core.apps.deploy({ slug: 'notes', html: '<p>1</p>', title: 'Notes', userId: h.adminId });
-    const res = await get(h, await h.login());
+    const cookie = await h.login();
+    const res = await get(h, cookie, '/publish');
     expect(res.text).toContain(en('dash.apps'));
     expect(res.text).toContain(en('dash.connect'));
     expect(res.text).toContain('href="/admin"');
+    expect((await get(h, cookie)).text).toContain('href="/admin"');
   });
 
   it('the account page of an administrator links to the administration', async () => {
@@ -177,12 +184,13 @@ describe('home page', () => {
     const token = /lgr_[A-Za-z0-9_-]+/.exec(created.text)?.[0];
     expect(token).toBeTruthy();
     expect(h.core.tokens.verify(token!)?.id).toBe(h.adminId);
-    const after = await get(h, cookie);
+    const after = await get(h, cookie, '/publish');
     expect(after.text).toContain('laptop');
     expect(after.text).not.toContain(token!);
     const info = h.core.tokens.list(h.adminId)[0];
     const revoke = await post(h, cookie, `/ui/tokens/${info.id}/revoke`, { csrf: csrfFor(h) });
     expect(revoke.status).toBe(302);
+    expect(revoke.headers.location).toBe('/publish');
     expect(h.core.tokens.list(h.adminId)).toHaveLength(0);
   });
 
