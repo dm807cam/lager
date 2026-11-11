@@ -7,6 +7,8 @@
   var USERS_URL = '/__lager/users?ids=';
   var DB_URL = '/__lager/db';
   var EVENTS_URL = '/__lager/db/events';
+  var RETRY_MIN_MS = 1000;
+  var RETRY_MAX_MS = 30000;
   var MAX_PROFILE_IDS = 100;
   var META = Object.freeze({ fromCache: false, hasPendingWrites: false });
   var ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -194,8 +196,9 @@
     es.addEventListener('reset', function () { refreshWhere(function () { return true; }); });
     es.addEventListener('error', function () { sourceFailed = true; });
     es.addEventListener('open', function () {
-      // Events sent while the stream was down are lost, so catch up after a reconnect.
-      if (sourceFailed) { sourceFailed = false; refreshWhere(function () { return true; }); }
+      // Changes landing before the stream opened, or while it was down, are lost: catch up (deduplicated by key).
+      sourceFailed = false;
+      refreshWhere(function () { return true; });
     });
   }
 
@@ -217,10 +220,13 @@
     var dirty = false;
     var first = true;
     var lastKey = null;
+    var retryTimer = null;
+    var retryDelay = RETRY_MIN_MS;
     var listener = { matches: matches, refresh: refresh };
 
     function stop() {
       active = false;
+      if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
       listeners.delete(listener);
       closeSourceIfIdle();
     }
@@ -236,6 +242,7 @@
 
     function refresh() {
       if (!active) return;
+      if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
       if (running) { dirty = true; return; }
       running = true;
       dirty = false;
@@ -243,6 +250,7 @@
         function (result) {
           running = false;
           if (!active) return;
+          retryDelay = RETRY_MIN_MS;
           if (first || result.key !== lastKey) {
             first = false;
             lastKey = result.key;
@@ -252,7 +260,14 @@
         },
         function (e) {
           running = false;
-          if (active) fail(e);
+          if (!active) return;
+          if (e && e.code === 'unavailable') {
+            // Transient: keep the listener and retry with a bounded backoff (an event or reconnect retries sooner).
+            retryTimer = setTimeout(function () { retryTimer = null; refresh(); }, retryDelay);
+            retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
+          } else {
+            fail(e);
+          }
         }
       );
     }
@@ -281,6 +296,7 @@
         return dbCall({ op: 'acquire', path: path, options: options }).then(function (r) {
           var out = {};
           ['acquired', 'version', 'expiresAt', 'holder'].forEach(function (k) { if (r[k] !== undefined) out[k] = r[k]; });
+          if (!out.acquired) delete out.holder; // the holder of a busy lease is never revealed
           return out;
         });
       },

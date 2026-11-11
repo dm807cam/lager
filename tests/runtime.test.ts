@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const SOURCE = fs.readFileSync(path.resolve(process.cwd(), 'src/runtime/runtime.js'), 'utf8');
@@ -93,7 +93,9 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
       }
       case 'delete': docs.delete(b.path); return json({ ok: true });
       case 'query': return json({ docs: runQuery(b.path, b.query ?? {}) });
-      case 'acquire': return json({ acquired: true, version: 1, holder: b.options.holder, expiresAt: 'x' });
+      case 'acquire':
+        if (b.path === 'locks/busy') return json({ acquired: false, expiresAt: 'x', holder: 'someone' });
+        return json({ acquired: true, version: 1, holder: b.options.holder, expiresAt: 'x' });
       default: return json({ error: { code: 'invalid_argument', message: 'op' } }, 400);
     }
   }
@@ -190,6 +192,7 @@ describe('db', () => {
     expect(await ref.delete()).toBeUndefined();
     expect((await ref.get()).exists).toBe(false);
     expect(await ref.acquire({ holder: 'tab1', ttlMs: 5000 })).toEqual({ acquired: true, version: 1, holder: 'tab1', expiresAt: 'x' });
+    expect(await db.doc('locks/busy').acquire({ holder: 'tab1' })).toEqual({ acquired: false, expiresAt: 'x' });
 
     expect(dbCalls()).toEqual([
       { op: 'set', path: 'tasks/t1', data: { title: 'a', n: 1 } },
@@ -199,6 +202,7 @@ describe('db', () => {
       { op: 'delete', path: 'tasks/t1' },
       { op: 'get', path: 'tasks/t1' },
       { op: 'acquire', path: 'tasks/t1', options: { holder: 'tab1', ttlMs: 5000 } },
+      { op: 'acquire', path: 'locks/busy', options: { holder: 'tab1' } },
     ]);
     const init = calls.find(([u]) => u === '/__lager/db')![1];
     expect(init.method).toBe('POST');
@@ -439,6 +443,68 @@ describe('onSnapshot', () => {
     await flush();
     expect([d.length, q.length]).toEqual([2, 2]);
     u1(); u2();
+  });
+
+  it('transient failures retry with backoff and recover; unsubscribe cancels the retry', async () => {
+    const db = await boot().use('db');
+    put('tasks/t1', { v: 1 });
+    const seen: any[] = [];
+    const errors: any[] = [];
+    vi.useFakeTimers();
+    try {
+      let failing = true;
+      g.fetch = async (u: string, i: any) => {
+        if (failing && u === '/__lager/db') throw new TypeError('offline');
+        return fakeFetch(u, i);
+      };
+      const unsub = db.doc('tasks/t1').onSnapshot((s: any) => seen.push(s), (e: any) => errors.push(e));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen).toHaveLength(0);
+      expect(errors).toHaveLength(0);
+      expect(es().closed).toBe(false);
+      await vi.advanceTimersByTimeAsync(999);
+      await vi.advanceTimersByTimeAsync(1); // retry 1 at 1s fails, next at +2s
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(seen).toHaveLength(0);
+      failing = false;
+      await vi.advanceTimersByTimeAsync(1);
+      expect(errors).toHaveLength(0);
+      expect(seen).toHaveLength(1);
+      expect(seen[0].data()).toEqual({ v: 1 });
+
+      // a pending retry is cancelled by unsubscribe
+      failing = true;
+      put('tasks/t1', { v: 2 });
+      es().emit('change', { path: 'tasks/t1', parent: 'tasks' });
+      await vi.advanceTimersByTimeAsync(0);
+      const attempts = dbCalls().length;
+      expect(vi.getTimerCount()).toBe(1);
+      unsub();
+      expect(vi.getTimerCount()).toBe(0);
+      failing = false;
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(dbCalls().length).toBe(attempts);
+      expect(seen).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a change between the initial fetch and the stream open is caught on open', async () => {
+    const db = await boot().use('db');
+    put('tasks/t1', { v: 1 });
+    const seen: any[] = [];
+    db.doc('tasks/t1').onSnapshot((s: any) => seen.push(s));
+    await flush();
+    expect(seen).toHaveLength(1);
+    put('tasks/t1', { v: 2 }); // event emitted before the stream was open is lost
+    es().emit('open');
+    await flush();
+    expect(seen).toHaveLength(2);
+    expect(seen[1].data()).toEqual({ v: 2 });
+    es().emit('open'); // nothing changed: deduplicated
+    await flush();
+    expect(seen).toHaveLength(2);
   });
 
   it('fetch errors go to the error callback and end the listener', async () => {
