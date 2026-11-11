@@ -5,9 +5,13 @@ import request from 'supertest';
 import { adminExtension } from '../src/http/admin.js';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { manageExtension } from '../src/http/manage.js';
-import { esc } from '../src/http/pages.js';
+import { badCodePage, disabledPage, esc, forbiddenPage, noticeHtml, notFoundPage } from '../src/http/pages.js';
 import { en } from '../src/i18n/en.js';
+import { de } from '../src/i18n/de.js';
+import { es } from '../src/i18n/es.js';
+import { fr } from '../src/i18n/fr.js';
 import { LOCALES, t, type Locale, type MessageKey } from '../src/i18n/index.js';
+import { MemoryMailer } from '../src/platform/mail.js';
 import { makeHarness, type Harness } from './support/http.js';
 
 const SRC = path.resolve(import.meta.dirname, '../src');
@@ -22,32 +26,35 @@ function sourceFiles(dir = SRC): string[] {
 
 /**
  * The contents of every string and template literal of a source file (comments, identifiers and regular expressions are
- * skipped, so a German word in a comment or an identifier never counts, while one inside a literal always does).
+ * skipped, so a German word in a comment or an identifier never counts, while one inside a literal always does). `at` is the offset
+ * of the opening quote, or, for the text after a `${…}` substitution, of the character after its closing brace.
  */
-function literals(source: string): string[] {
-  const out: string[] = [];
+function literalsAt(source: string): Array<{ text: string; at: number }> {
+  const out: Array<{ text: string; at: number }> = [];
   const n = source.length;
   let i = 0;
   const readString = (quote: string): void => {
     let s = '';
+    const at = i;
     i++;
     while (i < n && source[i] !== quote) {
       if (source[i] === '\\') { s += source[i + 1] ?? ''; i += 2; continue; }
       s += source[i++];
     }
     i++;
-    out.push(s);
+    out.push({ text: s, at });
   };
   const readTemplate = (): void => {
     let s = '';
+    let at = i;
     i++;
     while (i < n && source[i] !== '`') {
       if (source[i] === '\\') { s += source[i + 1] ?? ''; i += 2; continue; }
-      if (source[i] === '$' && source[i + 1] === '{') { out.push(s); s = ''; i += 2; code(true); continue; }
+      if (source[i] === '$' && source[i + 1] === '{') { out.push({ text: s, at }); s = ''; i += 2; code(true); at = i; continue; }
       s += source[i++];
     }
     i++;
-    out.push(s);
+    out.push({ text: s, at });
   };
   /** Scans code; inside a template substitution it returns at the closing brace. */
   function code(inSubstitution: boolean): void {
@@ -82,13 +89,52 @@ function literals(source: string): string[] {
   return out;
 }
 
+const literals = (source: string): string[] => literalsAt(source).map((l) => l.text);
+
+/**
+ * Inline human-facing text in a page handler, in any language. Two shapes are recognised inside string and template literals:
+ *  - an HTML text node: a `>` followed by a word of two or more letters (`<p>Nothing here</p>`, `<td>Aucun</td>`); the product
+ *    names in TEXT_ALLOWED, a single letter (the "v" of "v3") and arrow functions or `->` are fine;
+ *  - a sentence: a capital letter (or ¿ ¡) first and a space somewhere in the literal ("Delete this group?").
+ * Plus attribute text (`title="Delete"`, `alt=`, `placeholder=`, `aria-label=`) that is not a substitution.
+ * Machine-facing literals are allowed by shape: the message of a `LagerError` or another `…Error`, a `message:` or
+ * `error_description:` property of a JSON body, the label a request validator puts into its message (`check(value, "Line 3")`),
+ * the plain-text line of a non-browser 404, and SQL (what `.prepare()` / `.exec()` receive). A new machine-facing context
+ * is added to MACHINE_CONTEXT on purpose; a sentence anywhere else is a missing catalog entry. A sentence that starts in
+ * lowercase and contains no tag is not caught: the heuristic is a net, and the render tests below are the other half.
+ */
+const TEXT_ALLOWED = new Set(['Lager', 'Claude']);
+const MACHINE_CONTEXT = /(?:new\s+\w*Error\(\s*(?:'[^']*',\s*)?|\bmessage:\s*|\berror_description:\s*|\.(?:prepare|exec)\(\s*|\.type\('text\/plain'\)\.send\(\s*|\bcheck\(\s*\w+,\s*)$/;
+const SQL = /^(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|PRAGMA|BEGIN|COMMIT|WITH)\b/;
+const SENTENCE = /^[\p{Lu}¿¡][^\n]* /u;
+const ATTRIBUTE_TEXT = /\b(?:title|alt|placeholder|aria-label)="\p{L}{2,}(?![\p{L}\p{N}._/:-])/u;
+
+function inlineText(source: string): string[] {
+  const found: string[] = [];
+  for (const { text, at } of literalsAt(source)) {
+    const words = [...text.matchAll(/(?<![=-])>\s*(\p{L}+)/gu)].map((m) => m[1]).filter((w) => w.length >= 2 && !TEXT_ALLOWED.has(w));
+    const machine = MACHINE_CONTEXT.test(source.slice(Math.max(0, at - 80), at)) || SQL.test(text);
+    if (words.length > 0 || ATTRIBUTE_TEXT.test(text) || (SENTENCE.test(text) && !machine)) found.push(text.slice(0, 80));
+  }
+  return found;
+}
+
+/** The files whose literals may carry no human-facing text: every page handler and the OAuth server. */
+const PAGE_FILES = (): string[] => [
+  ...fs.readdirSync(path.join(SRC, 'http')).filter((f) => f.endsWith('.ts')).map((f) => path.join(SRC, 'http', f)),
+  path.join(SRC, 'mcp/oauth.ts'),
+];
+
 const GERMAN_CHARS = /[äöüÄÖÜß„“]/;
 const GERMAN_WORDS = [
   'Speichern', 'Löschen', 'Freigabe', 'Freigaben', 'Instanz', 'Instanzen', 'Einladung', 'Einladungen', 'Passwort', 'Anmelden', 'Abmelden',
   'Übersicht', 'Verwaltung', 'Nutzer', 'Gruppe', 'Gruppen', 'Zurück', 'Hinzufügen', 'Entfernen', 'Aktivieren', 'Deaktivieren', 'Besitzer',
   'Einstellungen', 'Konto', 'Widerrufen', 'Erstellt', 'Sichtbarkeit', 'Schnappschüsse', 'Mitarbeiter', 'Verwalter', 'Betrachter', 'Größe',
   'Datum', 'Öffnen', 'Fehler', 'gefunden', 'Wiederherstellen', 'Umbenennen', 'Benutzer', 'Zugriff', 'Bestätigung', 'gespeichert', 'selbst', 'Geschlossen', 'Offen', 'Einladung', 'Rolle', 'Rücksetz', 'Mitglieder', 'Registrierung',
+  'Verbindungen', 'offene', 'Offene', 'zu viele', 'nicht', 'Nicht', 'wurde', 'Wurde', 'bitte', 'Bitte',
 ];
+/** The German example password of `.env.example` is refused at start-up (ADMIN_PASSWORD_PLACEHOLDERS), so it must stay a literal. */
+const GERMAN_EXEMPT = new Set(['bitte-aendern']);
 const GERMAN_WORD_RE = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${GERMAN_WORDS.join('|')})(?![\\p{L}\\p{N}_])`, 'u');
 
 describe('catalog-only text', () => {
@@ -101,8 +147,43 @@ describe('catalog-only text', () => {
     const offences: string[] = [];
     for (const file of sourceFiles()) {
       for (const text of literals(fs.readFileSync(file, 'utf8'))) {
-        if (GERMAN_CHARS.test(text) || GERMAN_WORD_RE.test(text)) offences.push(`${path.relative(SRC, file)}: ${text.slice(0, 80)}`);
+        if (!GERMAN_EXEMPT.has(text) && (GERMAN_CHARS.test(text) || GERMAN_WORD_RE.test(text))) offences.push(`${path.relative(SRC, file)}: ${text.slice(0, 80)}`);
       }
+    }
+    expect(offences).toEqual([]);
+  });
+
+  it('the inline-text scanner recognises text in any language and lets machine-facing literals through', () => {
+    const bad = [
+      "const a = `<p>Nothing here yet</p>`;",
+      'const a = `<td>${x}</td><td>Aucun résultat</td>`;',
+      "const a = '<button>Guardar</button>';",
+      'const a = `<p class="x">${y}</p><p>Keine Daten</p>`;',
+      "const a = 'Delete this group?';",
+      "res.send('Something went wrong, try again');",
+      "throw new Problem('Zugriff verweigert.');",
+      "const a = '¿Seguro que quieres borrarlo?';",
+      "const a = `<img src=\"${u}\" alt=\"Logo\">`;",
+    ];
+    for (const code of bad) expect(inlineText(code), code).not.toEqual([]);
+    const good = [
+      "throw new LagerError('not_found', 'Instance not found.');",
+      "throw new LagerError('invalid_argument', `Line ${n} is not valid JSON.`);",
+      "res.status(400).json({ error: { code: 'x', message: 'Request body too large.' } });",
+      "res.json({ error: 'invalid_client', error_description: 'Invalid client credentials.' });",
+      "this.db.prepare('SELECT * FROM oauth_tokens WHERE token_hash = ? AND kind = \\'access\\'');",
+      "const a = `<td>v${n}</td><span class=\"name\">Lager</span><a href=\"/x\">${esc(t(l, 'k'))}</a>`;",
+      "const f = (x) => x > 1 ? `a` : 'b'; const g = a => a;",
+      "res.set('Cache-Control', 'no-store'); const h = 'text/html; charset=utf-8';",
+      "const a = `<img src=\"/i.webp\" alt=\"\">`;",
+    ];
+    for (const code of good) expect(inlineText(code), code).toEqual([]);
+  });
+
+  it('no page handler or the OAuth server carries inline human-facing text', () => {
+    const offences: string[] = [];
+    for (const file of PAGE_FILES()) {
+      for (const text of inlineText(fs.readFileSync(file, 'utf8'))) offences.push(`${path.relative(SRC, file)}: ${text}`);
     }
     expect(offences).toEqual([]);
   });
@@ -208,6 +289,115 @@ describe('signed-in pages in every locale', () => {
     for (const route of ['/', '/instances/notes', '/apps/notes', '/admin/invites', '/admin/settings', `/admin/groups/${groupId}`]) {
       const res = await request(h.app).get(route).set('Host', h.host).set('Cookie', cookie);
       expect(res.text, route).toContain(`href="/lang/de?return=${encodeURIComponent(route)}"`);
+    }
+  });
+});
+
+/** Values that are the same word in the language as in English (loanwords, shared Latin vocabulary, product and role names). */
+const SAME_AS_ENGLISH: Record<'de' | 'fr' | 'es', readonly string[]> = {
+  de: ['common.name', 'nav.admin', 'common.app', 'common.version', 'common.status', 'role.admin', 'role.publisher', 'instance.version', 'instance.downloadHtml',
+    'instance.domains.domain', 'instance.domains.host', 'app.pageTitle', 'admin.pageTitle', 'admin.section.apps', 'admin.apps.domains'],
+  fr: ['nav.admin', 'common.instance', 'common.version', 'common.date', 'role.publisher', 'instance.pageTitle', 'instance.version', 'instance.versionNote',
+    'instance.downloadHtml', 'instance.grants.type', 'app.versions', 'app.instances', 'admin.section.invites'],
+  es: ['role.publisher', 'instance.downloadHtml'],
+};
+
+describe('translations', () => {
+  it('every German, French and Spanish value differs from the English one unless the word is the same in that language', () => {
+    const same: string[] = [];
+    for (const [name, catalog] of [['de', de], ['fr', fr], ['es', es]] as const) {
+      for (const key of Object.keys(en) as MessageKey[]) {
+        if (catalog[key] === en[key] && !SAME_AS_ENGLISH[name].includes(key)) same.push(`${name} ${key}`);
+      }
+      for (const key of SAME_AS_ENGLISH[name]) expect(catalog[key as MessageKey], `${name} ${key} no longer needs its allowlist entry`).toBe(en[key as MessageKey]);
+    }
+    expect(same).toEqual([]);
+  });
+
+  it('French uses the typographic apostrophe only', () => {
+    expect(Object.entries(fr).filter(([, v]) => v.includes("'")).map(([k]) => k)).toEqual([]);
+  });
+});
+
+/** Sample values for the placeholders a notice text may carry. */
+const PARAMS = { max: 63, min: 8, name: 'N', title: 'T', count: 2, user: 'U', slug: 's', section: 'S', number: 3, email: 'e@x.y' };
+
+describe('error pages, notices and mail in every locale', () => {
+  it('the error pages render the catalog text of each locale', () => {
+    const pages: Array<[(l: Locale) => string, MessageKey, MessageKey]> = [
+      [(l) => notFoundPage(l), 'error.notFound.title', 'error.notFound.text'],
+      [(l) => forbiddenPage(l), 'error.forbidden.title', 'error.forbidden.text'],
+      [(l) => disabledPage(l), 'error.disabled.title', 'error.disabled.text'],
+      [(l) => badCodePage(l), 'error.badCode.title', 'error.badCode.text'],
+    ];
+    for (const locale of LOCALES) {
+      for (const [render, title, text] of pages) {
+        const html = render(locale);
+        expect(html, `${locale} ${title}`).toContain(`<html lang="${locale}"`);
+        for (const key of [title, text]) {
+          expect(html, `${locale} ${key}`).toContain(esc(t(locale, key)));
+          if (locale !== 'en') expect(html, `${locale} ${key} English`).not.toContain(esc(t('en', key)));
+        }
+      }
+    }
+  });
+
+  it('the cross-origin refusal and the unknown-instance page answer in the language of the request', async () => {
+    h = makeHarness();
+    h.core.apps.deploy({ slug: 'wk', html: '<p>1</p>', userId: h.adminId });
+    for (const locale of LOCALES) {
+      const refused = await request(h.app).post('/login').set('Host', h.host).set('Origin', 'https://evil.example').set('Accept-Language', locale).type('form').send({ email: 'a@b.c', password: 'x' });
+      expect(refused.status, locale).toBe(403);
+      expect(refused.text, locale).toContain(esc(t(locale, 'error.crossOrigin')));
+      expect(refused.text, locale).toContain(`<html lang="${locale}"`);
+      const ghost = await request(h.app).get('/').set('Host', 'ghost.apps.localhost').set('Accept-Language', locale);
+      expect(ghost.status, locale).toBe(404);
+      expect(ghost.text, locale).toContain(esc(t(locale, 'error.notFound.text')));
+    }
+  });
+
+  it('every notice key renders its text, with limits filled in, in every locale', () => {
+    const keys = (Object.keys(en) as MessageKey[]).filter((k) => k.startsWith('notice.'));
+    expect(keys.length).toBeGreaterThan(10);
+    for (const locale of LOCALES) {
+      for (const key of keys) {
+        const html = noticeHtml(locale, { error: key });
+        const text = esc(t(locale, key, PARAMS));
+        // A text that quotes a limit is rendered with the real number, never with a placeholder.
+        expect(html, `${locale} ${key}`).not.toContain('{');
+        if (!en[key].includes('{')) expect(html, `${locale} ${key}`).toContain(text);
+        expect(noticeHtml(locale, { ok: key }), `${locale} ${key} ok`).toContain('role="status"');
+        if (locale !== 'en' && !SAME_AS_ENGLISH[locale].includes(key)) expect(html, `${locale} ${key} English`).not.toContain(esc(t('en', key)));
+      }
+    }
+  });
+
+  it('every mail has its subject and body in the recipient language', async () => {
+    const mailer = new MemoryMailer();
+    h = makeHarness({ mailer });
+    h.core.settings.setRegistration('open');
+    const english = new Map<string, { subject: string; text: string }>();
+    for (const locale of LOCALES) {
+      mailer.sent.length = 0;
+      const email = `user-${locale}@x.y`;
+      await h.core.accounts.register({ name: 'U', email, password: 'password-123', locale });
+      await h.core.accounts.requestPasswordReset(email, locale);
+      await h.core.accounts.createInvite({ email: `invited-${locale}@x.y`, role: 'user', createdBy: h.adminId, locale });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const kinds = ['verify', 'reset', 'invite'] as const;
+      expect(mailer.sent, locale).toHaveLength(3);
+      for (const kind of kinds) {
+        const mail = mailer.sent.find((m) => m.subject === t(locale, `mail.${kind}.subject`));
+        expect(mail, `${locale} ${kind}`).toBeDefined();
+        expect(mail!.text, `${locale} ${kind}`).toContain(t(locale, `mail.${kind}.intro`));
+        expect(mail!.text, `${locale} ${kind}`).toContain(t(locale, `mail.validity.${kind}`));
+        expect(mail!.text, `${locale} ${kind}`).not.toContain('{');
+        if (locale === 'en') english.set(kind, { subject: mail!.subject, text: mail!.text });
+        else {
+          expect(mail!.subject, `${locale} ${kind}`).not.toBe(english.get(kind)!.subject);
+          expect(mail!.text, `${locale} ${kind}`).not.toContain(t('en', `mail.${kind}.intro`));
+        }
+      }
     }
   });
 });
