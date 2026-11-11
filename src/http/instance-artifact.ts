@@ -19,6 +19,14 @@ function reply(res: Response, f: Failure): void {
 
 const isObject = (v: unknown): v is object => v !== null && typeof v === 'object' && !Array.isArray(v);
 
+/** The page must be a complete HTML document: optional BOM and whitespace, then a doctype. */
+const DOCTYPE = /^\uFEFF?\s*<!doctype html/i;
+
+/** `{publish: false}` under either name stops the page from saving itself, for every viewer. */
+function publishDisabled(ctx: Ctx): boolean {
+  return [ctx.caps.artifact, ctx.caps.self].some((d) => isObject(d) && (d as Record<string, unknown>).publish === false);
+}
+
 /** The app declares `artifact` or its alias `self`. */
 function declared(ctx: Ctx): boolean {
   return isObject(ctx.caps.artifact) || isObject(ctx.caps.self);
@@ -40,6 +48,7 @@ export function mountArtifactRoutes(router: express.Router, core: Core, ctxOf: (
       const ctx = ctxOf(res);
       requireAccess(ctx);
       if (!declared(ctx)) { reply(res, { status: 403, code: 'not_declared', message: 'Diese App darf sich nicht selbst speichern.' }); return; }
+      if (publishDisabled(ctx)) { reply(res, { status: 403, code: 'not_granted', message: 'Diese App darf sich nicht selbst speichern.' }); return; }
       if (ctx.viewer.level !== 'admin' && ctx.viewer.level !== 'owner') {
         reply(res, { status: 403, code: 'forbidden', message: 'Nur Verwalter dürfen die Seite speichern.' });
         return;
@@ -64,6 +73,10 @@ export function mountArtifactRoutes(router: express.Router, core: Core, ctxOf: (
       const { html, baseVersion } = isObject(body) ? body as Record<string, unknown> : {} as Record<string, unknown>;
       if (typeof html !== 'string' || html.trim() === '' || typeof baseVersion !== 'number' || !Number.isInteger(baseVersion)) {
         reply(res, { status: 400, code: 'invalid_content', message: 'html und baseVersion werden erwartet.' });
+        return;
+      }
+      if (!DOCTYPE.test(html)) {
+        reply(res, { status: 400, code: 'invalid_content', message: 'Die Seite muss ein vollständiges HTML-Dokument sein (<!doctype html>).' });
         return;
       }
       if (Buffer.byteLength(html) > MAX_HTML_BYTES) {

@@ -37,7 +37,7 @@ describe('rest api', () => {
     const res = await put('<p>2</p>');
     expect(res.body.version).toBe(3);
     expect(res.body.pinned).toEqual(['poll']);
-    expect(res.body.warnings).toEqual(['Diese Instanzen wurden nicht aktualisiert, weil sie selbst gespeicherte Inhalte haben: poll']);
+    expect(res.body.warnings).toEqual(['Diese Instanzen wurden nicht aktualisiert, weil ihre automatische Aktualisierung ausgeschaltet ist: poll']);
     const detail = await request(h.app).get('/api/apps/poll').set('Host', h.host).set('Authorization', `Bearer ${token}`);
     expect(detail.body.latestVersion).toBe(3);
     expect(detail.body.versions.map((v: { number: number }) => v.number)).toEqual([1, 3]);

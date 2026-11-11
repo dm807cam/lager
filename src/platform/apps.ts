@@ -41,6 +41,8 @@ export interface AccessChecks {
 
 const MAX_HTML_BYTES = 16 * 1024 * 1024;
 const SELF_PUBLISHED_NOTE = 'selbst gespeichert';
+/** An instance keeps this many self-published versions; older ones are removed when a newer one is saved. */
+export const MAX_SAVED_VERSIONS = 20;
 const VISIBILITIES: Visibility[] = ['private', 'users', 'public'];
 const USERS_LEVELS: UsersLevel[] = ['view', 'interact'];
 const SELF_INSTANCES: SelfInstances[] = ['off', 'users'];
@@ -87,12 +89,23 @@ export class Apps {
   private activatedHooks: ActivatedHook[] = [];
   private deleteHooks: Array<(instance: Instance) => void> = [];
   private checks: AccessChecks | null = null;
+  private quota: { bytes: number; otherUsage: (instanceId: string) => number } | null = null;
 
   constructor(private db: DatabaseSync, private dataDir: string, private users: Users, private settings?: Settings) {}
 
   /** Replaces the Stage 1 owner-only rule for deploy, activate, visibility and users-level changes. */
   setChecks(checks: AccessChecks): void {
     this.checks = checks;
+  }
+
+  /** Saved pages count against the instance quota together with `otherUsage` (documents and assets); 0 = unlimited. */
+  setQuota(bytes: number, otherUsage: (instanceId: string) => number): void {
+    this.quota = { bytes, otherUsage };
+  }
+
+  /** Bytes of the pages this instance saved itself. */
+  savedBytes(instanceId: string): number {
+    return Number((this.db.prepare('SELECT COALESCE(SUM(size_bytes), 0) AS b FROM versions WHERE instance_id = ?').get(instanceId) as { b: number }).b);
   }
 
   onInstanceDeleted(hook: (instance: Instance) => void): void {
@@ -446,6 +459,17 @@ export class Apps {
       const base = this.db.prepare('SELECT * FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, instance.activeVersion) as VersionRow | undefined;
       if (!base) throw new LagerError('not_found', `Version ${instance.activeVersion} not found.`);
       const number = (this.db.prepare('SELECT MAX(number) AS n FROM versions WHERE app_id = ?').get(instance.appId) as { n: number }).n + 1;
+      // Keep the newest MAX_SAVED_VERSIONS - 1 saved versions plus the new one, which becomes the active version.
+      const mine = this.db.prepare('SELECT number, size_bytes FROM versions WHERE instance_id = ? ORDER BY number DESC')
+        .all(instance.id) as unknown as Array<{ number: number; size_bytes: number }>;
+      const dropped = mine.slice(MAX_SAVED_VERSIONS - 1);
+      if (this.quota && this.quota.bytes > 0) {
+        const kept = this.savedBytes(instance.id) - dropped.reduce((sum, r) => sum + Number(r.size_bytes), 0);
+        if (this.quota.otherUsage(instance.id) + kept + sizeBytes > this.quota.bytes) {
+          throw new LagerError('quota_exceeded', 'Der Speicher dieser Instanz ist voll.');
+        }
+      }
+      for (const r of dropped) this.db.prepare('DELETE FROM versions WHERE app_id = ? AND number = ?').run(instance.appId, r.number);
       const now = new Date().toISOString();
       this.db
         .prepare(
@@ -456,10 +480,23 @@ export class Apps {
       this.fireHooks(instance, instance.activeVersion, number);
       this.db.prepare('UPDATE instances SET active_version = ?, auto_update = 0 WHERE id = ?').run(number, instance.id);
       const version = toVersion(this.db.prepare('SELECT * FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, number) as unknown as VersionRow);
-      return { version, instance: this.getInstance(instance.id)! };
+      return { version, instance: this.getInstance(instance.id)!, dropped: dropped.map((r) => r.number) };
     });
+    this.trashVersionFiles(out.instance.appId, out.dropped);
     this.fireActivated([out.instance]);
-    return out;
+    return { version: out.version, instance: out.instance };
+  }
+
+  /** The saved pages hold an instance's state: removed versions go to the trash, never back to another instance. */
+  private trashVersionFiles(appId: string, numbers: number[]): void {
+    const stamp = new Date().toISOString().replace(/[-:.]/g, '');
+    for (const n of numbers) {
+      const source = path.dirname(this.versionFile(appId, n));
+      if (!fs.existsSync(source)) continue;
+      const target = path.join(this.dataDir, 'trash', `version-${appId}-${n}-${stamp}`);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.renameSync(source, target);
+    }
   }
 
   /** Whether the instance follows new deploys. Turning it on does not move the instance; the next deploy does. */
@@ -537,15 +574,7 @@ export class Apps {
       return { instance: inst, saved: numbers };
     });
     for (const hook of this.deleteHooks) hook(instance);
-    // The saved pages hold this instance's state: they go to the trash with its data.
-    const stamp = new Date().toISOString().replace(/[-:.]/g, '');
-    for (const n of saved) {
-      const source = path.dirname(this.versionFile(instance.appId, n));
-      if (!fs.existsSync(source)) continue;
-      const target = path.join(this.dataDir, 'trash', `version-${instance.appId}-${n}-${stamp}`);
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.renameSync(source, target);
-    }
+    this.trashVersionFiles(instance.appId, saved);
   }
 
   /** Removes the rows of the instance and reserves its slug for the owner (see `claimSlug`). */

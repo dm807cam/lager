@@ -57,8 +57,10 @@ export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
   users.onDemoted((id) => { accounts.deleteInvitesBy(id); });
   const hub = new Hub();
   const data = new InstanceData(config.dataDir, hub, config.snapshotKeep, config.instanceQuotaBytes);
-  const assets = new InstanceAssets(config.dataDir, config.instanceQuotaBytes, (id) => data.usage(id));
-  data.setExtraUsage((id) => assets.usage(id).bytes);
+  // Pages an instance saved itself count like its documents and uploads against the one instance quota.
+  const assets = new InstanceAssets(config.dataDir, config.instanceQuotaBytes, (id) => data.usage(id) + apps.savedBytes(id));
+  data.setExtraUsage((id) => assets.usage(id).bytes + apps.savedBytes(id));
+  apps.setQuota(config.instanceQuotaBytes, (id) => data.usage(id) + assets.usage(id).bytes);
   const groups = new Groups(db, users);
   const access = new Access(db, users, groups, apps);
   apps.setChecks({

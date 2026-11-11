@@ -198,8 +198,9 @@
     });
     es.addEventListener('reset', function () { refreshWhere(function () { return true; }); });
     es.addEventListener('reload', onReloadEvent);
-    es.addEventListener('error', function () { sourceFailed = true; });
+    es.addEventListener('error', function () { sourceFailed = true; onStreamError(); });
     es.addEventListener('open', function () {
+      onStreamOpen();
       // Changes landing before the stream opened, or while it was down, are lost: catch up (deduplicated by key).
       sourceFailed = false;
       refreshWhere(function () { return true; });
@@ -1028,20 +1029,25 @@
 
   var ARTIFACT_URL = '/__lager/artifact';
   var DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024;
-  var DOWNLOAD_BLOCKED = ['exe', 'bat', 'cmd', 'scr', 'js', 'msi', 'dmg', 'app', 'sh'];
+  var DOWNLOAD_ALLOWED = ['gif', 'png', 'jpg', 'jpeg', 'webp', 'mp4', 'webm', 'mov', 'txt', 'json', 'md',
+    'docx', 'pptx', 'epub', 'csv', 'ttf', 'html', 'svg', 'pdf', 'xlsx', 'zip', 'fig'];
+  var DOCTYPE_RE = /^\uFEFF?\s*<!doctype html/i;
+  var INVISIBLE_RE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g;
   var REVOKE_DELAY_MS = 1000;
   // The event stream carries `reload` events for as long as the page may publish, even without db listeners.
   var keepSourceOpen = false;
   var loadedVersion = null;
   var reloaded = false;
+  var streamOpen = false;
   var artifactNamespace = null;
 
   /**
    * location.reload() and window.confirm() go through here so a test (or an embedding page) can observe them:
-   * `window.__lagerHost.reload` / `.confirm` replace the browser's own when present.
+   * `.reload` / `.confirm` of `window.__lagerHost`, read once when the runtime starts, replace the browser's own.
    */
+  var lagerHost = window.__lagerHost;
   function hostCall(name, arg) {
-    var host = window.__lagerHost;
+    var host = lagerHost;
     if (host && typeof host[name] === 'function') return host[name](arg);
     if (name === 'reload') return window.location.reload();
     return window.confirm(arg);
@@ -1056,13 +1062,32 @@
     return declaredObject(session, 'artifact') || declaredObject(session, 'self');
   }
 
+  function doReload() {
+    if (reloaded) return;
+    reloaded = true;
+    hostCall('reload');
+  }
+
   function onReloadEvent(e) {
     var data;
     try { data = JSON.parse(e.data); } catch (_) { return; }
     var version = data && typeof data === 'object' ? Number(data.version) : NaN;
-    if (!isFinite(version) || loadedVersion === null || version === loadedVersion || reloaded) return;
-    reloaded = true;
-    hostCall('reload');
+    if (!isFinite(version) || loadedVersion === null || version === loadedVersion) return;
+    doReload();
+  }
+
+  function onStreamError() { streamOpen = false; }
+
+  /** Reload events sent while the stream was down or not yet open are lost: compare with the live version instead. */
+  function onStreamOpen() {
+    streamOpen = true;
+    if (!keepSourceOpen || loadedVersion === null) return;
+    fetch(SESSION_URL, { credentials: 'same-origin', cache: 'no-store' }).then(function (res) {
+      return res.ok ? res.json() : null;
+    }).then(function (body) {
+      var live = body && body.instance ? Number(body.instance.version) : NaN;
+      if (isFinite(live) && live !== loadedVersion) doReload();
+    }).catch(function () { /* the next event or reconnect catches up */ });
   }
 
   function artifactError(code, message) { return { code: code, message: message }; }
@@ -1072,10 +1097,11 @@
     var message = error && typeof error.message === 'string' ? error.message : 'Request failed (' + res.status + ').';
     var raw = error && typeof error.code === 'string' ? error.code : '';
     var code;
-    if (res.status === 401 || (res.status === 403 && raw !== 'not_declared')) code = 'not_writer';
-    else if (res.status === 403) code = 'not_declared';
+    if (res.status === 403 && raw === 'not_declared') code = 'not_declared';
+    else if (res.status === 403 && raw === 'not_granted') code = 'not_granted';
+    else if (res.status === 401 || res.status === 403) code = 'not_writer';
     else if (res.status === 409) code = 'conflict';
-    else if (res.status === 413) code = 'too_large';
+    else if (res.status === 413 || res.status === 507) code = 'too_large';
     else if (res.status === 429) code = 'rate_limited';
     else if (res.status === 400 && raw === 'invalid_content') code = 'invalid_content';
     else code = 'upstream_error';
@@ -1086,6 +1112,9 @@
     if (artifactNamespace) return artifactNamespace;
     var level = levelOf(session);
     var editor = level === 'admin' || level === 'owner';
+    var saveOff = ['artifact', 'self'].some(function (n) {
+      return declaredObject(session, n) && session.capabilities[n].publish === false;
+    });
     var instance = session && session.instance;
     loadedVersion = instance && isFinite(Number(instance.version)) ? Number(instance.version) : null;
     keepSourceOpen = true;
@@ -1098,8 +1127,9 @@
     function publish(arg) {
       return Promise.resolve().then(function () {
         if (arg !== null && typeof arg === 'object') throw artifactError('capability_disabled', 'Publishing several files is not available on this Lager server.');
+        if (saveOff) throw artifactError('not_granted', 'This page may not save itself.');
         if (!editor) throw artifactError('not_writer', 'This view cannot save the page.');
-        if (typeof arg !== 'string' || arg.trim() === '') throw artifactError('invalid_content', 'publish expects the complete html as a non-empty string.');
+        if (typeof arg !== 'string' || !DOCTYPE_RE.test(arg)) throw artifactError('invalid_content', 'publish expects a complete html document starting with <!doctype html>.');
         return fetch(ARTIFACT_URL, {
           method: 'POST',
           credentials: 'same-origin',
@@ -1108,8 +1138,15 @@
         }).then(
           function (res) {
             return res.json().catch(function () { return null; }).then(function (json) {
-              if (!res.ok) throw artifactFailure(res, json);
+              if (!res.ok) {
+                var failure = artifactFailure(res, json);
+                // Somebody else saved first: this view is stale, show the winning version.
+                if (failure.code === 'conflict') doReload();
+                throw failure;
+              }
               if (!json || typeof json.version !== 'string') throw artifactError('upstream_error', 'Unexpected response (' + res.status + ').');
+              // Normally the reload event does this; without an open stream nobody would tell this view.
+              if (!streamOpen) doReload();
               return Object.freeze({ version: json.version });
             });
           },
@@ -1131,15 +1168,18 @@
 
   /** The base name of the file the viewer would get: no directories, no control characters, no trailing dots or spaces. */
   function downloadName(filename) {
-    var name = filename.replace(/[\u0000-\u001f\u007f]/g, '');
-    name = name.slice(Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\')) + 1).trim().replace(/[. ]+$/, '');
+    var name = filename.replace(INVISIBLE_RE, '');
+    name = name.slice(Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\')) + 1).replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '');
     return name;
   }
 
   function downloadBlob(data) {
     if (typeof data === 'string') {
       if (data.length > DOWNLOAD_MAX_BYTES) throw downloadError('too_large', 'The file is larger than 50 MiB.');
-      return data === '' ? null : new Blob([data]);
+      if (data === '') return null;
+      var encoded = new Blob([data]);
+      if (encoded.size > DOWNLOAD_MAX_BYTES) throw downloadError('too_large', 'The file is larger than 50 MiB.');
+      return encoded;
     }
     var size = -1;
     if (typeof Blob !== 'undefined' && data instanceof Blob) size = data.size;
@@ -1158,8 +1198,8 @@
         var name = downloadName(request.filename);
         if (name === '') throw downloadError('bad_request', 'The filename is empty.');
         var dot = name.lastIndexOf('.');
-        if (dot >= 0 && DOWNLOAD_BLOCKED.indexOf(name.slice(dot + 1).toLowerCase()) >= 0) {
-          throw downloadError('rejected_extension', 'Files of this type cannot be saved.');
+        if (dot < 0 || DOWNLOAD_ALLOWED.indexOf(name.slice(dot + 1).toLowerCase()) < 0) {
+          throw downloadError('rejected_extension', 'Only files with an allowed extension can be saved.');
         }
         var blob = downloadBlob(request.data);
         if (blob === null) throw downloadError('bad_request', 'data must not be empty.');

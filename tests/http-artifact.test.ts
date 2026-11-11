@@ -108,7 +108,7 @@ function events(env: Env, cookie: string, host = HOST): Promise<{ next(event: st
 describe('POST /__lager/artifact', () => {
   it('owner publishes; the page then serves the new html', async () => {
     const env = await setup();
-    const res = await publish(env, env.owner, { html: '<p>voted</p>', baseVersion: 1 });
+    const res = await publish(env, env.owner, { html: '<!doctype html><p>voted</p>', baseVersion: 1 });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ version: '2' });
     const page = await request(env, 'GET', '/', HOST, env.owner);
@@ -119,7 +119,7 @@ describe('POST /__lager/artifact', () => {
     expect(session.body.instance.version).toBe(2);
     // an editor with the admin grant may publish as well
     const adm = env.mk('adm@x.y', 'admin');
-    expect((await publish(env, adm.cookie, { html: '<p>by admin</p>', baseVersion: 2 })).body).toEqual({ version: '3' });
+    expect((await publish(env, adm.cookie, { html: '<!doctype html><p>by admin</p>', baseVersion: 2 })).body).toEqual({ version: '3' });
   });
 
   it('reload event reaches a second open stream, and no other instance is told', async () => {
@@ -128,7 +128,7 @@ describe('POST /__lager/artifact', () => {
     const viewer = env.mk('v@x.y', 'view');
     const b = await events(env, viewer.cookie);
     const other = await events(env, env.ownerTwo, SECOND);
-    expect((await publish(env, env.owner, { html: '<p>n</p>', baseVersion: 1 })).status).toBe(200);
+    expect((await publish(env, env.owner, { html: '<!doctype html><p>n</p>', baseVersion: 1 })).status).toBe(200);
     expect(await a.next('reload')).toEqual({ version: 2 });
     expect(await b.next('reload')).toEqual({ version: 2 });
     // another instance's stream stays quiet: its own activation is the first thing it hears
@@ -141,33 +141,33 @@ describe('POST /__lager/artifact', () => {
   it('interact viewer is forbidden; undeclared app is not_declared; anonymous is refused', async () => {
     const env = await setup();
     const i = env.mk('i@x.y', 'interact');
-    const denied = await publish(env, i.cookie, { html: '<p>x</p>', baseVersion: 1 });
+    const denied = await publish(env, i.cookie, { html: '<!doctype html><p>x</p>', baseVersion: 1 });
     expect(denied.status).toBe(403);
     expect(denied.body.error.code).toBe('forbidden');
-    const none = await publish(env, env.ownerPlain, { html: '<p>x</p>', baseVersion: 1 }, PLAIN);
+    const none = await publish(env, env.ownerPlain, { html: '<!doctype html><p>x</p>', baseVersion: 1 }, PLAIN);
     expect(none.status).toBe(403);
     expect(none.body.error.code).toBe('not_declared');
-    expect((await publish(env, undefined, { html: '<p>x</p>', baseVersion: 1 })).status).toBe(401);
+    expect((await publish(env, undefined, { html: '<!doctype html><p>x</p>', baseVersion: 1 })).status).toBe(401);
     expect(env.core.apps.getInstance(env.inst.id)!.activeVersion).toBe(1);
   });
 
   it('accepts the self declaration as well', async () => {
     const env = await setup();
     env.core.apps.deploy({ slug: 'plain', html: '<p>x2</p>', userId: env.admin.id, capabilities: { self: {} } });
-    expect((await publish(env, env.ownerPlain, { html: '<p>y</p>', baseVersion: 2 }, PLAIN)).body).toEqual({ version: '3' });
+    expect((await publish(env, env.ownerPlain, { html: '<!doctype html><p>y</p>', baseVersion: 2 }, PLAIN)).body).toEqual({ version: '3' });
   });
 
   it('stale baseVersion → 409', async () => {
     const env = await setup();
-    expect((await publish(env, env.owner, { html: '<p>a</p>', baseVersion: 1 })).status).toBe(200);
-    const stale = await publish(env, env.owner, { html: '<p>b</p>', baseVersion: 1 });
+    expect((await publish(env, env.owner, { html: '<!doctype html><p>a</p>', baseVersion: 1 })).status).toBe(200);
+    const stale = await publish(env, env.owner, { html: '<!doctype html><p>b</p>', baseVersion: 1 });
     expect(stale.status).toBe(409);
     expect(stale.body.error.code).toBe('conflict');
   });
 
   it('the other instance of the app keeps serving its own version', async () => {
     const env = await setup();
-    await publish(env, env.owner, { html: '<p>state of one</p>', baseVersion: 1 });
+    await publish(env, env.owner, { html: '<!doctype html><p>state of one</p>', baseVersion: 1 });
     const other = await request(env, 'GET', '/', SECOND, env.ownerTwo);
     expect(other.text).toContain('<p>v1</p>');
     expect(other.text).not.toContain('state of one');
@@ -178,34 +178,51 @@ describe('POST /__lager/artifact', () => {
   it('61st publish within an hour → 429', async () => {
     const env = await setup();
     for (let n = 1; n <= 60; n++) {
-      const r = await publish(env, env.owner, { html: `<p>${n}</p>`, baseVersion: n });
+      const r = await publish(env, env.owner, { html: `<!doctype html><p>${n}</p>`, baseVersion: n });
       expect(r.status).toBe(200);
     }
-    const limited = await publish(env, env.owner, { html: '<p>61</p>', baseVersion: 61 });
+    const limited = await publish(env, env.owner, { html: '<!doctype html><p>61</p>', baseVersion: 61 });
     expect(limited.status).toBe(429);
     expect(limited.body.error.code).toBe('rate_limited');
     // another instance has its own budget
-    expect((await publish(env, env.ownerTwo, { html: '<p>x</p>', baseVersion: 1 }, SECOND)).status).toBe(200);
+    expect((await publish(env, env.ownerTwo, { html: '<!doctype html><p>x</p>', baseVersion: 1 }, SECOND)).status).toBe(200);
   });
 
   it('oversized and empty html are refused', async () => {
     const env = await setup();
-    const big = await publish(env, env.owner, { html: 'x'.repeat(16 * 1024 * 1024 + 1), baseVersion: 1 });
+    const big = await publish(env, env.owner, { html: '<!doctype html>' + 'x'.repeat(16 * 1024 * 1024), baseVersion: 1 });
     expect(big.status).toBe(413);
     expect(big.body.error.code).toBe('too_large');
-    const huge = await publish(env, env.owner, { html: 'x'.repeat(20 * 1024 * 1024), baseVersion: 1 });
+    const huge = await publish(env, env.owner, { html: '<!doctype html>' + 'x'.repeat(20 * 1024 * 1024), baseVersion: 1 });
     expect(huge.status).toBe(413);
     expect(huge.body.error.code).toBe('too_large');
-    for (const bad of [{ html: '', baseVersion: 1 }, { html: '  \n', baseVersion: 1 }, { html: 5, baseVersion: 1 }, { html: '<p>x</p>' }, { html: '<p>x</p>', baseVersion: 'one' }, '[]', 'nope']) {
+    for (const bad of [{ html: '<p>not a document</p>', baseVersion: 1 }, { html: 'x<!doctype html>', baseVersion: 1 }, { html: '', baseVersion: 1 }, { html: '  \n', baseVersion: 1 }, { html: 5, baseVersion: 1 }, { html: '<p>x</p>' }, { html: '<!doctype html><p>x</p>', baseVersion: 'one' }, '[]', 'nope']) {
       const r = await publish(env, env.owner, bad);
       expect([r.status, r.body.error.code]).toEqual([400, 'invalid_content']);
     }
     expect(env.core.apps.getInstance(env.inst.id)!.activeVersion).toBe(1);
   });
 
+  it('accepts a BOM and whitespace before a case-insensitive doctype', async () => {
+    const env = await setup();
+    const r = await publish(env, env.owner, { html: '\uFEFF \n<!DOCTYPE HTML><html></html>', baseVersion: 1 });
+    expect(r.body).toEqual({ version: '2' });
+  });
+
+  it('{publish:false} refuses everyone with not_granted, under either name', async () => {
+    const env = await setup();
+    env.core.apps.deploy({ slug: 'plain', html: '<p>locked</p>', userId: env.admin.id, capabilities: { artifact: { publish: false } } });
+    const r = await publish(env, env.ownerPlain, { html: '<!doctype html><p>y</p>', baseVersion: 2 }, PLAIN);
+    expect([r.status, r.body.error.code]).toEqual([403, 'not_granted']);
+    env.core.apps.deploy({ slug: 'plain', html: '<p>locked2</p>', userId: env.admin.id, capabilities: { self: { publish: false } } });
+    const r2 = await publish(env, env.ownerPlain, { html: '<!doctype html><p>y</p>', baseVersion: 3 }, PLAIN);
+    expect([r2.status, r2.body.error.code]).toEqual([403, 'not_granted']);
+    expect(env.core.apps.getInstance(env.plain.id)!.activeVersion).toBe(3);
+  });
+
   it('requires X-Lager-Request', async () => {
     const env = await setup();
-    const r = await publish(env, env.owner, { html: '<p>x</p>', baseVersion: 1 }, HOST, false);
+    const r = await publish(env, env.owner, { html: '<!doctype html><p>x</p>', baseVersion: 1 }, HOST, false);
     expect(r.status).toBe(403);
     expect(env.core.apps.getInstance(env.inst.id)!.activeVersion).toBe(1);
   });

@@ -53,7 +53,7 @@ export function appDetail(core: Core, user: User, app: App): object {
 export function describeDeploy(core: Core, user: User, r: DeployResult): object {
   const pinned = r.pinned.filter((i) => core.access.canSeeInstance(i, user)).map((i) => i.slug);
   const warnings = pinned.length > 0
-    ? [...r.warnings, `Diese Instanzen wurden nicht aktualisiert, weil sie selbst gespeicherte Inhalte haben: ${pinned.join(', ')}`]
+    ? [...r.warnings, `Diese Instanzen wurden nicht aktualisiert, weil ihre automatische Aktualisierung ausgeschaltet ist: ${pinned.join(', ')}`]
     : r.warnings;
   return {
     app: r.app.slug, version: r.version.number, createdVersion: r.createdVersion,
