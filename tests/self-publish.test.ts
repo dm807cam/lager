@@ -117,11 +117,24 @@ describe('selfPublish', () => {
     expect(core.apps.setAutoUpdate(a.id, false, pub.id).autoUpdate).toBe(false);
   });
 
-  it('snapshot hook still runs on selfPublish', () => {
+  it('selfPublish takes no data snapshot, deploy-driven and manual activations still do', () => {
     const { a } = setup();
     core.data.set(a.id, 'votes/a', { n: 1 }, pub.id);
     core.apps.selfPublish({ instanceId: a.id, html: '<p>mine</p>', baseVersion: 1, userId: pub.id });
-    expect(core.data.listSnapshots(a.id).map((s) => s.label)).toEqual(['v1-to-v2']);
+    expect(core.data.listSnapshots(a.id)).toEqual([]);
+    core.apps.activate(a.id, 1, pub.id);
+    expect(core.data.listSnapshots(a.id).map((s) => s.label)).toEqual(['v2-to-v1']);
+  });
+
+  it('setAutoUpdate(true) moves the instance to the latest deployed version at once', () => {
+    const { a } = setup();
+    core.data.set(a.id, 'votes/a', { n: 1 }, pub.id);
+    core.apps.selfPublish({ instanceId: a.id, html: '<p>mine</p>', baseVersion: 1, userId: pub.id });
+    const on = core.apps.setAutoUpdate(a.id, true, pub.id);
+    expect(on).toMatchObject({ autoUpdate: true, activeVersion: 1 });
+    expect(core.data.listSnapshots(a.id).map((s) => s.label)).toEqual(['v2-to-v1']);
+    // Switching it off never moves the instance.
+    expect(core.apps.setAutoUpdate(a.id, false, pub.id)).toMatchObject({ autoUpdate: false, activeVersion: 1 });
   });
 
   it('announces every activation to listeners of the instance', () => {
@@ -153,7 +166,7 @@ describe('selfPublish', () => {
 const doc = (n: number | string, pad = 0): string => `<!doctype html><p>${n}</p>${'x'.repeat(pad)}`;
 
 describe('saved version limits', () => {
-  it('the 21st save prunes the oldest, keeps the active one and moves the pruned html to the trash', () => {
+  it('the 21st save prunes the oldest, keeps the active one and deletes the pruned html outright', () => {
     const { a, b, appId } = setup();
     core.apps.selfPublish({ instanceId: b.id, html: doc('other'), baseVersion: 1, userId: usr.id });
     let base = 1;
@@ -167,10 +180,26 @@ describe('saved version limits', () => {
     expect(core.apps.listVersions(appId).filter((v) => v.instanceId === b.id).map((v) => v.number)).toEqual([2]);
     expect(core.apps.listVersions(appId)[0].number).toBe(1);
     expect(code(() => core.apps.readVersionHtml(appId, 3))).toBe('not_found');
-    const trash = fs.readdirSync(path.join(dir, 'trash')).filter((n) => n.startsWith(`version-${appId}-3-`));
-    expect(trash).toHaveLength(1);
-    expect(fs.readFileSync(path.join(dir, 'trash', trash[0], 'index.html'), 'utf8')).toBe(doc(1));
+    // Pruned versions are gone from rows and disk, and nothing of them lands in the trash (no quota counts it).
     expect(fs.existsSync(path.join(dir, 'apps', appId, 'versions', '3'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'trash'))).toBe(false);
+    const holds = (folder: string): boolean => fs.readdirSync(folder, { withFileTypes: true }).some((e) => {
+      const p = path.join(folder, e.name);
+      return e.isDirectory() ? holds(p) : fs.readFileSync(p, 'utf8') === doc(1);
+    });
+    expect(holds(path.join(dir, 'apps'))).toBe(false);
+    // Numbers are never reused: the next save continues after the highest number ever issued.
+    expect(Number(core.apps.selfPublish({ instanceId: a.id, html: doc(22), baseVersion: base, userId: pub.id }).version.number)).toBe(base + 1);
+  });
+
+  it('version numbers are never reused after the newest saved versions were removed', () => {
+    const { a, appId } = setup();
+    const first = Number(core.apps.selfPublish({ instanceId: a.id, html: doc('x'), baseVersion: 1, userId: pub.id }).version.number);
+    core.apps.activate(a.id, 1, pub.id);
+    core.apps.deleteInstance(a.id, pub.id);
+    const d = core.apps.deploy({ slug: 'poll', html: '<p>next</p>', userId: pub.id });
+    expect(d.version.number).toBeGreaterThan(first);
+    expect(core.apps.listVersions(appId).filter((v) => v.number === first)).toEqual([]);
   });
 
   it('saved bytes count toward the instance quota and an over-quota save is refused', () => {
@@ -206,6 +235,8 @@ describe('migration 5 (a database behind the latest still upgrades cleanly)', ()
   it('keeps existing versions deployed', () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-mig-'));
     const old = openPlatformDb(d);
+    old.exec('DROP INDEX versions_instance');
+    old.exec('ALTER TABLE apps DROP COLUMN next_version');
     old.exec('ALTER TABLE versions DROP COLUMN instance_id');
     old.exec('DROP TABLE instance_domains');
     old.exec('ALTER TABLE users DROP COLUMN locale');
@@ -215,8 +246,11 @@ describe('migration 5 (a database behind the latest still upgrades cleanly)', ()
     old.exec(`INSERT INTO versions (app_id, number, sha256, size_bytes, capabilities, created_by, created_at) VALUES ('a1', 1, 's', 1, '{}', 'o', 'x')`);
     old.close();
     const db = openPlatformDb(d);
-    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(7);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(8);
     expect(db.prepare('SELECT instance_id FROM versions').get()).toEqual({ instance_id: null });
+    // The counter starts after the highest existing number; versions(instance_id) is indexed.
+    expect(db.prepare("SELECT next_version FROM apps WHERE id = 'a1'").get()).toEqual({ next_version: 2 });
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'versions_instance'").get()).toEqual({ name: 'versions_instance' });
     db.close();
   });
 });

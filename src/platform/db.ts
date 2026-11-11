@@ -160,6 +160,11 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE users ADD COLUMN locale TEXT;
   `,
+  `
+  ALTER TABLE apps ADD COLUMN next_version INTEGER NOT NULL DEFAULT 1;
+  UPDATE apps SET next_version = COALESCE((SELECT MAX(number) FROM versions WHERE versions.app_id = apps.id), 0) + 1;
+  CREATE INDEX versions_instance ON versions(instance_id);
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

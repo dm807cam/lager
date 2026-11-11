@@ -56,13 +56,13 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 const guide = fs.readFileSync(new URL('../src/guide.md', import.meta.url), 'utf8');
 
 describe('mcp endpoint', () => {
-  it('lists the nineteen tools and exposes instructions', async () => {
+  it('lists the twenty tools and exposes instructions', async () => {
     const r = await start();
     const client = await connect(r);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'activate_version', 'add_domain', 'check_artifact', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'export_data', 'get_app', 'get_guide',
-      'import_data', 'list_apps', 'list_shares', 'list_snapshots', 'remove_domain', 'restore_snapshot', 'set_visibility', 'share_instance', 'unshare_instance',
+      'import_data', 'list_apps', 'list_shares', 'list_snapshots', 'remove_domain', 'restore_snapshot', 'set_auto_update', 'set_visibility', 'share_instance', 'unshare_instance',
     ]);
     expect(client.getServerVersion()?.name).toBe('lager');
     const firstSection = guide.split(/\r?\n---\r?\n/)[0].trim();
@@ -306,6 +306,20 @@ describe('mcp endpoint', () => {
     expect((await call(admin, 'add_domain', { instance: 'nope', host: 'adm.example.test' })).json.error.code).toBe('not_found');
     const other = await asUser(r, 'other@x.y', 'user');
     expect((await call(other.client, 'add_domain', { instance: 'mine', host: 'o.example.test' })).json.error.code).toBe('forbidden');
+  });
+
+  it('set_auto_update pins and follows', async () => {
+    const r = await start();
+    const client = await connect(r);
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>1</p>' });
+    expect((await call(client, 'set_auto_update', { instance: 'todo', on: false })).isError).toBe(false);
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>2</p>' });
+    const inst = (): ReturnType<typeof r.h.core.apps.getInstanceBySlug> => r.h.core.apps.getInstanceBySlug('todo');
+    expect(inst()).toMatchObject({ activeVersion: 1, autoUpdate: false });
+    expect((await call(client, 'set_auto_update', { instance: 'todo', on: true })).json).toMatchObject({ slug: 'todo', activeVersion: 2 });
+    expect(inst()!.autoUpdate).toBe(true);
+    const other = await asUser(r, 'x@x.y');
+    expect((await call(other.client, 'set_auto_update', { instance: 'todo', on: false })).json.error.code).toBe('forbidden');
   });
 
   it('create_instance with owner_email', async () => {
@@ -597,6 +611,6 @@ describe('mcp endpoint', () => {
     const client = new Client({ name: 't', version: '1' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${r.base}/mcp`), { authProvider: provider }));
     clients.push(client);
-    expect((await client.listTools()).tools).toHaveLength(19);
+    expect((await client.listTools()).tools).toHaveLength(20);
   });
 });

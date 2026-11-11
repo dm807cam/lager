@@ -78,6 +78,7 @@ Every deploy with changed content or changed capabilities creates the next versi
 
 - `get_app {slug}` shows all versions and instances.
 - `activate_version {instance, version}` activates any existing version – backwards and forwards.
+- `set_auto_update {instance, on}` switches whether the instance follows new deploys; switching it on moves the instance to the latest deployed version at once.
 - Before every version change Lager automatically takes a snapshot of the instance's data. `list_snapshots {instance}` shows them, `restore_snapshot {instance, snapshot}` restores one (the current state is saved first).
 
 Data belongs to the instance, never to the version: new code must cope with the existing data. Change data formats in a backward-compatible way (read missing fields with default values).

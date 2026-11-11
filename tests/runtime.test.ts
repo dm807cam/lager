@@ -133,6 +133,7 @@ const es = (): FakeEventSource => FakeEventSource.instances[FakeEventSource.inst
 function boot(): any {
   delete g.claude;
   delete g.storage;
+  delete g.__lagerRuntime;
   (0, eval)(SOURCE);
   return g.claude;
 }
@@ -146,7 +147,18 @@ beforeEach(() => {
   g.fetch = fakeFetch;
   g.EventSource = FakeEventSource;
 });
-afterEach(() => { delete g.claude; delete g.storage; delete g.__lagerHost; });
+// The runtime reads its session shortly after it starts; let that settle inside the test that booted it.
+afterEach(async () => { await flush(); await flush(); delete g.claude; delete g.storage; delete g.__lagerHost; delete g.__lagerRuntime; });
+
+describe('double inclusion', () => {
+  it('a second load of the runtime returns at once and keeps the first one\'s state', async () => {
+    const claude = boot();
+    const first = await claude.use('db');
+    (0, eval)(SOURCE);
+    expect(g.claude).toBe(claude);
+    expect(await g.claude.use('db')).toBe(first);
+  });
+});
 
 describe('claude.use', () => {
   it('use is memoized and unknown names resolve null', async () => {
@@ -1311,6 +1323,52 @@ describe('artifact and self', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
+  it('every view follows saves even when the page never calls use("artifact")', async () => {
+    declare({ artifact: {}, db: {} });
+    boot();
+    await flush();
+    await flush();
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(es().url).toBe('/__lager/db/events');
+    es().emit('reload', { version: 1 });
+    expect(reload).not.toHaveBeenCalled();
+    es().emit('reload', { version: 2 });
+    expect(reload).toHaveBeenCalledTimes(1);
+    // The alias counts as well.
+    FakeEventSource.instances = [];
+    declare({ self: {} });
+    boot();
+    await flush();
+    await flush();
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+
+  it('a page that declares neither opens no stream and reads the session only once', async () => {
+    declare({ db: {}, user: {} });
+    const claude = boot();
+    await flush();
+    await flush();
+    expect(FakeEventSource.instances).toHaveLength(0);
+    await claude.use('user');
+    await claude.use('db');
+    expect(FakeEventSource.instances).toHaveLength(0);
+    expect(calls.filter(([u]) => u === '/__lager/session')).toHaveLength(1);
+  });
+
+  it('a stream that db listeners opened before use("artifact") still catches up on a missed version', async () => {
+    declare({ db: {}, artifact: {} });
+    const claude = boot();
+    // No timer turn in between: the listener opens the stream before the runtime's own session read would.
+    const db = await claude.use('db');
+    const off = db.doc('a/b').onSnapshot(() => {});
+    es().emit('open');
+    session = { status: 200, body: { ...(sessionOf(OWNER).body as any), capabilities: { db: {}, artifact: {} }, instance: { id: 'i1', slug: 'demo', appSlug: 'demo', version: 3 } } };
+    await claude.use('artifact');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(reload).toHaveBeenCalledTimes(1);
+    off();
+  });
+
   it('is null when not declared, and shows up in permissions when declared', async () => {
     declare({});
     expect(await boot().use('artifact')).toBeNull();
@@ -1407,13 +1465,14 @@ describe('downloads', () => {
       await (await boot().use('downloads')).save({ filename: 'plan.txt', data: 'x' });
       return confirm.mock.calls[0][0] as string;
     };
-    expect(await asking('en')).toBe('Save file \u201Cplan.txt\u201D?');
-    expect(await asking('de')).toBe('Datei \u201Eplan.txt\u201C speichern?');
-    expect(await asking('fr')).toBe('Enregistrer le fichier \u00AB\u00A0plan.txt\u00A0\u00BB\u00A0?');
-    expect(await asking('es')).toBe('\u00BFGuardar el archivo \u00ABplan.txt\u00BB?');
-    expect(await asking('ja')).toBe('Save file \u201Cplan.txt\u201D?');
-    expect(await asking(undefined)).toBe('Save file \u201Cplan.txt\u201D?');
-    expect(await asking('constructor')).toBe('Save file \u201Cplan.txt\u201D?');
+    // The confirmation names the file and its size (data 'x' is one byte).
+    expect(await asking('en')).toBe('Save file \u201Cplan.txt\u201D (1\u00A0B)?');
+    expect(await asking('de')).toBe('Datei \u201Eplan.txt\u201C (1\u00A0B) speichern?');
+    expect(await asking('fr')).toBe('Enregistrer le fichier \u00AB\u00A0plan.txt\u00A0\u00BB (1\u00A0B)\u00A0?');
+    expect(await asking('es')).toBe('\u00BFGuardar el archivo \u00ABplan.txt\u00BB (1\u00A0B)?');
+    expect(await asking('ja')).toBe('Save file \u201Cplan.txt\u201D (1\u00A0B)?');
+    expect(await asking(undefined)).toBe('Save file \u201Cplan.txt\u201D (1\u00A0B)?');
+    expect(await asking('constructor')).toBe('Save file \u201Cplan.txt\u201D (1\u00A0B)?');
   });
 
   it('downloads.save confirms, sanitises the filename and saves through a temporary link', async () => {
@@ -1421,7 +1480,7 @@ describe('downloads', () => {
     const downloads = await boot().use('downloads');
     expect(Object.isFrozen(downloads)).toBe(true);
     expect(await downloads.save({ filename: 'data/..\\export\u0007.csv', data: 'a,b\n' })).toEqual({ status: 'saved' });
-    expect(confirm).toHaveBeenCalledWith('Save file \u201Cexport.csv\u201D?');
+    expect(confirm).toHaveBeenCalledWith('Save file \u201Cexport.csv\u201D (4\u00A0B)?');
     expect(clicked).toEqual([{ download: 'export.csv', href: 'blob:test/1' }]);
     expect(await created[0].text()).toBe('a,b\n');
     expect(document.querySelector('a[download]')).toBeNull();
@@ -1467,6 +1526,32 @@ describe('downloads', () => {
     expect(confirm).toHaveBeenCalledTimes(2);
   });
 
+  it('refuses names over 240 bytes, bare extensions and unknown export requests', async () => {
+    declare();
+    const downloads = await boot().use('downloads');
+    expect(await code(downloads.save({ filename: `${'a'.repeat(236)}.txt`, data: 'x' }))).toBe('resolved');
+    expect(await code(downloads.save({ filename: `${'a'.repeat(237)}.txt`, data: 'x' }))).toBe('bad_request');
+    // 3 bytes per character: 78 characters and the extension are 238 bytes, 81 are 247
+    expect(await code(downloads.save({ filename: `${'\u20AC'.repeat(78)}.txt`, data: 'x' }))).toBe('resolved');
+    expect(await code(downloads.save({ filename: `${'\u20AC'.repeat(81)}.txt`, data: 'x' }))).toBe('bad_request');
+    for (const name of ['.txt', ' .csv', 'dir/.json']) expect(await code(downloads.save({ filename: name, data: 'x' })), name).toBe('rejected_extension');
+    confirm.mockClear();
+    expect(await code(downloads.save({ filename: 'a.txt', data: 'x', request: 'tok-1' } as never))).toBe('request_unknown');
+    expect(await code(downloads.save({ filename: 'a.txt', data: 'x', request: 7 } as never))).toBe('bad_request');
+    expect(await code(downloads.save({ filename: 'a.txt', data: 'x', request: null } as never))).toBe('resolved');
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('the confirmation shows the size in readable units', async () => {
+    declare();
+    const downloads = await boot().use('downloads');
+    await downloads.save({ filename: 'a.zip', data: new Uint8Array(1536) });
+    await downloads.save({ filename: 'b.zip', data: new Uint8Array(3 * 1024 * 1024) });
+    expect(confirm.mock.calls.map((c) => c[0])).toEqual([
+      'Save file \u201Ca.zip\u201D (1.5\u00A0KB)?', 'Save file \u201Cb.zip\u201D (3\u00A0MB)?',
+    ]);
+  });
+
   it('every allowed extension is accepted, and invisible or bidi characters never reach the name', async () => {
     declare();
     const downloads = await boot().use('downloads');
@@ -1475,7 +1560,7 @@ describe('downloads', () => {
     }
     confirm.mockClear();
     await downloads.save({ filename: 'in\u202Evoice\u200B  gnp\u2066.\uFEFFtxt', data: 'x' });
-    expect(confirm).toHaveBeenCalledWith('Save file \u201Cinvoice gnp.txt\u201D?');
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/^Save file \u201Cinvoice gnp\.txt\u201D \(\d+\u00A0B\)\?$/));
     // the bidi override that would make "fdp.exe" read as "exe.pdf" is gone, so the real extension is checked
     expect(await code(downloads.save({ filename: 'a\u202Efdp.exe', data: 'x' }))).toBe('rejected_extension');
   });

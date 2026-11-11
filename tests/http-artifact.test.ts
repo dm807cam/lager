@@ -188,6 +188,22 @@ describe('POST /__lager/artifact', () => {
     expect((await publish(env, env.ownerTwo, { html: '<!doctype html><p>x</p>', baseVersion: 1 }, SECOND)).status).toBe(200);
   });
 
+  it('failed attempts count toward the limit, which is checked before the body is read', async () => {
+    const env = await setup();
+    for (let n = 0; n < 60; n++) expect((await publish(env, env.owner, { html: 'not a document', baseVersion: 1 })).status).toBe(400);
+    // The 61st attempt is refused although its body is never sent.
+    const res = await new Promise<number>((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1', port: env.port, path: '/__lager/artifact', method: 'POST',
+        headers: { Host: HOST, Cookie: env.owner, 'X-Lager-Request': '1', 'Content-Type': 'application/json', 'Content-Length': '100000' },
+      }, (r) => { r.resume(); resolve(r.statusCode!); });
+      req.on('error', reject);
+      req.flushHeaders();
+      setTimeout(() => req.destroy(), 3000).unref();
+    });
+    expect(res).toBe(429);
+  });
+
   it('oversized and empty html are refused', async () => {
     const env = await setup();
     const big = await publish(env, env.owner, { html: '<!doctype html>' + 'x'.repeat(16 * 1024 * 1024), baseVersion: 1 });

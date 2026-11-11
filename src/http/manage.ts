@@ -269,11 +269,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     // The form sends a hidden "0" and, when ticked, a "1" as well.
     const raw = (req.body as Record<string, unknown> | undefined)?.on;
     const on = Array.isArray(raw) ? raw.includes('1') : raw === '1';
-    const inst = managed(user, param(req, 'slug'));
-    core.apps.setAutoUpdate(inst.id, on, user.id);
-    // Switching it on means "follow the app": move to the latest deployed version now instead of at some later deploy.
-    const latest = on ? core.apps.latestDeployedVersion(inst.appId) : null;
-    if (latest && latest.number !== inst.activeVersion) core.apps.activate(inst.id, latest.number, user.id);
+    core.apps.setAutoUpdate(managed(user, param(req, 'slug')).id, on, user.id);
   }));
 
   router.post('/ui/instances/:slug/visibility', ...action(instBack, (req, user) => {

@@ -12,7 +12,7 @@ import type { GrantLevel } from '../platform/access.js';
 import type { Instance, Visibility } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 import type { PlatformExtension } from './app.js';
-import { sendError } from './errors.js';
+import { discardBody, sendError } from './errors.js';
 import { sessionUser } from './session.js';
 
 const MAX_HTML = '16mb';
@@ -250,6 +250,14 @@ export const apiExtension: PlatformExtension = (router, core) => {
     res.json(instanceJson(core, core.apps.activate(inst.id, version, user.id)));
   });
 
+  router.post('/api/instances/:slug/auto-update', noStore, auth, express.json({ limit: '10kb' }), (req, res) => {
+    const user = userOf(res);
+    const on = bodyObject(req).on;
+    if (typeof on !== 'boolean') throw new LagerError('invalid_argument', 'on must be true or false.');
+    const inst = managedInstance(core, user, req.params.slug as string);
+    res.json(instanceJson(core, core.apps.setAutoUpdate(inst.id, on, user.id)));
+  });
+
   router.get('/api/instances/:slug/grants', noStore, auth, (req, res) => {
     res.json(grantsJson(core, managedInstance(core, userOf(res), req.params.slug as string)));
   });
@@ -282,8 +290,8 @@ export const apiExtension: PlatformExtension = (router, core) => {
   const importing = new Set<string>();
   router.post('/api/instances/:slug/import', noStore, auth, async (req, res) => {
     const user = userOf(res);
-    // Every refusal below happens before the body is read; the connection is not reused for the unread rest.
-    const refuse = (e: unknown): void => { res.set('Connection', 'close'); sendError(res, e); };
+    // Every refusal below happens before the body is read.
+    const refuse = (e: unknown): void => { discardBody(req); sendError(res, e); };
     let inst: Instance;
     try {
       inst = managedInstance(core, user, req.params.slug as string);
@@ -294,7 +302,7 @@ export const apiExtension: PlatformExtension = (router, core) => {
       if (Number.isFinite(declared) && declared > (json ? MAX_IMPORT_JSON_BYTES : MAX_IMPORT_BYTES)) throw new ImportTooLarge();
       if (importing.has(inst.id)) throw new LagerError('conflict', 'Another import into this instance is still running.');
     } catch (e) {
-      if (e instanceof ImportTooLarge) { res.set('Connection', 'close').status(413).json({ error: { code: 'invalid_argument', message: 'Request body too large.' } }); return; }
+      if (e instanceof ImportTooLarge) { discardBody(req); res.status(413).json({ error: { code: 'invalid_argument', message: 'Request body too large.' } }); return; }
       refuse(e);
       return;
     }
@@ -305,9 +313,7 @@ export const apiExtension: PlatformExtension = (router, core) => {
       const docs = await readImportDocs(req, json, access.writable);
       res.json(core.data.importDocs(inst.id, docs, user.id, { allowPrivateOf: user.id }));
     } catch (e) {
-      // The rest of the body is read and thrown away, so the client still receives the answer instead of a reset.
-      req.resume();
-      setTimeout(() => req.destroy(), 10_000).unref();
+      discardBody(req);
       if (e instanceof ImportTooLarge) res.status(413).json({ error: { code: 'invalid_argument', message: 'Request body too large.' } });
       else sendError(res, e);
     } finally {

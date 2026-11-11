@@ -1,4 +1,4 @@
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { LagerError, type ErrorCode } from '../errors.js';
 
 const STATUS: Record<ErrorCode, number> = {
@@ -24,4 +24,17 @@ export function safeReturnPath(value: unknown): string {
   if (value.startsWith('//') || value.startsWith('/\\')) return '/';
   if (/[\r\n\t]/.test(value)) return '/';
   return value;
+}
+
+/**
+ * After an answer that was decided without reading the body: the rest of the upload is read and thrown away, so the client
+ * still receives the answer instead of a reset. A client that keeps sending is cut off after ten seconds.
+ */
+export function discardBody(req: Request): void {
+  if (req.readableEnded) return;
+  req.resume();
+  const cutoff = setTimeout(() => { if (!req.readableEnded) req.destroy(); }, 10_000);
+  cutoff.unref();
+  req.once('end', () => clearTimeout(cutoff));
+  req.once('close', () => clearTimeout(cutoff));
 }

@@ -41,6 +41,7 @@ function boot(capabilities: Record<string, unknown>, calls: Array<{ url: string;
     return json({ error: { code: 'not_found', message: 'x' } }, 404);
   };
   g.EventSource = FakeEventSource;
+  delete g.__lagerRuntime;
   (0, eval)(RUNTIME);
   document.body.innerHTML = /<body>([\s\S]*)<\/body>/.exec(BOARD.replace(/<script>[\s\S]*<\/script>/, ''))![1];
   (0, eval)(/<script>([\s\S]*)<\/script>/.exec(BOARD)![1]);

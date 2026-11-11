@@ -31,6 +31,7 @@ describe('examples/notes.html with the real runtime', () => {
       return json({ error: { code: 'not_found', message: 'x' } });
     };
     g.EventSource = QuietEventSource;
+    delete g.__lagerRuntime;
     (0, eval)(RUNTIME);
     document.body.innerHTML = /<body>([\s\S]*)<\/body>/.exec(NOTES.replace(/<script>[\s\S]*<\/script>/, ''))![1];
     const script = /<script>([\s\S]*)<\/script>/.exec(NOTES)![1];

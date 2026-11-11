@@ -338,6 +338,44 @@ describe('rest api', () => {
   });
 });
 
+describe('capability declarations and auto-update', () => {
+  it('deploy refuses malformed capability declarations', async () => {
+    const { h, token } = setup();
+    const put = (capabilities: unknown) => request(h.app).put('/api/apps/caps').set('Host', h.host).set('Authorization', `Bearer ${token}`).send({ html: '<p>x</p>', capabilities });
+    for (const bad of [
+      { assets: true }, { room: 'yes' }, { db: null }, { downloads: false }, { user: [] },
+      { assets: { upload: 'view' } }, { assets: { upload: true } },
+      { room: { topics: [] } }, { room: { topics: { move: 'admin' } } }, { room: { topics: { move: true } } },
+      { artifact: { publish: 'no' } }, { self: { publish: 1 } },
+    ]) {
+      const res = await put(bad);
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+      expect(res.body.error.code).toBe('invalid_argument');
+    }
+    for (const ok of [{}, { assets: {} }, { assets: { upload: 'interact' } }, { room: { topics: { move: 'interact' } } }, { artifact: { publish: false } }, { self: {}, downloads: {} }]) {
+      expect((await put(ok)).status, JSON.stringify(ok)).toBe(200);
+    }
+  });
+
+  it('POST /api/instances/:slug/auto-update switches it and activates the latest deployed version when turned on', async () => {
+    const { h, token } = setup();
+    h.core.apps.deploy({ slug: 'follow', html: '<p>1</p>', userId: h.adminId });
+    const inst = h.core.apps.getInstanceBySlug('follow')!;
+    const post = (slug: string, body: unknown, t = token) => request(h.app).post(`/api/instances/${slug}/auto-update`).set('Host', h.host).set('Authorization', `Bearer ${t}`).send(body as object);
+    expect((await post('follow', { on: false })).body.activeVersion).toBe(1);
+    h.core.apps.deploy({ slug: 'follow', html: '<p>2</p>', userId: h.adminId });
+    expect(h.core.apps.getInstance(inst.id)).toMatchObject({ activeVersion: 1, autoUpdate: false });
+    const on = await post('follow', { on: true });
+    expect(on.status).toBe(200);
+    expect(on.body.activeVersion).toBe(2);
+    expect(h.core.apps.getInstance(inst.id)!.autoUpdate).toBe(true);
+    expect((await post('follow', { on: 'yes' })).status).toBe(400);
+    expect((await post('nope', { on: true })).status).toBe(404);
+    const other = h.core.users.create({ email: 'o@x.y', name: 'O', password: 'pw-other-123', role: 'user' });
+    expect((await post('follow', { on: false }, h.core.tokens.create(other.id, 'o').token)).status).toBe(403);
+  });
+});
+
 describe('export, import, version download and check', () => {
   const bearer = (h: Harness, userId: string): string => `Bearer ${h.core.tokens.create(userId, 't').token}`;
   const seed = (h: Harness, slug = 'notes'): { id: string } => {

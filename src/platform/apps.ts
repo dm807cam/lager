@@ -171,6 +171,15 @@ export class Apps {
     this.db.prepare('INSERT INTO instance_creations (user_id, created_at) VALUES (?, ?)').run(owner.id, new Date(now).toISOString());
   }
 
+  /** The next version number of the app. Numbers come from a counter and are never reused, also after saved versions were pruned. */
+  private allocateVersion(appId: string): number {
+    const row = this.db.prepare('SELECT next_version AS n, (SELECT MAX(number) FROM versions WHERE app_id = apps.id) AS top FROM apps WHERE id = ?')
+      .get(appId) as { n: number; top: number | null };
+    const number = Math.max(Number(row.n), Number(row.top ?? 0) + 1);
+    this.db.prepare('UPDATE apps SET next_version = ? WHERE id = ?').run(number + 1, appId);
+    return number;
+  }
+
   private fireHooks(instance: Instance, from: number, to: number): void {
     for (const hook of this.hooks) hook(instance, from, to);
   }
@@ -226,7 +235,6 @@ export class Apps {
 
       // "Latest" means the latest deployed version: a self-published one carries a single instance's state.
       const latest = this.latestDeployedVersion(app.id) ?? undefined;
-      const highest = (this.db.prepare('SELECT MAX(number) AS n FROM versions WHERE app_id = ?').get(app.id) as { n: number | null }).n ?? 0;
 
       let version: Version;
       let createdVersion = false;
@@ -235,7 +243,7 @@ export class Apps {
         version = latest;
       } else {
         version = {
-          appId: app.id, number: highest + 1, sha256, sizeBytes, instanceId: null,
+          appId: app.id, number: this.allocateVersion(app.id), sha256, sizeBytes, instanceId: null,
           capabilities: JSON.parse(capabilitiesJson) as Capabilities, note: input.note ?? null,
           createdBy: user.id, createdAt: now,
         };
@@ -458,7 +466,7 @@ export class Apps {
       }
       const base = this.db.prepare('SELECT * FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, instance.activeVersion) as VersionRow | undefined;
       if (!base) throw new LagerError('not_found', `Version ${instance.activeVersion} not found.`);
-      const number = (this.db.prepare('SELECT MAX(number) AS n FROM versions WHERE app_id = ?').get(instance.appId) as { n: number }).n + 1;
+      const number = this.allocateVersion(instance.appId);
       // Keep the newest MAX_SAVED_VERSIONS - 1 saved versions plus the new one, which becomes the active version.
       const mine = this.db.prepare('SELECT number, size_bytes FROM versions WHERE instance_id = ? ORDER BY number DESC')
         .all(instance.id) as unknown as Array<{ number: number; size_bytes: number }>;
@@ -477,17 +485,22 @@ export class Apps {
         )
         .run(instance.appId, number, sha256, sizeBytes, base.capabilities, SELF_PUBLISHED_NOTE, input.userId, now, instance.id);
       this.writeVersionFile(instance.appId, number, input.html);
-      this.fireHooks(instance, instance.activeVersion, number);
+      // No data snapshot here: saving the page leaves the documents untouched, so there is nothing to restore.
       this.db.prepare('UPDATE instances SET active_version = ?, auto_update = 0 WHERE id = ?').run(number, instance.id);
       const version = toVersion(this.db.prepare('SELECT * FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, number) as unknown as VersionRow);
       return { version, instance: this.getInstance(instance.id)!, dropped: dropped.map((r) => r.number) };
     });
-    this.trashVersionFiles(out.instance.appId, out.dropped);
+    this.deleteVersionFiles(out.instance.appId, out.dropped);
     this.fireActivated([out.instance]);
     return { version: out.version, instance: out.instance };
   }
 
-  /** The saved pages hold an instance's state: removed versions go to the trash, never back to another instance. */
+  /** Pruned saved versions are deleted outright: the trash is not counted by any quota, so nothing may pile up there. */
+  private deleteVersionFiles(appId: string, numbers: number[]): void {
+    for (const n of numbers) fs.rmSync(path.dirname(this.versionFile(appId, n)), { recursive: true, force: true });
+  }
+
+  /** The saved pages hold an instance's state: when the instance or app is deleted, they go to the trash, never back to another instance. */
   private trashVersionFiles(appId: string, numbers: number[]): void {
     const stamp = new Date().toISOString().replace(/[-:.]/g, '');
     for (const n of numbers) {
@@ -499,10 +512,12 @@ export class Apps {
     }
   }
 
-  /** Whether the instance follows new deploys. Turning it on does not move the instance; the next deploy does. */
+  /** Whether the instance follows new deploys. Turning it on moves the instance to the latest deployed version right away. */
   setAutoUpdate(instanceId: string, on: boolean, userId: string): Instance {
     const instance = this.managedInstance(instanceId, userId);
     this.db.prepare('UPDATE instances SET auto_update = ? WHERE id = ?').run(on ? 1 : 0, instance.id);
+    const latest = on ? this.latestDeployedVersion(instance.appId) : null;
+    if (latest && latest.number !== instance.activeVersion) return this.activate(instance.id, latest.number, userId);
     return this.getInstance(instance.id)!;
   }
 

@@ -200,6 +200,8 @@ export function checkCapabilities(value: unknown): Capabilities | undefined {
   const bad = (msg: string): never => { throw new LagerError('invalid_argument', `Invalid capabilities: ${msg}`); };
   if (!isObject(value)) bad('must be an object.');
   const caps = value as Record<string, unknown>;
+  // A declaration is an object: a capability turned on with `true` would be declared here but unavailable to the page.
+  for (const [name, decl] of Object.entries(caps)) if (!isObject(decl)) bad(`${name} must be an object.`);
   if (caps.db !== undefined) {
     if (!isObject(caps.db)) bad('db must be an object.');
     const rules = (caps.db as Record<string, unknown>).rules;
@@ -218,6 +220,21 @@ export function checkCapabilities(value: unknown): Capabilities | undefined {
     if (!isObject(caps.user)) bad('user must be an object.');
     const scopes = (caps.user as Record<string, unknown>).scopes;
     if (scopes !== undefined && (!Array.isArray(scopes) || !scopes.every((s) => typeof s === 'string'))) bad('user.scopes must be an array of strings.');
+  }
+  if (caps.assets !== undefined) {
+    const upload = (caps.assets as Record<string, unknown>).upload;
+    if (upload !== undefined && upload !== 'interact') bad('assets.upload must be "interact".');
+  }
+  if (caps.room !== undefined) {
+    const topics = (caps.room as Record<string, unknown>).topics;
+    if (topics !== undefined) {
+      if (!isObject(topics)) bad('room.topics must be an object.');
+      for (const [topic, level] of Object.entries(topics as Record<string, unknown>)) if (level !== 'interact') bad(`room.topics.${topic} must be "interact".`);
+    }
+  }
+  for (const name of ['artifact', 'self']) {
+    const publish = caps[name] === undefined ? undefined : (caps[name] as Record<string, unknown>).publish;
+    if (publish !== undefined && typeof publish !== 'boolean') bad(`${name}.publish must be true or false.`);
   }
   return caps as Capabilities;
 }
@@ -299,6 +316,11 @@ export function buildMcpServer(core: Core, user: User): McpServer {
       owner_email: z.string().optional().describe('E-mail of the account that should own the instance (only for those who deploy the app); default: you'),
     },
   }, ({ app, slug, visibility, owner_email }) => run(() => instanceJson(core, createInstanceFor(core, user, { app, slug, ownerEmail: owner_email, visibility }))));
+
+  server.registerTool('set_auto_update', {
+    description: 'Set whether an instance follows new deploys. Switching it on moves the instance to the latest deployed version right away; switching it off pins the instance to its current version.',
+    inputSchema: { instance: slugArg, on: z.boolean() },
+  }, ({ instance, on }) => run(() => instanceJson(core, core.apps.setAutoUpdate(managedInstance(core, user, instance).id, on, user.id))));
 
   server.registerTool('set_visibility', {
     description: 'Set who can open an instance: private (the owner and those it is shared with), users (all signed-in users), public (anyone).',

@@ -3,6 +3,10 @@
 (function () {
   'use strict';
 
+  // A second inclusion of this script (a page that lists it twice) must not replace the first one's state.
+  if (window.__lagerRuntime) return;
+  Object.defineProperty(window, '__lagerRuntime', { value: true, configurable: true });
+
   var SESSION_URL = '/__lager/session';
   var USERS_URL = '/__lager/users?ids=';
   var DB_URL = '/__lager/db';
@@ -1029,6 +1033,7 @@
 
   var ARTIFACT_URL = '/__lager/artifact';
   var DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024;
+  var DOWNLOAD_NAME_MAX_BYTES = 240;
   var DOWNLOAD_ALLOWED = ['gif', 'png', 'jpg', 'jpeg', 'webp', 'mp4', 'webm', 'mov', 'txt', 'json', 'md',
     'docx', 'pptx', 'epub', 'csv', 'ttf', 'html', 'svg', 'pdf', 'xlsx', 'zip', 'fig'];
   var DOCTYPE_RE = /^\uFEFF?\s*<!doctype html/i;
@@ -1079,8 +1084,7 @@
   function onStreamError() { streamOpen = false; }
 
   /** Reload events sent while the stream was down or not yet open are lost: compare with the live version instead. */
-  function onStreamOpen() {
-    streamOpen = true;
+  function catchUp() {
     if (!keepSourceOpen || loadedVersion === null) return;
     fetch(SESSION_URL, { credentials: 'same-origin', cache: 'no-store' }).then(function (res) {
       return res.ok ? res.json() : null;
@@ -1088,6 +1092,24 @@
       var live = body && body.instance ? Number(body.instance.version) : NaN;
       if (isFinite(live) && live !== loadedVersion) doReload();
     }).catch(function () { /* the next event or reconnect catches up */ });
+  }
+
+  function onStreamOpen() {
+    streamOpen = true;
+    catchUp();
+  }
+
+  /**
+   * Every view of an instance whose active version declares `artifact`/`self` follows its saves, whether or not the page
+   * uses the capability: the event stream stays open and a `reload` event with another version reloads the page.
+   */
+  function watchReloads(session) {
+    if (keepSourceOpen || !artifactAvailable(session)) return;
+    var instance = session && session.instance;
+    loadedVersion = instance && isFinite(Number(instance.version)) ? Number(instance.version) : null;
+    keepSourceOpen = true;
+    // A stream that db listeners opened earlier has already fired its open event: compare versions now.
+    if (streamOpen) catchUp(); else openSource();
   }
 
   function artifactError(code, message) { return { code: code, message: message }; }
@@ -1115,10 +1137,7 @@
     var saveOff = ['artifact', 'self'].some(function (n) {
       return declaredObject(session, n) && session.capabilities[n].publish === false;
     });
-    var instance = session && session.instance;
-    loadedVersion = instance && isFinite(Number(instance.version)) ? Number(instance.version) : null;
-    keepSourceOpen = true;
-    openSource();
+    watchReloads(session);
 
     function unsupported(code, what) {
       return function () { return Promise.reject(artifactError(code, what + ' is not available on this Lager server.')); };
@@ -1191,16 +1210,25 @@
 
   /** The one sentence the runtime shows to people: the download confirmation, in the viewer's language (English when unknown). */
   var SAVE_FILE = {
-    en: function (n) { return 'Save file \u201C' + n + '\u201D?'; },
-    de: function (n) { return 'Datei \u201E' + n + '\u201C speichern?'; },
-    fr: function (n) { return 'Enregistrer le fichier \u00AB\u00A0' + n + '\u00A0\u00BB\u00A0?'; },
-    es: function (n) { return '\u00BFGuardar el archivo \u00AB' + n + '\u00BB?'; }
+    en: function (n, s) { return 'Save file \u201C' + n + '\u201D (' + s + ')?'; },
+    de: function (n, s) { return 'Datei \u201E' + n + '\u201C (' + s + ') speichern?'; },
+    fr: function (n, s) { return 'Enregistrer le fichier \u00AB\u00A0' + n + '\u00A0\u00BB (' + s + ')\u00A0?'; },
+    es: function (n, s) { return '\u00BFGuardar el archivo \u00AB' + n + '\u00BB (' + s + ')?'; }
   };
-  function saveFileQuestion(session, name) {
+  /** A size for people: 1.5 KB, 12 MB; the decimal mark follows the viewer's language. */
+  function sizeText(bytes, locale) {
+    var units = ['B', 'KB', 'MB', 'GB'];
+    var value = bytes;
+    var i = 0;
+    while (value >= 1024 && i < units.length - 1) { value /= 1024; i += 1; }
+    var number;
+    try { number = value.toLocaleString(locale, { maximumFractionDigits: i === 0 ? 0 : 1 }); } catch (_) { number = String(Math.round(value * 10) / 10); }
+    return number + '\u00A0' + units[i];
+  }
+  function saveFileQuestion(session, name, bytes) {
     var v = viewerOf(session);
-    var locale = v && typeof v.locale === 'string' ? v.locale : 'en';
-    var make = Object.prototype.hasOwnProperty.call(SAVE_FILE, locale) ? SAVE_FILE[locale] : SAVE_FILE.en;
-    return make(name);
+    var locale = v && typeof v.locale === 'string' && Object.prototype.hasOwnProperty.call(SAVE_FILE, v.locale) ? v.locale : 'en';
+    return SAVE_FILE[locale](name, sizeText(bytes, locale));
   }
 
   function buildDownloads(session) {
@@ -1209,15 +1237,22 @@
         if (!request || typeof request !== 'object' || typeof request.filename !== 'string' || request.filename.length > 512) {
           throw downloadError('bad_request', 'save expects {filename, data}.');
         }
+        // Lager issues no export requests, so any token a page names is unknown.
+        if (request.request !== undefined && request.request !== null) {
+          if (typeof request.request !== 'string') throw downloadError('bad_request', 'request must be a string.');
+          throw downloadError('request_unknown', 'No export request with this token is open.');
+        }
         var name = downloadName(request.filename);
         if (name === '') throw downloadError('bad_request', 'The filename is empty.');
+        if (new Blob([name]).size > DOWNLOAD_NAME_MAX_BYTES) throw downloadError('bad_request', 'The filename is longer than 240 bytes.');
         var dot = name.lastIndexOf('.');
-        if (dot < 0 || DOWNLOAD_ALLOWED.indexOf(name.slice(dot + 1).toLowerCase()) < 0) {
+        // A name that is only an extension (".txt") has no base name and no extension of its own.
+        if (dot <= 0 || DOWNLOAD_ALLOWED.indexOf(name.slice(dot + 1).toLowerCase()) < 0) {
           throw downloadError('rejected_extension', 'Only files with an allowed extension can be saved.');
         }
         var blob = downloadBlob(request.data);
         if (blob === null) throw downloadError('bad_request', 'data must not be empty.');
-        if (!hostCall('confirm', saveFileQuestion(session, name))) throw downloadError('declined', 'The viewer declined the download.');
+        if (!hostCall('confirm', saveFileQuestion(session, name, blob.size))) throw downloadError('declined', 'The viewer declined the download.');
         var url = URL.createObjectURL(blob);
         var link = document.createElement('a');
         link.href = url;
@@ -1360,6 +1395,10 @@
   });
 
   // ------------------------------------------------------------------ export
+
+  // Pages whose version declares `artifact`/`self` follow saves of any view, so the session is read once the page has settled.
+  // It is shared with the first `claude.use()`; pages that declare neither open no event stream.
+  setTimeout(function () { getSession().then(watchReloads).catch(function () { /* no session, no watching */ }); }, 0);
 
   window.claude = Object.freeze({
     use: use,

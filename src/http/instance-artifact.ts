@@ -34,7 +34,7 @@ function declared(ctx: Ctx): boolean {
 
 /** Mounts `POST /__lager/artifact`: the page saves itself as a new version that belongs to this instance only. */
 export function mountArtifactRoutes(router: express.Router, core: Core, ctxOf: (res: Response) => Ctx, requireAccess: (ctx: Ctx) => void): void {
-  /** Successful publishes per instance within the last hour. */
+  /** Publish attempts per instance within the last hour: failed ones count too, and the limit is checked before the body is read. */
   const recent = new Map<string, number[]>();
   const publishesInWindow = (instanceId: string, now: number): number[] => {
     const fresh = (recent.get(instanceId) ?? []).filter((t) => t > now - WINDOW_MS);
@@ -57,6 +57,8 @@ export function mountArtifactRoutes(router: express.Router, core: Core, ctxOf: (
         reply(res, { status: 429, code: 'rate_limited', message: 'Too many saves in the last hour.' });
         return;
       }
+      const now = Date.now();
+      recent.set(ctx.instance.id, [...publishesInWindow(ctx.instance.id, now), now]);
     } catch (e) { sendError(res, e); return; }
     next();
   }, (req, res, next) => {
@@ -84,8 +86,6 @@ export function mountArtifactRoutes(router: express.Router, core: Core, ctxOf: (
         return;
       }
       const { version } = core.apps.selfPublish({ instanceId: ctx.instance.id, html, baseVersion, userId: ctx.viewer.userId ?? '' });
-      const now = Date.now();
-      recent.set(ctx.instance.id, [...publishesInWindow(ctx.instance.id, now), now]);
       res.set('Cache-Control', 'no-store').json({ version: String(version.number) });
     } catch (e) { sendError(res, e); }
   });
