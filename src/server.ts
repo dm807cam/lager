@@ -7,6 +7,7 @@ import { dashboardExtension } from './http/dashboard.js';
 import { manageExtension } from './http/manage.js';
 import { createHttpApp } from './http/app.js';
 import { startTrashPurge } from './data/trash.js';
+import { ensureDefaultIcon } from './mcp/tools.js';
 import { mcpExtension } from './mcp/http.js';
 
 const config = loadConfig(process.env);
@@ -16,6 +17,11 @@ try {
 } catch (e) {
   console.error(e instanceof Error ? e.message : e);
   process.exit(1);
+}
+// Load the renderer once, and give apps from before icons existed their generated icon.
+await core.icons.ready();
+for (const existing of core.apps.listAllApps()) {
+  try { await ensureDefaultIcon(core, existing); } catch (e) { console.error(`Could not draw an icon for "${existing.slug}":`, e); }
 }
 const app = createHttpApp(core, [authExtension, adminExtension, apiExtension, mcpExtension, dashboardExtension, manageExtension]);
 const server = app.listen(config.port, () => {

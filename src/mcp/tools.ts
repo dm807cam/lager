@@ -9,7 +9,7 @@ import type { QuerySpec } from '../data/query.js';
 import { canRead, canWrite, type Viewer } from '../data/rules.js';
 import { LagerError } from '../errors.js';
 import type { GrantLevel } from '../platform/access.js';
-import type { App, Capabilities, DbRule, DeployResult, Instance, Version, Visibility } from '../platform/apps.js';
+import { normalizeDescription, normalizeThemeColor, type App, type Capabilities, type DbRule, type DeployResult, type Instance, type Version, type Visibility } from '../platform/apps.js';
 import { checkArtifact, type ArtifactCheck } from '../platform/check.js';
 import type { User } from '../platform/users.js';
 
@@ -47,9 +47,21 @@ function visibleInstances(core: Core, user: User, appId: string): Instance[] {
   return core.apps.listInstances(appId).filter((i) => core.access.canSeeInstance(i, user));
 }
 
+export const NO_ICON_WARNING = 'No icon supplied; a generated one is used. Pass icon_svg to set your own.';
+
+/** The public 192 px PNG of the app's icon on the platform host; the version in the URL busts caches. */
+export function iconUrl(core: Core, app: App): string {
+  return `${core.config.publicUrl.origin}/app-icons/${app.id}/${app.iconVersion}/192.png`;
+}
+
+/** What every app result says about how the app looks. */
+function appLook(core: Core, app: App): { description: string; themeColor: string; iconUrl: string } {
+  return { description: app.description, themeColor: app.themeColor, iconUrl: iconUrl(core, app) };
+}
+
 export function appSummary(core: Core, user: User, app: App): object {
   return {
-    slug: app.slug, title: app.title, latestVersion: core.apps.latestDeployedVersion(app.id)?.number ?? null,
+    slug: app.slug, title: app.title, ...appLook(core, app), latestVersion: core.apps.latestDeployedVersion(app.id)?.number ?? null,
     instances: visibleInstances(core, user, app.id).map((i) => instanceJson(core, i)),
   };
 }
@@ -68,11 +80,94 @@ export function describeDeploy(core: Core, user: User, r: DeployResult): object 
     ? [...r.warnings, `These instances were not updated because their automatic updates are switched off: ${pinned.join(', ')}`]
     : r.warnings;
   return {
-    app: r.app.slug, version: r.version.number, createdVersion: r.createdVersion,
+    app: r.app.slug, version: r.version.number, createdVersion: r.createdVersion, ...appLook(core, r.app),
     // Per instance the primary URL comes first, then its custom domains.
     urls: r.instances.filter((i) => core.access.canSeeInstance(i, user))
       .flatMap((i) => [instanceUrl(core.config, i.slug), ...domainsJson(core, i).map((d) => d.url)]), warnings, pinned,
   };
+}
+
+/** The app's generated icon, written when it has none yet (apps from before icons existed, or a first deploy). Returns the current row. */
+export async function ensureDefaultIcon(core: Core, app: App): Promise<App> {
+  if (core.icons.has(app.id)) return app;
+  await core.icons.ready();
+  await core.icons.setDefault(app.id, app.slug, app.themeColor);
+  return core.apps.bumpIconVersion(app.id);
+}
+
+/** Draws the stored icon again, e.g. because the theme colour behind the maskable variant changed. */
+async function redrawIcon(core: Core, app: App): Promise<App> {
+  const source = core.icons.source(app.id);
+  if (source === null) return app;
+  await core.icons.set(app.id, source, app.themeColor);
+  return core.apps.bumpIconVersion(app.id);
+}
+
+const isIconInvalid = (e: unknown): e is LagerError => e instanceof LagerError && e.reason === 'icon_invalid';
+
+/**
+ * Deploys, then does the icon work (which needs the async renderer) for MCP and REST alike. A new app without `iconSvg` gets
+ * a generated icon and a warning; a redeploy without it keeps the icon. An icon that is refused never fails the deploy: the
+ * previous or generated icon stays and the result says why.
+ */
+export async function deployWithIcon(core: Core, user: User, input: {
+  slug: string; html: string; title?: string; note?: string; capabilities?: Capabilities;
+  iconSvg?: string; description?: string; themeColor?: string;
+}): Promise<object> {
+  if (input.iconSvg !== undefined && typeof input.iconSvg !== 'string') throw new LagerError('invalid_argument', 'icon_svg must be a string.');
+  const prior = core.apps.getApp(input.slug);
+  const result = core.apps.deploy({
+    slug: input.slug, html: input.html, title: input.title, note: input.note, capabilities: input.capabilities, userId: user.id,
+    description: input.description, themeColor: input.themeColor,
+  });
+  let app = result.app;
+  const warnings = [...result.warnings];
+  let drawn = false;
+  if (input.iconSvg !== undefined) {
+    await core.icons.ready();
+    try {
+      await core.icons.set(app.id, input.iconSvg, app.themeColor);
+      app = core.apps.bumpIconVersion(app.id);
+      drawn = true;
+    } catch (e) {
+      if (!isIconInvalid(e)) throw e;
+      warnings.push(`${e.message} ${core.icons.has(app.id) ? 'The previous icon stays.' : 'A generated icon is used instead.'}`);
+    }
+  }
+  if (!core.icons.has(app.id)) {
+    app = await ensureDefaultIcon(core, app);
+    if (input.iconSvg === undefined) warnings.push(NO_ICON_WARNING);
+  } else if (!drawn && prior && prior.themeColor !== app.themeColor) {
+    app = await redrawIcon(core, app);
+  }
+  return describeDeploy(core, user, { ...result, app, warnings });
+}
+
+/**
+ * `set_app_icon` and its REST counterparts: owner or collaborator. A refused icon is an error and nothing changes.
+ * Returns the app summary.
+ */
+export async function updateAppLook(core: Core, user: User, app: App, input: { iconSvg?: string; description?: string; themeColor?: string }): Promise<object> {
+  if (input.iconSvg === undefined && input.description === undefined && input.themeColor === undefined) {
+    throw new LagerError('invalid_argument', 'Give at least one of icon_svg, description and theme_color.');
+  }
+  if (input.iconSvg !== undefined && typeof input.iconSvg !== 'string') throw new LagerError('invalid_argument', 'icon_svg must be a string.');
+  if (!core.access.canDeploy(app, user)) throw new LagerError('forbidden', `You may not change app "${app.slug}".`);
+  const description = input.description === undefined ? undefined : normalizeDescription(input.description);
+  const themeColor = input.themeColor === undefined ? undefined : normalizeThemeColor(input.themeColor);
+  let fresh = app;
+  if (input.iconSvg !== undefined) {
+    await core.icons.ready();
+    // Drawn before anything is stored: a refused icon changes nothing.
+    await core.icons.set(app.id, input.iconSvg, themeColor ?? app.themeColor);
+    fresh = core.apps.bumpIconVersion(app.id);
+  }
+  if (description !== undefined || themeColor !== undefined) {
+    fresh = core.apps.setAppMeta(app.id, { description, themeColor }, user.id);
+    if (input.iconSvg === undefined && themeColor !== undefined && themeColor !== app.themeColor) fresh = await redrawIcon(core, fresh);
+  }
+  fresh = await ensureDefaultIcon(core, fresh);
+  return appSummary(core, user, fresh);
 }
 
 function appBySlug(core: Core, slug: string): App {
@@ -245,6 +340,16 @@ function result(value: unknown, isError = false): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(value) }], ...(isError ? { isError: true } : {}) };
 }
 
+async function runAsync(fn: () => Promise<unknown>): Promise<CallToolResult> {
+  try {
+    return result(await fn());
+  } catch (e) {
+    if (e instanceof LagerError) return result({ error: { code: e.code, message: e.message } }, true);
+    console.error(e);
+    return result({ error: { code: 'internal', message: 'Internal server error.' } }, true);
+  }
+}
+
 function run(fn: () => unknown): CallToolResult {
   try {
     return result(fn());
@@ -281,18 +386,30 @@ const visibilityArg = z.enum(['private', 'users', 'public']);
 const capabilitiesArg = z.record(z.string(), z.unknown())
   .describe('Capabilities of this version, e.g. {"db":{},"user":{}}; db.rules: [{path, read?, write?}]');
 
+const iconSvgArg = z.string().describe('The app icon as SVG: square viewBox="0 0 512 512", a filled background covering the whole square, one bold simple motif, shapes and paths only (no text, images, scripts or external references), under 64 KiB');
+const descriptionArg = z.string().describe('One plain sentence (at most 200 characters) saying what the app does');
+const themeColorArg = z.string().describe('Hex colour such as #1f2a5c that matches the icon background; used for the phone status bar and splash screen');
+
 export function buildMcpServer(core: Core, user: User): McpServer {
   const server = new McpServer({ name: 'lager', version: '0.1.0' }, { instructions: INSTRUCTIONS });
 
   server.registerTool('deploy_app', {
-    description: 'Deploy an artifact (one HTML file) as a new version of the app. Creates the app and its default instance on first deploy. Returns the instance URLs and lint warnings.',
+    description: 'Deploy an artifact (one HTML file) as a new version of the app. Creates the app and its default instance on first deploy. Pass icon_svg, description and theme_color when you create an app. Returns the instance URLs, the icon URL and lint warnings.',
     inputSchema: {
       slug: slugArg, html: z.string().describe('Complete HTML of the artifact'), title: z.string().optional(),
       capabilities: capabilitiesArg.optional(), note: z.string().optional().describe('Short version note'),
+      icon_svg: iconSvgArg.optional(), description: descriptionArg.optional(), theme_color: themeColorArg.optional(),
     },
-  }, ({ slug, html, title, capabilities, note }) => run(() => describeDeploy(core, user, core.apps.deploy({
-    slug, html, title, note, capabilities: checkCapabilities(capabilities), userId: user.id,
-  }))));
+  }, ({ slug, html, title, capabilities, note, icon_svg, description, theme_color }) => runAsync(() => deployWithIcon(core, user, {
+    slug, html, title, note, capabilities: checkCapabilities(capabilities), iconSvg: icon_svg, description, themeColor: theme_color,
+  })));
+
+  server.registerTool('set_app_icon', {
+    description: 'Change the icon, the description or the theme colour of one of your apps (owner or collaborator) without deploying. Give at least one field. An icon that is refused is an error and nothing changes. Icon rules are in the guide.',
+    inputSchema: { app: slugArg, icon_svg: iconSvgArg.optional(), description: descriptionArg.optional(), theme_color: themeColorArg.optional() },
+  }, ({ app, icon_svg, description, theme_color }) => runAsync(() => updateAppLook(core, user, appBySlug(core, app), {
+    iconSvg: icon_svg, description, themeColor: theme_color,
+  })));
 
   server.registerTool('list_apps', {
     description: 'List your apps (owned or collaborating) with their instances.',

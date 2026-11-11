@@ -89,3 +89,20 @@ describe('checkArtifact', () => {
     expect(r.warnings.some((w) => w.includes('"db" is used'))).toBe(true);
   });
 });
+
+describe('icon warning on deploy', () => {
+  it('deploy result carries the icon warning text in English', async () => {
+    const { makeHarness } = await import('./support/http.js');
+    const { deployWithIcon } = await import('../src/mcp/tools.js');
+    const h = makeHarness({ defaultLocale: 'de' });
+    try {
+      const user = h.core.users.get(h.adminId)!;
+      const first = await deployWithIcon(h.core, user, { slug: 'todo', html: '<p>x</p>' }) as { warnings: string[] };
+      expect(first.warnings).toEqual(['No icon supplied; a generated one is used. Pass icon_svg to set your own.']);
+      const again = await deployWithIcon(h.core, user, { slug: 'todo', html: '<p>y</p>' }) as { warnings: string[] };
+      expect(again.warnings).toEqual([]);
+    } finally {
+      h.core.close();
+    }
+  });
+});

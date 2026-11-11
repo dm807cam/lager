@@ -69,6 +69,7 @@ export function page(locale: Locale, title: string, body: string, opts: PageOpts
 <html lang="${locale}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
 <link rel="icon" type="image/webp" href="/icon.webp">
+<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-180.png"><meta name="theme-color" content="#1f2a5c">
 <style>${CSS}</style></head>
 <body><header class="top"><div class="in"><img src="/icon.webp" alt="" width="40" height="40"><span class="name">Lager</span>${opts.headerExtra ?? ''}</div></header>
 <main${opts.wide ? ' class="wide"' : ''}>${body}</main>${opts.switcher === false ? '' : languageSwitcher(locale, opts.returnPath ?? '/')}</body></html>`;

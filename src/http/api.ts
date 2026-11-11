@@ -6,7 +6,7 @@ import type { Core } from '../core.js';
 import { assertDocData, parseDocPath } from '../data/paths.js';
 import { LagerError } from '../errors.js';
 import {
-  addDomainTo, appDetail, domainInstance, downloadableVersion, runArtifactCheck, appSummary, checkCapabilities, createInstanceFor, domainsJson, removeDomainFrom, describeDeploy, grantPrincipal, grantsJson, instanceJson, managedInstance, readableApp, transferAccess,
+  addDomainTo, appDetail, domainInstance, downloadableVersion, runArtifactCheck, appSummary, checkCapabilities, createInstanceFor, domainsJson, removeDomainFrom, deployWithIcon, updateAppLook, grantPrincipal, grantsJson, instanceJson, managedInstance, readableApp, transferAccess,
 } from '../mcp/tools.js';
 import type { GrantLevel } from '../platform/access.js';
 import type { Instance, Visibility } from '../platform/apps.js';
@@ -87,7 +87,9 @@ function bodyObject(req: Request): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
-function deployInput(req: Request): { html: string; title?: string; note?: string; capabilities?: unknown } {
+interface DeployInput { html: string; title?: string; note?: string; capabilities?: unknown; description?: string; themeColor?: string; iconSvg?: string }
+
+function deployInput(req: Request): DeployInput {
   if (typeof req.body === 'string') {
     const raw = queryString(req, 'capabilities');
     let capabilities: unknown;
@@ -98,14 +100,22 @@ function deployInput(req: Request): { html: string; title?: string; note?: strin
         throw new LagerError('invalid_argument', 'Query parameter capabilities must be JSON.');
       }
     }
-    return { html: req.body, title: queryString(req, 'title'), note: queryString(req, 'note'), capabilities };
+    return {
+      html: req.body, title: queryString(req, 'title'), note: queryString(req, 'note'), capabilities,
+      description: queryString(req, 'description'), themeColor: queryString(req, 'theme_color'),
+    };
   }
   if (!req.is('application/json')) {
     throw new LagerError('invalid_argument', 'Send the HTML as text/html or as JSON {html, title?, note?, capabilities?}.');
   }
   const body = bodyObject(req);
   if (typeof body.html !== 'string') throw new LagerError('invalid_argument', 'html must be a string.');
-  return { html: body.html, title: optionalString(body, 'title'), note: optionalString(body, 'note'), capabilities: body.capabilities ?? undefined };
+  return {
+    html: body.html, title: optionalString(body, 'title'), note: optionalString(body, 'note'), capabilities: body.capabilities ?? undefined,
+    description: optionalString(body, 'description') ?? queryString(req, 'description'),
+    themeColor: optionalString(body, 'theme_color') ?? queryString(req, 'theme_color'),
+    iconSvg: optionalString(body, 'icon_svg'),
+  };
 }
 
 /** Streams the instance's documents as NDJSON (one `{path,data}` per line), including the caller's own private area. */
@@ -223,14 +233,27 @@ export const apiExtension: PlatformExtension = (router, core) => {
 
   router.put('/api/apps/:slug', noStore, auth,
     express.text({ type: 'text/html', limit: MAX_HTML }), express.json({ limit: MAX_JSON }),
-    (req, res) => {
+    async (req, res) => {
       const input = deployInput(req);
-      const result = core.apps.deploy({
+      res.json(await deployWithIcon(core, userOf(res), {
         slug: req.params.slug as string, html: input.html, title: input.title, note: input.note,
-        capabilities: checkCapabilities(input.capabilities), userId: userOf(res).id,
-      });
-      res.json(describeDeploy(core, userOf(res), result));
+        capabilities: checkCapabilities(input.capabilities), description: input.description, themeColor: input.themeColor, iconSvg: input.iconSvg,
+      }));
     });
+
+  /** The icon as `image/svg+xml`; the 64 KiB rule is enforced on the text, the body limit only leaves a margin. */
+  router.put('/api/apps/:slug/icon', noStore, auth, express.text({ type: 'image/svg+xml', limit: '80kb' }), async (req, res) => {
+    const user = userOf(res);
+    if (typeof req.body !== 'string') throw new LagerError('invalid_argument', 'Send the icon as image/svg+xml.');
+    res.json(await updateAppLook(core, user, readableApp(core, user, req.params.slug as string), { iconSvg: req.body }));
+  });
+
+  router.patch('/api/apps/:slug', noStore, auth, express.json({ limit: '10kb' }), async (req, res) => {
+    const user = userOf(res);
+    const body = bodyObject(req);
+    const app = readableApp(core, user, req.params.slug as string);
+    res.json(await updateAppLook(core, user, app, { description: optionalString(body, 'description'), themeColor: optionalString(body, 'theme_color') }));
+  });
 
   router.get('/api/apps', noStore, auth, (_req, res) => {
     const user = userOf(res);

@@ -9,6 +9,7 @@ Keep durable data only through `const db = await claude.use("db")` – never `lo
 Information about the user comes from `await claude.use("user")`.
 When deploying, pass the `capabilities` the artifact uses, usually `{"db": {}, "user": {}}`.
 Deploy with the `deploy_app` tool (slug, html, title, capabilities, note) instead of publishing a claude.ai artifact.
+When you deploy a new app, always pass `icon_svg`, `description` and `theme_color` too (rules: section "Icon and home screen" in `get_guide`).
 If you have a shell and a `LAGER_TOKEN`, upload the file directly instead of sending its content as an argument:
 `curl -X PUT -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: text/html" --data-binary @index.html "<Lager-address>/api/apps/<slug>?title=...&capabilities=..."`
 Afterwards tell the user the URL that comes back and every warning in `warnings`.
@@ -82,6 +83,18 @@ Every deploy with changed content or changed capabilities creates the next versi
 - Before every version change Lager automatically takes a snapshot of the instance's data. `list_snapshots {instance}` shows them, `restore_snapshot {instance, snapshot}` restores one (the current state is saved first).
 
 Data belongs to the instance, never to the version: new code must cope with the existing data. Change data formats in a backward-compatible way (read missing fields with default values).
+
+## Icon and home screen
+
+Every app has an icon, and every app can be added to a phone's home screen. Pass these three arguments of `deploy_app` when you deploy a new app (`set_app_icon` changes them later; on REST: `icon_svg` in the JSON body of `PUT /api/apps/<slug>`, `description` and `theme_color` in the query or the JSON body, `PUT /api/apps/<slug>/icon` with `Content-Type: image/svg+xml`, `PATCH /api/apps/<slug>` with `{description, theme_color}`):
+
+- `icon_svg`: the icon as SVG. A square `viewBox="0 0 512 512"` with a filled background that covers the whole square (phones crop the icon to their own shape, so keep the motif away from the edges). One bold, simple motif that stays legible at 48 px. Two or three colours. Shapes and paths only: no `<text>` (the renderer has no fonts, draw letters as paths if you need them), no images, no `<foreignObject>`, no scripts or `on…` attributes, no external references (`href` and `url()` may only point to `#id` inside the icon), no DOCTYPE or entities. At most 64 KiB, 2000 elements and 32 levels of nesting.
+- `theme_color`: a hex colour such as `#1f2a5c` that matches the icon's background. It colours the status bar and the start screen of the installed app.
+- `description`: one plain sentence (at most 200 characters) saying what the app does.
+
+Without `icon_svg` a new app gets a generated icon and the result carries a warning; a redeploy without it leaves the icon as it is. An icon that is refused never fails a deploy: the previous (or generated) icon stays and the reason is in `warnings`; `set_app_icon` returns an error instead. Tell the user about such a warning.
+
+To install: the user opens the app on the phone and chooses "Add to Home Screen" (in the browser menu or the share sheet). The first time, signing in happens in the browser; the installed app then opens like any other app.
 
 ## Sharing and instances
 

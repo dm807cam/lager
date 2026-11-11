@@ -9,6 +9,7 @@ import { Access } from './platform/access.js';
 import { Apps } from './platform/apps.js';
 import { openPlatformDb } from './platform/db.js';
 import { Domains } from './platform/domains.js';
+import { AppIcons } from './platform/icons.js';
 import { Groups } from './platform/groups.js';
 import { createMailer, type Mailer } from './platform/mail.js';
 import { Settings } from './platform/settings.js';
@@ -35,6 +36,8 @@ export interface Core {
   domains: Domains;
   /** Every authorization decision on apps and instances. */
   access: Access;
+  /** App icons rendered from the SVG Claude supplies. `await core.icons.ready()` before `set` or `setDefault`. */
+  icons: AppIcons;
   close(): void;
 }
 
@@ -78,6 +81,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
   apps.onActivated((inst) => { hub.publish(inst.id, { type: 'reload', version: inst.activeVersion }); });
   return {
     config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, accounts, groups, domains, access,
+    icons: new AppIcons(config.dataDir),
     close() {
       assets.close();
       data.close();

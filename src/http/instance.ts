@@ -12,6 +12,7 @@ import { instanceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from '
 import { safeReturnPath, sendError, sendNotFound } from './errors.js';
 import { injectRuntime } from './inject.js';
 import { mountArtifactRoutes } from './instance-artifact.js';
+import { mountPwaRoutes } from './instance-pwa.js';
 import { mountAssetRoutes } from './instance-assets.js';
 import { mountRoomRoutes, STREAM_LIMITS } from './instance-room.js';
 import { assertOwnOrigin } from './origin.js';
@@ -84,6 +85,8 @@ export function createInstanceRouter(core: Core): express.Router {
   const hasScope = (ctx: Ctx, scope: string): boolean => Array.isArray(ctx.caps.user?.scopes) && ctx.caps.user.scopes.includes(scope);
   const emailAllowed = (ctx: Ctx): boolean => hasScope(ctx, 'email');
 
+  mountPwaRoutes(router, core);
+
   router.use((req, res, next) => {
     const instance = core.apps.getInstanceBySlug(res.locals.slug as string);
     if (!instance) {
@@ -132,7 +135,9 @@ export function createInstanceRouter(core: Core): express.Router {
       }
       return;
     }
-    const html = injectRuntime(core.apps.readVersionHtml(ctx.instance.appId, ctx.instance.activeVersion));
+    const app = core.apps.getApp(ctx.instance.appId);
+    const html = injectRuntime(core.apps.readVersionHtml(ctx.instance.appId, ctx.instance.activeVersion),
+      app ? { title: app.title, themeColor: app.themeColor, iconVersion: app.iconVersion } : undefined);
     res.set({
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',

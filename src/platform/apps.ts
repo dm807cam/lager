@@ -5,6 +5,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { assertSlug } from '../config.js';
 import { LagerError } from '../errors.js';
 import { checkArtifact } from './check.js';
+import { DEFAULT_THEME_COLOR } from './icons.js';
 import type { Settings } from './settings.js';
 import type { User, Users } from './users.js';
 
@@ -14,7 +15,15 @@ export interface Capabilities { db?: { rules?: DbRule[] }; user?: { scopes?: str
 export type Visibility = 'private' | 'users' | 'public';
 export type SelfInstances = 'off' | 'users';
 export type UsersLevel = 'view' | 'interact';
-export interface App { id: string; slug: string; title: string; ownerId: string; createdAt: string; selfInstances: SelfInstances }
+export interface App {
+  id: string; slug: string; title: string; ownerId: string; createdAt: string; selfInstances: SelfInstances;
+  /** One plain sentence (at most 200 characters); empty when not given. */
+  description: string;
+  /** `#rrggbb`, lower case. */
+  themeColor: string;
+  /** Bumps on every icon change; part of every icon URL so caches never serve an old picture. */
+  iconVersion: number;
+}
 export interface Version {
   appId: string; number: number; sha256: string; sizeBytes: number;
   capabilities: Capabilities; note: string | null; createdBy: string; createdAt: string;
@@ -50,7 +59,10 @@ const SELF_INSTANCES: SelfInstances[] = ['off', 'users'];
 export const CREATIONS_PER_WINDOW = 10;
 const CREATION_WINDOW_MS = 24 * 3600_000;
 
-interface AppRow { id: string; slug: string; title: string; owner_id: string; created_at: string; self_instances: SelfInstances }
+interface AppRow {
+  id: string; slug: string; title: string; owner_id: string; created_at: string; self_instances: SelfInstances;
+  description: string; theme_color: string; icon_version: number;
+}
 interface VersionRow {
   app_id: string; number: number; sha256: string; size_bytes: number;
   capabilities: string; note: string | null; created_by: string; created_at: string; instance_id: string | null;
@@ -61,7 +73,29 @@ interface InstanceRow {
   users_level: UsersLevel; disabled_at: string | null;
 }
 
-const toApp = (r: AppRow): App => ({ id: r.id, slug: r.slug, title: r.title, ownerId: r.owner_id, createdAt: r.created_at, selfInstances: r.self_instances });
+const toApp = (r: AppRow): App => ({
+  id: r.id, slug: r.slug, title: r.title, ownerId: r.owner_id, createdAt: r.created_at, selfInstances: r.self_instances,
+  description: r.description, themeColor: r.theme_color, iconVersion: Number(r.icon_version),
+});
+
+export const MAX_DESCRIPTION = 200;
+
+/** Trimmed, whitespace collapsed to single spaces, at most 200 characters, no control characters. */
+export function normalizeDescription(value: unknown): string {
+  if (typeof value !== 'string') throw new LagerError('invalid_argument', 'description must be a string.');
+  const text = value.trim().replace(/\s+/g, ' ');
+  if (/[\u0000-\u001F\u007F]/.test(text)) throw new LagerError('invalid_argument', 'description must be plain text.');
+  if ([...text].length > MAX_DESCRIPTION) throw new LagerError('invalid_argument', `description must be at most ${MAX_DESCRIPTION} characters.`);
+  return text;
+}
+
+/** `#rgb` or `#rrggbb` (any case) to `#rrggbb` lower case. */
+export function normalizeThemeColor(value: unknown): string {
+  const m = typeof value === 'string' ? /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value.trim()) : null;
+  if (!m) throw new LagerError('invalid_argument', 'theme_color must be a hex colour such as #1f2a5c or #fff.');
+  const hex = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1];
+  return `#${hex.toLowerCase()}`;
+}
 const toVersion = (r: VersionRow): Version => ({
   appId: r.app_id, number: r.number, sha256: r.sha256, sizeBytes: r.size_bytes,
   capabilities: JSON.parse(r.capabilities) as Capabilities, note: r.note, createdBy: r.created_by, createdAt: r.created_at,
@@ -186,6 +220,8 @@ export class Apps {
 
   deploy(input: {
     slug: string; html: string; title?: string; capabilities?: Capabilities; note?: string; userId: string;
+    /** Left out on a redeploy = unchanged. */
+    description?: string; themeColor?: string;
   }): DeployResult {
     assertSlug(input.slug);
     if (typeof input.html !== 'string' || input.html.trim() === '') {
@@ -201,6 +237,8 @@ export class Apps {
       throw new LagerError('forbidden', 'Only admins and publishers can deploy apps.');
     }
     if (user.disabled) throw new LagerError('forbidden', 'This account is disabled.');
+    const description = input.description === undefined ? undefined : normalizeDescription(input.description);
+    const themeColor = input.themeColor === undefined ? undefined : normalizeThemeColor(input.themeColor);
     const capabilities = input.capabilities ?? {};
     const capabilitiesJson = canonicalJson(capabilities);
     const sha256 = crypto.createHash('sha256').update(input.html).digest('hex');
@@ -220,16 +258,23 @@ export class Apps {
           this.db.prepare('UPDATE apps SET title = ? WHERE id = ?').run(input.title, app.id);
           app = { ...app, title: input.title };
         }
+        if ((description !== undefined && description !== app.description) || (themeColor !== undefined && themeColor !== app.themeColor)) {
+          app = { ...app, description: description ?? app.description, themeColor: themeColor ?? app.themeColor };
+          this.db.prepare('UPDATE apps SET description = ?, theme_color = ? WHERE id = ?').run(app.description, app.themeColor, app.id);
+        }
       } else {
         if (this.db.prepare('SELECT 1 FROM instances WHERE slug = ?').get(input.slug)) {
           throw new LagerError('conflict', `Instance slug "${input.slug}" is already taken.`, 'slug_taken');
         }
         this.claimSlug(input.slug, user.id);
         this.countCreation(user);
-        app = { id: crypto.randomUUID(), slug: input.slug, title: input.title || input.slug, ownerId: user.id, createdAt: now, selfInstances: 'off' };
+        app = {
+          id: crypto.randomUUID(), slug: input.slug, title: input.title || input.slug, ownerId: user.id, createdAt: now, selfInstances: 'off',
+          description: description ?? '', themeColor: themeColor ?? DEFAULT_THEME_COLOR, iconVersion: 0,
+        };
         this.db
-          .prepare('INSERT INTO apps (id, slug, title, owner_id, created_at) VALUES (?, ?, ?, ?, ?)')
-          .run(app.id, app.slug, app.title, app.ownerId, app.createdAt);
+          .prepare('INSERT INTO apps (id, slug, title, owner_id, created_at, description, theme_color) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .run(app.id, app.slug, app.title, app.ownerId, app.createdAt, app.description, app.themeColor);
         createdApp = true;
       }
 
@@ -279,6 +324,25 @@ export class Apps {
     });
     this.fireActivated(updated);
     return result;
+  }
+
+  /** Changes the description and/or theme colour. Owner or collaborator (the same people who may deploy). */
+  setAppMeta(appId: string, meta: { description?: string; themeColor?: string }, userId: string): App {
+    const row = this.db.prepare('SELECT * FROM apps WHERE id = ?').get(appId) as AppRow | undefined;
+    if (!row) throw new LagerError('not_found', 'App not found.');
+    const app = toApp(row);
+    const allowed = this.checks ? this.checks.canDeploy(app, userId) : app.ownerId === userId;
+    if (!allowed) throw new LagerError('forbidden', `You are not allowed to change "${app.slug}".`);
+    const description = meta.description === undefined ? app.description : normalizeDescription(meta.description);
+    const themeColor = meta.themeColor === undefined ? app.themeColor : normalizeThemeColor(meta.themeColor);
+    this.db.prepare('UPDATE apps SET description = ?, theme_color = ? WHERE id = ?').run(description, themeColor, appId);
+    return { ...app, description, themeColor };
+  }
+
+  /** Called after the icon files changed; the new number goes into every icon URL. */
+  bumpIconVersion(appId: string): App {
+    this.db.prepare('UPDATE apps SET icon_version = icon_version + 1 WHERE id = ?').run(appId);
+    return this.getApp(appId)!;
   }
 
   getApp(slugOrId: string): App | null {

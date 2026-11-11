@@ -17,8 +17,11 @@ describe('rest api', () => {
     const res = await request(h.app).put('/api/apps/workout').query({ title: 'Workout', note: 'first' })
       .set('Host', h.host).set('Authorization', `Bearer ${token}`).type('text/html').send('<h1>Hi</h1>');
     expect(res.status).toBe(200);
+    const app0 = h.core.apps.getApp('workout')!;
     expect(res.body).toEqual({
-      app: 'workout', version: 1, createdVersion: true, urls: ['http://workout.apps.localhost:8080'], warnings: [], pinned: [],
+      app: 'workout', version: 1, createdVersion: true, urls: ['http://workout.apps.localhost:8080'], pinned: [],
+      warnings: ['No icon supplied; a generated one is used. Pass icon_svg to set your own.'],
+      description: '', themeColor: '#1f2a5c', iconUrl: `http://lager.localhost:8080/app-icons/${app0.id}/${app0.iconVersion}/192.png`,
     });
     expect(res.body.urls[0]).toBe('http://workout.apps.localhost:8080');
     const app = h.core.apps.getApp('workout')!;
@@ -63,7 +66,8 @@ describe('rest api', () => {
     expect(res.status).toBe(200);
     expect(res.body.app).toBe('poll');
     expect(res.body.createdVersion).toBe(true);
-    expect(res.body.warnings).toHaveLength(1);
+    expect(res.body.warnings).toHaveLength(2);
+    expect(res.body.warnings.filter((w: string) => w.includes('localStorage'))).toHaveLength(1);
     expect(h.core.apps.listVersions(h.core.apps.getApp('poll')!.id)[0].capabilities).toEqual(caps);
 
     const again = await request(h.app).put('/api/apps/poll').set('Host', h.host).set('Authorization', `Bearer ${token}`)
@@ -105,9 +109,11 @@ describe('rest api', () => {
     h.core.apps.deploy({ slug: 'theirs', html: '<p>t</p>', userId: other.id });
     const res = await request(h.app).get('/api/apps').set('Host', h.host).set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
+    const mine = h.core.apps.getApp('mine')!;
     expect(res.body).toEqual({
       apps: [{
-        slug: 'mine', title: 'Mine', latestVersion: 2,
+        slug: 'mine', title: 'Mine', latestVersion: 2, description: '', themeColor: '#1f2a5c',
+        iconUrl: `http://lager.localhost:8080/app-icons/${mine.id}/${mine.iconVersion}/192.png`,
         instances: [{ slug: 'mine', url: 'http://mine.apps.localhost:8080', activeVersion: 2, visibility: 'private', domains: [] }],
       }],
     });
@@ -563,4 +569,71 @@ describe('export, import, version download and check', () => {
     expect((await post({ html: '<p/>' }, bearer(h, pub.id))).status).toBe(200);
     expect((await request(h.app).post('/api/check').set('Host', h.host).send({ html: 'x' })).status).toBe(401);
   });
+
+  describe('icons and descriptions', () => {
+    const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#336699"/><circle cx="256" cy="256" r="100" fill="#fff"/></svg>';
+
+    it('PUT /api/apps/:slug/icon and PATCH /api/apps/:slug', async () => {
+      const { h, token } = setup();
+      const auth = (r: request.Test): request.Test => r.set('Host', h.host).set('Authorization', `Bearer ${token}`);
+      await auth(request(h.app).put('/api/apps/todo')).type('text/html').send('<p>x</p>');
+      const v1 = h.core.apps.getApp('todo')!.iconVersion;
+
+      const icon = await auth(request(h.app).put('/api/apps/todo/icon')).type('image/svg+xml').send(SVG);
+      expect(icon.status).toBe(200);
+      expect(icon.body).toMatchObject({ slug: 'todo' });
+      expect(icon.body.iconUrl).toMatch(/\/app-icons\/[0-9a-f-]{36}\/\d+\/192\.png$/);
+      expect(h.core.apps.getApp('todo')!.iconVersion).toBeGreaterThan(v1);
+
+      const bad = await auth(request(h.app).put('/api/apps/todo/icon')).type('image/svg+xml').send('<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>');
+      expect(bad.status).toBe(400);
+      expect(bad.body.error.code).toBe('invalid_argument');
+      const wrongType = await auth(request(h.app).put('/api/apps/todo/icon')).type('text/plain').send(SVG);
+      expect(wrongType.status).toBe(400);
+      const big = await auth(request(h.app).put('/api/apps/todo/icon')).type('image/svg+xml').send(`<svg xmlns="http://www.w3.org/2000/svg"><!--${'a'.repeat(200 * 1024)}--></svg>`);
+      expect(big.status).toBe(413);
+      expect((await request(h.app).put('/api/apps/todo/icon').set('Host', h.host).type('image/svg+xml').send(SVG)).status).toBe(401);
+      expect((await auth(request(h.app).put('/api/apps/nope/icon')).type('image/svg+xml').send(SVG)).status).toBe(404);
+
+      const patch = await auth(request(h.app).patch('/api/apps/todo')).send({ description: ' Words ', theme_color: '#ABC' });
+      expect(patch.status).toBe(200);
+      expect(patch.body).toMatchObject({ slug: 'todo', description: 'Words', themeColor: '#aabbcc' });
+      expect(h.core.apps.getApp('todo')).toMatchObject({ description: 'Words', themeColor: '#aabbcc' });
+      expect((await auth(request(h.app).patch('/api/apps/todo')).send({})).status).toBe(400);
+      expect((await auth(request(h.app).patch('/api/apps/todo')).send({ theme_color: 'nope' })).status).toBe(400);
+      expect((await auth(request(h.app).patch('/api/apps/todo')).send({ description: 5 })).status).toBe(400);
+
+      const other = h.core.users.create({ email: 'p@x.y', name: 'P', password: 'pw-p-12345', role: 'publisher' });
+      const otherToken = h.core.tokens.create(other.id, 't').token;
+      const denied = await request(h.app).patch('/api/apps/todo').set('Host', h.host).set('Authorization', `Bearer ${otherToken}`).send({ description: 'mine' });
+      expect(denied.status).toBe(403);
+      expect(h.core.apps.getApp('todo')!.description).toBe('Words');
+    });
+
+    it('PUT /api/apps/:slug takes description and theme_color in the query and icon_svg in JSON', async () => {
+      const { h, token } = setup();
+      const auth = (r: request.Test): request.Test => r.set('Host', h.host).set('Authorization', `Bearer ${token}`);
+      const q = await auth(request(h.app).put('/api/apps/one').query({ description: 'From query', theme_color: '#123' })).type('text/html').send('<p>x</p>');
+      expect(q.status).toBe(200);
+      expect(q.body).toMatchObject({ description: 'From query', themeColor: '#112233' });
+      expect(q.body.warnings).toEqual(['No icon supplied; a generated one is used. Pass icon_svg to set your own.']);
+
+      const j = await auth(request(h.app).put('/api/apps/two')).send({ html: '<p>x</p>', description: 'From json', theme_color: '#445566', icon_svg: SVG });
+      expect(j.status).toBe(200);
+      expect(j.body).toMatchObject({ description: 'From json', themeColor: '#445566', warnings: [] });
+      expect(h.core.icons.has(h.core.apps.getApp('two')!.id)).toBe(true);
+
+      const queryIcon = await auth(request(h.app).put('/api/apps/three').query({ icon_svg: SVG })).type('text/html').send('<p>x</p>');
+      expect(queryIcon.status).toBe(200);
+      // icon_svg is read from JSON only: in the query it is ignored, so the generated icon is used.
+      expect(queryIcon.body.warnings).toHaveLength(1);
+
+      const bad = await auth(request(h.app).put('/api/apps/four')).send({ html: '<p>x</p>', icon_svg: '<svg xmlns="http://www.w3.org/2000/svg"><use href="http://x.y/a.svg#b"/></svg>' });
+      expect(bad.status).toBe(200);
+      expect(bad.body.warnings).toHaveLength(1);
+      expect(bad.body.warnings[0]).toMatch(/icon/i);
+      expect((await auth(request(h.app).put('/api/apps/five')).send({ html: '<p>x</p>', icon_svg: 5 })).status).toBe(400);
+    });
+  });
 });
+

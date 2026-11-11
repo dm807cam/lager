@@ -159,7 +159,7 @@ describe('stage 3 end to end', () => {
     // 1. The publisher deploys the example with every Stage 3 capability declared: no warnings.
     const d1 = await deploy('board', board, BOARD_CAPS);
     expect(d1.status).toBe(200);
-    expect(parse(d1)).toMatchObject({ app: 'board', version: 1, warnings: [], pinned: [] });
+    expect(parse(d1)).toMatchObject({ app: 'board', version: 1, warnings: ['No icon supplied; a generated one is used. Pass icon_svg to set your own.'], pinned: [] });
     const owner = await open(pSession, hostOf('board'));
     const session = parse(await call(hostOf('board'), 'GET', '/__lager/session', { headers: { Cookie: owner } }));
     expect(session.capabilities).toEqual(BOARD_CAPS);

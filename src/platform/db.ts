@@ -165,6 +165,11 @@ const MIGRATIONS: string[] = [
   UPDATE apps SET next_version = COALESCE((SELECT MAX(number) FROM versions WHERE versions.app_id = apps.id), 0) + 1;
   CREATE INDEX versions_instance ON versions(instance_id);
   `,
+  `
+  ALTER TABLE apps ADD COLUMN description TEXT NOT NULL DEFAULT '';
+  ALTER TABLE apps ADD COLUMN theme_color TEXT NOT NULL DEFAULT '#1f2a5c';
+  ALTER TABLE apps ADD COLUMN icon_version INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

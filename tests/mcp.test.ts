@@ -56,13 +56,13 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 const guide = fs.readFileSync(new URL('../src/guide.md', import.meta.url), 'utf8');
 
 describe('mcp endpoint', () => {
-  it('lists the twenty tools and exposes instructions', async () => {
+  it('lists the twenty-one tools and exposes instructions', async () => {
     const r = await start();
     const client = await connect(r);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'activate_version', 'add_domain', 'check_artifact', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'export_data', 'get_app', 'get_guide',
-      'import_data', 'list_apps', 'list_shares', 'list_snapshots', 'remove_domain', 'restore_snapshot', 'set_auto_update', 'set_visibility', 'share_instance', 'unshare_instance',
+      'import_data', 'list_apps', 'list_shares', 'list_snapshots', 'remove_domain', 'restore_snapshot', 'set_app_icon', 'set_auto_update', 'set_visibility', 'share_instance', 'unshare_instance',
     ]);
     expect(client.getServerVersion()?.name).toBe('lager');
     const firstSection = guide.split(/\r?\n---\r?\n/)[0].trim();
@@ -77,7 +77,12 @@ describe('mcp endpoint', () => {
     const client = await connect(r);
     const dep = await call(client, 'deploy_app', { slug: 'todo', html: '<p>todo</p>', title: 'Todo', capabilities: { db: {} }, note: 'n1' });
     expect(dep.isError).toBe(false);
-    expect(dep.json).toEqual({ app: 'todo', version: 1, createdVersion: true, urls: [`http://todo.apps.localhost:${new URL(r.base).port}`], warnings: [], pinned: [] });
+    const app0 = r.h.core.apps.getApp('todo')!;
+    expect(dep.json).toEqual({
+      app: 'todo', version: 1, createdVersion: true, urls: [`http://todo.apps.localhost:${new URL(r.base).port}`], pinned: [],
+      warnings: ['No icon supplied; a generated one is used. Pass icon_svg to set your own.'],
+      description: '', themeColor: '#1f2a5c', iconUrl: `${r.base}/app-icons/${app0.id}/${app0.iconVersion}/192.png`,
+    });
     const got = await call(client, 'get_app', { slug: 'todo' });
     expect(got.json).toMatchObject({ slug: 'todo', title: 'Todo', latestVersion: 1, instances: [{ slug: 'todo', activeVersion: 1, visibility: 'private' }] });
     expect(got.json.versions).toEqual([expect.objectContaining({ number: 1, note: 'n1' })]);
@@ -93,7 +98,7 @@ describe('mcp endpoint', () => {
     const client = await connect(r);
     const dep = await call(client, 'deploy_app', { slug: 'ls', html: '<script>localStorage.setItem("a","b")</script>' });
     expect(dep.isError).toBe(false);
-    expect(dep.json.warnings).toHaveLength(1);
+    expect(dep.json.warnings).toHaveLength(2);
     expect(dep.json.warnings[0]).toContain('localStorage');
   });
 
@@ -611,6 +616,162 @@ describe('mcp endpoint', () => {
     const client = new Client({ name: 't', version: '1' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${r.base}/mcp`), { authProvider: provider }));
     clients.push(client);
-    expect((await client.listTools()).tools).toHaveLength(20);
+    expect((await client.listTools()).tools).toHaveLength(21);
+  });
+
+  describe('icons and descriptions', () => {
+    const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#336699"/><circle cx="256" cy="256" r="100" fill="#fff"/></svg>';
+    const NO_ICON = 'No icon supplied; a generated one is used. Pass icon_svg to set your own.';
+    const png = async (url: string): Promise<{ status: number; w: number; type: string | null }> => {
+      const res = await fetch(url);
+      const b = Buffer.from(await res.arrayBuffer());
+      return { status: res.status, w: b.length > 24 ? b.readUInt32BE(16) : 0, type: res.headers.get('content-type') };
+    };
+
+    it('deploy_app with icon_svg, description and theme_color', async () => {
+      const r = await start();
+      const client = await connect(r);
+      const dep = await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>', title: 'Todo', icon_svg: SVG, description: '  A shared list.  ', theme_color: '#369' });
+      expect(dep.isError).toBe(false);
+      expect(dep.json.warnings).toEqual([]);
+      expect(dep.json).toMatchObject({ description: 'A shared list.', themeColor: '#336699' });
+      const got = await call(client, 'get_app', { slug: 'todo' });
+      expect(got.json).toMatchObject({ description: 'A shared list.', themeColor: '#336699' });
+      const app = r.h.core.apps.getApp('todo')!;
+      expect(got.json.iconUrl).toBe(`${r.base}/app-icons/${app.id}/${app.iconVersion}/192.png`);
+      expect(await png(got.json.iconUrl)).toEqual({ status: 200, w: 192, type: 'image/png' });
+      expect(dep.json.iconUrl).toBe(got.json.iconUrl);
+      const list = await call(client, 'list_apps');
+      expect(list.json.apps[0]).toMatchObject({ description: 'A shared list.', themeColor: '#336699', iconUrl: got.json.iconUrl });
+    });
+
+    it('first deploy without an icon gets the default and a warning', async () => {
+      const r = await start();
+      const client = await connect(r);
+      const dep = await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>' });
+      expect(dep.json.warnings).toEqual([NO_ICON]);
+      expect(dep.json).toMatchObject({ description: '', themeColor: '#1f2a5c' });
+      expect(await png(dep.json.iconUrl)).toMatchObject({ status: 200, w: 192 });
+    });
+
+    it('redeploy without icon_svg keeps the icon, description and colour', async () => {
+      const r = await start();
+      const client = await connect(r);
+      await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>', icon_svg: SVG, description: 'Keep me', theme_color: '#336699' });
+      const before = r.h.core.apps.getApp('todo')!;
+      const bytes = fs.readFileSync(r.h.core.icons.png(before.id, 512)!);
+      const dep = await call(client, 'deploy_app', { slug: 'todo', html: '<p>t2</p>' });
+      expect(dep.json.warnings).toEqual([]);
+      const after = r.h.core.apps.getApp('todo')!;
+      expect(after).toMatchObject({ iconVersion: before.iconVersion, description: 'Keep me', themeColor: '#336699' });
+      expect(fs.readFileSync(r.h.core.icons.png(after.id, 512)!).equals(bytes)).toBe(true);
+    });
+
+    it('redeploy with a new icon bumps the icon version', async () => {
+      const r = await start();
+      const client = await connect(r);
+      await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>' });
+      const v1 = r.h.core.apps.getApp('todo')!.iconVersion;
+      const dep = await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>', icon_svg: SVG });
+      expect(dep.json.warnings).toEqual([]);
+      expect(r.h.core.apps.getApp('todo')!.iconVersion).toBeGreaterThan(v1);
+    });
+
+    it('a new theme colour redraws the maskable variant', async () => {
+      const r = await start();
+      const client = await connect(r);
+      await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>', icon_svg: SVG, theme_color: '#336699' });
+      const app = r.h.core.apps.getApp('todo')!;
+      const before = fs.readFileSync(r.h.core.icons.png(app.id, 512, true)!);
+      await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>', theme_color: '#993366' });
+      expect(r.h.core.apps.getApp('todo')!.iconVersion).toBeGreaterThan(app.iconVersion);
+      expect(fs.readFileSync(r.h.core.icons.png(app.id, 512, true)!).equals(before)).toBe(false);
+    });
+
+    it('an invalid icon does not fail the deploy but is reported', async () => {
+      const r = await start();
+      const client = await connect(r);
+      const first = await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>', icon_svg: '<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>' });
+      expect(first.isError).toBe(false);
+      expect(first.json.version).toBe(1);
+      expect(first.json.warnings).toHaveLength(1);
+      expect(first.json.warnings[0]).toMatch(/icon/i);
+      expect(first.json.warnings[0]).toMatch(/<script>/);
+      expect(first.json.warnings[0]).not.toBe(NO_ICON);
+      const app = r.h.core.apps.getApp('todo')!;
+      expect(r.h.core.icons.has(app.id)).toBe(true);
+      expect(await png(first.json.iconUrl)).toMatchObject({ status: 200 });
+      // On a redeploy the previous icon stays.
+      await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>', icon_svg: SVG });
+      const good = r.h.core.apps.getApp('todo')!;
+      const bytes = fs.readFileSync(r.h.core.icons.png(good.id, 512)!);
+      const again = await call(client, 'deploy_app', { slug: 'todo', html: '<p>t2</p>', icon_svg: 'not svg' });
+      expect(again.isError).toBe(false);
+      expect(again.json.warnings).toHaveLength(1);
+      expect(r.h.core.apps.getApp('todo')!.iconVersion).toBe(good.iconVersion);
+      expect(fs.readFileSync(r.h.core.icons.png(good.id, 512)!).equals(bytes)).toBe(true);
+    });
+
+    it('an invalid description or colour fails the deploy', async () => {
+      const r = await start();
+      const client = await connect(r);
+      const long = await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>', description: 'x'.repeat(201) });
+      expect(long.isError).toBe(true);
+      expect(long.json.error.code).toBe('invalid_argument');
+      const color = await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>', theme_color: 'blue' });
+      expect(color.isError).toBe(true);
+      expect(r.h.core.apps.getApp('todo')).toBeNull();
+    });
+
+    it('set_app_icon: owner yes, stranger no, invalid icon is an error', async () => {
+      const r = await start();
+      const client = await connect(r);
+      await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>' });
+      const v1 = r.h.core.apps.getApp('todo')!.iconVersion;
+      const ok = await call(client, 'set_app_icon', { app: 'todo', icon_svg: SVG, description: 'Now with a picture', theme_color: '#abc' });
+      expect(ok.isError).toBe(false);
+      expect(ok.json).toMatchObject({ slug: 'todo', description: 'Now with a picture', themeColor: '#aabbcc' });
+      expect(r.h.core.apps.getApp('todo')!.iconVersion).toBeGreaterThan(v1);
+      expect(await png(ok.json.iconUrl)).toMatchObject({ status: 200, w: 192 });
+
+      const before = r.h.core.apps.getApp('todo')!;
+      const bad = await call(client, 'set_app_icon', { app: 'todo', icon_svg: '<svg xmlns="http://www.w3.org/2000/svg"><image href="http://x.y/a.png"/></svg>', description: 'changed anyway?' });
+      expect(bad.isError).toBe(true);
+      expect(bad.json.error.code).toBe('invalid_argument');
+      expect(r.h.core.apps.getApp('todo')).toEqual(before);
+
+      const none = await call(client, 'set_app_icon', { app: 'todo' });
+      expect(none.isError).toBe(true);
+      expect(none.json.error.code).toBe('invalid_argument');
+
+      const descOnly = await call(client, 'set_app_icon', { app: 'todo', description: 'Only words' });
+      expect(descOnly.isError).toBe(false);
+      expect(r.h.core.apps.getApp('todo')).toMatchObject({ description: 'Only words', iconVersion: before.iconVersion });
+
+      const missing = await call(client, 'set_app_icon', { app: 'nope', description: 'x' });
+      expect(missing.json.error.code).toBe('not_found');
+
+      const stranger = r.h.core.users.create({ email: 'p@x.y', name: 'P', password: 'pw-p-12345', role: 'publisher' });
+      const other = await connect(r, r.h.core.tokens.create(stranger.id, 'mcp').token);
+      const denied = await call(other, 'set_app_icon', { app: 'todo', icon_svg: SVG });
+      expect(denied.isError).toBe(true);
+      expect(denied.json.error.code).toBe('forbidden');
+      expect(r.h.core.apps.getApp('todo')).toMatchObject({ description: 'Only words', iconVersion: before.iconVersion });
+
+      // A collaborator may.
+      r.h.core.apps.addCollaborator(before.id, stranger.id, r.h.adminId);
+      expect((await call(other, 'set_app_icon', { app: 'todo', description: 'By a collaborator' })).isError).toBe(false);
+    });
+
+    it('deleting the app removes its icon files', async () => {
+      const r = await start();
+      const client = await connect(r);
+      await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>', icon_svg: SVG });
+      const app = r.h.core.apps.getApp('todo')!;
+      expect(r.h.core.icons.has(app.id)).toBe(true);
+      r.h.core.apps.deleteApp(app.id, r.h.adminId);
+      expect(r.h.core.icons.has(app.id)).toBe(false);
+    });
   });
 });
+

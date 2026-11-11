@@ -13,11 +13,23 @@ import { sameOriginGuard } from './origin.js';
 import { signToken } from './tokens.js';
 import { hostUrl, instanceUrl } from '../config.js';
 import { normalizeHost } from '../platform/domains.js';
+import { ensureDefaultIcon } from '../mcp/tools.js';
 import type { PlatformExtension } from './app.js';
 
 // dist/assets after a build, ../../assets next to src when running from source.
-const ICON = fs.readFileSync([new URL('../assets/icon.webp', import.meta.url), new URL('../../assets/icon.webp', import.meta.url)]
-  .find((u) => fs.existsSync(u)) ?? new URL('../assets/icon.webp', import.meta.url));
+const asset = (name: string): Buffer => fs.readFileSync([new URL(`../assets/${name}`, import.meta.url), new URL(`../../assets/${name}`, import.meta.url)]
+  .find((u) => fs.existsSync(u)) ?? new URL(`../assets/${name}`, import.meta.url));
+const ICON = asset('icon.webp');
+const PLATFORM_ICONS = new Map([180, 192, 512].map((size) => [size, asset(`icon-${size}.png`)] as const));
+const PLATFORM_MANIFEST = JSON.stringify({
+  name: 'Lager', short_name: 'Lager',
+  start_url: '/', scope: '/', display: 'standalone', background_color: '#1f2a5c', theme_color: '#1f2a5c',
+  icons: [
+    { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+    { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+  ],
+});
+const ICON_FILE = /^(64|192|512)\.png$/;
 
 const MAX_FAILURES = 10;
 const WINDOW_MS = 15 * 60 * 1000;
@@ -79,6 +91,38 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
 
   router.get('/icon.webp', (_req, res) => {
     res.set('Cache-Control', 'public, max-age=604800').type('image/webp').send(ICON);
+  });
+
+  for (const [size, bytes] of PLATFORM_ICONS) {
+    router.get(`/icon-${size}.png`, (_req, res) => {
+      res.set({ 'Cache-Control': 'public, max-age=604800', 'X-Content-Type-Options': 'nosniff' }).type('image/png').send(bytes);
+    });
+  }
+
+  router.get('/manifest.webmanifest', (_req, res) => {
+    res.set({ 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff' }).type('application/manifest+json').send(PLATFORM_MANIFEST);
+  });
+
+  // The icons of apps: public, and cached for a year because the version is part of the URL. A wrong version is sent to the current one.
+  router.get('/app-icons/:appId/:version/:file', async (req, res) => {
+    const m = ICON_FILE.exec(req.params.file as string);
+    const found = m ? core.apps.getApp(req.params.appId as string) : null;
+    if (!m || !found || found.id !== req.params.appId) {
+      res.status(404).type('text/plain').send('Not found');
+      return;
+    }
+    const app = await ensureDefaultIcon(core, found);
+    if (req.params.version !== String(app.iconVersion)) {
+      res.set('Cache-Control', 'no-cache').redirect(`/app-icons/${app.id}/${app.iconVersion}/${m[1]}.png`);
+      return;
+    }
+    const file = core.icons.png(app.id, Number(m[1]) as 64 | 192 | 512);
+    if (!file) {
+      res.status(404).type('text/plain').send('Not found');
+      return;
+    }
+    res.set({ 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'cross-origin' });
+    res.type('image/png').sendFile(file, { dotfiles: 'allow', cacheControl: false });
   });
 
   // `same-origin` lets browsers send the real Origin on the login post (`no-referrer` would make it `null`, which the guard refuses).
