@@ -2,6 +2,10 @@
 
 # Lager
 
+The only two apps you'll ever need: Claude + Lager.
+
+We used to buy apps. Now Claude builds any app you can imagine, on the spot. Lager is where they run — on your server, with your data staying yours.
+
 Lager is a self-hosted server for Claude artifacts, the small HTML apps that Claude builds for you. Instead of keeping an artifact only inside claude.ai, Claude publishes it to your server:
 
 - Every app gets its own subdomain (`<slug>.apps.example.com`).
@@ -58,7 +62,13 @@ Lager ships in English, French, Spanish and German. English is the default and t
 
 The language of a page is chosen in this order: the signed-in account's language setting (Account page), the language switcher in the page footer (stored in the `lager_lang` cookie), the browser's `Accept-Language` header, and finally `LAGER_DEFAULT_LOCALE`. Mails use the recipient's language where it is known. Dates and sizes are written the way the chosen language writes them.
 
-To add a language, copy `src/i18n/en.ts` to a new file such as `src/i18n/it.ts`, translate the values (keep the `{name}` placeholders, and keep "Lager" and "Claude" as they are), then register it in `LOCALES` and `LOCALE_NAMES` in `src/i18n/index.ts`. The type checker reports every missing key, and `npm test` checks that all catalogs have the same keys and placeholders and that no human-facing text lives outside the catalogs.
+To add a language:
+
+1. Copy `src/i18n/en.ts` to a new file such as `src/i18n/it.ts` and translate the values. Keep the `{name}` placeholders, and keep "Lager", "Claude" and the role name "Publisher" as they are.
+2. In `src/i18n/index.ts`, import the catalog and add it to `CATALOGS`, `LOCALES` and `LOCALE_NAMES`.
+3. Add the language to the small table in `src/runtime/runtime.js` (`SAVE_FILE`) that holds the one sentence the browser runtime shows itself: the confirmation before a download (it also formats the file size).
+
+The type checker reports every missing key. `npm test` checks that every catalog has the same keys and placeholders and that every value differs from the English one (except a short list of words that are the same in that language); that every key is used and every `t()` call uses an existing key; that no German appears in the source outside the catalogs; that no page handler, and not the OAuth server, contains inline human-facing text (an HTML text node, a capitalised sentence or a titled attribute in a string or template literal, in any language; error messages for programs, SQL and header values are exempt); and that the pages, the error pages, every notice and every mail render in each language without leftover placeholders. The test cannot judge whether a translation is good, or catch a lowercase phrase that sits outside any HTML.
 
 ## Accounts and roles
 
@@ -137,23 +147,29 @@ curl -X PUT -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: text/html"
 
 | Building block | What it does on Lager | Declaration | Limits |
 | --- | --- | --- | --- |
-| `db` | Document database of the instance with live updates | `{"db": {}}`, optionally `{"db": {"rules": [...]}}` | Document 256 KiB, query 1000 results; instance storage is limited (see "Limits") |
+| `db` | Document database of the instance with live updates | `{"db": {}}`, optionally `{"db": {"rules": [...]}}` | Document 256 KiB, path 1000 bytes, query 1000 results; instance storage is limited (see "Limits") |
 | `user` | Name and id of the viewer, profiles, people search | `{"user": {}}`; email addresses only with `{"user": {"scopes": ["email"]}}`, search with scope `"profile"` | Every member is async, including `name()` |
 | `permissions` | Shows which building blocks are available | none | none |
-| `assets` | Upload, list and delete files; they are served from `/_blob/<id>` on the instance | `{"assets": {}}` | Managers and owners may upload; with `{"assets": {"upload": "interact"}}` contributors too (they see and delete only their own files). At most 20 MiB per file (CSS and JavaScript 16 MiB, SVG 2 MiB) and 2000 files per instance. Allowed are images, video, audio, PDF, fonts, CSS, JavaScript, CSV, Markdown, JSON and text; HTML is refused, and the content must match the stated type. Files count toward the instance's storage |
-| `room` | Ephemeral rooms with messages and presence; nothing is stored, and a server restart empties all rooms | `{"room": {}}`; contributors may send only on topics opened with `{"room": {"topics": {"<topic>": "interact"}}}` | Otherwise managers and owners send, viewers only listen. Message at most 4 KiB, presence at most 2 KiB; per viewer and instance at most 8 open connections and 30 sends per second; at most 50 rooms per instance and 100 participants per room |
-| `artifact` (also `self`) | The page saves itself: `artifact.publish(html)` creates a version that belongs only to this instance and is active there at once | `{"artifact": {}}`; `{"artifact": {"publish": false}}` blocks saving | Managers and owners only. The document must start with `<!doctype html`, at most 16 MiB, 60 saves per hour and instance, the last 20 saved versions are kept (older ones go to the trash). Saved pages count toward the instance's storage |
-| `downloads` | `downloads.save({filename, data})` offers the viewer a file to save after a confirmation in the browser; the server is not involved | `{"downloads": {}}` | At most 50 MiB; allowed extensions: gif, png, jpg, jpeg, webp, mp4, webm, mov, txt, json, md, docx, pptx, epub, csv, ttf, html, svg, pdf, xlsx, zip, fig |
+| `assets` | Upload, list and delete files; they are served from `/_blob/<id>` on the instance | `{"assets": {}}` | Managers and owners may upload; with `{"assets": {"upload": "interact"}}` contributors too (they see and delete only their own files); owners and managers can still list and delete files if the page no longer declares `assets`. An upload must state its `Content-Length`, and at most 2 uploads run at once per viewer and instance. At most 20 MiB per file (CSS and JavaScript 16 MiB, SVG 2 MiB) and 2000 files per instance. Allowed are images, video, audio, PDF, fonts, CSS, JavaScript, CSV, Markdown, JSON and text; HTML is refused, and the content must match the stated type. Files count toward the instance's storage |
+| `room` | Ephemeral rooms with messages and presence; nothing is stored, and a server restart empties all rooms | `{"room": {}}`; contributors may send only on topics opened with `{"room": {"topics": {"<topic>": "interact"}}}` | Otherwise managers and owners send, viewers only listen. Message at most 4 KiB, presence at most 2 KiB; per viewer and instance at most 8 open connections (8 rooms) and 30 sends per second, and at most 100 open connections of anonymous visitors per instance; at most 50 rooms per instance and 100 participants per room |
+| `artifact` (also `self`) | The page saves itself: `artifact.publish(html)` creates a version that belongs only to this instance and is active there at once | `{"artifact": {}}`; `{"artifact": {"publish": false}}` blocks saving | Managers and owners only. The document must start with `<!doctype html`, at most 16 MiB, 60 save attempts per hour and instance (refused ones count too), the last 20 saved versions are kept (older ones are deleted outright, not moved to the trash). Saved pages count toward the instance's storage |
+| `downloads` | `downloads.save({filename, data})` offers the viewer a file to save after a confirmation in the browser; the server is not involved | `{"downloads": {}}` | At most 50 MiB, file name at most 240 bytes; the confirmation names the file and its size; allowed extensions: gif, png, jpg, jpeg, webp, mp4, webm, mov, txt, json, md, docx, pptx, epub, csv, ttf, html, svg, pdf, xlsx, zip, fig |
 
-Whoever saves a page with `artifact.publish` detaches that instance from the app's deploys: it no longer follows new deploys automatically. A deploy lists such instances in the field `pinned` and in its warnings. The saved versions do not appear in the app's version list; only the managers of the instance that saved them can download their HTML.
+Whoever saves a page with `artifact.publish` detaches that instance from the app's deploys: it no longer follows new deploys automatically. A deploy lists such instances in the field `pinned` and in its warnings. To follow deploys again, turn "Update automatically" back on: on the instance page, with `POST /api/instances/<slug>/auto-update` and the body `{"on": true}`, or with the MCP tool `set_auto_update`; turning it on moves the instance to the latest deployed version at once (the saved page stays among that instance's saved versions). The saved versions do not appear in the app's version list; only the managers of the instance that saved them can download their HTML.
 
-Everything else stays unavailable: for other names (for example `sample` or `tts`) `claude.use` always returns `null`, and `claude.complete` does not exist (the call rejects with an error message). In the `artifact` building block, `publish` with several files, `edit`, `sync` and `metadata` reject with an error code, and `room.sendToClaudeSession` rejects because Lager has no conversation with Claude beside the page. `check_artifact` (MCP) and `POST /api/check` show before a deploy what an artifact uses, what Lager does not offer and what is not yet declared.
+Everything else stays unavailable: for other names (for example `sample` or `tts`) `claude.use` always returns `null`, and `claude.complete` does not exist (the call rejects with an error message). In the `artifact` building block, `publish` with several files, `edit`, `sync` and `metadata` reject with an error code, and `room.sendToClaudeSession` rejects because Lager has no conversation with Claude beside the page. `check_artifact` (MCP) and `POST /api/check` show before a deploy what an artifact uses, what Lager does not offer and what is not yet declared. The check is best effort: it only sees `claude.use("…")` calls whose name is a string literal.
+
+The event streams (`/__lager/db/events`, `/__lager/room/events`) and the files at `/_blob/<id>` answer only the instance's own page: a request that the browser marks as coming from another site or from another instance (even one under the same apps domain) is refused, so another page cannot open them or embed the files with the visitor's cookies.
 
 ## Limits
 
 - **Storage per instance:** The data of an instance is limited to `LAGER_INSTANCE_QUOTA_MB` (default 50 MiB). This size includes the documents, the uploaded files (`assets`) and the pages an instance saved itself (`artifact`). When the limit is reached, Lager refuses further writes, uploads and saves with the error `quota_exceeded` (HTTP 507 for the database); reading and deleting keep working. Versions created by deploys, snapshots and the trash are not counted.
 - **Instances per user:** Every account that is not an administrator may own at most as many instances as an administrator sets in the administration area under Settings (1 to 1000, default 20). This applies when creating further instances, including self-service.
 - **New instances per day:** Accounts that are not administrators may create at most 10 instances within 24 hours; deleted instances count, and so does the instance created by the first deploy of an app. This stops anyone from filling the storage by creating, filling and deleting in a loop.
+- **Open connections:** Per viewer and instance at most 8 live-update streams for the database and 8 for rooms; for anonymous visitors the viewer is the client address, and all of them together may hold at most 100 per instance. Further ones get HTTP 429, and the page works without live updates there.
+- **Paths and documents:** Paths are limited to 16 segments and 1000 bytes; a document is at most 256 KiB.
+- **Domains:** At most 10 custom domains per instance.
+- **Saved versions:** An instance keeps its last 20 self-saved pages; older ones are deleted.
 - **Snapshots:** They contain only the documents of the instance. `restore_snapshot` does not restore uploaded files or self-saved pages.
 - **Reserved names:** The name of a deleted instance stays reserved for its former owner. Other accounts cannot take it over, because otherwise stored browser data and service workers of the old instance would carry over to the new one.
 
@@ -220,7 +236,9 @@ By default Lager trusts exactly one proxy in front of it (`LAGER_TRUST_PROXY=tru
 
 An instance can answer on its own host name in addition to `<slug>.apps.example.com`, for example `notes.example.org`. The address under the apps domain stays and is the first URL of the instance.
 
-**Who may do this:** By default only administrators. An administrator can switch the setting for custom domains in the administration area (Settings) to also allow publishers; then publishers may do it too. In both cases the account must manage the instance, that is be its owner or a manager (`admin`). An administrator who does not own the instance needs a grant as manager for that. You enter the domain on the instance page in the dashboard, with `PUT /api/instances/<slug>/domains` and the body `{"host": "notes.example.org"}` (plus `GET` and `DELETE`), or with the MCP tools `add_domain` and `remove_domain`. A host name belongs to at most one instance on the whole server. The host name of the platform and all names under `LAGER_APPS_DOMAIN` are not allowed.
+**Who may do this:** By default only administrators. An administrator can switch the setting for custom domains in the administration area (Settings) to also allow publishers; then publishers may do it too. A publisher must also manage the instance, that is be its owner or a manager (`admin`). Administrators may handle the domains of any instance, without owning it or holding a grant: in the administration area under Apps (the link "Domains" per instance), through the same REST and MCP calls. You enter the domain on the instance page in the dashboard, with `PUT /api/instances/<slug>/domains` and the body `{"host": "notes.example.org"}` (plus `GET` and `DELETE`), or with the MCP tools `add_domain` and `remove_domain`. An instance can have at most 10 custom domains. A host name belongs to at most one instance on the whole server. The host name of the platform and all names under `LAGER_APPS_DOMAIN` are not allowed.
+
+**Host name rules:** a DNS name of at least two labels made of letters, digits and hyphens (at most 253 characters in all), written in lower case or converted to it; one trailing dot is dropped. No port, no IP address (the last label must start with a letter), no wildcard and no underscore. Names ending in `.localhost`, `.local` or `.internal` are refused.
 
 **Lager does not verify who owns the domain.** It only decides that requests with this host name go to the instance. Whoever may enter a domain can therefore claim any host name whose DNS points to your proxy. Grant the right with care, and leave it at administrators only if you do not trust your publishers.
 
@@ -231,7 +249,7 @@ The steps outside Lager:
 3. Proxy host: in Nginx Proxy Manager create a proxy host for the domain: `http`, host of the container, port 8080, Websockets Support on, the certificate from step 2, Force SSL. The proxy must pass the `Host` header on unchanged (Nginx Proxy Manager does this by default). On the "Advanced" tab, add the same `location` block for the event streams as for the apps proxy host.
 4. Only then enter the domain in Lager.
 
-**Sign-in:** Sign-in still goes through the platform (`LAGER_PUBLIC_URL`). A visitor without a session is sent from the custom domain to the platform, signs in there and returns with a one-time code to the domain they started on. The instance cookie is per host name: someone who has opened the instance at `<slug>.apps.example.com` is not yet signed in on the custom domain and goes through the flow there once. Access rights are the same as under the apps domain. If you remove the domain or delete the instance, Lager answers requests for the host name with "not found".
+**Sign-in:** Sign-in still goes through the platform (`LAGER_PUBLIC_URL`). A visitor without a session is sent from the custom domain to the platform, signs in there and returns with a one-time code to the domain they started on; the code is valid only for that host name. The instance cookie is per host name: someone who has opened the instance at `<slug>.apps.example.com` is not yet signed in on the custom domain and goes through the flow there once. Access rights are the same as under the apps domain. If you remove the domain or delete the instance, Lager answers requests for the host name with "not found".
 
 ## Connecting Claude
 
@@ -266,9 +284,9 @@ The skill `skill/lager/SKILL.md` teaches Claude to build and deploy artifacts wi
 
 ## Export, import and moving
 
-**Exporting data:** The instance page in the dashboard has a link to export the data as NDJSON. `GET /api/instances/<slug>/export` with a bearer token returns the same, as does the MCP tool `export_data`. The file contains one line `{"path": …, "data": …}` per document, plus the exporting account's own private area (`data/users/<id>/…`) but not the private areas of others. The account must manage the instance (owner or manager). Lager exports only the database as documents: uploads, snapshots, grants and domains are not included.
+**Exporting data:** The instance page in the dashboard has a link to export the data as NDJSON. `GET /api/instances/<slug>/export` with a bearer token returns the same, as does the MCP tool `export_data`, which returns 200 documents by default (at most 1000, and about 8 MiB) and may stop early: its answer carries `truncated`, and when that is true you narrow the `prefix` and ask again. The REST export and the dashboard link are complete. The file contains one line `{"path": …, "data": …}` per document, plus the exporting account's own private area (`data/users/<id>/…`) but not the private areas of others. The account must manage the instance (owner or manager). The owner exports everything except other users' private areas; a manager gets only the documents that the app's rules let them read. Lager exports only the database as documents: uploads, snapshots, grants and domains are not included.
 
-**Importing data:** `POST /api/instances/<slug>/import` with `Content-Type: application/x-ndjson` (one line per document, ideally the export file) or a JSON array of `{path, data}`; at most 50 MiB and 100000 documents per call. The MCP tool `import_data` takes at most 1000 documents per call. An import replaces documents with the same path and deletes no others. Lager takes no snapshot before an import; back up existing data beforehand with an export if needed. You can import into the same instance or another one, also one of a different app, and so move data between servers. You create the second instance with `POST /api/apps/<slug>/instances` or `create_instance`.
+**Importing data:** `POST /api/instances/<slug>/import` with `Content-Type: application/x-ndjson` (one line per document, ideally the export file) or a JSON array of `{path, data}`; at most 20 MiB (a JSON array at most 5 MiB) and 100000 documents per call, and only one import runs at a time per instance (a second one is refused with HTTP 409). Document paths are limited to 1000 bytes. A manager can only write paths that the app's rules let them write; the owner is not restricted. The MCP tool `import_data` takes at most 1000 documents per call. An import replaces documents with the same path and deletes no others. Lager takes no snapshot before an import; back up existing data beforehand with an export if needed. You can import into the same instance or another one, also one of a different app, and so move data between servers. You create the second instance with `POST /api/apps/<slug>/instances` or `create_instance`.
 
 ```sh
 curl -H "Authorization: Bearer $LAGER_TOKEN" https://lager.example.com/api/instances/board/export > board.ndjson
@@ -312,3 +330,7 @@ To restore, copy the contents back (or unpack the archive into an empty volume).
 - For custom domains, Lager does not check who owns the host name.
 - No TLS of its own: HTTPS is handled by the proxy in front.
 - No automatic backup and no replication.
+
+## Notes
+
+Lager is an independent project and is not affiliated with Anthropic; Claude is a trademark of Anthropic.
