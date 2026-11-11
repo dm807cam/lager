@@ -78,6 +78,16 @@ describe('platform host', () => {
     expect(denied.status).toBe(403);
   });
 
+  it('platform admins get no special rights on foreign instances', async () => {
+    h = makeHarness();
+    const publisher = h.core.users.create({ email: 'p@x.y', name: 'P', password: 'pw', role: 'publisher' });
+    h.core.apps.deploy({ slug: 'theirs', html: '<p>x</p>', userId: publisher.id });
+    const cookie = await h.login(); // bootstrap admin, not the owner
+    const res = await request(h.app).get('/auth/instance').query({ slug: 'theirs' }).set('Host', PLATFORM_HOST).set('Cookie', cookie);
+    expect(res.status).toBe(403);
+    expect(res.headers.location).toBeUndefined();
+  });
+
   it('an instance code is not a platform session', async () => {
     h = makeHarness();
     h.core.apps.deploy({ slug: 'workout', html: '<p>x</p>', userId: h.adminId });

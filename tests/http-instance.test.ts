@@ -90,10 +90,20 @@ describe('instance host', () => {
 
   it('callback return must be a local path', async () => {
     const { h, inst } = setup();
-    const code = signToken({ uid: h.adminId, iid: inst.id, k: 'code' }, 'test-secret', 60);
+    const code = signToken({ uid: h.adminId, iid: inst.id, k: 'code', jti: 'j1' }, 'test-secret', 60);
     const cb = await request(h.app).get('/__lager/callback').query({ code, return: '//evil.example' }).set('Host', W);
     expect(cb.status).toBe(302);
     expect(cb.headers.location).toBe('/');
+  });
+
+  it('handshake code is single-use', async () => {
+    const { h } = setup();
+    const auth = await request(h.app).get('/auth/instance').query({ slug: 'workout' }).set('Host', PLATFORM_HOST).set('Cookie', await h.login());
+    const loc = new URL(auth.headers.location);
+    expect((await request(h.app).get(loc.pathname + loc.search).set('Host', loc.host)).status).toBe(302);
+    const again = await request(h.app).get(loc.pathname + loc.search).set('Host', loc.host);
+    expect(again.status).toBe(400);
+    expect(again.headers['set-cookie']).toBeUndefined();
   });
 
   it('level none with a user is 403', async () => {

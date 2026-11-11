@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import express from 'express';
 import type { Core } from '../core.js';
 import { clearCookie, setCookie, SESSION_COOKIE, THIRTY_DAYS_SECONDS } from './cookies.js';
@@ -77,7 +78,7 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
       res.status(403).type('html').send(forbiddenPage());
       return;
     }
-    const code = signToken({ uid: user.id, iid: instance.id, k: 'code' }, config.secret, 60);
+    const code = signToken({ uid: user.id, iid: instance.id, k: 'code', jti: crypto.randomUUID() }, config.secret, 60);
     const back = safeReturnPath(req.query.return);
     res.redirect(`${instanceUrl(config, instance.slug)}/__lager/callback?code=${encodeURIComponent(code)}&return=${encodeURIComponent(back)}`);
   });

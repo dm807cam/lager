@@ -2,7 +2,6 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import express from 'express';
 import type { Request, Response } from 'express';
-import { instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
 import { canRead, canWrite, type Level, type Viewer } from '../data/rules.js';
 import type { HubEvent } from '../data/hub.js';
@@ -70,6 +69,8 @@ function requireAccess(ctx: Ctx): void {
 export function createInstanceRouter(core: Core): express.Router {
   const router = express.Router();
   const { config } = core;
+  // Consumed handshake code ids with their expiry (epoch seconds); codes are single-use.
+  const usedCodes = new Map<string, number>();
   const runtime = fs.readFileSync(RUNTIME_FILE);
   const runtimeEtag = `"${crypto.createHash('sha256').update(runtime).digest('base64url').slice(0, 27)}"`;
 
@@ -88,12 +89,20 @@ export function createInstanceRouter(core: Core): express.Router {
 
   router.get('/__lager/callback', (req, res) => {
     const { instance } = ctxOf(res);
-    const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown }>(
+    const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown; jti?: unknown; exp: number }>(
       typeof req.query.code === 'string' ? req.query.code : undefined, config.secret);
-    if (!t || t.k !== 'code' || t.iid !== instance.id || typeof t.uid !== 'string' || !core.users.get(t.uid)) {
+    if (!t || t.k !== 'code' || t.iid !== instance.id || typeof t.uid !== 'string' || typeof t.jti !== 'string'
+      || !core.users.get(t.uid)) {
       res.status(400).type('html').send(badCodePage());
       return;
     }
+    const now = Math.floor(Date.now() / 1000);
+    for (const [id, exp] of usedCodes) if (exp <= now) usedCodes.delete(id);
+    if (usedCodes.has(t.jti)) {
+      res.status(400).type('html').send(badCodePage());
+      return;
+    }
+    usedCodes.set(t.jti, t.exp);
     setCookie(res, config, INSTANCE_COOKIE, signToken({ uid: t.uid, iid: instance.id, k: 'inst' }, config.secret, THIRTY_DAYS_SECONDS));
     res.redirect(safeReturnPath(req.query.return));
   });
