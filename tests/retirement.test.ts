@@ -10,8 +10,11 @@ import { manageExtension } from '../src/http/manage.js';
 import { signToken } from '../src/http/tokens.js';
 import { LagerError } from '../src/errors.js';
 import type { User } from '../src/platform/users.js';
+import { esc } from '../src/http/pages.js';
+import { t, type MessageKey } from '../src/i18n/index.js';
 import { makeHarness, type Harness } from './support/http.js';
 
+const en = (key: MessageKey): string => esc(t('en', key));
 let h: Harness;
 afterEach(() => {
   vi.useRealTimers();
@@ -74,7 +77,7 @@ describe('retired slugs', () => {
     expect(h.core.apps.deploy({ slug: 'gone', html, userId: p.id }).createdApp).toBe(true);
   });
 
-  it('the self-service route refuses a retired slug with a German notice, the former owner may reuse it', async () => {
+  it('the self-service route refuses a retired slug with a notice, the former owner may reuse it', async () => {
     const { p, q, u } = world();
     const { app, instances } = h.core.apps.deploy({ slug: 'notes', html, userId: p.id });
     h.core.apps.setSelfInstances(app.id, 'users', p.id);
@@ -91,12 +94,34 @@ describe('retired slugs', () => {
     expect(refused.status).toBe(302);
     // q is a publisher but no collaborator, so the self-service path applies.
     const page = await request(h.app).get(refused.headers.location as string).set('Host', h.host).set('Cookie', qc);
-    expect(page.text).toContain('Dieser Name wurde bereits verwendet und ist gesperrt.');
+    expect(page.text).toContain(en('notice.slugRetired'));
     expect(h.core.apps.getInstanceBySlug('mine')).toBeNull();
 
     const again = await post(uc, u, '/ui/apps/notes/instances', { slug: 'mine' });
     expect(again.status).toBe(302);
     expect(h.core.apps.getInstanceBySlug('mine')?.ownerId).toBe(u.id);
+  });
+});
+
+describe('notices are chosen by reason and shown in the viewer\'s language', () => {
+  it('a French-speaking user who reuses a retired slug reads the French notice', async () => {
+    const { p, q, u } = world();
+    const { app, instances } = h.core.apps.deploy({ slug: 'notes', html, userId: p.id });
+    h.core.apps.setSelfInstances(app.id, 'users', p.id);
+    h.core.apps.createInstance({ appId: app.id, slug: 'mine', ownerId: u.id });
+    h.core.apps.deleteInstance(h.core.apps.getInstanceBySlug('mine')!.id, u.id);
+    h.core.apps.deleteInstance(instances[0].id, p.id);
+    h.core.apps.createInstance({ appId: app.id, slug: 'keep', ownerId: p.id });
+    const qc = await h.login(q.email, 'password-123');
+    const refused = await post(qc, q, '/ui/apps/notes/instances', { slug: 'mine' });
+    expect(refused.status).toBe(302);
+    const page = await request(h.app).get(refused.headers.location as string).set('Host', h.host).set('Cookie', qc).set('Accept-Language', 'fr-FR,fr;q=0.9');
+    expect(page.text).toContain('<html lang="fr"');
+    expect(page.text).toContain(esc(t('fr', 'notice.slugRetired')));
+    expect(page.text).not.toContain(esc(t('en', 'notice.slugRetired')));
+    // The signed flash carries only the notice key; the same link read in German shows the German notice.
+    const german = await request(h.app).get(refused.headers.location as string).set('Host', h.host).set('Cookie', `${qc}; lager_lang=de`);
+    expect(german.text).toContain(esc(t('de', 'notice.slugRetired')));
   });
 });
 
@@ -137,7 +162,7 @@ describe('disabled instances', () => {
     h.core.apps.setInstanceDisabled(h.core.apps.getInstanceBySlug('notes')!.id, true);
     const page = await request(h.app).get('/instances/notes').set('Host', h.host).set('Cookie', pc);
     expect(page.status).toBe(200);
-    expect(page.text).toContain('deaktiviert');
+    expect(page.text).toContain(en('instance.disabledNotice'));
     expect(page.text).toContain('action="/ui/instances/notes/delete"');
     expect(page.text).not.toContain('/visibility');
     expect((await request(h.app).get('/instances/notes').set('Host', h.host).set('Cookie', uc)).status).toBe(403);

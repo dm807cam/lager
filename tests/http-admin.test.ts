@@ -6,8 +6,10 @@ import { csrfToken } from '../src/http/session.js';
 import { MemoryMailer } from '../src/platform/mail.js';
 import type { User } from '../src/platform/users.js';
 import { makeHarness, type Harness } from './support/http.js';
-import { t } from '../src/i18n/index.js';
+import { esc } from '../src/http/pages.js';
+import { t, type MessageKey } from '../src/i18n/index.js';
 
+const en = (key: MessageKey): string => esc(t('en', key));
 let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
 
@@ -40,7 +42,7 @@ describe('administration area', () => {
     const { user, cookie } = await s.makeUser('nina@x.y');
     const res = await s.get('/admin/users', cookie);
     expect(res.status).toBe(403);
-    expect(res.text).toContain('Kein Zugriff');
+    expect(res.text).toContain(en('error.forbidden.title'));
     const before = s.hh.core.users.get(user.id)!.role;
     const p = await s.post(`/admin/users/${user.id}/role`, cookie, { role: 'admin' }, user);
     expect(p.status).toBe(403);
@@ -48,7 +50,7 @@ describe('administration area', () => {
     expect((await s.post('/admin/settings', cookie, { registration: 'open', maxInstances: '5' }, user)).status).toBe(403);
   });
 
-  it('shows the Verwaltung link to administrators only', async () => {
+  it('shows the administration link to administrators only', async () => {
     const s = setup();
     const admin = await s.hh.login();
     expect((await s.get('/', admin)).text).toContain('href="/admin"');
@@ -84,10 +86,10 @@ describe('administration area', () => {
     const admin = await s.hh.login();
     const res = await s.post(`/admin/users/${s.hh.adminId}/role`, admin, { role: 'user' });
     expect(res.status).toBe(409);
-    expect(res.text).toContain('Der letzte aktive Administrator kann nicht herabgestuft oder deaktiviert werden.');
+    expect(res.text).toContain(en('admin.users.lastAdmin'));
     expect(s.hh.core.users.get(s.hh.adminId)!.role).toBe('admin');
     const res2 = await s.post(`/admin/users/${s.hh.adminId}/disabled`, admin, { disabled: '1' });
-    expect(res2.text).toContain('Der letzte aktive Administrator kann nicht herabgestuft oder deaktiviert werden.');
+    expect(res2.text).toContain(en('admin.users.lastAdmin'));
     expect(s.hh.core.users.get(s.hh.adminId)!.disabled).toBe(false);
   });
 
@@ -98,10 +100,10 @@ describe('administration area', () => {
     expect((await s.get('/', cookie)).status).toBe(200);
     expect((await s.post(`/admin/users/${user.id}/disabled`, admin, { disabled: '1' })).status).toBe(302);
     expect((await s.get('/', cookie)).status).toBe(302);
-    expect((await s.get('/admin/users', admin)).text).toContain('deaktiviert');
+    expect((await s.get('/admin/users', admin)).text).toContain(en('common.disabled'));
     await s.post(`/admin/users/${user.id}/disabled`, admin, { disabled: '0' });
     expect(s.hh.core.users.get(user.id)!.disabled).toBe(false);
-    expect((await s.get('/admin/users', admin)).text).not.toContain('deaktiviert</td>');
+    expect((await s.get('/admin/users', admin)).text).not.toContain(`${en('common.disabled')}</td>`);
     expect((await s.post(`/admin/users/${user.id}/disabled`, admin, { disabled: 'x' })).status).toBe(400);
   });
 
@@ -129,7 +131,7 @@ describe('administration area', () => {
     const res = await s.post('/admin/invites', admin, { email: 'new@x.y', role: 'publisher' });
     expect(res.status).toBe(200);
     expect(mailer.sent).toHaveLength(1);
-    expect(res.text).toContain('Die Einladung wurde per E-Mail gesendet.');
+    expect(res.text).toContain(en('admin.invites.mailed'));
     const link = /https?:\/\/[^\s"<]+\/register\?invite=[^\s"<]+/.exec(res.text)![0];
     const u = new URL(link);
     const reg = await request(s.hh.app).post('/register').set('Host', s.hh.host).type('form')
@@ -138,12 +140,12 @@ describe('administration area', () => {
     expect(s.hh.core.users.getByEmail('new@x.y')!.role).toBe('publisher');
 
     const noMail = await s.post('/admin/invites', admin, { role: 'user' });
-    expect(noMail.text).toContain('Es wurde keine E-Mail gesendet.');
+    expect(noMail.text).toContain(en('admin.invites.notMailed'));
     const list = await s.get('/admin/invites', admin);
     expect(list.text).not.toContain('invite=');
     const open = s.hh.core.accounts.listInvites().filter((i) => !i.used);
     expect(open).toHaveLength(1);
-    expect(list.text).toContain('Widerrufen');
+    expect(list.text).toContain(en('common.revoke'));
     const rev = await s.post(`/admin/invites/${open[0].id}/revoke`, admin, {});
     expect(rev.status).toBe(302);
     expect(s.hh.core.accounts.listInvites().filter((i) => !i.used)).toHaveLength(0);
@@ -162,9 +164,9 @@ describe('administration area', () => {
     const add = await s.post(`/admin/groups/${group.id}/members`, admin, { email: ' nina@x.y ' });
     expect(add.status).toBe(302);
     expect(s.hh.core.groups.members(group.id).map((m) => m.id)).toEqual([user.id]);
-    expect((await s.get(`/admin/groups/${group.id}`, admin)).text).toContain('Entfernen');
+    expect((await s.get(`/admin/groups/${group.id}`, admin)).text).toContain(en('common.remove'));
     const unknown = await s.post(`/admin/groups/${group.id}/members`, admin, { email: 'who@x.y' });
-    expect(unknown.text).toContain('Kein Konto mit dieser E-Mail-Adresse.');
+    expect(unknown.text).toContain(en('notice.noAccount'));
     await s.post(`/admin/groups/${group.id}/members/${user.id}/remove`, admin, {});
     expect(s.hh.core.groups.members(group.id)).toHaveLength(0);
     expect((await s.post(`/admin/groups/${group.id}/delete`, admin, {})).headers.location).toBe('/admin/groups');
@@ -176,8 +178,8 @@ describe('administration area', () => {
     const s = setup();
     const admin = await s.hh.login();
     const page = await s.get('/admin/settings', admin);
-    expect(page.text).toContain('Nur mit Einladung');
-    expect(page.text).toContain('Geschlossen');
+    expect(page.text).toContain(en('admin.mode.invite'));
+    expect(page.text).toContain(en('admin.mode.closed'));
     expect((await s.post('/admin/settings', admin, { registration: 'closed', maxInstances: '7' })).status).toBe(302);
     expect(s.hh.core.settings.registration).toBe('closed');
     expect(s.hh.core.settings.maxInstancesPerUser).toBe(7);
@@ -189,7 +191,7 @@ describe('administration area', () => {
   it('settings page warns when mail is not configured', async () => {
     const s = setup();
     const page = await s.get('/admin/settings', await s.hh.login());
-    expect(page.text).toContain('Ohne Mailversand werden E-Mail-Adressen nicht bestätigt.');
+    expect(page.text).toContain(en('admin.settings.noMail'));
   });
 
   it('apps overview lists foreign apps and disables an instance', async () => {
@@ -202,13 +204,13 @@ describe('administration area', () => {
     expect(page.status).toBe(200);
     expect(page.text).toContain('pub@x.y');
     expect(page.text).toContain(slug);
-    expect(page.text).toContain('Deaktivieren');
+    expect(page.text).toContain(en('common.deactivate'));
     expect(page.text).not.toContain('secret content');
     expect((await s.post(`/admin/instances/${slug}/disabled`, admin, { disabled: '1' })).headers.location).toBe('/admin/apps');
     const host = `${slug}.apps.localhost:8080`;
     const served = await request(s.hh.app).get('/').set('Host', host);
     expect(served.text).toContain(t('en', 'error.disabled.text'));
-    expect((await s.get('/admin/apps', admin)).text).toContain('Aktivieren');
+    expect((await s.get('/admin/apps', admin)).text).toContain(en('common.activate'));
     await s.post(`/admin/instances/${slug}/disabled`, admin, { disabled: '0' });
     expect(s.hh.core.apps.getInstanceBySlug(slug)!.disabled).toBe(false);
     expect((await s.post('/admin/instances/nope/disabled', admin, { disabled: '1' })).status).toBe(404);

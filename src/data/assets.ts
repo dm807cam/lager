@@ -94,7 +94,7 @@ export function normalizeAssetType(declared: string | undefined, bytes: Buffer):
     if (!signature(bytes)) throw new AssetError('unsupported_type', 'The content does not match the stated file type.');
   } else if (type === 'image/svg+xml') {
     if (!isUtf8(bytes) || firstChar(bytes) !== '<' || !/<svg[\s>/]/i.test(bytes.toString('utf8'))) {
-      throw new AssetError('unsupported_type', 'Der Inhalt ist kein SVG-Dokument.');
+      throw new AssetError('unsupported_type', 'The content is not an SVG document.');
     }
   } else {
     if (!isUtf8(bytes)) throw new AssetError('invalid_request', 'Text files must be UTF-8.');

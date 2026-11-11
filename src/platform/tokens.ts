@@ -8,7 +8,7 @@ export interface ApiTokenInfo { id: string; name: string; userId: string; create
 interface TokenRow { id: string; user_id: string; name: string; token_hash: string; created_at: string; last_used_at: string | null }
 
 const PREFIX = 'lgr_';
-const MAX_NAME = 100;
+export const MAX_NAME = 100;
 
 const toInfo = (r: TokenRow): ApiTokenInfo => ({
   id: r.id, name: r.name, userId: r.user_id, createdAt: r.created_at, lastUsedAt: r.last_used_at,
@@ -33,7 +33,7 @@ export class ApiTokens {
   create(userId: string, name: string): { token: string; info: ApiTokenInfo } {
     const trimmed = typeof name === 'string' ? name.trim() : '';
     if (!trimmed || trimmed.length > MAX_NAME) {
-      throw new LagerError('invalid_argument', `Token name must be 1 to ${MAX_NAME} characters.`);
+      throw new LagerError('invalid_argument', `Token name must be 1 to ${MAX_NAME} characters.`, 'token_name_invalid');
     }
     if (!this.users.get(userId)) throw new LagerError('not_found', 'User not found.');
     const token = PREFIX + crypto.randomBytes(32).toString('base64url');

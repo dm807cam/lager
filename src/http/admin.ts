@@ -3,87 +3,76 @@ import type { Request, RequestHandler, Response } from 'express';
 import { instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
-import type { Locale } from '../i18n/index.js';
+import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { localeOf, requestLocale } from './locale.js';
 import type { CustomDomainsMode, RegistrationMode } from '../platform/settings.js';
 import type { Role, User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
-import { esc, forbiddenAdminPage, optionList, page, signedInHeader } from './pages.js';
+import { backLink, dateText, esc, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, signedInHeader, sizeText, visibilityLabel, type Option } from './pages.js';
 import { csrfToken, csrfValid } from './session.js';
 
-const ROLE_LABELS: Array<[Role, string]> = [['admin', 'Administrator'], ['publisher', 'Publisher'], ['user', 'Nutzer']];
-const DOMAIN_LABELS: Array<[CustomDomainsMode, string]> = [['admins', 'Nur Administratoren'], ['publishers', 'Auch Publisher']];
-const MODE_LABELS: Array<[RegistrationMode, string]> = [['open', 'Offen'], ['invite', 'Nur mit Einladung'], ['closed', 'Geschlossen']];
-const SECTIONS: Array<[string, string]> = [['users', 'Nutzer'], ['invites', 'Einladungen'], ['groups', 'Gruppen'], ['settings', 'Einstellungen'], ['apps', 'Apps']];
-const LAST_ADMIN = 'Der letzte aktive Administrator kann nicht herabgestuft oder deaktiviert werden.';
-const NO_ACCOUNT = 'Kein Konto mit dieser E-Mail-Adresse.';
+const ROLES: readonly Role[] = ['admin', 'publisher', 'user'];
+const ROLE_KEYS: Record<Role, MessageKey> = { admin: 'role.admin', publisher: 'role.publisher', user: 'role.user' };
+const DOMAIN_KEYS: Record<CustomDomainsMode, MessageKey> = { admins: 'admin.domains.admins', publishers: 'admin.domains.publishers' };
+const MODE_KEYS: Record<RegistrationMode, MessageKey> = { open: 'admin.mode.open', invite: 'admin.mode.invite', closed: 'admin.mode.closed' };
+const SECTIONS: Array<[Section, MessageKey]> = [['users', 'admin.section.users'], ['invites', 'admin.section.invites'], ['groups', 'admin.section.groups'], ['settings', 'admin.section.settings'], ['apps', 'admin.section.apps']];
 const MAX_FIELD = 300;
 
 type Section = 'users' | 'invites' | 'groups' | 'settings' | 'apps';
 /** A note above the section; `once` carries a one-time link and is never stored. */
 interface Msg { ok?: string; error?: string; once?: { title: string; link: string } }
 
-const roleLabel = (role: Role): string => ROLE_LABELS.find(([r]) => r === role)?.[1] ?? role;
-const formatDate = (iso: string): string => esc(iso.slice(0, 16).replace('T', ' ') + ' UTC');
-const formatSize = (bytes: number): string => (bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1024 / 1024).toFixed(1)} MiB`);
+const roleLabel = (locale: Locale, role: Role): string => t(locale, ROLE_KEYS[role]);
+const options = <K extends string>(locale: Locale, keys: Record<K, MessageKey>): Option[] => (Object.keys(keys) as K[]).map((k) => [k, t(locale, keys[k])]);
+const roleOptions = (locale: Locale, selected: Role): string => optionList(ROLES.map((r) => [r, roleLabel(locale, r)] as const), selected);
 
-function form(action: string, csrf: string, fields: string, button: string, quiet = false): string {
-  return `<form method="post" action="${esc(action)}"><input type="hidden" name="csrf" value="${esc(csrf)}">${fields}<button type="submit"${quiet ? ' class="quiet"' : ''}>${button}</button></form>`;
-}
-
-const hiddenField = (name: string, value: string): string => `<input type="hidden" name="${esc(name)}" value="${esc(value)}">`;
-
-function roleOptions(selected: Role): string {
-  return ROLE_LABELS.map(([r, label]) => `<option value="${r}"${r === selected ? ' selected' : ''}>${label}</option>`).join('');
-}
-
-function shell(core: Core, locale: Locale, admin: User, active: Section, title: string, body: string, msg: Msg = {}): string {
+function shell(core: Core, locale: Locale, admin: User, active: Section, title: string, body: string, msg: Msg = {}, returnPath = `/admin/${active}`): string {
   const csrf = csrfToken(core, admin);
-  const nav = `<nav class="tabs" aria-label="Verwaltung">${SECTIONS.map(([id, label]) =>
-    `<a href="/admin/${id}"${id === active ? ' aria-current="page" class="current"' : ''}>${label}</a>`).join('')}</nav>`;
+  const nav = `<nav class="tabs" aria-label="${esc(t(locale, 'nav.admin'))}">${SECTIONS.map(([id, key]) =>
+    `<a href="/admin/${id}"${id === active ? ' aria-current="page" class="current"' : ''}>${esc(t(locale, key))}</a>`).join('')}</nav>`;
   const once = msg.once
-    ? `<div class="card" role="status"><strong>${esc(msg.once.title)}</strong><span class="token mono">${esc(msg.once.link)}</span><span class="err">Kopiere den Link jetzt: Er wird nur dieses eine Mal angezeigt.</span></div>` : '';
-  return page(locale, `Verwaltung: ${title}`, `<h1>Verwaltung</h1>${nav}
+    ? `<div class="card" role="status"><strong>${esc(msg.once.title)}</strong><span class="token mono">${esc(msg.once.link)}</span><span class="err">${esc(t(locale, 'admin.oneTime'))}</span></div>` : '';
+  return page(locale, t(locale, 'admin.pageTitle', { section: title }), `<h1>${esc(t(locale, 'nav.admin'))}</h1>${nav}
 ${msg.ok ? `<p class="ok" role="status">${esc(msg.ok)}</p>` : ''}${msg.error ? `<p class="err" role="alert">${esc(msg.error)}</p>` : ''}${once}
-<h2>${esc(title)}</h2>${body}`, { wide: true, headerExtra: signedInHeader(locale, admin.email, csrf, true) });
+<h2>${esc(title)}</h2>${body}`, { wide: true, returnPath, headerExtra: signedInHeader(locale, admin.email, csrf, true) });
 }
 
 function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const rows = core.users.list().map((u) => {
     const base = `/admin/users/${encodeURIComponent(u.id)}`;
-    const status = u.disabled ? 'deaktiviert' : u.verified ? 'aktiv' : 'unbestätigt';
+    const status = t(locale, u.disabled ? 'common.disabled' : u.verified ? 'common.active' : 'common.unverified');
     return `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td>
-<td><form method="post" action="${base}/role" class="inline"><input type="hidden" name="csrf" value="${esc(csrf)}"><select name="role" aria-label="Rolle von ${esc(u.email)}">${roleOptions(u.role)}</select><button type="submit" class="quiet">Speichern</button></form></td>
-<td>${status}</td><td>${formatDate(u.createdAt)}</td>
-<td><div class="row">${form(`${base}/disabled`, csrf, hiddenField('disabled', u.disabled ? '0' : '1'), u.disabled ? 'Aktivieren' : 'Deaktivieren', true)}
-${form(`${base}/reset-link`, csrf, '', 'Rücksetz-Link', true)}</div></td></tr>`;
+<td><form method="post" action="${base}/role" class="inline">${hiddenField('csrf', csrf)}<select name="role" aria-label="${esc(t(locale, 'admin.users.roleOf', { email: u.email }))}">${roleOptions(locale, u.role)}</select><button type="submit" class="quiet">${esc(t(locale, 'common.save'))}</button></form></td>
+<td>${esc(status)}</td><td>${dateText(locale, u.createdAt)}</td>
+<td><div class="row">${form(`${base}/disabled`, csrf, hiddenField('disabled', u.disabled ? '0' : '1'), esc(t(locale, u.disabled ? 'common.activate' : 'common.deactivate')), true)}
+${form(`${base}/reset-link`, csrf, '', esc(t(locale, 'admin.users.resetLink')), true)}</div></td></tr>`;
   }).join('');
-  return shell(core, locale, admin, 'users', 'Nutzer', `<div class="scroll"><table><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th>Erstellt</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`, msg);
+  return shell(core, locale, admin, 'users', t(locale, 'admin.section.users'), `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.name'))}</th><th>${esc(t(locale, 'common.email'))}</th><th>${esc(t(locale, 'admin.users.role'))}</th><th>${esc(t(locale, 'common.status'))}</th><th>${esc(t(locale, 'common.created'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`, msg);
 }
 
 function invitesSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const now = new Date().toISOString();
   const open = core.accounts.listInvites().filter((i) => !i.used && i.expiresAt > now);
-  const rows = open.map((i) => `<tr><td>${i.email ? esc(i.email) : '<span class="muted">beliebig</span>'}</td><td>${esc(roleLabel(i.role))}</td>
-<td>${formatDate(i.createdAt)}</td><td>${formatDate(i.expiresAt)}</td>
-<td>${form(`/admin/invites/${encodeURIComponent(i.id)}/revoke`, csrf, '', 'Widerrufen', true)}</td></tr>`).join('');
+  const rows = open.map((i) => `<tr><td>${i.email ? esc(i.email) : `<span class="muted">${esc(t(locale, 'common.any'))}</span>`}</td><td>${esc(roleLabel(locale, i.role))}</td>
+<td>${dateText(locale, i.createdAt)}</td><td>${dateText(locale, i.expiresAt)}</td>
+<td>${form(`/admin/invites/${encodeURIComponent(i.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), true)}</td></tr>`).join('');
   const body = `<div class="card">${form('/admin/invites', csrf,
-    `<label for="invite-email">E-Mail (optional)</label><input id="invite-email" name="email" type="email" maxlength="254" autocomplete="off">
-<label for="invite-role">Rolle</label><select id="invite-role" name="role">${roleOptions('user')}</select>`, 'Einladung erstellen')}</div>
-${open.length ? `<div class="scroll"><table><thead><tr><th>E-Mail</th><th>Rolle</th><th>Erstellt</th><th>Gültig bis</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
-    : '<p class="muted">Keine offenen Einladungen.</p>'}`;
-  return shell(core, locale, admin, 'invites', 'Einladungen', body, msg);
+    `<label for="invite-email">${esc(t(locale, 'admin.invites.email'))}</label><input id="invite-email" name="email" type="email" maxlength="254" autocomplete="off">
+<label for="invite-role">${esc(t(locale, 'admin.invites.role'))}</label><select id="invite-role" name="role">${roleOptions(locale, 'user')}</select>`, esc(t(locale, 'admin.invites.create')))}</div>
+${open.length ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.email'))}</th><th>${esc(t(locale, 'admin.invites.role'))}</th><th>${esc(t(locale, 'common.created'))}</th><th>${esc(t(locale, 'admin.invites.validUntil'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<p class="muted">${esc(t(locale, 'admin.invites.none'))}</p>`}`;
+  return shell(core, locale, admin, 'invites', t(locale, 'admin.section.invites'), body, msg);
 }
 
 function groupsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const groups = core.groups.list();
   const rows = groups.map((g) => `<tr><td><a href="/admin/groups/${encodeURIComponent(g.id)}">${esc(g.name)}</a></td><td>${g.memberCount}</td></tr>`).join('');
-  const body = `${groups.length ? `<div class="scroll"><table><thead><tr><th>Name</th><th>Mitglieder</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Noch keine Gruppen.</p>'}
-<div class="card">${form('/admin/groups', csrf, '<label for="group-name">Name der neuen Gruppe</label><input id="group-name" name="name" required maxlength="60">', 'Gruppe erstellen')}</div>`;
-  return shell(core, locale, admin, 'groups', 'Gruppen', body, msg);
+  const body = `${groups.length ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.name'))}</th><th>${esc(t(locale, 'admin.groups.members'))}</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${esc(t(locale, 'admin.groups.none'))}</p>`}
+<div class="card">${form('/admin/groups', csrf, `<label for="group-name">${esc(t(locale, 'admin.groups.newName'))}</label><input id="group-name" name="name" required maxlength="60">`, esc(t(locale, 'admin.groups.create')))}</div>`;
+  return shell(core, locale, admin, 'groups', t(locale, 'admin.section.groups'), body, msg);
 }
 
 function groupPage(core: Core, locale: Locale, admin: User, groupId: string, msg?: Msg): string | null {
@@ -93,25 +82,24 @@ function groupPage(core: Core, locale: Locale, admin: User, groupId: string, msg
   const base = `/admin/groups/${encodeURIComponent(group.id)}`;
   const members = core.groups.members(group.id);
   const rows = members.map((m) => `<tr><td>${esc(m.name)}</td><td>${esc(m.email)}</td>
-<td>${form(`${base}/members/${encodeURIComponent(m.id)}/remove`, csrf, '', 'Entfernen', true)}</td></tr>`).join('');
-  const body = `<p><a href="/admin/groups">Alle Gruppen</a></p>
-<div class="card">${form(`${base}/rename`, csrf, `<label for="group-name">Name</label><input id="group-name" name="name" required maxlength="60" value="${esc(group.name)}">`, 'Umbenennen')}</div>
-<h3>Mitglieder</h3>
-${members.length ? `<div class="scroll"><table><thead><tr><th>Name</th><th>E-Mail</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Keine Mitglieder.</p>'}
-<div class="card">${form(`${base}/members`, csrf, '<label for="member-email">E-Mail des Kontos</label><input id="member-email" name="email" type="email" required maxlength="254">', 'Hinzufügen')}</div>
-${form(`${base}/delete`, csrf, '', 'Gruppe löschen', true)}`;
-  return shell(core, locale, admin, 'groups', `Gruppe ${group.name}`, body, msg);
+<td>${form(`${base}/members/${encodeURIComponent(m.id)}/remove`, csrf, '', esc(t(locale, 'common.remove')), true)}</td></tr>`).join('');
+  const body = `<p><a href="/admin/groups">${esc(t(locale, 'admin.groups.all'))}</a></p>
+<div class="card">${form(`${base}/rename`, csrf, `<label for="group-name">${esc(t(locale, 'common.name'))}</label><input id="group-name" name="name" required maxlength="60" value="${esc(group.name)}">`, esc(t(locale, 'common.rename')))}</div>
+<h3>${esc(t(locale, 'admin.groups.members'))}</h3>
+${members.length ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.name'))}</th><th>${esc(t(locale, 'common.email'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${esc(t(locale, 'admin.groups.noMembers'))}</p>`}
+<div class="card">${form(`${base}/members`, csrf, `<label for="member-email">${esc(t(locale, 'admin.groups.memberEmail'))}</label><input id="member-email" name="email" type="email" required maxlength="254">`, esc(t(locale, 'common.add')))}</div>
+${form(`${base}/delete`, csrf, '', esc(t(locale, 'admin.groups.delete')), true)}`;
+  return shell(core, locale, admin, 'groups', t(locale, 'admin.groups.pageTitle', { name: group.name }), body, msg, base);
 }
 
 function settingsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
-  const options = MODE_LABELS.map(([m, label]) => `<option value="${m}"${m === core.settings.registration ? ' selected' : ''}>${label}</option>`).join('');
   const body = `<div class="card">${form('/admin/settings', csrf,
-    `<label for="registration">Registrierung</label><select id="registration" name="registration">${options}</select>
-${core.mailer.enabled ? '' : '<p class="muted">Ohne Mailversand werden E-Mail-Adressen nicht bestätigt.</p>'}
-<label for="max-instances">Maximale Instanzen pro Nutzer</label><input id="max-instances" name="maxInstances" type="number" min="1" max="1000" step="1" required value="${core.settings.maxInstancesPerUser}">
-<label for="custom-domains">Eigene Domains</label><select id="custom-domains" name="customDomains">${optionList(DOMAIN_LABELS, core.settings.customDomains)}</select>`, 'Speichern')}</div>`;
-  return shell(core, locale, admin, 'settings', 'Einstellungen', body, msg);
+    `<label for="registration">${esc(t(locale, 'admin.settings.registration'))}</label><select id="registration" name="registration">${optionList(options(locale, MODE_KEYS), core.settings.registration)}</select>
+${core.mailer.enabled ? '' : `<p class="muted">${esc(t(locale, 'admin.settings.noMail'))}</p>`}
+<label for="max-instances">${esc(t(locale, 'admin.settings.maxInstances'))}</label><input id="max-instances" name="maxInstances" type="number" min="1" max="1000" step="1" required value="${core.settings.maxInstancesPerUser}">
+<label for="custom-domains">${esc(t(locale, 'admin.settings.customDomains'))}</label><select id="custom-domains" name="customDomains">${optionList(options(locale, DOMAIN_KEYS), core.settings.customDomains)}</select>`, esc(t(locale, 'common.save')))}</div>`;
+  return shell(core, locale, admin, 'settings', t(locale, 'admin.section.settings'), body, msg);
 }
 
 function appsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
@@ -120,15 +108,14 @@ function appsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string
   const html = core.apps.listAllApps().map((app) => {
     const rows = core.apps.listInstances(app.id).map((i) => {
       const url = instanceUrl(core.config, i.slug);
-      const visibility = i.visibility === 'private' ? 'Privat' : i.visibility === 'users' ? 'Alle Angemeldeten' : 'Öffentlich';
-      return `<tr><td><a href="${esc(url)}">${esc(i.slug)}</a></td><td>${esc(emailOf.get(i.ownerId) ?? '–')}</td><td>v${i.activeVersion}</td><td>${visibility}</td>
-<td>${formatSize(core.data.usage(i.id))}</td><td>${i.disabled ? '<span class="err">deaktiviert</span>' : 'aktiv'}</td>
-<td>${form(`/admin/instances/${encodeURIComponent(i.slug)}/disabled`, csrf, hiddenField('disabled', i.disabled ? '0' : '1'), i.disabled ? 'Aktivieren' : 'Deaktivieren', true)}</td></tr>`;
+      return `<tr><td><a href="${esc(url)}">${esc(i.slug)}</a></td><td>${esc(emailOf.get(i.ownerId) ?? '–')}</td><td>v${i.activeVersion}</td><td>${esc(visibilityLabel(locale, i.visibility))}</td>
+<td>${sizeText(locale, core.data.usage(i.id))}</td><td>${i.disabled ? `<span class="err">${esc(t(locale, 'common.disabled'))}</span>` : esc(t(locale, 'common.active'))}</td>
+<td>${form(`/admin/instances/${encodeURIComponent(i.slug)}/disabled`, csrf, hiddenField('disabled', i.disabled ? '0' : '1'), esc(t(locale, i.disabled ? 'common.activate' : 'common.deactivate')), true)}</td></tr>`;
     }).join('');
     return `<section><h3>${esc(app.title)} <span class="muted mono">${esc(app.slug)}</span> <span class="muted">· ${esc(emailOf.get(app.ownerId) ?? '–')}</span></h3>
-${rows ? `<div class="scroll"><table><thead><tr><th>Instanz</th><th>Besitzer</th><th>Version</th><th>Sichtbarkeit</th><th>Daten</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Keine Instanzen.</p>'}</section>`;
+${rows ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.instance'))}</th><th>${esc(t(locale, 'common.owner'))}</th><th>${esc(t(locale, 'common.version'))}</th><th>${esc(t(locale, 'common.visibility'))}</th><th>${esc(t(locale, 'admin.apps.data'))}</th><th>${esc(t(locale, 'common.status'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${esc(t(locale, 'app.noInstances'))}</p>`}</section>`;
   }).join('');
-  return shell(core, locale, admin, 'apps', 'Apps', html || '<p class="muted">Noch keine Apps.</p>', msg);
+  return shell(core, locale, admin, 'apps', t(locale, 'admin.section.apps'), html || `<p class="muted">${esc(t(locale, 'admin.apps.none'))}</p>`, msg);
 }
 
 /** Platform administrators only: no session goes to /login, any other role gets a 403 page. */
@@ -168,7 +155,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     async (req, res, next) => {
       const user = adminOf(res);
       if (!csrfValid(core, user, field(req, 'csrf', 2000))) {
-        send(res, 403, page(localeOf(res), 'Fehler', '<h1>Das hat nicht geklappt</h1><p class="err">Die Sitzung ist abgelaufen. Bitte lade die Seite neu und versuche es erneut.</p><p><a href="/admin">Zurück zur Verwaltung</a></p>'));
+        send(res, 403, formErrorPage(localeOf(res), 'error.sessionExpired', backLink(localeOf(res), '/admin', t(localeOf(res), 'admin.back'))));
         return;
       }
       try {
@@ -178,12 +165,13 @@ export const adminExtension: PlatformExtension = (router, core) => {
       }
     },
   ];
-  /** Domain error in an action: render `view` again with a German message, status from the error code. */
-  const failWith = (res: Response, e: unknown, view: (msg: Msg) => string | null, messages: Partial<Record<string, string>> = {}): void => {
+  /** Domain error in an action: render `view` again with a message in the viewer's language, status from the error code. */
+  const failWith = (res: Response, e: unknown, view: (msg: Msg) => string | null, messages: Partial<Record<string, MessageKey>> = {}): void => {
     if (!(e instanceof LagerError)) throw e;
     const status = e.code === 'not_found' ? 404 : e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400;
-    const error = messages[e.code] ?? 'Die Eingabe ist ungültig.';
-    send(res, status, view({ error }) ?? page(localeOf(res), 'Nicht gefunden', '<h1>Nicht gefunden</h1><p>Seite nicht gefunden.</p><p><a href="/admin">Zurück zur Verwaltung</a></p>'));
+    const locale = localeOf(res);
+    const error = t(locale, messages[e.code] ?? 'validation.generic');
+    send(res, status, view({ error }) ?? missingPage(locale, 'error.notFound.text', backLink(locale, '/admin', t(locale, 'admin.back'))));
   };
 
   const showUsers = (res: Response): void => send(res, 200, usersSection(core, localeOf(res), adminOf(res)));
@@ -193,7 +181,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
   router.get('/admin/groups', noStore, admin, (_req, res) => { send(res, 200, groupsSection(core, localeOf(res), adminOf(res))); });
   router.get('/admin/groups/:id', noStore, admin, (req, res) => {
     const html = groupPage(core, localeOf(res), adminOf(res), param(req, 'id'));
-    if (html === null) send(res, 404, page(localeOf(res), 'Nicht gefunden', '<h1>Nicht gefunden</h1><p>Diese Gruppe gibt es nicht.</p><p><a href="/admin/groups">Alle Gruppen</a></p>'));
+    if (html === null) send(res, 404, missingPage(localeOf(res), 'admin.groups.missing', backLink(localeOf(res), '/admin/groups', t(localeOf(res), 'admin.groups.all'))));
     else send(res, 200, html);
   });
   router.get('/admin/settings', noStore, admin, (_req, res) => { send(res, 200, settingsSection(core, localeOf(res), adminOf(res))); });
@@ -201,7 +189,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
 
   // --- users ---
 
-  const userMessages = { conflict: LAST_ADMIN, not_found: 'Nutzer nicht gefunden.', invalid_argument: 'Ungültige Eingabe.' };
+  const userMessages = { conflict: 'admin.users.lastAdmin', not_found: 'admin.users.notFound', invalid_argument: 'validation.generic' } as const;
 
   router.post('/admin/users/:id/role', ...action((req, res, user) => {
     try {
@@ -222,7 +210,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
   router.post('/admin/users/:id/reset-link', ...action((req, res, user) => {
     try {
       const link = core.accounts.createResetLink(param(req, 'id'));
-      send(res, 200, usersSection(core, localeOf(res), user, { once: { title: 'Rücksetz-Link (gültig für 1 Stunde)', link } }));
+      send(res, 200, usersSection(core, localeOf(res), user, { once: { title: t(localeOf(res), 'admin.users.resetLinkTitle'), link } }));
     } catch (e) { failWith(res, e, (m) => usersSection(core, localeOf(res), user, m), userMessages); }
   }));
 
@@ -234,15 +222,15 @@ export const adminExtension: PlatformExtension = (router, core) => {
       const { url } = await core.accounts.createInvite({ email: email || undefined, role: field(req, 'role') as Role, createdBy: user.id, locale: localeOf(res) });
       const mailed = email !== '' && core.mailer.enabled;
       send(res, 200, invitesSection(core, localeOf(res), user, {
-        once: { title: 'Einladungslink (gültig für 7 Tage)', link: url },
-        ok: mailed ? 'Die Einladung wurde per E-Mail gesendet.' : 'Es wurde keine E-Mail gesendet.',
+        once: { title: t(localeOf(res), 'admin.invites.linkTitle'), link: url },
+        ok: t(localeOf(res), mailed ? 'admin.invites.mailed' : 'admin.invites.notMailed'),
       }));
-    } catch (e) { failWith(res, e, (m) => invitesSection(core, localeOf(res), user, m), { invalid_argument: 'Bitte gib eine gültige E-Mail-Adresse und eine gültige Rolle an.' }); }
+    } catch (e) { failWith(res, e, (m) => invitesSection(core, localeOf(res), user, m), { invalid_argument: 'admin.invites.invalid' }); }
   }));
 
   router.post('/admin/invites/:id/revoke', ...action((req, res, user) => {
     if (!core.accounts.revokeInvite(param(req, 'id'))) {
-      send(res, 404, invitesSection(core, localeOf(res), user, { error: 'Einladung nicht gefunden.' }));
+      send(res, 404, invitesSection(core, localeOf(res), user, { error: t(localeOf(res), 'admin.invites.notFound') }));
       return;
     }
     res.redirect('/admin/invites');
@@ -250,7 +238,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
 
   // --- groups ---
 
-  const groupMessages = { conflict: 'Eine Gruppe mit diesem Namen gibt es schon.', invalid_argument: 'Der Name muss 1 bis 60 Zeichen lang sein.', not_found: 'Gruppe nicht gefunden.' };
+  const groupMessages = { conflict: 'admin.groups.exists', invalid_argument: 'admin.groups.nameInvalid', not_found: 'admin.groups.notFound' } as const;
 
   router.post('/admin/groups', ...action((req, res, user) => {
     try {
@@ -271,10 +259,10 @@ export const adminExtension: PlatformExtension = (router, core) => {
     const id = param(req, 'id');
     try {
       const member = core.users.getByEmail(field(req, 'email', 254));
-      if (!member) throw new LagerError('not_found', NO_ACCOUNT);
+      if (!member) throw new LagerError('not_found', 'No account with this email address.');
       core.groups.addMember(id, member.id);
       res.redirect(`/admin/groups/${encodeURIComponent(id)}`);
-    } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), { ...groupMessages, not_found: core.groups.get(id) ? NO_ACCOUNT : 'Gruppe nicht gefunden.' }); }
+    } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), { ...groupMessages, not_found: core.groups.get(id) ? 'notice.noAccount' : 'admin.groups.notFound' }); }
   }));
 
   router.post('/admin/groups/:id/members/:userId/remove', ...action((req, res, user) => {
@@ -299,16 +287,16 @@ export const adminExtension: PlatformExtension = (router, core) => {
     try {
       // Validate both before storing either, so a bad limit does not leave a half-applied change.
       const mode = field(req, 'registration') as RegistrationMode;
-      if (!MODE_LABELS.some(([m]) => m === mode)) throw new LagerError('invalid_argument', 'Registration must be open, invite or closed.');
+      if (!Object.hasOwn(MODE_KEYS, mode)) throw new LagerError('invalid_argument', 'Registration must be open, invite or closed.');
       const max = /^\d+$/.test(raw) ? Number(raw) : NaN;
       // A request without the field (older forms) leaves the setting as it is.
       const domains = (req.body as Record<string, unknown> | undefined)?.customDomains === undefined ? core.settings.customDomains : field(req, 'customDomains') as CustomDomainsMode;
-      if (!DOMAIN_LABELS.some(([m]) => m === domains)) throw new LagerError('invalid_argument', 'Custom domains must be admins or publishers.');
+      if (!Object.hasOwn(DOMAIN_KEYS, domains)) throw new LagerError('invalid_argument', 'Custom domains must be admins or publishers.');
       core.settings.setMaxInstancesPerUser(max);
       core.settings.setRegistration(mode);
       core.settings.setCustomDomains(domains);
       res.redirect('/admin/settings');
-    } catch (e) { failWith(res, e, (m) => settingsSection(core, localeOf(res), user, m), { invalid_argument: 'Bitte wähle einen Registrierungsmodus, gib für die Instanzen eine ganze Zahl von 1 bis 1000 an und wähle, wer eigene Domains setzen darf.' }); }
+    } catch (e) { failWith(res, e, (m) => settingsSection(core, localeOf(res), user, m), { invalid_argument: 'admin.settings.invalid' }); }
   }));
 
   // --- instances ---
@@ -321,6 +309,6 @@ export const adminExtension: PlatformExtension = (router, core) => {
       if (value !== '0' && value !== '1') throw new LagerError('invalid_argument', 'disabled must be 0 or 1.');
       core.apps.setInstanceDisabled(instance.id, value === '1');
       res.redirect('/admin/apps');
-    } catch (e) { failWith(res, e, (m) => appsSection(core, localeOf(res), user, m), { not_found: 'Instanz nicht gefunden.' }); }
+    } catch (e) { failWith(res, e, (m) => appsSection(core, localeOf(res), user, m), { not_found: 'admin.instances.notFound' }); }
   }));
 };

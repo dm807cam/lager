@@ -46,7 +46,7 @@ describe('selfPublish', () => {
     const r = core.apps.selfPublish({ instanceId: a.id, html: '<p>voted</p>', baseVersion: 1, userId: pub.id });
     expect(r.version.number).toBe(2);
     expect(r.version.instanceId).toBe(a.id);
-    expect(r.version.note).toBe('selbst gespeichert');
+    expect(r.version.note).toBe('saved by the instance itself');
     expect(r.version.capabilities).toEqual({ artifact: {} });
     expect(r.instance.activeVersion).toBe(2);
     expect(r.instance.autoUpdate).toBe(false);

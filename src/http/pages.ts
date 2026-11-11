@@ -1,4 +1,4 @@
-import { LOCALE_NAMES, LOCALES, t, type Locale } from '../i18n/index.js';
+import { formatDate, formatSize, LOCALE_NAMES, LOCALES, t, type Locale, type MessageKey } from '../i18n/index.js';
 
 export const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -112,9 +112,10 @@ export const badCodePage = (locale: Locale, opts: PageOpts = {}): string =>
 export const sessionExpiredPage = (locale: Locale, back = '/', backLabel = t(locale, 'common.backToOverview')): string =>
   page(locale, t(locale, 'error.failed.title'), `<h1>${esc(t(locale, 'error.failed.title'))}</h1><p class="err">${esc(t(locale, 'error.sessionExpired'))}</p><p><a href="${esc(back)}">${esc(backLabel)}</a></p>`);
 
-// Signed-in area: German until the dashboard, management and administration pages are converted.
-export const forbiddenAdminPage = (locale: Locale): string =>
-  page(locale, 'Kein Zugriff', '<h1>Kein Zugriff</h1><p>Die Verwaltung ist nur für Administratoren zugänglich.</p><p><a href="/">Zurück zur Übersicht</a></p>');
+/** The administration area to anyone who is not an administrator. */
+export const forbiddenAdminPage = (locale: Locale): string => messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.admin'), backLink(locale));
+
+export const backLink = (locale: Locale, href = '/', label = t(locale, 'common.backToOverview')): string => `<p><a href="${esc(href)}">${esc(label)}</a></p>`;
 
 const hidden = (fields: Record<string, string>): string =>
   Object.entries(fields).map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join('\n');
@@ -136,13 +137,20 @@ export const consentInvalidPage = (locale: Locale): string =>
 
 // --- shared pieces of the signed-in pages ---
 
-export const formatDate = (iso: string): string => esc(iso.slice(0, 16).replace('T', ' ') + ' UTC');
-export const formatSize = (bytes: number): string => (bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1024 / 1024).toFixed(1)} MiB`);
+/** Date and time as HTML text in the viewer's format. */
+export const dateText = (locale: Locale, iso: string): string => esc(formatDate(locale, iso));
+export const sizeText = (locale: Locale, bytes: number): string => esc(formatSize(locale, bytes));
 
-export const VISIBILITY_LABELS: ReadonlyArray<readonly [string, string]> = [['private', 'Privat'], ['users', 'Alle Angemeldeten'], ['public', 'Öffentlich']];
-export const LEVEL_LABELS: ReadonlyArray<readonly [string, string]> = [['view', 'Betrachter'], ['interact', 'Mitwirkender'], ['admin', 'Verwalter'], ['owner', 'Besitzer']];
-export const visibilityLabel = (v: string): string => VISIBILITY_LABELS.find(([k]) => k === v)?.[1] ?? v;
-export const levelLabel = (l: string): string => LEVEL_LABELS.find(([k]) => k === l)?.[1] ?? l;
+const VISIBILITY_KEYS: Record<string, MessageKey> = { private: 'visibility.private', users: 'visibility.users', public: 'visibility.public' };
+const LEVEL_KEYS: Record<string, MessageKey> = { view: 'level.view', interact: 'level.interact', admin: 'level.admin', owner: 'level.owner' };
+export type Option = readonly [string, string];
+
+const labelOf = (locale: Locale, keys: Record<string, MessageKey>, value: string): string => (keys[value] ? t(locale, keys[value]) : value);
+export const visibilityLabel = (locale: Locale, v: string): string => labelOf(locale, VISIBILITY_KEYS, v);
+export const levelLabel = (locale: Locale, l: string): string => labelOf(locale, LEVEL_KEYS, l);
+export const visibilityOptions = (locale: Locale): Option[] => Object.keys(VISIBILITY_KEYS).map((v) => [v, visibilityLabel(locale, v)]);
+/** Options for the given access levels, labelled in `locale`. */
+export const levelOptions = (locale: Locale, levels: readonly string[]): Option[] => levels.map((l) => [l, levelLabel(locale, l)]);
 
 export const hiddenField = (name: string, value: string): string => `<input type="hidden" name="${esc(name)}" value="${esc(value)}">`;
 
@@ -152,12 +160,20 @@ export function form(action: string, csrf: string, fields: string, button: strin
 }
 
 /** `<option>` list for a select; `options` are [value, label] pairs. */
-export const optionList = (options: ReadonlyArray<readonly [string, string]>, selected: string): string =>
+export const optionList = (options: ReadonlyArray<Option>, selected: string): string =>
   options.map(([v, label]) => `<option value="${esc(v)}"${v === selected ? ' selected' : ''}>${esc(label)}</option>`).join('');
 
-/** Notice line above a page body. */
-export const noticeHtml = (flash: { ok?: string; error?: string }): string =>
-  (flash.ok ? `<p class="ok" role="status">${esc(flash.ok)}</p>` : '') + (flash.error ? `<p class="err" role="alert">${esc(flash.error)}</p>` : '');
+/** Notice line above a page body; the flash carries catalog keys and is shown in `locale`. */
+export const noticeHtml = (locale: Locale, flash: { ok?: MessageKey; error?: MessageKey }): string =>
+  (flash.ok ? `<p class="ok" role="status">${esc(t(locale, flash.ok))}</p>` : '') + (flash.error ? `<p class="err" role="alert">${esc(t(locale, flash.error))}</p>` : '');
 
 export const forbiddenInstancePage = (locale: Locale): string =>
-  page(locale, 'Kein Zugriff', '<h1>Kein Zugriff</h1><p>Du darfst diese Seite nicht verwalten.</p><p><a href="/">Zurück zur Übersicht</a></p>');
+  messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.instance'), backLink(locale));
+export const forbiddenAppPage = (locale: Locale): string =>
+  messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.app'), backLink(locale));
+/** A page-level "does not exist" with a way back; `what` is a catalog key. */
+export const missingPage = (locale: Locale, what: MessageKey, back = backLink(locale)): string =>
+  messagePage(locale, t(locale, 'error.notFound.title'), t(locale, what), back);
+/** A form post that failed for a reason the viewer should read; `message` is a catalog key. */
+export const formErrorPage = (locale: Locale, message: MessageKey, back = backLink(locale)): string =>
+  page(locale, t(locale, 'error.failed.title'), `<h1>${esc(t(locale, 'error.failed.title'))}</h1><p class="err">${esc(t(locale, message))}</p>${back}`);

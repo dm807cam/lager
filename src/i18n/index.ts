@@ -13,6 +13,10 @@ export type MessageKey = keyof typeof en;
 
 const CATALOGS: Record<Locale, Readonly<Record<string, string>>> = { en, de, fr, es };
 
+export function isMessageKey(value: unknown): value is MessageKey {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(en, value);
+}
+
 export function isLocale(value: unknown): value is Locale {
   return typeof value === 'string' && (LOCALES as readonly string[]).includes(value);
 }
@@ -61,4 +65,17 @@ export function formatDate(locale: Locale, iso: string): string {
   }
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : f.format(date);
+}
+
+const sizeFormatters = new Map<Locale, Intl.NumberFormat>();
+
+/** A byte count as bytes, KiB or MiB, with the decimal separator of `locale`. */
+export function formatSize(locale: Locale, bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  let f = sizeFormatters.get(locale);
+  if (!f) {
+    f = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    sizeFormatters.set(locale, f);
+  }
+  return bytes < 1024 * 1024 ? `${f.format(bytes / 1024)} KiB` : `${f.format(bytes / 1024 / 1024)} MiB`;
 }

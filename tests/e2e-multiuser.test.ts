@@ -12,6 +12,8 @@ import { adminExtension } from '../src/http/admin.js';
 import { authExtension } from '../src/http/auth.js';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { manageExtension } from '../src/http/manage.js';
+import { esc } from '../src/http/pages.js';
+import { t } from '../src/i18n/index.js';
 import { mcpExtension } from '../src/mcp/http.js';
 import { MemoryMailer } from '../src/platform/mail.js';
 
@@ -185,7 +187,7 @@ describe('multi-user end to end', () => {
     const selfOn = await adminPost(pSession, pCsrf, '/ui/apps/notes/self-instances', { mode: 'users' });
     expect(selfOn.status).toBe(302);
     const uCsrf = csrfIn((await home(call, uSession)).body);
-    expect((await home(call, uSession)).body).toContain('Eigene Instanz anlegen');
+    expect((await home(call, uSession)).body).toContain(esc(t('en', 'dash.createOwn')));
     const created = await adminPost(uSession, uCsrf, '/ui/apps/notes/instances', { from: 'home', slug: 'notes-u' });
     expect(created.status).toBe(302);
     const uOwn = await mustOpen(uSession, 'notes-u');

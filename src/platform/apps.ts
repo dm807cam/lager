@@ -40,7 +40,7 @@ export interface AccessChecks {
 }
 
 const MAX_HTML_BYTES = 16 * 1024 * 1024;
-const SELF_PUBLISHED_NOTE = 'selbst gespeichert';
+const SELF_PUBLISHED_NOTE = 'saved by the instance itself';
 /** An instance keeps this many self-published versions; older ones are removed when a newer one is saved. */
 export const MAX_SAVED_VERSIONS = 20;
 const VISIBILITIES: Visibility[] = ['private', 'users', 'public'];

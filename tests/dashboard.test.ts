@@ -3,10 +3,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { manageExtension } from '../src/http/manage.js';
+import { esc } from '../src/http/pages.js';
 import { signToken } from '../src/http/tokens.js';
+import { t, type MessageKey } from '../src/i18n/index.js';
 import type { User } from '../src/platform/users.js';
 import { makeHarness, type Harness } from './support/http.js';
 
+const en = (key: MessageKey): string => esc(t('en', key));
 let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
 
@@ -21,12 +24,12 @@ function addUser(hh: Harness, email: string, role: 'publisher' | 'user' = 'user'
   return hh.core.users.create({ email, name: email.split('@')[0], password: 'password-123', role });
 }
 
-/** Publisher `p` owns app `notes` (title "Notizen") with instance `notes`; plain users `u` and `w`. */
+/** Publisher `p` owns app `notes` (title "Notes") with instance `notes`; plain users `u` and `w`. */
 function scenario(hh: Harness): { p: User; u: User; w: User } {
   const p = addUser(hh, 'p@x.y', 'publisher');
   const u = addUser(hh, 'u@x.y');
   const w = addUser(hh, 'w@x.y');
-  hh.core.apps.deploy({ slug: 'notes', html: '<p>1</p>', title: 'Notizen', userId: p.id });
+  hh.core.apps.deploy({ slug: 'notes', html: '<p>1</p>', title: 'Notes', userId: p.id });
   return { p, u, w };
 }
 const loginAs = (hh: Harness, user: User): Promise<string> => hh.login(user.email, 'password-123');
@@ -60,11 +63,11 @@ describe('home page', () => {
     const { u } = scenario(h);
     const res = await get(h, await loginAs(h, u));
     expect(res.status).toBe(200);
-    expect(res.text).toContain('Übersicht');
-    expect(res.text).toContain('Meine Instanzen');
-    expect(res.text).toContain('Du hast noch keine Instanzen.');
-    for (const text of ['Meine Apps', 'API-Tokens', 'Claude verbinden', '/mcp']) expect(res.text).not.toContain(text);
-    expect(res.text).not.toContain('Verwaltung');
+    expect(res.text).toContain(en('nav.overview'));
+    expect(res.text).toContain(en('dash.ownInstances'));
+    expect(res.text).toContain(en('dash.noInstances'));
+    for (const text of [en('dash.apps'), en('dash.tokens'), en('dash.connect'), '/mcp']) expect(res.text).not.toContain(text);
+    expect(res.text).not.toContain(en('nav.admin'));
   });
 
   it('publisher sees apps, connector and tokens', async () => {
@@ -72,67 +75,67 @@ describe('home page', () => {
     const { p } = scenario(h);
     h.core.apps.deploy({ slug: 'notes', html: '<p>2</p>', userId: p.id });
     const res = await get(h, await loginAs(h, p));
-    expect(res.text).toContain('Meine Apps');
-    expect(res.text).toContain('Notizen');
+    expect(res.text).toContain(en('dash.apps'));
+    expect(res.text).toContain('Notes');
     expect(res.text).toContain('href="/apps/notes"');
     expect(res.text).toContain('v2');
-    expect(res.text).toContain('Claude verbinden');
+    expect(res.text).toContain(en('dash.connect'));
     expect(res.text).toContain('http://lager.localhost:8080/mcp');
-    expect(res.text).toContain('API-Tokens');
-    expect(res.text).toContain('Meine Instanzen');
+    expect(res.text).toContain(en('dash.tokens'));
+    expect(res.text).toContain(en('dash.ownInstances'));
     expect(res.text).toContain('href="http://notes.apps.localhost:8080"');
     expect(res.text).toContain('href="/instances/notes"');
-    expect(res.text).toContain('Privat');
+    expect(res.text).toContain(en('visibility.private'));
   });
 
-  it('administrators see the same sections and the Verwaltung link', async () => {
+  it('administrators see the same sections and the Administration link', async () => {
     const h = setup();
     const res = await get(h, await h.login());
-    expect(res.text).toContain('Meine Apps');
-    expect(res.text).toContain('Claude verbinden');
+    expect(res.text).toContain(en('dash.apps'));
+    expect(res.text).toContain(en('dash.connect'));
     expect(res.text).toContain('href="/admin"');
   });
 
-  it('the account page of an administrator links to Verwaltung', async () => {
+  it('the account page of an administrator links to the administration', async () => {
     const h = setup();
     const res = await request(h.app).get('/account').set('Host', h.host).set('Cookie', await h.login());
     expect(res.status).toBe(200);
     expect(res.text).toContain('href="/admin"');
   });
 
-  it('shared instance appears under „Für mich freigegeben" with the level', async () => {
+  it('shared instance appears under "Shared with me" with the level', async () => {
     const h = setup();
     const { p, u, w } = scenario(h);
     const inst = h.core.apps.getInstanceBySlug('notes')!;
     h.core.access.setGrant(inst, 'user', u.id, 'view', p);
     h.core.access.setGrant(inst, 'user', w.id, 'admin', p);
     const forU = await get(h, await loginAs(h, u));
-    expect(forU.text).toContain('Für mich freigegeben');
-    expect(forU.text).toContain('Notizen');
-    expect(forU.text).toContain('Betrachter');
+    expect(forU.text).toContain(en('dash.shared'));
+    expect(forU.text).toContain('Notes');
+    expect(forU.text).toContain(en('level.view'));
     expect(forU.text).not.toContain('href="/instances/notes"');
     const forW = await get(h, await loginAs(h, w));
-    expect(forW.text).toContain('Verwalter');
+    expect(forW.text).toContain(en('level.admin'));
     expect(forW.text).toContain('href="/instances/notes"');
     const forP = await get(h, await loginAs(h, p));
-    expect(forP.text).not.toContain('Für mich freigegeben');
+    expect(forP.text).not.toContain(en('dash.shared'));
   });
 
   it('catalog lists users-visible instances and self-service apps', async () => {
     const h = setup();
     const { p, u } = scenario(h);
     const empty = await get(h, await loginAs(h, u));
-    expect(empty.text).not.toContain('Katalog');
+    expect(empty.text).not.toContain(en('dash.catalog'));
     const inst = h.core.apps.getInstanceBySlug('notes')!;
     h.core.apps.setVisibility(inst.id, 'users', p.id);
-    h.core.apps.deploy({ slug: 'todo', html: '<p>t</p>', title: 'Aufgaben', userId: p.id });
+    h.core.apps.deploy({ slug: 'todo', html: '<p>t</p>', title: 'Tasks', userId: p.id });
     const app = h.core.apps.getApp('todo')!;
     h.core.apps.setSelfInstances(app.id, 'users', p.id);
     const res = await get(h, await loginAs(h, u));
-    expect(res.text).toContain('Katalog');
+    expect(res.text).toContain(en('dash.catalog'));
     expect(res.text).toContain('href="http://notes.apps.localhost:8080"');
-    expect(res.text).toContain('Aufgaben');
-    expect(res.text).toContain('Eigene Instanz anlegen');
+    expect(res.text).toContain('Tasks');
+    expect(res.text).toContain(en('dash.createOwn'));
     expect(res.text).toContain('action="/ui/apps/todo/instances"');
   });
 
@@ -193,15 +196,17 @@ describe('home page', () => {
   it('a flash message shows once signed and is ignored when forged', async () => {
     const h = setup();
     const cookie = await h.login();
-    const good = signToken({ uid: h.adminId, k: 'flash', e: 1, m: 'Kein Konto mit dieser E-Mail-Adresse.' }, h.core.config.secret, 60);
+    const good = signToken({ uid: h.adminId, k: 'flash', e: 1, m: 'notice.noAccount' }, h.core.config.secret, 60);
     const ok = await request(h.app).get('/').query({ flash: good }).set('Host', h.host).set('Cookie', cookie);
-    expect(ok.text).toContain('Kein Konto mit dieser E-Mail-Adresse.');
+    expect(ok.text).toContain(en('notice.noAccount'));
     const forged = await request(h.app).get('/').query({ flash: '<b>x</b>.AAAA' }).set('Host', h.host).set('Cookie', cookie);
     expect(forged.status).toBe(200);
     expect(forged.text).not.toContain('<b>x</b>');
-    const other = signToken({ uid: 'someone-else', k: 'flash', e: 1, m: 'Fremd' }, h.core.config.secret, 60);
+    const other = signToken({ uid: 'someone-else', k: 'flash', e: 1, m: 'notice.noAccount' }, h.core.config.secret, 60);
     const foreign = await request(h.app).get('/').query({ flash: other }).set('Host', h.host).set('Cookie', cookie);
-    expect(foreign.text).not.toContain('Fremd');
+    expect(foreign.text).not.toContain(en('notice.noAccount'));
+    const plain = signToken({ uid: h.adminId, k: 'flash', e: 1, m: 'Free text that is not a catalog key' }, h.core.config.secret, 60);
+    expect((await request(h.app).get('/').query({ flash: plain }).set('Host', h.host).set('Cookie', cookie)).text).not.toContain('Free text');
   });
 
   it('serves the icon publicly', async () => {

@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import type { Core } from '../core.js';
+import { isMessageKey, type MessageKey } from '../i18n/index.js';
 import type { User } from '../platform/users.js';
 import { readCookie, sessionCookieName, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
 import { signToken, verifyToken } from './tokens.js';
@@ -37,16 +38,16 @@ export function csrfValid(core: Core, user: User, value: unknown): boolean {
 }
 
 const FLASH_TTL_SECONDS = 120;
-/** A one-line notice for the next page view. */
-export interface Flash { ok?: string; error?: string }
+/** A one-line notice for the next page view, as a catalog key; the page renders it in the viewer's language. */
+export interface Flash { ok?: MessageKey; error?: MessageKey }
 
-/** Signed, short-lived `flash` query value carrying a fixed German message to the page a POST redirects to. */
+/** Signed, short-lived `flash` query value carrying only the key of a notice to the page a POST redirects to. */
 export const flashToken = (core: Core, user: User, flash: Flash): string =>
   signToken({ uid: user.id, k: 'flash', e: flash.error !== undefined ? 1 : 0, m: flash.error ?? flash.ok ?? '' }, core.config.secret, FLASH_TTL_SECONDS);
 
-/** The notice of a valid flash value issued to this user; anything else yields nothing. */
+/** The notice of a valid flash value issued to this user; anything else, including a value that is not a catalog key, yields nothing. */
 export function readFlash(core: Core, user: User, value: unknown): Flash {
   const t = verifyToken<{ uid?: unknown; k?: unknown; e?: unknown; m?: unknown }>(typeof value === 'string' ? value : undefined, core.config.secret);
-  if (t === null || t.k !== 'flash' || t.uid !== user.id || typeof t.m !== 'string' || t.m === '') return {};
+  if (t === null || t.k !== 'flash' || t.uid !== user.id || !isMessageKey(t.m)) return {};
   return t.e === 1 ? { error: t.m } : { ok: t.m };
 }

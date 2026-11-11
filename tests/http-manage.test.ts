@@ -4,8 +4,11 @@ import { dashboardExtension } from '../src/http/dashboard.js';
 import { manageExtension } from '../src/http/manage.js';
 import { signToken } from '../src/http/tokens.js';
 import type { User } from '../src/platform/users.js';
+import { esc } from '../src/http/pages.js';
+import { t, type MessageKey } from '../src/i18n/index.js';
 import { makeHarness, type Harness } from './support/http.js';
 
+const en = (key: MessageKey): string => esc(t('en', key));
 let h: Harness;
 afterEach(() => { h?.core.close(); });
 
@@ -62,12 +65,12 @@ describe('instance page', () => {
     h.core.data.set(inst().id, 'notes/n1', { text: 'x' }, p.id);
     h.core.data.snapshot(inst().id, 'manual-one');
     const res = await page(pc, '/instances/notes');
-    for (const text of ['Version', 'Aktivieren', 'Sichtbarkeit', 'Freigaben', 'Schnappschüsse', 'manual-one', 'Wiederherstellen', 'Instanz löschen', 'name="confirm"']) {
+    for (const text of [en('instance.version'), en('common.activate'), en('instance.visibility.title'), en('instance.grants.title'), en('instance.snapshots.title'), 'manual-one', en('instance.snapshots.restore'), en('instance.delete.title'), 'name="confirm"']) {
       expect(res.text).toContain(text);
     }
     h.core.access.setGrant(inst(), 'user', u.id, 'admin', p);
     const grantee = await page(uc, '/instances/notes');
-    expect(grantee.text).not.toContain('Instanz löschen');
+    expect(grantee.text).not.toContain(en('instance.delete.title'));
     expect(grantee.text).toContain('u@x.y');
   });
 
@@ -94,7 +97,7 @@ describe('instance page', () => {
     expect(level('notes', u)).toBe('view');
     const shown = await follow(pc, add);
     expect(shown.text).toContain('u@x.y');
-    expect(shown.text).toContain('Nutzer');
+    expect(shown.text).toContain(en('instance.grants.user'));
     await post(pc, p, '/ui/instances/notes/grants', { email: 'u@x.y', level: 'interact' });
     expect(level('notes', u)).toBe('interact');
     const rm = await post(pc, p, '/ui/instances/notes/grants/remove', { type: 'user', id: u.id });
@@ -110,7 +113,7 @@ describe('instance page', () => {
     expect(level('notes', w)).toBe('interact');
     const shown = await follow(pc, res);
     expect(shown.text).toContain('team');
-    expect(shown.text).toContain('Gruppe');
+    expect(shown.text).toContain(en('instance.grants.group'));
     await post(pc, p, '/ui/instances/notes/grants/remove', { type: 'group', id: team.id });
     expect(level('notes', w)).toBe('none');
   });
@@ -120,14 +123,14 @@ describe('instance page', () => {
     const res = await post(pc, p, '/ui/instances/notes/grants', { email: 'nobody@x.y', level: 'view' });
     const shown = await follow(pc, res);
     expect(shown.status).toBe(200);
-    expect(shown.text).toContain('Kein Konto mit dieser E-Mail-Adresse.');
+    expect(shown.text).toContain(en('notice.noAccount'));
     expect(h.core.access.listGrants(inst().id)).toHaveLength(0);
   });
 
   it('a grant for the owner is refused with a message, a grantee cannot manage as viewer', async () => {
     const { p, u, pc, uc } = await setup();
     const self = await post(pc, p, '/ui/instances/notes/grants', { email: 'p@x.y', level: 'view' });
-    expect((await follow(pc, self)).text).toContain('Der Besitzer hat bereits vollen Zugriff.');
+    expect((await follow(pc, self)).text).toContain(en('notice.ownerFullAccess'));
     h.core.access.setGrant(inst(), 'user', u.id, 'view', p);
     const denied = await post(uc, u, '/ui/instances/notes/grants', { email: 'w@x.y', level: 'view' });
     expect(denied.status).toBe(403);
@@ -142,7 +145,7 @@ describe('instance page', () => {
     await post(pc, p, '/ui/instances/notes/visibility', { visibility: 'users', users_level: 'interact' });
     expect(level('notes', w)).toBe('interact');
     const shown = await page(pc, '/instances/notes');
-    expect(shown.text).toContain('Stufe für Angemeldete');
+    expect(shown.text).toContain(en('instance.usersLevel'));
     const bad = await post(pc, p, '/ui/instances/notes/visibility', { visibility: 'private', users_level: 'admin' });
     expect((await follow(pc, bad)).status).toBe(200);
     expect(inst().visibility).toBe('users');
@@ -157,7 +160,7 @@ describe('instance page', () => {
     expect(h.core.apps.getInstanceBySlug('notes')).not.toBeNull();
     const wrong = await post(pc, p, '/ui/instances/notes/delete', { confirm: 'nope' });
     const shown = await follow(pc, wrong);
-    expect(shown.text).toContain('Zur Bestätigung den Namen eingeben.');
+    expect(shown.text).toContain(en('notice.confirmName'));
     expect(h.core.apps.getInstanceBySlug('notes')).not.toBeNull();
     const ok = await post(pc, p, '/ui/instances/notes/delete', { confirm: 'notes' });
     expect(ok.status).toBe(302);
@@ -263,12 +266,12 @@ describe('app page', () => {
     const cc = await h.login('c@x.y', 'password-123');
     const owner = await page(pc, '/apps/notes');
     expect(owner.status).toBe(200);
-    for (const text of ['Mitarbeiter', 'Selbstbedienung', 'App löschen', 'Instanz anlegen', 'p@x.y']) expect(owner.text).toContain(text);
+    for (const text of [en('app.collaborators'), en('app.self.title'), en('app.delete.title'), en('app.newInstance'), 'p@x.y']) expect(owner.text).toContain(text);
     const collab = await page(cc, '/apps/notes');
     expect(collab.status).toBe(200);
-    expect(collab.text).toContain('Instanz anlegen');
-    expect(collab.text).not.toContain('Mitarbeiter');
-    expect(collab.text).not.toContain('App löschen');
+    expect(collab.text).toContain(en('app.newInstance'));
+    expect(collab.text).not.toContain(en('app.collaborators'));
+    expect(collab.text).not.toContain(en('app.delete.title'));
     const refused = await post(cc, c, '/ui/apps/notes/collaborators', { email: 'admin@x.y' });
     expect(refused.status).toBe(403);
     expect((await page(uc, '/apps/notes')).status).toBe(403);
@@ -288,10 +291,10 @@ describe('app page', () => {
     expect(h.core.apps.isCollaborator(app.id, c.id)).toBe(false);
     const plain = await post(pc, p, '/ui/apps/notes/collaborators', { email: 'u@x.y' });
     const shown = await follow(pc, plain);
-    expect(shown.text).toContain('Mitarbeiter müssen aktive Administratoren oder Publisher sein.');
+    expect(shown.text).toContain(en('notice.collaboratorsInvalid'));
     expect(h.core.apps.isCollaborator(app.id, u.id)).toBe(false);
     const unknown = await post(pc, p, '/ui/apps/notes/collaborators', { email: 'nobody@x.y' });
-    expect((await follow(pc, unknown)).text).toContain('Kein Konto mit dieser E-Mail-Adresse.');
+    expect((await follow(pc, unknown)).text).toContain(en('notice.noAccount'));
   });
 
   it('self-service switch', async () => {
@@ -313,7 +316,7 @@ describe('app page', () => {
     expect(inst('mine').ownerId).toBe(p.id);
     expect(own.status).toBe(302);
     const unknown = await post(pc, p, '/ui/apps/notes/instances', { slug: 'ghost', owner_email: 'nobody@x.y' });
-    expect((await follow(pc, unknown)).text).toContain('Kein Konto mit dieser E-Mail-Adresse.');
+    expect((await follow(pc, unknown)).text).toContain(en('notice.noAccount'));
     expect(h.core.apps.getInstanceBySlug('ghost')).toBeNull();
     // A self-service creator cannot pick the owner.
     h.core.apps.setSelfInstances(h.core.apps.getApp('notes')!.id, 'users', p.id);
@@ -328,9 +331,9 @@ describe('app page', () => {
   it('shows taken and invalid names as notices', async () => {
     const { p, pc } = await setup();
     const taken = await post(pc, p, '/ui/apps/notes/instances', { slug: 'notes' });
-    expect((await follow(pc, taken)).text).toContain('Dieser Name ist schon vergeben.');
+    expect((await follow(pc, taken)).text).toContain(en('notice.slugTaken'));
     const bad = await post(pc, p, '/ui/apps/notes/instances', { slug: 'Bad Name' });
-    expect((await follow(pc, bad)).text).toContain('Ungültiger Name');
+    expect((await follow(pc, bad)).text).toContain(en('notice.slugInvalid'));
   });
 
   it('instance limit message', async () => {
@@ -341,7 +344,7 @@ describe('app page', () => {
     expect(first.headers.location).toBe('/');
     const second = await post(wc, w, '/ui/apps/notes/instances', { slug: 'w-two', from: 'home' });
     const shown = await follow(wc, second);
-    expect(shown.text).toContain('Instanz-Limit erreicht');
+    expect(shown.text).toContain(en('notice.instanceLimit'));
     expect(h.core.apps.getInstanceBySlug('w-two')).toBeNull();
     expect(pc).toBeTruthy();
   });
@@ -353,10 +356,10 @@ describe('app page', () => {
     const notOwner = await post(uc, u, '/ui/apps/notes/delete', { confirm: 'notes' });
     expect(notOwner.status).toBe(403);
     const wrong = await post(pc, p, '/ui/apps/notes/delete', { confirm: 'x' });
-    expect((await follow(pc, wrong)).text).toContain('Zur Bestätigung den Namen eingeben.');
+    expect((await follow(pc, wrong)).text).toContain(en('notice.confirmName'));
     const blocked = await post(pc, p, '/ui/apps/notes/delete', { confirm: 'notes' });
     const shown = await follow(pc, blocked);
-    expect(shown.text).toContain('Andere Nutzer haben Instanzen dieser App.');
+    expect(shown.text).toContain(en('notice.otherUsersInstances'));
     expect(h.core.apps.getApp('notes')).not.toBeNull();
     h.core.apps.deleteInstance(inst('u-inst').id, u.id);
     const ok = await post(pc, p, '/ui/apps/notes/delete', { confirm: 'notes' });
@@ -370,7 +373,7 @@ describe('self-publishing and versions', () => {
   it('auto-update toggle', async () => {
     const { p, u, pc, uc } = await setup();
     const before = await page(pc, '/instances/notes');
-    expect(before.text).toContain('Automatisch auf neue Versionen aktualisieren');
+    expect(before.text).toContain(en('instance.autoUpdate.label'));
     expect(before.text).toMatch(/name="on"[^>]*value="1"[^>]*checked|checked[^>]*name="on"/);
     const off = await post(pc, p, '/ui/instances/notes/auto-update', { on: '0' });
     expect(off.status).toBe(302);
@@ -402,7 +405,7 @@ describe('self-publishing and versions', () => {
     h.core.apps.selfPublish({ instanceId: inst().id, html: '<p>mine</p>', baseVersion: 2, userId: p.id });
     h.core.apps.selfPublish({ instanceId: other.id, html: '<p>theirs</p>', baseVersion: 2, userId: u.id });
     const own = await page(pc, '/instances/notes');
-    expect(own.text).toContain('selbst gespeichert');
+    expect(own.text).toContain(en('instance.savedBySelf'));
     // Match table cells, not bare "v3": the pages carry base64 csrf tokens that can contain such substrings by chance.
     expect(own.text).toContain('<td>v3</td>');
     expect(own.text).not.toContain('<td>v4</td>');
@@ -412,7 +415,7 @@ describe('self-publishing and versions', () => {
     const list = await page(pc, '/apps/notes');
     expect(list.text).not.toContain('<td>v3</td>');
     expect(list.text).not.toContain('<td>v4</td>');
-    expect(list.text).toMatch(/notes-u[\s\S]*?1 selbst gespeichert|1 selbst gespeichert[\s\S]*?notes-u/);
+    expect(list.text).toMatch(new RegExp(`notes-u[\\s\\S]*?${esc(t('en', 'app.savedCount', { count: 1 }))}|${esc(t('en', 'app.savedCount', { count: 1 }))}[\\s\\S]*?notes-u`));
     // activating somebody else's version through the form is refused
     expect((await post(pc, p, '/ui/instances/notes/activate', { version: '4' })).status).toBe(403);
     expect(inst().activeVersion).toBe(3);
@@ -428,17 +431,17 @@ describe('data export and version html links', () => {
     h.core.data.set(inst().id, `data/users/${p.id}/storage/kv/hers`, { hers: 1 }, null);
 
     const owner = await page(pc, '/instances/notes');
-    expect(owner.text).toContain('<h2>Daten</h2>');
-    expect(owner.text).toContain('<a href="/instances/notes/export">Daten exportieren (NDJSON)</a>');
+    expect(owner.text).toContain(`<h2>${en('instance.data.title')}</h2>`);
+    expect(owner.text).toContain(`<a href="/instances/notes/export">${en('instance.data.export')}</a>`);
     expect(owner.text).toContain('href="/apps/notes/versions/1/html"');
     expect(owner.text).toContain('href="/apps/notes/versions/2/html"');
     const app = await page(pc, '/apps/notes');
     expect(app.text).toContain('href="/apps/notes/versions/1/html"');
     expect(app.text).toContain('>HTML</a>');
 
-    // A Verwalter who does not work on the app sees the export link but no links to its deployed versions.
+    // A manager who does not work on the app sees the export link but no links to its deployed versions.
     const admin = await page(uc, '/instances/notes');
-    expect(admin.text).toContain('Daten exportieren (NDJSON)');
+    expect(admin.text).toContain(en('instance.data.export'));
     expect(admin.text).not.toContain('/versions/1/html');
 
     const exp = await page(uc, '/instances/notes/export').buffer(true).parse((r, cb) => {

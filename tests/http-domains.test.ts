@@ -5,8 +5,11 @@ import { dashboardExtension } from '../src/http/dashboard.js';
 import { manageExtension } from '../src/http/manage.js';
 import { csrfToken } from '../src/http/session.js';
 import type { User } from '../src/platform/users.js';
+import { esc } from '../src/http/pages.js';
+import { t, type MessageKey } from '../src/i18n/index.js';
 import { makeHarness, type Harness } from './support/http.js';
 
+const en = (key: MessageKey): string => esc(t('en', key));
 let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
 
@@ -155,12 +158,12 @@ describe('custom domains on the management page', () => {
     const { hh, pub, admin } = setup();
     const pc = await hh.login('p@x.y', 'password-123');
     const ac = await hh.login();
-    expect((await page(pc, '/instances/notes')).text).not.toContain('Eigene Domains');
+    expect((await page(pc, '/instances/notes')).text).not.toContain(en('instance.domains.title'));
     const adminPage = await page(ac, '/instances/notes');
-    expect(adminPage.text).toContain('Eigene Domains');
-    expect(adminPage.text).toContain('DNS, Proxy-Eintrag und Zertifikat für die Domain richtest du selbst ein. Lager prüft nicht, wem die Domain gehört.');
+    expect(adminPage.text).toContain(en('instance.domains.title'));
+    expect(adminPage.text).toContain(en('instance.domains.hint'));
     hh.core.settings.setCustomDomains('publishers');
-    expect((await page(pc, '/instances/notes')).text).toContain('Eigene Domains');
+    expect((await page(pc, '/instances/notes')).text).toContain(en('instance.domains.title'));
     // A grantee without manage right never sees it, and posting is refused.
     const u = hh.core.users.create({ email: 'u@x.y', name: 'U', password: 'password-123', role: 'user' });
     const uc = await hh.login('u@x.y', 'password-123');
@@ -178,12 +181,12 @@ describe('custom domains on the management page', () => {
     expect(added.status).toBe(200);
     expect(hh.core.domains.list(inst.id)).toEqual([CUSTOM]);
     expect(added.text).toContain(`http://${CUSTOM_HOST}`);
-    expect(added.text).toContain('Entfernen');
-    expect((await follow(await post(ac, admin, '/ui/instances/notes/domains', { host: 'nonsense' }))).text).toContain('Das ist kein gültiger Hostname.');
+    expect(added.text).toContain(en('common.remove'));
+    expect((await follow(await post(ac, admin, '/ui/instances/notes/domains', { host: 'nonsense' }))).text).toContain(en('notice.hostInvalid'));
     hh.core.domains.add(other, 'other.example.test', admin, true);
-    expect((await follow(await post(ac, admin, '/ui/instances/notes/domains', { host: 'other.example.test' }))).text).toContain('Diese Domain ist bereits vergeben.');
+    expect((await follow(await post(ac, admin, '/ui/instances/notes/domains', { host: 'other.example.test' }))).text).toContain(en('notice.hostTaken'));
     for (const bad of ['lager.localhost', 'x.apps.localhost']) {
-      expect((await follow(await post(ac, admin, '/ui/instances/notes/domains', { host: bad }))).text, bad).toContain('Diese Domain kann nicht verwendet werden.');
+      expect((await follow(await post(ac, admin, '/ui/instances/notes/domains', { host: bad }))).text, bad).toContain(en('notice.hostUnavailable'));
     }
     // CSRF is required.
     const noCsrf = await request(h!.app).post('/ui/instances/notes/domains/remove').set('Host', hh.host).set('Cookie', ac).type('form').send({ host: CUSTOM });
@@ -207,9 +210,9 @@ describe('custom domains on the management page', () => {
     const { hh, admin } = setup();
     const ac = await hh.login();
     const form = await page(ac, '/admin/settings');
-    expect(form.text).toContain('Eigene Domains');
-    expect(form.text).toContain('Nur Administratoren');
-    expect(form.text).toContain('Auch Publisher');
+    expect(form.text).toContain(en('instance.domains.title'));
+    expect(form.text).toContain(en('admin.domains.admins'));
+    expect(form.text).toContain(en('admin.domains.publishers'));
     expect(hh.core.settings.customDomains).toBe('admins');
     expect((await post(ac, admin, '/admin/settings', { registration: 'open', maxInstances: '5', customDomains: 'publishers' })).status).toBe(302);
     expect(hh.core.settings.customDomains).toBe('publishers');

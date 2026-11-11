@@ -52,6 +52,14 @@ Configuration (environment variables only, template in `.env.example`):
 | `LAGER_INSTANCE_QUOTA_MB` | Size of an instance's data in MiB, integer from 1 | `50` |
 | `LAGER_TRUST_PROXY` | Number of proxy hops in front of Lager whose `X-Forwarded-*` headers are trusted: `false`/`0` none, `true` = 1, or a number | `true` (1) |
 
+## Languages
+
+Lager ships in English, French, Spanish and German. English is the default and the source of every text.
+
+The language of a page is chosen in this order: the signed-in account's language setting (Account page), the language switcher in the page footer (stored in the `lager_lang` cookie), the browser's `Accept-Language` header, and finally `LAGER_DEFAULT_LOCALE`. Mails use the recipient's language where it is known. Dates and sizes are written the way the chosen language writes them.
+
+To add a language, copy `src/i18n/en.ts` to a new file such as `src/i18n/it.ts`, translate the values (keep the `{name}` placeholders, and keep "Lager" and "Claude" as they are), then register it in `LOCALES` and `LOCALE_NAMES` in `src/i18n/index.ts`. The type checker reports every missing key, and `npm test` checks that all catalogs have the same keys and placeholders and that no human-facing text lives outside the catalogs.
+
 ## Accounts and roles
 
 Lager has several accounts. Each account has exactly one role:
