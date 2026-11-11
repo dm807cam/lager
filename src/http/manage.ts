@@ -15,7 +15,7 @@ import {
   dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, formErrorPage, hiddenField, levelOptions, missingPage, noticeHtml, optionList, type Option, page,
   sizeText, visibilityLabel, visibilityOptions,
 } from './pages.js';
-import { appTile, avatar, badge, btn, card, dataTable, emptyState, icon, linkButton, meter, notice, signedIn, visibilityIcon } from './ui.js';
+import { appTile, avatar, badge, btn, named, card, dataTable, emptyState, icon, linkButton, meter, notice, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashToken, readFlash, type Flash } from './session.js';
 
 const GRANT_LEVELS = ['view', 'interact', 'admin'] as const;
@@ -55,8 +55,12 @@ function shell(core: Core, locale: Locale, user: User, title: string, body: stri
 const backTo = (href: string, label: string): string => `<a class="back" href="${esc(href)}">${icon('chevron', 'i-sm')}${esc(label)}</a>`;
 
 /** The band at the top of an instance or app page: icon, title, address and badges; `actions` and `badges` are trusted markup. */
+const THEME_COLOR = /^#[0-9a-f]{6}$/i;
+
 function hero(app: App, title: string, sub: string, badges: string[], actions: string, description = ''): string {
-  return `<header class="hero" style="--app:${esc(app.themeColor)}">${appTile(app, title, 'lg')}<div class="hero-main"><h1>${esc(title)}</h1>${sub}
+  // The colour goes into a style attribute: only a plain hex colour is ever written there, whatever the store holds.
+  const colour = THEME_COLOR.test(app.themeColor) ? app.themeColor : '#1f2a5c';
+  return `<header class="hero" style="--app:${colour}">${appTile(app, title, 'lg')}<div class="hero-main"><h1>${esc(title)}</h1>${sub}
 ${description ? `<p class="hero-desc">${esc(description)}</p>` : ''}<div class="badges">${badges.join('')}</div></div>${actions ? `<div class="hero-actions">${actions}</div>` : ''}</header>`;
 }
 
@@ -99,7 +103,7 @@ function grantsCard(core: Core, locale: Locale, inst: Instance, base: string, cs
   });
   const groups = core.groups.list().map((g) => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('');
   const list = rows.length
-    ? dataTable([t(locale, 'common.name'), t(locale, 'instance.grants.type'), t(locale, 'common.level'), ''], rows)
+    ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'instance.grants.type'), t(locale, 'common.level'), ''], rows)
     : emptyState(t(locale, 'instance.grants.none'), 'share');
   const add = form(`${base}/grants`, csrf, `${field('grant-email', t(locale, 'instance.grants.email'), '<input id="grant-email" name="email" type="email" maxlength="254" autocomplete="off">')}
 ${field('grant-group', t(locale, 'instance.grants.orGroup'), `<select id="grant-group" name="group"><option value="">–</option>${groups}</select>`)}
@@ -114,7 +118,7 @@ export function domainsBody(core: Core, locale: Locale, inst: Instance, base: st
     `<a class="mono" href="${esc(hostUrl(core.config, host))}">${esc(host)}</a>`,
     form(`${base}/remove`, csrf, hiddenField('host', host), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true),
   ]);
-  const list = rows.length ? dataTable([t(locale, 'instance.domains.domain'), ''], rows) : emptyState(t(locale, 'instance.domains.none'), 'globe');
+  const list = rows.length ? dataTable(locale, [t(locale, 'instance.domains.domain'), ''], rows) : emptyState(t(locale, 'instance.domains.none'), 'globe');
   const add = form(base, csrf, field('domain-host', t(locale, 'instance.domains.host'),
     '<input id="domain-host" name="host" required maxlength="253" autocomplete="off" spellcheck="false" placeholder="notes.example.com">'),
   `${icon('plus')}${esc(t(locale, 'common.add'))}`, 'secondary', 'form-row');
@@ -174,7 +178,7 @@ ${versionsList(core, locale, user, app, base, csrf, inst.activeVersion, inst.id)
 <div class="btn-row"><a class="${btn('secondary', true)}" href="/instances/${encodeURIComponent(inst.slug)}/export">${icon('download')}${esc(t(locale, 'instance.data.export'))}</a></div>
 <p class="hint gap-top">${esc(t(locale, 'instance.data.hint', { slug: inst.slug }))}</p>
 <div class="subsection"><h3>${esc(t(locale, 'instance.snapshots.title'))}</h3>${snapshots.length
-    ? dataTable([t(locale, 'common.name'), t(locale, 'common.date'), t(locale, 'common.size'), ''], snapRows)
+    ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'common.date'), t(locale, 'common.size'), ''], snapRows)
     : emptyState(t(locale, 'instance.snapshots.none'), 'download')}</div></section>`;
   const domains = core.domains.canManage(user, core.access.canManageInstance(inst, user)) ? card(t(locale, 'instance.domains.title'), domainsBody(core, locale, inst, `${base}/domains`, csrf)) : '';
   return shell(core, locale, user, title, `${hero(app, app.title, `<a class="url" href="${esc(url)}">${esc(url)}</a>`, [visibility, badge(`v${inst.activeVersion}`)],
@@ -194,7 +198,7 @@ function appPage(core: Core, locale: Locale, user: User, app: App, flash: Flash)
     esc(core.users.get(i.ownerId)?.email ?? '–'),
     saved.has(i.id) ? esc(t(locale, 'app.savedCount', { count: saved.get(i.id)! })) : '<span class="muted">–</span>',
     i.disabled ? badge(t(locale, 'common.disabled'), { tone: 'danger', icon: 'alert' })
-      : core.access.canManageInstance(i, user) ? linkButton(`/instances/${encodeURIComponent(i.slug)}`, `${icon('settings')}${esc(t(locale, 'common.manage'))}`, 'quiet', true) : '',
+      : core.access.canManageInstance(i, user) ? linkButton(`/instances/${encodeURIComponent(i.slug)}`, `${icon('settings')}${esc(t(locale, 'common.manage'))}`, 'quiet', true, named(t(locale, 'card.manage', { title: i.slug }))) : '',
   ]);
   const ownerField = core.access.canDeploy(app, user)
     ? field('owner-email', t(locale, 'app.ownerEmail'), '<input id="owner-email" name="owner_email" type="email" maxlength="254" autocomplete="off">') : '';
@@ -206,7 +210,7 @@ function appPage(core: Core, locale: Locale, user: User, app: App, flash: Flash)
   if (isOwner) {
     const collabRows = core.apps.listCollaborators(app.id).map((c) => [person(c), form(`${base}/collaborators/remove`, csrf, hiddenField('id', c.id), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true)]);
     const selfModes: Option[] = [['off', t(locale, 'self.off')], ['users', t(locale, 'self.users')]];
-    collaborators = card(t(locale, 'app.collaborators'), `${collabRows.length ? dataTable([t(locale, 'common.name'), ''], collabRows) : emptyState(t(locale, 'app.noCollaborators'), 'users')}
+    collaborators = card(t(locale, 'app.collaborators'), `${collabRows.length ? dataTable(locale, [t(locale, 'common.name'), ''], collabRows) : emptyState(t(locale, 'app.noCollaborators'), 'users')}
 <div class="subsection">${form(`${base}/collaborators`, csrf, field('collab-email', t(locale, 'app.collaboratorEmail'), '<input id="collab-email" name="email" type="email" required maxlength="254" autocomplete="off">'),
     `${icon('plus')}${esc(t(locale, 'common.add'))}`, 'secondary', 'form-row')}</div>`);
     selfService = fact(t(locale, 'app.self.title'), form(`${base}/self-instances`, csrf,
@@ -219,7 +223,7 @@ function appPage(core: Core, locale: Locale, user: User, app: App, flash: Flash)
     [`<span class="badge"><span class="sr-only">${esc(t(locale, 'dash.latestVersion'))} </span>v${latest}</span>`, badge(t(locale, count === 1 ? 'dash.instanceCount.one' : 'dash.instanceCount.other', { count }), { icon: 'grid' })], '', app.description)}
 <div class="layout"><div class="main-col">
 <section class="card"><h2>${esc(t(locale, 'app.versions'))}</h2>${versionsList(core, locale, user, app, null, csrf)}</section>
-<section class="card"><h2>${esc(t(locale, 'app.instances'))}</h2>${rows.length ? dataTable([t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'app.saved'), ''], rows) : emptyState(t(locale, 'app.noInstances'))}
+<section class="card"><h2>${esc(t(locale, 'app.instances'))}</h2>${rows.length ? dataTable(locale, [t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'app.saved'), ''], rows) : emptyState(t(locale, 'app.noInstances'))}
 <div class="subsection"><h3>${esc(t(locale, 'app.newInstance'))}</h3>${form(`${base}/instances`, csrf,
     `${field('new-slug', t(locale, 'instance.slugLabel'), `<input id="new-slug" name="slug" required maxlength="${MAX_SLUG_LENGTH}" autocomplete="off" spellcheck="false">`)}${ownerField}`,
     `${icon('plus')}${esc(t(locale, 'app.newInstance'))}`, 'primary', 'form-row')}</div></section>

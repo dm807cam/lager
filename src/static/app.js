@@ -19,6 +19,10 @@
     });
   });
   document.querySelectorAll('details.menu').forEach(function (m) {
+    // Tabbing out of an open menu closes it.
+    m.addEventListener('focusout', function (e) {
+      if (m.open && e.relatedTarget && !m.contains(e.relatedTarget)) m.removeAttribute('open');
+    });
     m.addEventListener('toggle', function () {
       if (!m.open) return;
       document.querySelectorAll('details.menu[open]').forEach(function (o) { if (o !== m) o.removeAttribute('open'); });

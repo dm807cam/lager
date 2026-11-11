@@ -77,6 +77,46 @@ export function formsOf(html: string, names: Map<string, string> = new Map()): F
   })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 }
 
+/** A field as the server receives it: its name, type and limits, and its value when that value is fixed by the page. */
+export interface FieldDetail { name: string; type: string; required: boolean; maxlength: string | null; value?: string }
+export interface FormDetail { action: string; method: string; fields: FieldDetail[] }
+
+/** Hidden fields whose values change with every run (tokens, random ids); their values are not recorded. */
+const VOLATILE = new Set(['csrf', 'token', 'invite', 'client_id', 'snapshot']);
+
+/** `formsOf` with each field's type, `required`, `maxlength` and, for hidden fields, the value the page fixes. */
+export function formDetailsOf(html: string, names: Map<string, string> = new Map()): FormDetail[] {
+  const doc = new JSDOM(html).window.document;
+  const rename = (s: string): string => [...names].reduce((out, [id, name]) => out.split(id).join(name), s);
+  return [...doc.querySelectorAll('form')].map((f) => ({
+    action: rename(f.getAttribute('action') ?? ''),
+    method: (f.getAttribute('method') ?? 'get').toLowerCase(),
+    fields: [...f.querySelectorAll('input[name], select[name], textarea[name], button[name]')].map((el) => {
+      const name = el.getAttribute('name')!;
+      const type = el.tagName === 'INPUT' ? el.getAttribute('type') ?? 'text' : el.tagName.toLowerCase();
+      const fixed = (type === 'hidden' || el.tagName === 'BUTTON') && !VOLATILE.has(name);
+      return { name, type, required: el.hasAttribute('required'), maxlength: el.getAttribute('maxlength'), ...(fixed ? { value: rename(el.getAttribute('value') ?? '') } : {}) };
+    }).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+  })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+}
+
+/** The home page of a plain user and of a publisher on a platform with nothing on it (no instances, no catalog). */
+export async function emptyHomes(): Promise<Array<{ name: string; html: string }>> {
+  const h = makeHarness({ publicUrl: 'http://localhost:8080', extensions: [dashboardExtension] });
+  try {
+    const out: Array<{ name: string; html: string }> = [];
+    for (const [name, role] of [['home (empty, user)', 'user'], ['home (empty, publisher)', 'publisher']] as const) {
+      const email = `${role}@x.y`;
+      h.core.users.create({ email, name: role, password: PASSWORD, role });
+      const res = await request(h.app).get('/').set('Host', h.host).set('Cookie', await h.login(email, PASSWORD));
+      out.push({ name, html: res.text });
+    }
+    return out;
+  } finally {
+    h.core.close();
+  }
+}
+
 /** Every record id of the showcase that can appear in a form action, mapped to a readable stand-in. */
 export function idNames(s: Showcase): Map<string, string> {
   const { core } = s.h;
@@ -88,7 +128,11 @@ export function idNames(s: Showcase): Map<string, string> {
   return names;
 }
 
-export interface PageVisit { name: string; path: string; as: 'admin' | 'pia' | 'uwe' | null; status?: number; method?: 'get' | 'post'; body?: Record<string, string> }
+export interface PageVisit {
+  name: string; path: string; as: 'admin' | 'pia' | 'uwe' | null; status?: number; method?: 'get' | 'post'; body?: Record<string, string>;
+  /** State the page needs, set up right before the request and undone right after it, so other visits see the showcase as seeded. */
+  before?: (s: Showcase) => void; after?: (s: Showcase) => void;
+}
 
 /** The pages every form-shape and shell test visits. */
 export function pageVisits(s: Showcase): PageVisit[] {
@@ -119,6 +163,14 @@ export function pageVisits(s: Showcase): PageVisit[] {
     { name: 'reset', path: '/reset?token=abc', as: null },
     { name: 'verify', path: `/verify?token=${s.verify}`, as: null },
     { name: 'verify (invalid link)', path: '/verify?token=nope', as: null, status: 400 },
+    { name: 'register (closed)', path: '/register', as: null, before: (sc) => sc.h.core.settings.setRegistration('closed'), after: (sc) => sc.h.core.settings.setRegistration('open') },
+    { name: 'register (invite only)', path: '/register', as: null, before: (sc) => sc.h.core.settings.setRegistration('invite'), after: (sc) => sc.h.core.settings.setRegistration('open') },
+    { name: 'forgot (sent)', path: '/forgot', as: null, method: 'post', body: { email: 'somebody@x.y' } },
+    {
+      name: 'instance (manager)', path: '/instances/notes', as: 'pia',
+      before: (sc) => sc.h.core.access.setGrant(sc.h.core.apps.getInstanceBySlug('notes')!, 'user', sc.ids.pia, 'admin', sc.h.core.users.get(sc.h.adminId)!),
+      after: (sc) => sc.h.core.access.removeGrant(sc.h.core.apps.getInstanceBySlug('notes')!, 'user', sc.ids.pia, sc.h.core.users.get(sc.h.adminId)!),
+    },
   ];
 }
 
@@ -135,6 +187,15 @@ export function cookies(s: Showcase): (who: PageVisit['as']) => Promise<string> 
 
 export async function visit(s: Showcase, v: PageVisit, cookieOf: (who: PageVisit['as']) => Promise<string>, extra: Record<string, string> = {}): Promise<request.Response> {
   const cookie = await cookieOf(v.as);
+  v.before?.(s);
+  try {
+    return await send(s, v, cookie, extra);
+  } finally {
+    v.after?.(s);
+  }
+}
+
+function send(s: Showcase, v: PageVisit, cookie: string, extra: Record<string, string>): request.Test {
   const req = v.method === 'post'
     ? request(s.h.app).post(v.path).set('Host', s.h.host).type('form').send(v.body ?? {})
     : request(s.h.app).get(v.path).set('Host', s.h.host);

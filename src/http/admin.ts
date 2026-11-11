@@ -57,7 +57,7 @@ ${form(`${base}/reset-link`, csrf, '', esc(t(locale, 'admin.users.resetLink')), 
     ];
   });
   return shell(core, locale, admin, 'users', t(locale, 'admin.section.users'),
-    dataTable([t(locale, 'common.name'), t(locale, 'admin.users.role'), t(locale, 'common.status'), t(locale, 'common.created'), ''], rows), msg);
+    dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.users.role'), t(locale, 'common.status'), t(locale, 'common.created'), ''], rows), msg);
 }
 
 function invitesSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
@@ -74,7 +74,7 @@ function invitesSection(core: Core, locale: Locale, admin: User, msg?: Msg): str
 ${field('invite-role', t(locale, 'admin.invites.role'), `<select id="invite-role" name="role">${roleOptions(locale, 'user')}</select>`)}`,
     `${icon('plus')}${esc(t(locale, 'admin.invites.create'))}`, 'primary', 'form-row');
   const list = open.length
-    ? dataTable([t(locale, 'common.email'), t(locale, 'admin.invites.role'), t(locale, 'common.created'), t(locale, 'admin.invites.validUntil'), ''], rows)
+    ? dataTable(locale, [t(locale, 'common.email'), t(locale, 'admin.invites.role'), t(locale, 'common.created'), t(locale, 'admin.invites.validUntil'), ''], rows)
     : emptyState(t(locale, 'admin.invites.none'), 'users');
   return shell(core, locale, admin, 'invites', t(locale, 'admin.section.invites'), `${create}<div class="subsection">${list}</div>`, msg);
 }
@@ -86,7 +86,7 @@ function groupsSection(core: Core, locale: Locale, admin: User, msg?: Msg): stri
     `<div class="cell-user"><span class="tile tile-xs" aria-hidden="true">${icon('users', 'i-sm')}</span><div><a href="/admin/groups/${encodeURIComponent(g.id)}"><strong>${esc(g.name)}</strong></a></div></div>`,
     `<span class="num">${g.memberCount}</span>`,
   ]);
-  const body = `${groups.length ? dataTable([t(locale, 'common.name'), t(locale, 'admin.groups.members')], rows) : emptyState(t(locale, 'admin.groups.none'), 'users')}
+  const body = `${groups.length ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.groups.members')], rows) : emptyState(t(locale, 'admin.groups.none'), 'users')}
 <div class="subsection">${form('/admin/groups', csrf, field('group-name', t(locale, 'admin.groups.newName'), `<input id="group-name" name="name" required maxlength="${MAX_NAME}" autocomplete="off">`),
     `${icon('plus')}${esc(t(locale, 'admin.groups.create'))}`, 'secondary', 'form-row')}</div>`;
   return shell(core, locale, admin, 'groups', t(locale, 'admin.section.groups'), body, msg);
@@ -104,7 +104,7 @@ function groupPage(core: Core, locale: Locale, admin: User, groupId: string, msg
   ]);
   const body = `${form(`${base}/rename`, csrf, field('group-name', t(locale, 'common.name'), `<input id="group-name" name="name" required maxlength="${MAX_NAME}" value="${esc(group.name)}" autocomplete="off">`), esc(t(locale, 'common.rename')), 'secondary', 'form-row')}
 <div class="subsection"><h3>${esc(t(locale, 'admin.groups.members'))}</h3>
-${members.length ? dataTable([t(locale, 'common.name'), ''], rows) : emptyState(t(locale, 'admin.groups.noMembers'), 'users')}
+${members.length ? dataTable(locale, [t(locale, 'common.name'), ''], rows) : emptyState(t(locale, 'admin.groups.noMembers'), 'users')}
 <div class="gap-top">${form(`${base}/members`, csrf, field('member-email', t(locale, 'admin.groups.memberEmail'), '<input id="member-email" name="email" type="email" required maxlength="254" autocomplete="off">'),
     `${icon('plus')}${esc(t(locale, 'common.add'))}`, 'secondary', 'form-row')}</div></div>
 <div class="subsection">${form(`${base}/delete`, csrf, '', `${icon('trash')}${esc(t(locale, 'admin.groups.delete'))}`, 'danger')}</div>`;
@@ -142,7 +142,7 @@ function appsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string
 ${linkButton(`/admin/instances/${encodeURIComponent(i.slug)}/domains`, `${icon('globe')}${esc(t(locale, 'admin.apps.domains'))}`, 'quiet', true)}</div>`,
     ]);
     return `<section class="app-group subsection"><div class="app-group-head">${appTile(app, app.title, 'sm')}<div><h3>${esc(app.title)}</h3><span class="slug">${esc(app.slug)} · ${esc(emailOf.get(app.ownerId) ?? '–')}</span></div></div>
-${rows.length ? dataTable([t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'common.version'), t(locale, 'common.visibility'), t(locale, 'admin.apps.data'), t(locale, 'common.status'), ''], rows) : emptyState(t(locale, 'app.noInstances'))}</section>`;
+${rows.length ? dataTable(locale, [t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'common.version'), t(locale, 'common.visibility'), t(locale, 'admin.apps.data'), t(locale, 'common.status'), ''], rows) : emptyState(t(locale, 'app.noInstances'))}</section>`;
   }).join('');
   return shell(core, locale, admin, 'apps', t(locale, 'admin.section.apps'), html || emptyState(t(locale, 'admin.apps.none')), msg);
 }
@@ -155,7 +155,7 @@ const DOMAIN_NOTICES: Record<string, MessageKey> = {
 function domainsPage(core: Core, locale: Locale, admin: User, inst: Instance, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const base = `/admin/instances/${encodeURIComponent(inst.slug)}/domains`;
-  return shell(core, locale, admin, 'apps', `${t(locale, 'instance.domains.title')}: ${inst.slug}`, domainsBody(core, locale, inst, base, csrf), msg, base,
+  return shell(core, locale, admin, 'apps', t(locale, 'admin.domains.pageTitle', { slug: inst.slug }), domainsBody(core, locale, inst, base, csrf), msg, base,
     `<a class="back" href="/admin/apps">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.section.apps'))}</a>`);
 }
 

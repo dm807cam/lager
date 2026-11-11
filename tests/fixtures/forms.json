@@ -753,5 +753,140 @@
         "state"
       ]
     }
+  ],
+  "register (closed)": [],
+  "register (invite only)": [],
+  "forgot (sent)": [],
+  "instance (manager)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        "csrf"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/activate",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "version"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/auto-update",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "on",
+        "on"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/domains",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "host"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/domains/remove",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "host"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "email",
+        "group",
+        "level"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "email",
+        "level"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "email",
+        "level"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "group",
+        "level"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants/remove",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "id",
+        "type"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants/remove",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "id",
+        "type"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants/remove",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "id",
+        "type"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/visibility",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "visibility"
+      ]
+    }
+  ],
+  "home (empty, user)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        "csrf"
+      ]
+    }
+  ],
+  "home (empty, publisher)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        "csrf"
+      ]
+    }
   ]
 }

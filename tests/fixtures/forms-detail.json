@@ -1,0 +1,2013 @@
+{
+  "home (administrator)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/apps/tasks/instances",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "from",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "home"
+        },
+        {
+          "name": "slug",
+          "type": "text",
+          "required": true,
+          "maxlength": "63"
+        }
+      ]
+    }
+  ],
+  "home (publisher)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/apps/tasks/instances",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "from",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "home"
+        },
+        {
+          "name": "slug",
+          "type": "text",
+          "required": true,
+          "maxlength": "63"
+        }
+      ]
+    }
+  ],
+  "home (user)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/apps/tasks/instances",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "from",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "home"
+        },
+        {
+          "name": "slug",
+          "type": "text",
+          "required": true,
+          "maxlength": "63"
+        }
+      ]
+    }
+  ],
+  "publish (administrator)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/tokens",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "maxlength": "100"
+        }
+      ]
+    },
+    {
+      "action": "/ui/tokens/{token:laptop}/revoke",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "publish (publisher)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/tokens",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "maxlength": "100"
+        }
+      ]
+    }
+  ],
+  "instance": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/activate",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "version",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/auto-update",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "on",
+          "type": "checkbox",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "on",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/delete",
+      "method": "post",
+      "fields": [
+        {
+          "name": "confirm",
+          "type": "text",
+          "required": true,
+          "maxlength": null
+        },
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/domains",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "host",
+          "type": "text",
+          "required": true,
+          "maxlength": "253"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/domains/remove",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "host",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "notes.example.com"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "email",
+          "type": "email",
+          "required": false,
+          "maxlength": "254"
+        },
+        {
+          "name": "group",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "level",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "email",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "uwe@x.y"
+        },
+        {
+          "name": "level",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "group",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "{group:Team}"
+        },
+        {
+          "name": "level",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants/remove",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "id",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "{group:Team}"
+        },
+        {
+          "name": "type",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "group"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants/remove",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "id",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "{user:uwe@x.y}"
+        },
+        {
+          "name": "type",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "user"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/visibility",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "visibility",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "instance (disabled)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/old-notes/delete",
+      "method": "post",
+      "fields": [
+        {
+          "name": "confirm",
+          "type": "text",
+          "required": true,
+          "maxlength": null
+        },
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "instance (publisher)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/tasks/auto-update",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "on",
+          "type": "checkbox",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "on",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/tasks/delete",
+      "method": "post",
+      "fields": [
+        {
+          "name": "confirm",
+          "type": "text",
+          "required": true,
+          "maxlength": null
+        },
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/tasks/domains",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "host",
+          "type": "text",
+          "required": true,
+          "maxlength": "253"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/tasks/grants",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "email",
+          "type": "email",
+          "required": false,
+          "maxlength": "254"
+        },
+        {
+          "name": "group",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "level",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/tasks/grants",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "email",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "admin@x.y"
+        },
+        {
+          "name": "level",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/tasks/grants/remove",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "id",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "{user:admin@x.y}"
+        },
+        {
+          "name": "type",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "user"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/tasks/visibility",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "users_level",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "visibility",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "app (owner)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/apps/notes/collaborators",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "email",
+          "type": "email",
+          "required": true,
+          "maxlength": "254"
+        }
+      ]
+    },
+    {
+      "action": "/ui/apps/notes/collaborators/remove",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "id",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "{user:pia@x.y}"
+        }
+      ]
+    },
+    {
+      "action": "/ui/apps/notes/delete",
+      "method": "post",
+      "fields": [
+        {
+          "name": "confirm",
+          "type": "text",
+          "required": true,
+          "maxlength": null
+        },
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/apps/notes/instances",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "owner_email",
+          "type": "email",
+          "required": false,
+          "maxlength": "254"
+        },
+        {
+          "name": "slug",
+          "type": "text",
+          "required": true,
+          "maxlength": "63"
+        }
+      ]
+    },
+    {
+      "action": "/ui/apps/notes/self-instances",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "mode",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "app (collaborator)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/apps/notes/instances",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "owner_email",
+          "type": "email",
+          "required": false,
+          "maxlength": "254"
+        },
+        {
+          "name": "slug",
+          "type": "text",
+          "required": true,
+          "maxlength": "63"
+        }
+      ]
+    }
+  ],
+  "admin users": [
+    {
+      "action": "/admin/users/{user:admin@x.y}/disabled",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "disabled",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "action": "/admin/users/{user:admin@x.y}/reset-link",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/admin/users/{user:admin@x.y}/role",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "role",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/admin/users/{user:nova@x.y}/disabled",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "disabled",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "action": "/admin/users/{user:nova@x.y}/reset-link",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/admin/users/{user:nova@x.y}/role",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "role",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/admin/users/{user:pia@x.y}/disabled",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "disabled",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "action": "/admin/users/{user:pia@x.y}/reset-link",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/admin/users/{user:pia@x.y}/role",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "role",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/admin/users/{user:uwe@x.y}/disabled",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "disabled",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "action": "/admin/users/{user:uwe@x.y}/reset-link",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/admin/users/{user:uwe@x.y}/role",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "role",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "admin invites": [
+    {
+      "action": "/admin/invites",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "email",
+          "type": "email",
+          "required": false,
+          "maxlength": "254"
+        },
+        {
+          "name": "role",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/admin/invites/{invite:user}/revoke",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "admin groups": [
+    {
+      "action": "/admin/groups",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "maxlength": "60"
+        }
+      ]
+    },
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "admin group": [
+    {
+      "action": "/admin/groups/{group:Team}/delete",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/admin/groups/{group:Team}/members",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "email",
+          "type": "email",
+          "required": true,
+          "maxlength": "254"
+        }
+      ]
+    },
+    {
+      "action": "/admin/groups/{group:Team}/members/{user:uwe@x.y}/remove",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/admin/groups/{group:Team}/rename",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "maxlength": "60"
+        }
+      ]
+    },
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "admin settings": [
+    {
+      "action": "/admin/settings",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "customDomains",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "maxInstances",
+          "type": "number",
+          "required": true,
+          "maxlength": null
+        },
+        {
+          "name": "registration",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "admin apps": [
+    {
+      "action": "/admin/instances/notes/disabled",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "disabled",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "action": "/admin/instances/old-notes/disabled",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "disabled",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "action": "/admin/instances/tasks/disabled",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "disabled",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "admin domains": [
+    {
+      "action": "/admin/instances/notes/domains",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "host",
+          "type": "text",
+          "required": true,
+          "maxlength": "253"
+        }
+      ]
+    },
+    {
+      "action": "/admin/instances/notes/domains/remove",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "host",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "notes.example.com"
+        }
+      ]
+    },
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "account": [
+    {
+      "action": "/account/locale",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "locale",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/account/name",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "maxlength": "80"
+        }
+      ]
+    },
+    {
+      "action": "/account/password",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "current",
+          "type": "password",
+          "required": true,
+          "maxlength": null
+        },
+        {
+          "name": "password",
+          "type": "password",
+          "required": true,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "login": [
+    {
+      "action": "/login",
+      "method": "post",
+      "fields": [
+        {
+          "name": "email",
+          "type": "email",
+          "required": true,
+          "maxlength": null
+        },
+        {
+          "name": "password",
+          "type": "password",
+          "required": true,
+          "maxlength": null
+        },
+        {
+          "name": "return",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "/"
+        }
+      ]
+    }
+  ],
+  "login (unconfirmed)": [
+    {
+      "action": "/login",
+      "method": "post",
+      "fields": [
+        {
+          "name": "email",
+          "type": "email",
+          "required": true,
+          "maxlength": null
+        },
+        {
+          "name": "password",
+          "type": "password",
+          "required": true,
+          "maxlength": null
+        },
+        {
+          "name": "return",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "/"
+        }
+      ]
+    },
+    {
+      "action": "/verify/resend",
+      "method": "post",
+      "fields": [
+        {
+          "name": "email",
+          "type": "email",
+          "required": true,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "register": [
+    {
+      "action": "/register",
+      "method": "post",
+      "fields": [
+        {
+          "name": "email",
+          "type": "email",
+          "required": true,
+          "maxlength": null
+        },
+        {
+          "name": "invite",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "maxlength": "80"
+        },
+        {
+          "name": "password",
+          "type": "password",
+          "required": true,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "register (invited)": [
+    {
+      "action": "/register",
+      "method": "post",
+      "fields": [
+        {
+          "name": "email",
+          "type": "email",
+          "required": true,
+          "maxlength": null
+        },
+        {
+          "name": "invite",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "maxlength": "80"
+        },
+        {
+          "name": "password",
+          "type": "password",
+          "required": true,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "forgot": [
+    {
+      "action": "/forgot",
+      "method": "post",
+      "fields": [
+        {
+          "name": "email",
+          "type": "email",
+          "required": true,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "reset": [
+    {
+      "action": "/reset",
+      "method": "post",
+      "fields": [
+        {
+          "name": "password",
+          "type": "password",
+          "required": true,
+          "maxlength": null
+        },
+        {
+          "name": "token",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "verify": [
+    {
+      "action": "/verify",
+      "method": "post",
+      "fields": [
+        {
+          "name": "token",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "verify (invalid link)": [
+    {
+      "action": "/verify/resend",
+      "method": "post",
+      "fields": [
+        {
+          "name": "email",
+          "type": "email",
+          "required": true,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "register (closed)": [],
+  "register (invite only)": [],
+  "forgot (sent)": [],
+  "instance (manager)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/activate",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "version",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/auto-update",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "on",
+          "type": "checkbox",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "on",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/domains",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "host",
+          "type": "text",
+          "required": true,
+          "maxlength": "253"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/domains/remove",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "host",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "notes.example.com"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "email",
+          "type": "email",
+          "required": false,
+          "maxlength": "254"
+        },
+        {
+          "name": "group",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "level",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "email",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "pia@x.y"
+        },
+        {
+          "name": "level",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "email",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "uwe@x.y"
+        },
+        {
+          "name": "level",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "group",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "{group:Team}"
+        },
+        {
+          "name": "level",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants/remove",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "id",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "{group:Team}"
+        },
+        {
+          "name": "type",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "group"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants/remove",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "id",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "{user:pia@x.y}"
+        },
+        {
+          "name": "type",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "user"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants/remove",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "id",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "{user:uwe@x.y}"
+        },
+        {
+          "name": "type",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "user"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/visibility",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "visibility",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "consent": [
+    {
+      "action": "/authorize",
+      "method": "post",
+      "fields": [
+        {
+          "name": "client_id",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "code_challenge_method",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "S256"
+        },
+        {
+          "name": "code_challenge",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "decision",
+          "type": "button",
+          "required": false,
+          "maxlength": null,
+          "value": "approve"
+        },
+        {
+          "name": "decision",
+          "type": "button",
+          "required": false,
+          "maxlength": null,
+          "value": "deny"
+        },
+        {
+          "name": "redirect_uri",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "https://claude.ai/api/mcp/auth_callback"
+        },
+        {
+          "name": "response_type",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "code"
+        },
+        {
+          "name": "state",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "st"
+        }
+      ]
+    }
+  ],
+  "home (empty, user)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ],
+  "home (empty, publisher)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    }
+  ]
+}

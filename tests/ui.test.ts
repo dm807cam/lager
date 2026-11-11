@@ -8,9 +8,10 @@ import { esc, notFoundPage } from '../src/http/pages.js';
 import { staticUrls } from '../src/http/static.js';
 import { t, type MessageKey } from '../src/i18n/index.js';
 import { makeHarness, type Harness } from './support/http.js';
-import { consentHtml, cookies, formsOf, idNames, pageVisits, PASSWORD, showcase, visit, type PageVisit, type Showcase } from './support/pages.js';
+import { consentHtml, cookies, emptyHomes, formDetailsOf, formsOf, idNames, pageVisits, PASSWORD, showcase, visit, type PageVisit, type Showcase } from './support/pages.js';
 
 const FIXTURE = path.resolve(import.meta.dirname, 'fixtures/forms.json');
+const DETAIL_FIXTURE = path.resolve(import.meta.dirname, 'fixtures/forms-detail.json');
 const STATIC = path.resolve(import.meta.dirname, '../src/static');
 const en = (key: MessageKey, params?: Record<string, string | number>): string => esc(t('en', key, params));
 const dom = (html: string): Document => new JSDOM(html).window.document;
@@ -107,7 +108,20 @@ describe('shell', () => {
     const publisher = await nav('pia', '/publish');
     expect([...publisher!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/', '/#catalog', '/publish']);
     expect(publisher!.querySelector('[aria-current="page"]')!.getAttribute('href')).toBe('/publish');
-    expect(publisher!.querySelector('a[href="/publish"]')!.textContent).toBe(t('en', 'nav.publish'));
+    expect(publisher!.querySelector('a[href="/publish"]')!.getAttribute('aria-label')).toBe(t('en', 'nav.publish'));
+  });
+
+  it('the phone tab bar uses the short labels and keeps the full label as the accessible name', async () => {
+    s = await showcase();
+    const cookie = await s.h.login();
+    for (const locale of ['en', 'de'] as const) {
+      const html = (await request(s.h.app).get('/').set('Host', s.h.host).set('Cookie', `${cookie}; lager_lang=${locale}`)).text;
+      const links = [...dom(html).querySelectorAll('nav.primary a')];
+      const expected: Array<[string, MessageKey, MessageKey]> = [['/', 'nav.apps', 'nav.tab.apps'], ['/#catalog', 'dash.catalog', 'dash.catalog'], ['/publish', 'nav.publish', 'nav.tab.publish'], ['/admin', 'nav.admin', 'nav.tab.admin']];
+      expect(links.map((a) => [a.getAttribute('href'), a.getAttribute('aria-label'), a.querySelector('.nav-short')!.textContent])).toEqual(
+        expected.map(([href, full, tab]) => [href, t(locale, full), t(locale, tab)]));
+      expect(links.filter((a) => a.getAttribute('aria-current') === 'page').map((a) => a.getAttribute('href'))).toEqual(['/']);
+    }
   });
 
   it('account menu and language menu are <details> and work as plain links/forms without script', async () => {
@@ -127,8 +141,11 @@ describe('shell', () => {
     expect([...lang.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(
       ['en', 'de', 'fr', 'es'].map((l) => `/lang/${l}?return=${encodeURIComponent('/instances/notes')}`));
     expect(lang.querySelector('[aria-current="true"]')!.getAttribute('lang')).toBe('en');
-    // The footer keeps the switcher for narrow screens, where the language menu is hidden.
-    expect(doc.querySelectorAll('footer a[href^="/lang/"]')).toHaveLength(4);
+    // Signed-in pages have one language navigation: the menu, which works without script. Signed-out pages use the footer.
+    expect(doc.querySelectorAll('a[href^="/lang/"]')).toHaveLength(4);
+    expect(doc.querySelector('footer')).toBeNull();
+    const login = dom((await visit(s, { name: 'login', path: '/login', as: null }, cookies(s))).text);
+    expect(login.querySelectorAll('footer nav a[href^="/lang/"]')).toHaveLength(4);
   });
 
   it('theme snippet sets data-theme before paint and the stylesheet defines both themes', async () => {
@@ -173,6 +190,11 @@ describe('home', () => {
     expect(card.querySelector('.app-desc')!.textContent).toBe('Quick notes that sync between your devices.');
     const badges = [...card.querySelectorAll('.badge')].map((b) => b.textContent);
     expect(badges).toEqual([t('en', 'visibility.private'), 'v2']);
+    // Badge text sits in a span that truncates, so a long value cannot widen the card.
+    expect([...card.querySelectorAll('.badge > .badge-text')].map((b) => b.textContent)).toEqual([t('en', 'visibility.private'), 'v2']);
+    // The card's actions name the app for screen readers ("Open Notes", not a row of identical "Open").
+    expect(card.querySelector('a[href="http://notes.apps.localhost:8080"]')!.getAttribute('aria-label')).toBe(t('en', 'card.open', { title: 'Notes' }));
+    expect(card.querySelector('a[href="/instances/notes"]')!.getAttribute('aria-label')).toBe(t('en', 'card.manage', { title: 'Notes' }));
     // The disabled instance says so and cannot be opened.
     const old = [...doc.querySelectorAll('#mine .app-card')].find((c) => c.querySelector('.slug')!.textContent === 'old-notes')!;
     expect([...old.querySelectorAll('.badge')].map((b) => b.textContent)).toContain(t('en', 'common.disabled'));
@@ -276,6 +298,13 @@ describe('management and administration', () => {
       if (name === 'consent') continue;
       const doc = dom(html);
       for (const table of doc.querySelectorAll('table')) {
+        // Explicit roles keep the semantics when the stacked layout turns rows into blocks; action columns have a real header.
+        expect(table.getAttribute('role'), name).toBe('table');
+        expect([...table.querySelectorAll('thead, tbody')].every((g) => g.getAttribute('role') === 'rowgroup'), name).toBe(true);
+        expect([...table.querySelectorAll('tr')].every((r) => r.getAttribute('role') === 'row'), name).toBe(true);
+        expect([...table.querySelectorAll('th')].every((c) => c.getAttribute('role') === 'columnheader' && c.textContent !== ''), name).toBe(true);
+        expect([...table.querySelectorAll('td')].every((c) => c.getAttribute('role') === 'cell'), name).toBe(true);
+        for (const th of table.querySelectorAll('th .sr-only')) expect(th.textContent, name).toBe(t('en', 'common.actions'));
         const heads = [...table.querySelectorAll('thead th')].map((th) => (th.querySelector('.sr-only') ? '' : th.textContent));
         for (const row of table.querySelectorAll('tbody tr')) {
           [...row.querySelectorAll('td')].forEach((td, i) => {
@@ -364,19 +393,36 @@ describe('signed-out pages', () => {
 });
 
 describe('behaviour of the forms', () => {
-  // The fixture was generated from the pages before the redesign; the markup may change, what the forms send may not.
+  /** Every page the fixtures cover, as `[name, html]`, in the fixtures' order. */
+  async function formPages(sc: Showcase): Promise<Array<[string, string]>> {
+    const cookieOf = cookies(sc);
+    const out: Array<[string, string]> = [];
+    for (const v of pageVisits(sc)) {
+      const res = await visit(sc, v, cookieOf);
+      expect(res.status, v.name).toBe(v.status ?? 200);
+      out.push([v.name, res.text]);
+    }
+    out.push(['consent', await consentHtml(sc)]);
+    for (const { name, html } of await emptyHomes()) out.push([name, html]);
+    return out;
+  }
+
+  // forms.json was generated from the pages before the redesign (the token forms moved with their page to /publish):
+  // the markup may change, the action, method and field names of every form may not.
   it('forms post the same fields to the same routes as before', async () => {
     s = await showcase();
     const expected = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')) as Record<string, unknown>;
     const names = idNames(s);
-    const cookieOf = cookies(s);
-    const actual: Record<string, unknown> = {};
-    for (const v of pageVisits(s)) {
-      const res = await visit(s, v, cookieOf);
-      expect(res.status, v.name).toBe(v.status ?? 200);
-      actual[v.name] = formsOf(res.text, names);
-    }
-    actual.consent = formsOf(await consentHtml(s), names);
+    const actual = Object.fromEntries((await formPages(s)).map(([name, html]) => [name, formsOf(html, names)]));
+    expect(actual).toEqual(expected);
+  });
+
+  // forms-detail.json is the current state in more depth: field types, required, maxlength and the fixed hidden values.
+  it('fields keep their types, limits and fixed values', async () => {
+    s = await showcase();
+    const expected = JSON.parse(fs.readFileSync(DETAIL_FIXTURE, 'utf8')) as Record<string, unknown>;
+    const names = idNames(s);
+    const actual = Object.fromEntries((await formPages(s)).map(([name, html]) => [name, formDetailsOf(html, names)]));
     expect(actual).toEqual(expected);
   });
 });

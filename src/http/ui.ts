@@ -47,13 +47,16 @@ export type ButtonStyle = 'primary' | 'secondary' | 'quiet' | 'danger';
 export const btn = (style: ButtonStyle = 'primary', small = false): string => `btn btn-${style}${small ? ' btn-sm' : ''}`;
 
 /** A link styled as a button; `label` is trusted markup. */
+/** ` aria-label="…"` for an action whose visible text needs the thing it acts on, e.g. "Open Notes". */
+export const named = (name: string): string => ` aria-label="${esc(name)}"`;
+
 export const linkButton = (href: string, label: string, style: ButtonStyle = 'primary', small = false, extra = ''): string =>
   `<a class="${btn(style, small)}" href="${esc(href)}"${extra}>${label}</a>`;
 
 export type Tone = 'neutral' | 'accent' | 'success' | 'danger' | 'warning';
 /** A small label; `text` is plain text. */
 export const badge = (text: string, opts: { icon?: IconName; tone?: Tone; dot?: boolean } = {}): string =>
-  `<span class="badge${opts.tone && opts.tone !== 'neutral' ? ` badge-${opts.tone}` : ''}${opts.dot ? ' badge-dot' : ''}">${opts.icon ? icon(opts.icon) : ''}${esc(text)}</span>`;
+  `<span class="badge${opts.tone && opts.tone !== 'neutral' ? ` badge-${opts.tone}` : ''}${opts.dot ? ' badge-dot' : ''}">${opts.icon ? icon(opts.icon) : ''}<span class="badge-text">${esc(text)}</span></span>`;
 
 const VISIBILITY_ICONS: Record<string, IconName> = { private: 'lock', users: 'users', public: 'globe' };
 export const visibilityIcon = (visibility: string): IconName => VISIBILITY_ICONS[visibility] ?? 'lock';
@@ -78,10 +81,10 @@ export const callout = (locale: Locale, title: string, secret: string, warning: 
 
 export const emptyState = (text: string, name: IconName = 'grid'): string => `<div class="empty">${icon(name)}<p>${esc(text)}</p></div>`;
 
-/** A titled section of a page; `body` and `action` are trusted markup. */
-export function section(id: string, title: string, body: string, opts: { count?: number; action?: string; sub?: string } = {}): string {
+/** A titled section of a page with an optional count next to the heading; `body` is trusted markup. */
+export function section(id: string, title: string, body: string, opts: { count?: number } = {}): string {
   const count = opts.count !== undefined ? ` <span class="count">${opts.count}</span>` : '';
-  return `<section class="section" id="${esc(id)}" aria-labelledby="${esc(id)}-title"><div class="section-head"><h2 id="${esc(id)}-title">${esc(title)}${count}</h2>${opts.action ?? ''}</div>${opts.sub ? `<p class="section-sub">${esc(opts.sub)}</p>` : ''}${body}</section>`;
+  return `<section class="section" id="${esc(id)}" aria-labelledby="${esc(id)}-title"><div class="section-head"><h2 id="${esc(id)}-title">${esc(title)}${count}</h2></div>${body}</section>`;
 }
 
 /** A card with a heading; `body` is trusted markup. */
@@ -90,15 +93,16 @@ export const card = (title: string, body: string, cls = ''): string =>
 
 /**
  * A table that scrolls on wide screens and stacks its rows under 640 px. `heads` are plain-text column labels; an empty
- * label marks an action column. Each cell repeats its column label in `data-label` for the stacked layout. Cells are trusted markup.
+ * label marks an action column, whose header is read out as "Actions". Each cell repeats its column label in `data-label`
+ * for the stacked layout, and explicit roles keep the table semantics when CSS turns the rows into blocks. Cells are trusted markup.
  */
-export function dataTable(heads: string[], rows: string[][], cls = ''): string {
-  const th = heads.map((h) => (h ? `<th scope="col">${esc(h)}</th>` : `<th scope="col"><span class="sr-only">–</span></th>`)).join('');
-  const body = rows.map((cells) => `<tr>${cells.map((c, i) => {
+export function dataTable(locale: Locale, heads: string[], rows: string[][], cls = ''): string {
+  const th = heads.map((h) => `<th scope="col" role="columnheader">${h ? esc(h) : `<span class="sr-only">${esc(t(locale, 'common.actions'))}</span>`}</th>`).join('');
+  const body = rows.map((cells) => `<tr role="row">${cells.map((c, i) => {
     const label = heads[i] ?? '';
-    return `<td data-label="${esc(label)}"${label ? '' : ' class="actions"'}>${c}</td>`;
+    return `<td role="cell" data-label="${esc(label)}"${label ? '' : ' class="actions"'}>${c}</td>`;
   }).join('')}</tr>`).join('');
-  return `<div class="table-wrap"><table class="table-stack${cls ? ` ${cls}` : ''}"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div>`;
+  return `<div class="table-wrap"><table role="table" class="table-stack${cls ? ` ${cls}` : ''}"><thead role="rowgroup"><tr role="row">${th}</tr></thead><tbody role="rowgroup">${body}</tbody></table></div>`;
 }
 
 /** Used against available as a thin bar with the numbers as text. */

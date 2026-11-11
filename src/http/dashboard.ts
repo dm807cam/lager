@@ -10,26 +10,27 @@ import { localeOf } from './locale.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { MAX_NAME } from '../platform/tokens.js';
 import { dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, visibilityLabel } from './pages.js';
-import { appCard, badge, btn, callout, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
+import { appCard, badge, btn, named, callout, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, readFlash, type Flash } from './session.js';
 
 const deploys = (user: User): boolean => user.role === 'admin' || user.role === 'publisher';
 const plural = (count: number, one: MessageKey, other: MessageKey): MessageKey => (count === 1 ? one : other);
 
 /** Open (for everyone who reaches the card) and Manage (only for those who may manage or delete the instance). */
-function instanceActions(core: Core, locale: Locale, i: Instance, manage: boolean): string {
-  const open = i.disabled ? '' : linkButton(instanceUrl(core.config, i.slug), `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary', true);
-  const admin = manage ? linkButton(`/instances/${encodeURIComponent(i.slug)}`, `${icon('settings')}<span class="btn-label">${esc(t(locale, 'common.manage'))}</span>`, 'quiet', true) : '';
+function instanceActions(core: Core, locale: Locale, i: Instance, title: string, manage: boolean): string {
+  const open = i.disabled ? '' : linkButton(instanceUrl(core.config, i.slug), `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary', true, named(t(locale, 'card.open', { title })));
+  const admin = manage ? linkButton(`/instances/${encodeURIComponent(i.slug)}`, `${icon('settings')}<span class="btn-label">${esc(t(locale, 'common.manage'))}</span>`, 'quiet', true, named(t(locale, 'card.manage', { title }))) : '';
   return open + admin;
 }
 
 function instanceCard(core: Core, locale: Locale, i: Instance, extra: { badges?: string[]; manage: boolean }): string {
   const app = core.apps.getApp(i.appId);
+  const title = app?.title ?? i.slug;
   const state = i.disabled ? badge(t(locale, 'common.disabled'), { tone: 'danger', icon: 'alert' }) : badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) });
   return appCard({
-    app, title: app?.title ?? i.slug, slug: i.slug, description: app?.description,
+    app, title, slug: i.slug, description: app?.description,
     badges: [state, badge(`v${i.activeVersion}`), ...(extra.badges ?? [])],
-    actions: instanceActions(core, locale, i, extra.manage),
+    actions: instanceActions(core, locale, i, title, extra.manage),
   });
 }
 
@@ -57,7 +58,7 @@ function catalogSection(core: Core, locale: Locale, csrf: string, catalog: Retur
     return appCard({
       app, title: i.appTitle, slug: i.slug, description: app?.description,
       badges: [badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) }), badge(i.ownerName, { icon: 'user' })],
-      actions: linkButton(instanceUrl(core.config, i.slug), `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary', true),
+      actions: linkButton(instanceUrl(core.config, i.slug), `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary', true, named(t(locale, 'card.open', { title: i.appTitle }))),
     });
   });
   const appCards = apps.map((a) => {
@@ -81,7 +82,7 @@ function appsSection(core: Core, locale: Locale, apps: App[]): string {
       app: a, title: a.title, slug: a.slug, description: a.description,
       badges: [`<span class="badge"><span class="sr-only">${esc(t(locale, 'dash.latestVersion'))} </span>v${latest}</span>`,
         badge(t(locale, plural(count, 'dash.instanceCount.one', 'dash.instanceCount.other'), { count }), { icon: 'grid' })],
-      actions: linkButton(`/apps/${encodeURIComponent(a.slug)}`, `${icon('settings')}${esc(t(locale, 'common.manage'))}`, 'secondary', true),
+      actions: linkButton(`/apps/${encodeURIComponent(a.slug)}`, `${icon('settings')}${esc(t(locale, 'common.manage'))}`, 'secondary', true, named(t(locale, 'card.manage', { title: a.title }))),
     });
   }).join('');
   return section('apps', t(locale, 'dash.apps'), apps.length ? `<div class="grid">${cards}</div>` : emptyState(t(locale, 'dash.noApps')), { count: apps.length || undefined });
@@ -108,7 +109,7 @@ function tokenSection(core: Core, locale: Locale, user: User, csrf: string): str
     form(`/ui/tokens/${encodeURIComponent(tk.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), 'danger', '', true),
   ]);
   const list = tokens.length
-    ? dataTable([t(locale, 'common.name'), t(locale, 'common.created'), t(locale, 'dash.tokens.lastUsed'), ''], rows)
+    ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'common.created'), t(locale, 'dash.tokens.lastUsed'), ''], rows)
     : emptyState(t(locale, 'dash.tokens.none'), 'lock');
   const create = form('/ui/tokens', csrf,
     field('token-name', t(locale, 'dash.tokens.nameLabel'), `<input id="token-name" name="name" required maxlength="${MAX_NAME}" autocomplete="off">`),

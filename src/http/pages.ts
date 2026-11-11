@@ -50,11 +50,12 @@ function footer(locale: Locale, returnPath: string | null): string {
   return `<footer class="site-footer"><nav aria-label="${esc(t(locale, 'footer.language'))}">${icon('globe', 'i-sm')}<span class="sr-only">${esc(t(locale, 'footer.language'))}</span>${languageLinks(locale, returnPath, '')}</nav></footer>`;
 }
 
-const NAV: Array<{ id: NavItem; href: string; key: MessageKey; icon: IconName }> = [
-  { id: 'apps', href: '/', key: 'nav.apps', icon: 'grid' },
-  { id: 'catalog', href: '/#catalog', key: 'dash.catalog', icon: 'compass' },
-  { id: 'publish', href: '/publish', key: 'nav.publish', icon: 'upload' },
-  { id: 'admin', href: '/admin', key: 'nav.admin', icon: 'shield' },
+/** `tab` is the shorter label of the phone tab bar; the full label stays the link's accessible name. */
+const NAV: Array<{ id: NavItem; href: string; key: MessageKey; tab: MessageKey; icon: IconName }> = [
+  { id: 'apps', href: '/', key: 'nav.apps', tab: 'nav.tab.apps', icon: 'grid' },
+  { id: 'catalog', href: '/#catalog', key: 'dash.catalog', tab: 'dash.catalog', icon: 'compass' },
+  { id: 'publish', href: '/publish', key: 'nav.publish', tab: 'nav.tab.publish', icon: 'upload' },
+  { id: 'admin', href: '/admin', key: 'nav.admin', tab: 'nav.tab.admin', icon: 'shield' },
 ];
 
 /** The top bar of signed-in pages: brand, primary navigation (a tab bar on phones), language and account menus. */
@@ -63,10 +64,10 @@ function topBar(locale: Locale, opts: PageOpts, returnPath: string): { html: str
   const items = NAV.filter((n) => n.id === 'apps' || (n.id === 'catalog' && opts.catalog) || (n.id === 'publish' && user.publisher) || (n.id === 'admin' && user.admin));
   // A navigation with a single destination is noise: the brand already links home.
   const nav = items.length > 1 ? `<nav class="primary" aria-label="${esc(t(locale, 'nav.main'))}">${items.map((n) =>
-    `<a href="${n.href}"${n.id === opts.current ? ' aria-current="page"' : ''}>${icon(n.icon)}<span>${esc(t(locale, n.key))}</span></a>`).join('')}</nav>` : '';
+    `<a href="${n.href}" aria-label="${esc(t(locale, n.key))}"${n.id === opts.current ? ' aria-current="page"' : ''}>${icon(n.icon)}<span class="nav-full" aria-hidden="true">${esc(t(locale, n.key))}</span><span class="nav-short" aria-hidden="true">${esc(t(locale, n.tab))}</span></a>`).join('')}</nav>` : '';
   const lang = opts.switcher === false ? '' : `<details class="menu lang-menu"><summary class="menu-trigger">${icon('globe', 'i-sm')}<span aria-hidden="true">${locale}</span><span class="sr-only">${esc(t(locale, 'footer.language'))}</span></summary>
 <div class="menu-panel">${languageLinks(locale, returnPath, 'menu-item')}</div></details>`;
-  const theme = `<button type="button" class="menu-item" data-theme-toggle data-system="${esc(t(locale, 'theme.system'))}" data-light="${esc(t(locale, 'theme.light'))}" data-dark="${esc(t(locale, 'theme.dark'))}" hidden>${icon('sun')}<span>${esc(t(locale, 'theme.label'))}: <span data-theme-name>${esc(t(locale, 'theme.system'))}</span></span></button>`;
+  const theme = `<button type="button" class="menu-item" data-theme-toggle data-system="${esc(t(locale, 'theme.system'))}" data-light="${esc(t(locale, 'theme.light'))}" data-dark="${esc(t(locale, 'theme.dark'))}" hidden>${icon('sun')}<span>${esc(t(locale, 'theme.label'))} <span data-theme-name>${esc(t(locale, 'theme.system'))}</span></span></button>`;
   const account = `<details class="menu account-menu"><summary class="menu-trigger avatar-trigger">${avatar(user)}<span class="sr-only">${esc(t(locale, 'nav.account'))}</span></summary>
 <div class="menu-panel"><div class="menu-head">${avatar(user, 'lg')}<div><strong>${esc(user.name || user.email)}</strong><span>${esc(user.email)}</span></div></div>
 <a class="menu-item" href="/account">${icon('user')}${esc(t(locale, 'nav.account'))}</a>${theme}<div class="menu-sep"></div>
@@ -79,7 +80,7 @@ function topBar(locale: Locale, opts: PageOpts, returnPath: string): { html: str
 
 /**
  * Shared shell. Signed-in pages (`opts.user`) get the top bar and a wide content area; all others the signed-out layout:
- * a small brand bar and a centred column. Both end in the language footer unless `switcher` is false.
+ * a small brand bar, a centred column and the language footer (unless `switcher` is false). Signed-in pages switch language in the top bar.
  */
 export function page(locale: Locale, title: string, body: string, opts: PageOpts = {}): string {
   const origin = opts.origin ?? '';
@@ -92,7 +93,8 @@ export function page(locale: Locale, title: string, body: string, opts: PageOpts
   if (opts.user) {
     const bar = topBar(locale, opts, returnPath);
     bodyClass = bar.tabbar ? 'app-body has-tabbar' : 'app-body';
-    content = `${skip}${bar.html}<main id="main" class="page">${body}</main>${footer(locale, switcherPath)}`;
+    // The top bar's language menu is the switcher here; a second language navigation in the footer would only repeat it.
+    content = `${skip}${bar.html}<main id="main" class="page">${body}</main>`;
   } else {
     bodyClass = 'auth-body';
     const brand = opts.hero
