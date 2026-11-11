@@ -145,6 +145,9 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX instance_creations_user ON instance_creations(user_id, created_at);
   `,
+  `
+  ALTER TABLE versions ADD COLUMN instance_id TEXT;
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

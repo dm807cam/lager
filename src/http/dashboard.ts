@@ -58,8 +58,7 @@ ${form(`/ui/apps/${encodeURIComponent(a.slug)}/instances`, csrf,
 function appsSection(core: Core, user: User): string {
   const apps = core.access.appsOf(user);
   const rows = apps.map((a) => {
-    const versions = core.apps.listVersions(a.id);
-    return `<tr><td>${esc(a.title)}</td><td class="mono">${esc(a.slug)}</td><td>v${versions.length ? versions[versions.length - 1].number : 0}</td>
+    return `<tr><td>${esc(a.title)}</td><td class="mono">${esc(a.slug)}</td><td>v${core.apps.latestDeployedVersion(a.id)?.number ?? 0}</td>
 <td><a href="/apps/${encodeURIComponent(a.slug)}">Öffnen</a></td></tr>`;
   }).join('');
   return `<h2>Meine Apps</h2>${apps.length

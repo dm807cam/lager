@@ -77,7 +77,7 @@ describe('mcp endpoint', () => {
     const client = await connect(r);
     const dep = await call(client, 'deploy_app', { slug: 'todo', html: '<p>todo</p>', title: 'Todo', capabilities: { db: {} }, note: 'n1' });
     expect(dep.isError).toBe(false);
-    expect(dep.json).toEqual({ app: 'todo', version: 1, createdVersion: true, urls: [`http://todo.apps.localhost:${new URL(r.base).port}`], warnings: [] });
+    expect(dep.json).toEqual({ app: 'todo', version: 1, createdVersion: true, urls: [`http://todo.apps.localhost:${new URL(r.base).port}`], warnings: [], pinned: [] });
     const got = await call(client, 'get_app', { slug: 'todo' });
     expect(got.json).toMatchObject({ slug: 'todo', title: 'Todo', latestVersion: 1, instances: [{ slug: 'todo', activeVersion: 1, visibility: 'private' }] });
     expect(got.json.versions).toEqual([expect.objectContaining({ number: 1, note: 'n1' })]);

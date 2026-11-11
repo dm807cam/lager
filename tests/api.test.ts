@@ -18,13 +18,29 @@ describe('rest api', () => {
       .set('Host', h.host).set('Authorization', `Bearer ${token}`).type('text/html').send('<h1>Hi</h1>');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      app: 'workout', version: 1, createdVersion: true, urls: ['http://workout.apps.localhost:8080'], warnings: [],
+      app: 'workout', version: 1, createdVersion: true, urls: ['http://workout.apps.localhost:8080'], warnings: [], pinned: [],
     });
     expect(res.body.urls[0]).toBe('http://workout.apps.localhost:8080');
     const app = h.core.apps.getApp('workout')!;
     expect(app.title).toBe('Workout');
     expect(h.core.apps.listVersions(app.id)[0].note).toBe('first');
     expect(h.core.apps.readVersionHtml(app.id, 1)).toBe('<h1>Hi</h1>');
+  });
+
+  it('PUT reports instances that keep their own saved content as pinned, with a warning', async () => {
+    const { h, token } = setup();
+    const put = (html: string) => request(h.app).put('/api/apps/poll').set('Host', h.host)
+      .set('Authorization', `Bearer ${token}`).type('text/html').send(html);
+    await put('<p>1</p>');
+    const inst = h.core.apps.getInstanceBySlug('poll')!;
+    h.core.apps.selfPublish({ instanceId: inst.id, html: '<p>state</p>', baseVersion: 1, userId: h.adminId });
+    const res = await put('<p>2</p>');
+    expect(res.body.version).toBe(3);
+    expect(res.body.pinned).toEqual(['poll']);
+    expect(res.body.warnings).toEqual(['Diese Instanzen wurden nicht aktualisiert, weil sie selbst gespeicherte Inhalte haben: poll']);
+    const detail = await request(h.app).get('/api/apps/poll').set('Host', h.host).set('Authorization', `Bearer ${token}`);
+    expect(detail.body.latestVersion).toBe(3);
+    expect(detail.body.versions.map((v: { number: number }) => v.number)).toEqual([1, 3]);
   });
 
   it('PUT text/html takes capabilities as a JSON query param', async () => {

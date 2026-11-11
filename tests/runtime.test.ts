@@ -37,6 +37,7 @@ let session: { status: number; body: unknown } | 'network-error';
 let users: Record<string, { id: string; name: string; email: string | null; isMe: boolean }>;
 let clock: number;
 let roomReply: (body: any) => Response;
+let artifactReply: (body: any) => Response | Promise<Response>;
 
 const parentOf = (path: string): string => path.split('/').slice(0, -1).join('/');
 const dbCalls = (): any[] => calls.filter(([u]) => u === '/__lager/db').map(([, init]) => JSON.parse(init.body));
@@ -106,6 +107,7 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
     }
   }
   if (url === '/__lager/room') return roomReply(JSON.parse(init.body));
+  if (url === '/__lager/artifact') return artifactReply(JSON.parse(init.body));
   if (url === '/__lager/assets' || url.startsWith('/__lager/assets/')) {
     const type = init?.headers?.['Content-Type'] as string | undefined;
     if (init?.method === 'POST') {
@@ -138,12 +140,13 @@ function boot(): any {
 beforeEach(() => {
   calls = []; docs = new Map(); users = {}; clock = 0;
   roomReply = () => json({ ok: true });
+  artifactReply = () => json({ version: '2' });
   session = sessionOf(OWNER);
   FakeEventSource.instances = [];
   g.fetch = fakeFetch;
   g.EventSource = FakeEventSource;
 });
-afterEach(() => { delete g.claude; delete g.storage; });
+afterEach(() => { delete g.claude; delete g.storage; delete g.__lagerHost; });
 
 describe('claude.use', () => {
   it('use is memoized and unknown names resolve null', async () => {
@@ -1003,6 +1006,7 @@ describe('room', () => {
       expect(await code(room.emit('t', 1))).toBe(expected);
     }
     roomReply = () => json({ ok: true });
+  artifactReply = () => json({ version: '2' });
     const before = roomPosts().length;
     es().emit('error');
     expect(room.connected()).toBe(false);
@@ -1173,5 +1177,191 @@ describe('room', () => {
     expect(await room.canSendToClaudeSession()).toBe('off');
     expect(await code(room.sendToClaudeSession({ a: 1 }))).toBe('claude_unavailable');
     expect(FakeEventSource.instances).toHaveLength(0);
+  });
+});
+
+describe('artifact and self', () => {
+  const declare = (caps: Record<string, unknown> = { artifact: {} }, viewer: Record<string, unknown> = OWNER): void => {
+    session = { status: 200, body: { ...(sessionOf(viewer).body as object), capabilities: caps } };
+  };
+  const READER = { ...OWNER, level: 'interact', isOwner: false, canEdit: false };
+  const failure = (p: Promise<unknown>): Promise<{ code: string }> => p.then(() => { throw new Error('resolved'); }, (e: { code: string }) => e);
+
+  it('artifact.publish posts html with the loaded version and maps errors', async () => {
+    declare();
+    const artifact = await boot().use('artifact');
+    expect(Object.isFrozen(artifact)).toBe(true);
+    expect(await artifact.publish('<p>x</p>')).toEqual({ version: '2' });
+    const post = calls.find(([u]) => u === '/__lager/artifact')!;
+    expect(post[1].method).toBe('POST');
+    expect(post[1].credentials).toBe('same-origin');
+    expect(post[1].headers).toEqual({ 'Content-Type': 'application/json', 'X-Lager-Request': '1' });
+    expect(JSON.parse(post[1].body)).toEqual({ html: '<p>x</p>', baseVersion: 1 });
+    const cases: Array<[number, string, string]> = [
+      [403, 'forbidden', 'not_writer'], [401, 'unauthenticated', 'not_writer'], [403, 'not_declared', 'not_declared'], [409, 'conflict', 'conflict'],
+      [413, 'too_large', 'too_large'], [400, 'invalid_content', 'invalid_content'], [429, 'rate_limited', 'rate_limited'], [500, 'internal', 'upstream_error'],
+    ];
+    for (const [status, code, expected] of cases) {
+      artifactReply = () => json({ error: { code, message: 'x' } }, status);
+      expect((await failure(artifact.publish('<p>y</p>'))).code, `${status} ${code}`).toBe(expected);
+    }
+    artifactReply = () => { throw new TypeError('offline'); };
+    expect((await failure(artifact.publish('<p>y</p>'))).code).toBe('upstream_error');
+    artifactReply = () => new Response('<html>', { status: 502 });
+    expect((await failure(artifact.publish('<p>y</p>'))).code).toBe('upstream_error');
+    expect((await failure(artifact.publish(''))).code).toBe('invalid_content');
+    expect((await failure(artifact.publish(5 as never))).code).toBe('invalid_content');
+  });
+
+  it('members Lager cannot serve reject with the contract codes', async () => {
+    declare();
+    const artifact = await boot().use('artifact');
+    const before = calls.length;
+    expect((await failure(artifact.publish({ 'index.html': '<p>x</p>' }))).code).toBe('capability_disabled');
+    expect((await failure(artifact.edit([{ op: 'remove', target: 'a' }]))).code).toBe('capability_removed');
+    expect((await failure(artifact.sync(() => 1))).code).toBe('capability_removed');
+    expect((await failure(artifact.metadata(['x']))).code).toBe('capability_removed');
+    expect(calls.length).toBe(before);
+  });
+
+  it('read-only viewers reject not_writer without a request', async () => {
+    declare({ artifact: {} }, READER);
+    const artifact = await boot().use('artifact');
+    expect(artifact).not.toBeNull();
+    expect((await failure(artifact.publish('<p>x</p>'))).code).toBe('not_writer');
+    expect(calls.some(([u]) => u === '/__lager/artifact')).toBe(false);
+  });
+
+  it('self is the same namespace as artifact', async () => {
+    declare({ self: {} });
+    const claude = boot();
+    const self = await claude.use('self');
+    expect(self).not.toBeNull();
+    expect(await claude.use('artifact')).toBe(self);
+    expect(await self.publish('<p>x</p>')).toEqual({ version: '2' });
+  });
+
+  it('a reload event with a newer version reloads the page once', async () => {
+    declare();
+    const reload = vi.fn();
+    g.__lagerHost = { reload };
+    await boot().use('artifact');
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(es().url).toBe('/__lager/db/events');
+    es().emit('reload', { version: 1 });
+    expect(reload).not.toHaveBeenCalled();
+    es().emit('reload', { version: 2 });
+    es().emit('reload', { version: 2 });
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('the stream stays open for reload events when db listeners come and go, and a bad event is ignored', async () => {
+    declare({ artifact: {}, db: {} });
+    const reload = vi.fn();
+    g.__lagerHost = { reload };
+    const claude = boot();
+    await claude.use('artifact');
+    const db = await claude.use('db');
+    const off = db.doc('a/b').onSnapshot(() => {});
+    await flush();
+    off();
+    expect(es().closed).toBe(false);
+    es().emit('reload', 'nonsense');
+    es().emit('reload', {});
+    expect(reload).not.toHaveBeenCalled();
+    es().emit('reload', { version: 5 });
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('is null when not declared, and shows up in permissions when declared', async () => {
+    declare({});
+    expect(await boot().use('artifact')).toBeNull();
+    expect(await boot().use('self')).toBeNull();
+    declare();
+    const p = await boot().use('permissions');
+    expect(await p.state('artifact')).toBe('granted');
+    expect(await p.state('self')).toBe('unavailable');
+  });
+});
+
+describe('downloads', () => {
+  const declare = (caps: Record<string, unknown> = { downloads: {} }): void => {
+    session = { status: 200, body: { ...(sessionOf(OWNER).body as object), capabilities: caps } };
+  };
+  let confirm: ReturnType<typeof vi.fn>;
+  let created: Blob[];
+  let revoked: string[];
+  let clicked: Array<{ download: string; href: string }>;
+  beforeEach(() => {
+    confirm = vi.fn(() => true);
+    created = []; revoked = []; clicked = [];
+    g.__lagerHost = { confirm };
+    g.URL.createObjectURL = (b: Blob) => { created.push(b); return 'blob:test/' + created.length; };
+    g.URL.revokeObjectURL = (u: string) => { revoked.push(u); };
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push({ download: this.download, href: this.href });
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+  });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); delete g.URL.createObjectURL; delete g.URL.revokeObjectURL; });
+  const code = (p: Promise<unknown>): Promise<string> => p.then(() => 'resolved', (e: { code: string }) => e.code);
+
+  it('downloads.save confirms, sanitises the filename and saves through a temporary link', async () => {
+    declare();
+    const downloads = await boot().use('downloads');
+    expect(Object.isFrozen(downloads)).toBe(true);
+    expect(await downloads.save({ filename: 'data/..\\export\u0007.csv', data: 'a,b\n' })).toEqual({ status: 'saved' });
+    expect(confirm).toHaveBeenCalledWith('Datei „export.csv" speichern?');
+    expect(clicked).toEqual([{ download: 'export.csv', href: 'blob:test/1' }]);
+    expect(await created[0].text()).toBe('a,b\n');
+    expect(document.querySelector('a[download]')).toBeNull();
+    expect(revoked).toEqual([]);
+    vi.advanceTimersByTime(1500);
+    expect(revoked).toEqual(['blob:test/1']);
+    // other data types
+    await downloads.save({ filename: 'a.bin', data: new Uint8Array([1, 2, 3]) });
+    await downloads.save({ filename: 'b.bin', data: new Uint8Array([1, 2, 3, 4]).buffer });
+    await downloads.save({ filename: 'c.txt', data: new Blob(['xyz']) });
+    expect(created.slice(1).map((b) => b.size)).toEqual([3, 4, 3]);
+  });
+
+  it('declining rejects declined and builds nothing', async () => {
+    declare();
+    confirm.mockReturnValue(false);
+    const downloads = await boot().use('downloads');
+    expect(await code(downloads.save({ filename: 'x.txt', data: 'x' }))).toBe('declined');
+    expect(created).toEqual([]);
+    expect(clicked).toEqual([]);
+  });
+
+  it('blocked extensions, size and bad requests are refused before asking', async () => {
+    declare();
+    const downloads = await boot().use('downloads');
+    for (const name of ['a.exe', 'a.BAT', 'a.cmd', 'a.scr', 'a.js', 'a.msi', 'a.dmg', 'a.app', 'a.sh', 'dir/a.exe', 'a.exe.', 'a.sh  ']) {
+      expect(await code(downloads.save({ filename: name, data: 'x' })), name).toBe('rejected_extension');
+    }
+    expect(await code(downloads.save({ filename: 'a.exe.txt', data: 'x' }))).toBe('resolved');
+    expect(await code(downloads.save({ filename: 'big.bin', data: new Blob([new Uint8Array(1)]) }))).toBe('resolved');
+    const huge = Object.create(ArrayBuffer.prototype, { byteLength: { value: 50 * 1024 * 1024 + 1 } });
+    expect(await code(downloads.save({ filename: 'big.bin', data: huge }))).toBe('too_large');
+    expect(await code(downloads.save({ filename: 'big.bin', data: 'x'.repeat(50 * 1024 * 1024 + 1) }))).toBe('too_large');
+    expect(await code(downloads.save({ filename: '', data: 'x' }))).toBe('bad_request');
+    expect(await code(downloads.save({ filename: '///', data: 'x' }))).toBe('bad_request');
+    expect(await code(downloads.save({ filename: 5, data: 'x' } as never))).toBe('bad_request');
+    expect(await code(downloads.save({ filename: 'a.txt', data: 5 } as never))).toBe('bad_request');
+    expect(await code(downloads.save({ filename: 'a.txt', data: '' }))).toBe('bad_request');
+    expect(await code(downloads.save(null as never))).toBe('bad_request');
+    // only the two accepted saves above reached the prompt
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it('is null when not declared, and no extension is needed', async () => {
+    declare({});
+    expect(await boot().use('downloads')).toBeNull();
+    declare();
+    const p = await boot().use('permissions');
+    expect(await p.state('downloads')).toBe('granted');
+    const downloads = await boot().use('downloads');
+    expect(await downloads.save({ filename: 'README', data: 'x' })).toEqual({ status: 'saved' });
   });
 });

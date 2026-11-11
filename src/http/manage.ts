@@ -46,9 +46,11 @@ function shell(user: User, csrf: string, title: string, body: string, flash: Fla
   return page(title, `${noticeHtml(flash)}${body}`, { wide: true, headerExtra: signedInHeader(user.email, csrf, user.role === 'admin') });
 }
 
-function versionsTable(core: Core, app: App, base: string | null, csrf: string, active?: number): string {
-  const rows = [...core.apps.listVersions(app.id)].reverse().map((v) => `<tr>
-<td>v${v.number}</td><td>${formatDate(v.createdAt)}</td><td>${v.note ? esc(v.note) : '<span class="muted">–</span>'}</td><td>${formatSize(v.sizeBytes)}</td>
+/** Deployed versions, plus the ones `instanceId` saved itself; other instances' saved versions are never listed. */
+function versionsTable(core: Core, app: App, base: string | null, csrf: string, active?: number, instanceId?: string): string {
+  const shown = core.apps.listVersions(app.id).filter((v) => v.instanceId === null || v.instanceId === instanceId);
+  const rows = [...shown].reverse().map((v) => `<tr>
+<td>v${v.number}</td><td>${formatDate(v.createdAt)}</td><td>${v.instanceId !== null ? '<span class="muted">selbst gespeichert</span>' : v.note ? esc(v.note) : '<span class="muted">–</span>'}</td><td>${formatSize(v.sizeBytes)}</td>
 ${base === null ? '' : `<td>${v.number === active ? '<span class="ok">aktiv</span>' : form(`${base}/activate`, csrf, hiddenField('version', String(v.number)), 'Aktivieren')}</td>`}</tr>`).join('');
   return `<div class="scroll"><table><thead><tr><th>Nr.</th><th>Datum</th><th>Notiz</th><th>Größe</th>${base === null ? '' : '<th></th>'}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
@@ -91,7 +93,10 @@ ${form(`${base}/delete`, csrf, `<label for="confirm">Zur Bestätigung den Namen 
   return shell(user, csrf, `Instanz ${inst.slug}`, `<p><a href="/">Zurück zur Übersicht</a></p>
 <h1>${esc(app.title)} <span class="muted mono">${esc(inst.slug)}</span></h1>
 <p><a href="${esc(url)}">${esc(url)}</a></p>
-<h2>Version</h2><p>Aktive Version: v${inst.activeVersion}</p>${versionsTable(core, app, base, csrf, inst.activeVersion)}
+<h2>Version</h2><p>Aktive Version: v${inst.activeVersion}</p>${versionsTable(core, app, base, csrf, inst.activeVersion, inst.id)}
+<div class="card">${form(`${base}/auto-update`, csrf,
+    `${hiddenField('on', '0')}<label><input type="checkbox" name="on" value="1"${inst.autoUpdate ? ' checked' : ''}> Automatisch auf neue Versionen aktualisieren</label>
+<p class="muted">Mit Häkchen ersetzt der nächste Deploy den selbst gespeicherten Stand dieser Instanz durch die neue Version. Der gespeicherte Stand bleibt in der Versionsliste erhalten.</p>`, 'Speichern')}</div>
 <h2>Sichtbarkeit</h2><div class="card">${form(`${base}/visibility`, csrf,
     `<label for="visibility">Wer darf die Instanz öffnen?</label><select id="visibility" name="visibility">${optionList(VISIBILITY_LABELS, inst.visibility)}</select>${level}`, 'Speichern')}</div>
 ${grantsSection(core, inst, base, csrf)}
@@ -104,8 +109,10 @@ ${del}`, flash);
 function appPage(core: Core, user: User, app: App, flash: Flash): string {
   const csrf = csrfToken(core, user);
   const base = `/ui/apps/${encodeURIComponent(app.slug)}`;
+  const saved = new Map<string, number>();
+  for (const v of core.apps.listVersions(app.id)) if (v.instanceId !== null) saved.set(v.instanceId, (saved.get(v.instanceId) ?? 0) + 1);
   const rows = core.apps.listInstances(app.id).map((i) => `<tr><td><a href="${esc(instanceUrl(core.config, i.slug))}">${esc(i.slug)}</a></td>
-<td>${esc(core.users.get(i.ownerId)?.email ?? '–')}</td><td>${i.disabled ? '<span class="err">deaktiviert</span>' : core.access.canManageInstance(i, user) ? `<a href="/instances/${encodeURIComponent(i.slug)}">Verwalten</a>` : ''}</td></tr>`).join('');
+<td>${esc(core.users.get(i.ownerId)?.email ?? '–')}</td><td>${saved.has(i.id) ? `${saved.get(i.id)} selbst gespeichert` : '<span class="muted">–</span>'}</td><td>${i.disabled ? '<span class="err">deaktiviert</span>' : core.access.canManageInstance(i, user) ? `<a href="/instances/${encodeURIComponent(i.slug)}">Verwalten</a>` : ''}</td></tr>`).join('');
   const ownerField = core.access.canDeploy(app, user)
     ? '<label for="owner-email">Besitzer (E-Mail), leer für dich selbst</label><input id="owner-email" name="owner_email" type="email" maxlength="254">' : '';
   let ownerOnly = '';
@@ -122,7 +129,7 @@ ${form(`${base}/delete`, csrf, `<label for="confirm">Zur Bestätigung den Namen 
   return shell(user, csrf, `App ${app.title}`, `<p><a href="/">Zurück zur Übersicht</a></p>
 <h1>${esc(app.title)} <span class="muted mono">${esc(app.slug)}</span></h1>
 <h2>Versionen</h2>${versionsTable(core, app, null, csrf)}
-<h2>Instanzen</h2>${rows ? `<div class="scroll"><table><thead><tr><th>Instanz</th><th>Besitzer</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Keine Instanzen.</p>'}
+<h2>Instanzen</h2>${rows ? `<div class="scroll"><table><thead><tr><th>Instanz</th><th>Besitzer</th><th>Gespeichert</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Keine Instanzen.</p>'}
 <h2>Instanz anlegen</h2><div class="card">${form(`${base}/instances`, csrf,
     `<label for="new-slug">Name der Instanz (Kleinbuchstaben, Ziffern, Bindestriche)</label><input id="new-slug" name="slug" required maxlength="63" autocomplete="off">${ownerField}`, 'Instanz anlegen')}</div>
 ${ownerOnly}`, flash);
@@ -208,6 +215,13 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const version = Number(field(req, 'version'));
     if (!Number.isInteger(version)) throw new LagerError('invalid_argument', 'Invalid version.');
     core.apps.activate(managed(user, param(req, 'slug')).id, version, user.id);
+  }));
+
+  router.post('/ui/instances/:slug/auto-update', ...action(instBack, (req, user) => {
+    // The form sends a hidden "0" and, when ticked, a "1" as well.
+    const raw = (req.body as Record<string, unknown> | undefined)?.on;
+    const on = Array.isArray(raw) ? raw.includes('1') : raw === '1';
+    core.apps.setAutoUpdate(managed(user, param(req, 'slug')).id, on, user.id);
   }));
 
   router.post('/ui/instances/:slug/visibility', ...action(instBack, (req, user) => {

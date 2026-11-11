@@ -170,6 +170,7 @@ describe('instance page', () => {
     const paths: Array<[string, Record<string, string>]> = [
       ['/ui/instances/notes/activate', { version: '1' }],
       ['/ui/instances/notes/visibility', { visibility: 'public' }],
+      ['/ui/instances/notes/auto-update', { on: '0' }],
       ['/ui/instances/notes/grants', { email: 'u@x.y', level: 'view' }],
       ['/ui/instances/notes/delete', { confirm: 'notes' }],
       ['/ui/apps/notes/instances', { slug: 'x1' }],
@@ -182,6 +183,7 @@ describe('instance page', () => {
       expect(res.status, path).toBe(403);
     }
     expect(inst().activeVersion).toBe(2);
+    expect(inst().autoUpdate).toBe(true);
     expect(inst().visibility).toBe('private');
     expect(h.core.apps.getApp('notes')).not.toBeNull();
   });
@@ -361,5 +363,49 @@ describe('app page', () => {
     expect(ok.status).toBe(302);
     expect(ok.headers.location).toBe('/');
     expect(h.core.apps.getApp('notes')).toBeNull();
+  });
+});
+
+describe('self-publishing and versions', () => {
+  it('auto-update toggle', async () => {
+    const { p, u, pc, uc } = await setup();
+    const before = await page(pc, '/instances/notes');
+    expect(before.text).toContain('Automatisch auf neue Versionen aktualisieren');
+    expect(before.text).toMatch(/name="on"[^>]*value="1"[^>]*checked|checked[^>]*name="on"/);
+    const off = await post(pc, p, '/ui/instances/notes/auto-update', { on: '0' });
+    expect(off.status).toBe(302);
+    expect(off.headers.location).toBe('/instances/notes');
+    expect(inst().autoUpdate).toBe(false);
+    h.core.apps.deploy({ slug: 'notes', html: '<p>3</p>', userId: p.id });
+    expect(inst().activeVersion).toBe(2);
+    expect((await page(pc, '/instances/notes')).text).not.toMatch(/name="on"[^>]*checked/);
+    await post(pc, p, '/ui/instances/notes/auto-update', { on: '1' });
+    expect(inst().autoUpdate).toBe(true);
+    // somebody without manage rights changes nothing
+    expect((await post(uc, u, '/ui/instances/notes/auto-update', { on: '0' })).status).toBe(403);
+    expect(inst().autoUpdate).toBe(true);
+    expect((await post(pc, p, '/ui/instances/missing/auto-update', { on: '0' })).status).toBe(404);
+  });
+
+  it('self-published versions are labelled and hidden from the app page list', async () => {
+    const { p, u, pc, uc } = await setup();
+    const app = h.core.apps.getApp('notes')!;
+    const other = h.core.apps.createInstance({ appId: app.id, slug: 'notes-u', ownerId: u.id });
+    h.core.apps.selfPublish({ instanceId: inst().id, html: '<p>mine</p>', baseVersion: 2, userId: p.id });
+    h.core.apps.selfPublish({ instanceId: other.id, html: '<p>theirs</p>', baseVersion: 2, userId: u.id });
+    const own = await page(pc, '/instances/notes');
+    expect(own.text).toContain('selbst gespeichert');
+    expect(own.text).toContain('v3');
+    expect(own.text).not.toContain('v4');
+    const theirs = await page(uc, '/instances/notes-u');
+    expect(theirs.text).toContain('v4');
+    expect(theirs.text).not.toContain('v3');
+    const list = await page(pc, '/apps/notes');
+    expect(list.text).not.toContain('>v3<');
+    expect(list.text).not.toContain('>v4<');
+    expect(list.text).toMatch(/notes-u[\s\S]*?1 selbst gespeichert|1 selbst gespeichert[\s\S]*?notes-u/);
+    // activating somebody else's version through the form is refused
+    expect((await post(pc, p, '/ui/instances/notes/activate', { version: '4' })).status).toBe(403);
+    expect(inst().activeVersion).toBe(3);
   });
 });

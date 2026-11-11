@@ -36,9 +36,8 @@ function visibleInstances(core: Core, user: User, appId: string): Instance[] {
 }
 
 export function appSummary(core: Core, user: User, app: App): object {
-  const versions = core.apps.listVersions(app.id);
   return {
-    slug: app.slug, title: app.title, latestVersion: versions.length ? versions[versions.length - 1].number : null,
+    slug: app.slug, title: app.title, latestVersion: core.apps.latestDeployedVersion(app.id)?.number ?? null,
     instances: visibleInstances(core, user, app.id).map((i) => instanceJson(core, i)),
   };
 }
@@ -46,14 +45,19 @@ export function appSummary(core: Core, user: User, app: App): object {
 export function appDetail(core: Core, user: User, app: App): object {
   return {
     ...appSummary(core, user, app),
-    versions: core.apps.listVersions(app.id).map((v) => ({ number: v.number, createdAt: v.createdAt, note: v.note, sizeBytes: v.sizeBytes })),
+    // Self-published versions hold one instance's state and are not part of the app.
+    versions: core.apps.listVersions(app.id).filter((v) => v.instanceId === null).map((v) => ({ number: v.number, createdAt: v.createdAt, note: v.note, sizeBytes: v.sizeBytes })),
   };
 }
 
 export function describeDeploy(core: Core, user: User, r: DeployResult): object {
+  const pinned = r.pinned.filter((i) => core.access.canSeeInstance(i, user)).map((i) => i.slug);
+  const warnings = pinned.length > 0
+    ? [...r.warnings, `Diese Instanzen wurden nicht aktualisiert, weil sie selbst gespeicherte Inhalte haben: ${pinned.join(', ')}`]
+    : r.warnings;
   return {
     app: r.app.slug, version: r.version.number, createdVersion: r.createdVersion,
-    urls: r.instances.filter((i) => core.access.canSeeInstance(i, user)).map((i) => instanceUrl(core.config, i.slug)), warnings: r.warnings,
+    urls: r.instances.filter((i) => core.access.canSeeInstance(i, user)).map((i) => instanceUrl(core.config, i.slug)), warnings, pinned,
   };
 }
 

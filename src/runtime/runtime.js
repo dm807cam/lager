@@ -1,4 +1,4 @@
-/* Lager browser runtime: provides window.claude.use("db" | "user" | "assets" | "room" | "permissions") and window.storage
+/* Lager browser runtime: provides window.claude.use("db" | "user" | "assets" | "room" | "artifact" | "self" | "downloads" | "permissions") and window.storage
    on top of the /__lager/* endpoints. Plain ES2020, no dependencies. */
 (function () {
   'use strict';
@@ -197,6 +197,7 @@
       refreshWhere(function (l) { return l.matches(change); });
     });
     es.addEventListener('reset', function () { refreshWhere(function () { return true; }); });
+    es.addEventListener('reload', onReloadEvent);
     es.addEventListener('error', function () { sourceFailed = true; });
     es.addEventListener('open', function () {
       // Changes landing before the stream opened, or while it was down, are lost: catch up (deduplicated by key).
@@ -206,7 +207,7 @@
   }
 
   function closeSourceIfIdle() {
-    if (listeners.size === 0 && source) {
+    if (listeners.size === 0 && source && !keepSourceOpen) {
       source.close();
       source = null;
       sourceFailed = false;
@@ -1016,6 +1017,162 @@
     });
   }
 
+  // ------------------------------------------------------------------ artifact, self, downloads
+
+  var ARTIFACT_URL = '/__lager/artifact';
+  var DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024;
+  var DOWNLOAD_BLOCKED = ['exe', 'bat', 'cmd', 'scr', 'js', 'msi', 'dmg', 'app', 'sh'];
+  var REVOKE_DELAY_MS = 1000;
+  // The event stream carries `reload` events for as long as the page may publish, even without db listeners.
+  var keepSourceOpen = false;
+  var loadedVersion = null;
+  var reloaded = false;
+  var artifactNamespace = null;
+
+  /**
+   * location.reload() and window.confirm() go through here so a test (or an embedding page) can observe them:
+   * `window.__lagerHost.reload` / `.confirm` replace the browser's own when present.
+   */
+  function hostCall(name, arg) {
+    var host = window.__lagerHost;
+    if (host && typeof host[name] === 'function') return host[name](arg);
+    if (name === 'reload') return window.location.reload();
+    return window.confirm(arg);
+  }
+
+  function declaredObject(session, name) {
+    var caps = session && session.capabilities;
+    return !!(caps && caps[name] && typeof caps[name] === 'object');
+  }
+
+  function artifactAvailable(session) {
+    return declaredObject(session, 'artifact') || declaredObject(session, 'self');
+  }
+
+  function onReloadEvent(e) {
+    var data;
+    try { data = JSON.parse(e.data); } catch (_) { return; }
+    var version = data && typeof data === 'object' ? Number(data.version) : NaN;
+    if (!isFinite(version) || loadedVersion === null || version === loadedVersion || reloaded) return;
+    reloaded = true;
+    hostCall('reload');
+  }
+
+  function artifactError(code, message) { return { code: code, message: message }; }
+
+  function artifactFailure(res, json) {
+    var error = json && json.error;
+    var message = error && typeof error.message === 'string' ? error.message : 'Request failed (' + res.status + ').';
+    var raw = error && typeof error.code === 'string' ? error.code : '';
+    var code;
+    if (res.status === 401 || (res.status === 403 && raw !== 'not_declared')) code = 'not_writer';
+    else if (res.status === 403) code = 'not_declared';
+    else if (res.status === 409) code = 'conflict';
+    else if (res.status === 413) code = 'too_large';
+    else if (res.status === 429) code = 'rate_limited';
+    else if (res.status === 400 && raw === 'invalid_content') code = 'invalid_content';
+    else code = 'upstream_error';
+    return artifactError(code, message);
+  }
+
+  function buildArtifact(session) {
+    if (artifactNamespace) return artifactNamespace;
+    var level = levelOf(session);
+    var editor = level === 'admin' || level === 'owner';
+    var instance = session && session.instance;
+    loadedVersion = instance && isFinite(Number(instance.version)) ? Number(instance.version) : null;
+    keepSourceOpen = true;
+    openSource();
+
+    function unsupported(code, what) {
+      return function () { return Promise.reject(artifactError(code, what + ' is not available on this Lager server.')); };
+    }
+
+    function publish(arg) {
+      return Promise.resolve().then(function () {
+        if (arg !== null && typeof arg === 'object') throw artifactError('capability_disabled', 'Publishing several files is not available on this Lager server.');
+        if (!editor) throw artifactError('not_writer', 'This view cannot save the page.');
+        if (typeof arg !== 'string' || arg.trim() === '') throw artifactError('invalid_content', 'publish expects the complete html as a non-empty string.');
+        return fetch(ARTIFACT_URL, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'X-Lager-Request': '1' },
+          body: JSON.stringify({ html: arg, baseVersion: loadedVersion }),
+        }).then(
+          function (res) {
+            return res.json().catch(function () { return null; }).then(function (json) {
+              if (!res.ok) throw artifactFailure(res, json);
+              if (!json || typeof json.version !== 'string') throw artifactError('upstream_error', 'Unexpected response (' + res.status + ').');
+              return Object.freeze({ version: json.version });
+            });
+          },
+          function (e) { throw artifactError('upstream_error', e && e.message ? String(e.message) : 'Network error.'); }
+        );
+      });
+    }
+
+    artifactNamespace = Object.freeze({
+      publish: publish,
+      edit: unsupported('capability_removed', 'edit'),
+      sync: unsupported('capability_removed', 'sync'),
+      metadata: unsupported('capability_removed', 'metadata'),
+    });
+    return artifactNamespace;
+  }
+
+  function downloadError(code, message) { return { code: code, message: message }; }
+
+  /** The base name of the file the viewer would get: no directories, no control characters, no trailing dots or spaces. */
+  function downloadName(filename) {
+    var name = filename.replace(/[\u0000-\u001f\u007f]/g, '');
+    name = name.slice(Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\')) + 1).trim().replace(/[. ]+$/, '');
+    return name;
+  }
+
+  function downloadBlob(data) {
+    if (typeof data === 'string') {
+      if (data.length > DOWNLOAD_MAX_BYTES) throw downloadError('too_large', 'The file is larger than 50 MiB.');
+      return data === '' ? null : new Blob([data]);
+    }
+    var size = -1;
+    if (typeof Blob !== 'undefined' && data instanceof Blob) size = data.size;
+    else if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) size = data.byteLength;
+    if (size < 0) throw downloadError('bad_request', 'data must be a string, Blob, ArrayBuffer or typed array.');
+    if (size > DOWNLOAD_MAX_BYTES) throw downloadError('too_large', 'The file is larger than 50 MiB.');
+    return size === 0 ? null : (data instanceof Blob ? data : new Blob([data]));
+  }
+
+  function buildDownloads() {
+    function save(request) {
+      return Promise.resolve().then(function () {
+        if (!request || typeof request !== 'object' || typeof request.filename !== 'string' || request.filename.length > 512) {
+          throw downloadError('bad_request', 'save expects {filename, data}.');
+        }
+        var name = downloadName(request.filename);
+        if (name === '') throw downloadError('bad_request', 'The filename is empty.');
+        var dot = name.lastIndexOf('.');
+        if (dot >= 0 && DOWNLOAD_BLOCKED.indexOf(name.slice(dot + 1).toLowerCase()) >= 0) {
+          throw downloadError('rejected_extension', 'Files of this type cannot be saved.');
+        }
+        var blob = downloadBlob(request.data);
+        if (blob === null) throw downloadError('bad_request', 'data must not be empty.');
+        if (!hostCall('confirm', 'Datei „' + name + '" speichern?')) throw downloadError('declined', 'The viewer declined the download.');
+        var url = URL.createObjectURL(blob);
+        var link = document.createElement('a');
+        link.href = url;
+        link.download = name;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        try { link.click(); } finally {
+          document.body.removeChild(link);
+          setTimeout(function () { URL.revokeObjectURL(url); }, REVOKE_DELAY_MS);
+        }
+        return Object.freeze({ status: 'saved' });
+      });
+    }
+    return Object.freeze({ save: save });
+  }
+
   // ------------------------------------------------------------------ permissions
 
   function buildPermissions(session) {
@@ -1023,6 +1180,9 @@
     if (levelOf(session)) states.db = 'granted';
     if (assetsAllowed(session)) states.assets = 'granted';
     if (roomAvailable(session)) states.room = 'granted';
+    if (declaredObject(session, 'artifact')) states.artifact = 'granted';
+    if (declaredObject(session, 'self')) states.self = 'granted';
+    if (declaredObject(session, 'downloads')) states.downloads = 'granted';
     var one = function (name) { return typeof name === 'string' && Object.prototype.hasOwnProperty.call(states, name) ? states[name] : 'unavailable'; };
     var all = function () { var o = {}; Object.keys(states).sort().forEach(function (k) { o[k] = states[k]; }); return o; };
     return Object.freeze({
@@ -1047,6 +1207,8 @@
       if (name === 'user') return buildUser(session);
       if (name === 'assets') return assetsAllowed(session) ? buildAssets() : null;
       if (name === 'room') return roomAvailable(session) ? buildRoom(session) : null;
+      if (name === 'artifact' || name === 'self') return artifactAvailable(session) ? buildArtifact(session) : null;
+      if (name === 'downloads') return declaredObject(session, 'downloads') ? buildDownloads() : null;
       if (name === 'permissions') return buildPermissions(session);
       return null;
     });

@@ -11,6 +11,7 @@ import type { User } from '../platform/users.js';
 import { instanceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
 import { safeReturnPath, sendError } from './errors.js';
 import { injectRuntime } from './inject.js';
+import { mountArtifactRoutes } from './instance-artifact.js';
 import { mountAssetRoutes } from './instance-assets.js';
 import { mountRoomRoutes } from './instance-room.js';
 import { badCodePage, disabledPage, forbiddenPage, notFoundPage } from './pages.js';
@@ -282,6 +283,7 @@ export function createInstanceRouter(core: Core): express.Router {
       const now = current();
       if (!now) { stop(); return; }
       if (e.type === 'reset') { send('reset'); return; }
+      if (e.type === 'reload') { send('reload', { version: e.version }); return; }
       const rules = activeCapabilities(core, now.inst).db?.rules;
       if (canRead(rules, { userId, level: now.level }, e.path)) send('change', { path: e.path, parent: e.parent });
     });
@@ -295,6 +297,7 @@ export function createInstanceRouter(core: Core): express.Router {
 
   mountAssetRoutes(router, core, ctxOf, requireAccess);
   mountRoomRoutes(router, core, ctxOf, requireAccess, activeCapabilities);
+  mountArtifactRoutes(router, core, ctxOf, requireAccess);
 
   router.use((_req, res) => { res.status(404).type('text/plain').send('Nicht gefunden'); });
   return router;

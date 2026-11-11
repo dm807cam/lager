@@ -1,4 +1,4 @@
-export type HubEvent = { type: 'change'; path: string; parent: string } | { type: 'reset' };
+export type HubEvent = { type: 'change'; path: string; parent: string } | { type: 'reset' } | { type: 'reload'; version: number };
 
 /** In-process pub/sub of data events, keyed by instance id. */
 export class Hub {

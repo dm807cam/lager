@@ -68,6 +68,8 @@ export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
   apps.onInstanceDeleted((instance) => { assets.drop(instance.id); data.trash(instance.id); });
   // Keep a restore point of the instance data whenever its active version changes.
   apps.onBeforeActivate((inst, from, to) => { data.snapshot(inst.id, `v${from}-to-v${to}`); });
+  // Every open view of the instance reloads when its active version changes.
+  apps.onActivated((inst) => { hub.publish(inst.id, { type: 'reload', version: inst.activeVersion }); });
   return {
     config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, accounts, groups, access,
     close() {

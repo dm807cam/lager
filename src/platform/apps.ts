@@ -18,6 +18,8 @@ export interface App { id: string; slug: string; title: string; ownerId: string;
 export interface Version {
   appId: string; number: number; sha256: string; sizeBytes: number;
   capabilities: Capabilities; note: string | null; createdBy: string; createdAt: string;
+  /** null = deployed version; otherwise self-published by that instance and private to it. */
+  instanceId: string | null;
 }
 export interface Instance {
   id: string; appId: string; slug: string; ownerId: string;
@@ -26,15 +28,19 @@ export interface Instance {
 }
 export interface DeployResult {
   app: App; version: Version; instances: Instance[]; warnings: string[];
+  /** Instances that were not moved to the new version because their auto-update is off. */
+  pinned: Instance[];
   createdApp: boolean; createdVersion: boolean;
 }
 export type ActivateHook = (instance: Instance, from: number, to: number) => void;
+export type ActivatedHook = (instance: Instance) => void;
 export interface AccessChecks {
   canDeploy(app: App, userId: string): boolean;
   canManage(instance: Instance, userId: string): boolean;
 }
 
 const MAX_HTML_BYTES = 16 * 1024 * 1024;
+const SELF_PUBLISHED_NOTE = 'selbst gespeichert';
 const VISIBILITIES: Visibility[] = ['private', 'users', 'public'];
 const USERS_LEVELS: UsersLevel[] = ['view', 'interact'];
 const SELF_INSTANCES: SelfInstances[] = ['off', 'users'];
@@ -45,7 +51,7 @@ const CREATION_WINDOW_MS = 24 * 3600_000;
 interface AppRow { id: string; slug: string; title: string; owner_id: string; created_at: string; self_instances: SelfInstances }
 interface VersionRow {
   app_id: string; number: number; sha256: string; size_bytes: number;
-  capabilities: string; note: string | null; created_by: string; created_at: string;
+  capabilities: string; note: string | null; created_by: string; created_at: string; instance_id: string | null;
 }
 interface InstanceRow {
   id: string; app_id: string; slug: string; owner_id: string;
@@ -57,6 +63,7 @@ const toApp = (r: AppRow): App => ({ id: r.id, slug: r.slug, title: r.title, own
 const toVersion = (r: VersionRow): Version => ({
   appId: r.app_id, number: r.number, sha256: r.sha256, sizeBytes: r.size_bytes,
   capabilities: JSON.parse(r.capabilities) as Capabilities, note: r.note, createdBy: r.created_by, createdAt: r.created_at,
+  instanceId: r.instance_id,
 });
 const toInstance = (r: InstanceRow): Instance => ({
   id: r.id, appId: r.app_id, slug: r.slug, ownerId: r.owner_id, activeVersion: r.active_version,
@@ -77,6 +84,7 @@ function canonicalJson(value: unknown): string {
 
 export class Apps {
   private hooks: ActivateHook[] = [];
+  private activatedHooks: ActivatedHook[] = [];
   private deleteHooks: Array<(instance: Instance) => void> = [];
   private checks: AccessChecks | null = null;
 
@@ -93,6 +101,15 @@ export class Apps {
 
   onBeforeActivate(hook: ActivateHook): void {
     this.hooks.push(hook);
+  }
+
+  /** Runs after an instance's active version changed and the change is committed (deploy, activate, self-publish). */
+  onActivated(hook: ActivatedHook): void {
+    this.activatedHooks.push(hook);
+  }
+
+  private fireActivated(instances: Instance[]): void {
+    for (const i of instances) for (const hook of this.activatedHooks) hook(i);
   }
 
   private transaction<T>(fn: () => T): T {
@@ -167,7 +184,8 @@ export class Apps {
     const sha256 = crypto.createHash('sha256').update(input.html).digest('hex');
     const warnings = lintArtifact(input.html);
 
-    return this.transaction(() => {
+    const updated: Instance[] = [];
+    const result = this.transaction(() => {
       const now = new Date().toISOString();
       const existing = this.db.prepare('SELECT * FROM apps WHERE slug = ?').get(input.slug) as AppRow | undefined;
       let app: App;
@@ -193,18 +211,18 @@ export class Apps {
         createdApp = true;
       }
 
-      const latestRow = this.db
-        .prepare('SELECT * FROM versions WHERE app_id = ? ORDER BY number DESC LIMIT 1')
-        .get(app.id) as VersionRow | undefined;
-      const latest = latestRow ? toVersion(latestRow) : undefined;
+      // "Latest" means the latest deployed version: a self-published one carries a single instance's state.
+      const latest = this.latestDeployedVersion(app.id) ?? undefined;
+      const highest = (this.db.prepare('SELECT MAX(number) AS n FROM versions WHERE app_id = ?').get(app.id) as { n: number | null }).n ?? 0;
 
       let version: Version;
       let createdVersion = false;
+      let pinned: Instance[] = [];
       if (latest && latest.sha256 === sha256 && canonicalJson(latest.capabilities) === capabilitiesJson) {
         version = latest;
       } else {
         version = {
-          appId: app.id, number: (latest?.number ?? 0) + 1, sha256, sizeBytes,
+          appId: app.id, number: highest + 1, sha256, sizeBytes, instanceId: null,
           capabilities: JSON.parse(capabilitiesJson) as Capabilities, note: input.note ?? null,
           createdBy: user.id, createdAt: now,
         };
@@ -230,11 +248,16 @@ export class Apps {
         for (const row of rows) {
           this.fireHooks(toInstance(row), row.active_version, version.number);
           this.db.prepare('UPDATE instances SET active_version = ? WHERE id = ?').run(version.number, row.id);
+          updated.push({ ...toInstance(row), activeVersion: version.number });
         }
+        pinned = (this.db.prepare('SELECT * FROM instances WHERE app_id = ? AND auto_update = 0 AND active_version != ? ORDER BY created_at, slug')
+          .all(app.id, version.number) as unknown as InstanceRow[]).map(toInstance);
       }
 
-      return { app, version, instances: this.listInstances(app.id), warnings, createdApp, createdVersion };
+      return { app, version, instances: this.listInstances(app.id), warnings, pinned, createdApp, createdVersion };
     });
+    this.fireActivated(updated);
+    return result;
   }
 
   getApp(slugOrId: string): App | null {
@@ -268,6 +291,12 @@ export class Apps {
     return rows.map(toVersion);
   }
 
+  /** The highest-numbered version that was deployed (not self-published), or null. */
+  latestDeployedVersion(appId: string): Version | null {
+    const row = this.db.prepare('SELECT * FROM versions WHERE app_id = ? AND instance_id IS NULL ORDER BY number DESC LIMIT 1').get(appId) as VersionRow | undefined;
+    return row ? toVersion(row) : null;
+  }
+
   readVersionHtml(appId: string, number: number): string {
     if (!Number.isInteger(number) || !this.db.prepare('SELECT 1 FROM versions WHERE app_id = ? AND number = ?').get(appId, number)) {
       throw new LagerError('not_found', `Version ${number} not found.`);
@@ -294,14 +323,15 @@ export class Apps {
       }
       this.claimSlug(input.slug, owner.id);
       this.countCreation(owner);
-      const latest = this.db.prepare('SELECT MAX(number) AS n FROM versions WHERE app_id = ?').get(input.appId) as { n: number | null };
-      if (latest.n === null) throw new LagerError('not_found', 'App has no versions.');
+      // New instances start on the latest deployed version, never on another instance's self-published one.
+      const latest = this.latestDeployedVersion(input.appId);
+      if (!latest) throw new LagerError('not_found', 'App has no versions.');
       const id = crypto.randomUUID();
       this.db
         .prepare(
           'INSERT INTO instances (id, app_id, slug, owner_id, active_version, auto_update, visibility, created_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)',
         )
-        .run(id, input.appId, input.slug, input.ownerId, latest.n, visibility, new Date().toISOString());
+        .run(id, input.appId, input.slug, input.ownerId, latest.number, visibility, new Date().toISOString());
       return this.getInstance(id)!;
     });
   }
@@ -378,17 +408,65 @@ export class Apps {
   }
 
   activate(instanceId: string, version: number, userId: string): Instance {
-    return this.transaction(() => {
+    let changed = false;
+    const result = this.transaction(() => {
       const instance = this.managedInstance(instanceId, userId);
-      if (!this.db.prepare('SELECT 1 FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, version)) {
-        throw new LagerError('not_found', `Version ${version} not found.`);
+      const row = this.db.prepare('SELECT instance_id FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, version) as { instance_id: string | null } | undefined;
+      if (!row) throw new LagerError('not_found', `Version ${version} not found.`);
+      if (row.instance_id !== null && row.instance_id !== instance.id) {
+        throw new LagerError('forbidden', 'Diese Version wurde von einer anderen Instanz gespeichert.');
       }
       if (instance.activeVersion !== version) {
         this.fireHooks(instance, instance.activeVersion, version);
-        this.db.prepare('UPDATE instances SET active_version = ? WHERE id = ?').run(version, instance.id);
+        // An instance on its own saved content must not be overwritten by the next deploy.
+        this.db.prepare('UPDATE instances SET active_version = ?, auto_update = CASE WHEN ? THEN 0 ELSE auto_update END WHERE id = ?')
+          .run(version, row.instance_id !== null ? 1 : 0, instance.id);
+        changed = true;
       }
       return this.getInstance(instanceId)!;
     });
+    if (changed) this.fireActivated([result]);
+    return result;
+  }
+
+  /**
+   * The page of `instanceId` saves itself as a new version that belongs to this instance only. `baseVersion` is the version the page
+   * was loaded from; a stale one is a conflict. The instance moves to the new version and stops following deploys.
+   */
+  selfPublish(input: { instanceId: string; html: string; baseVersion: number; userId: string }): { version: Version; instance: Instance } {
+    if (typeof input.html !== 'string' || input.html.trim() === '') throw new LagerError('invalid_argument', 'HTML must not be empty.');
+    const sizeBytes = Buffer.byteLength(input.html);
+    if (sizeBytes > MAX_HTML_BYTES) throw new LagerError('invalid_argument', 'HTML exceeds the limit of 16 MiB.');
+    const sha256 = crypto.createHash('sha256').update(input.html).digest('hex');
+    const out = this.transaction(() => {
+      const instance = this.managedInstance(input.instanceId, input.userId);
+      if (instance.activeVersion !== input.baseVersion) {
+        throw new LagerError('conflict', 'Die Seite wurde inzwischen in einer neuen Version gespeichert.');
+      }
+      const base = this.db.prepare('SELECT * FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, instance.activeVersion) as VersionRow | undefined;
+      if (!base) throw new LagerError('not_found', `Version ${instance.activeVersion} not found.`);
+      const number = (this.db.prepare('SELECT MAX(number) AS n FROM versions WHERE app_id = ?').get(instance.appId) as { n: number }).n + 1;
+      const now = new Date().toISOString();
+      this.db
+        .prepare(
+          'INSERT INTO versions (app_id, number, sha256, size_bytes, capabilities, note, created_by, created_at, instance_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(instance.appId, number, sha256, sizeBytes, base.capabilities, SELF_PUBLISHED_NOTE, input.userId, now, instance.id);
+      this.writeVersionFile(instance.appId, number, input.html);
+      this.fireHooks(instance, instance.activeVersion, number);
+      this.db.prepare('UPDATE instances SET active_version = ?, auto_update = 0 WHERE id = ?').run(number, instance.id);
+      const version = toVersion(this.db.prepare('SELECT * FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, number) as unknown as VersionRow);
+      return { version, instance: this.getInstance(instance.id)! };
+    });
+    this.fireActivated([out.instance]);
+    return out;
+  }
+
+  /** Whether the instance follows new deploys. Turning it on does not move the instance; the next deploy does. */
+  setAutoUpdate(instanceId: string, on: boolean, userId: string): Instance {
+    const instance = this.managedInstance(instanceId, userId);
+    this.db.prepare('UPDATE instances SET auto_update = ? WHERE id = ?').run(on ? 1 : 0, instance.id);
+    return this.getInstance(instance.id)!;
   }
 
   setVisibility(instanceId: string, visibility: Visibility, userId: string): Instance {
@@ -451,12 +529,23 @@ export class Apps {
 
   /** Removes the instance row and its grants, then lets listeners (data trash) react. Owner only. */
   deleteInstance(instanceId: string, userId: string): void {
-    const instance = this.transaction(() => {
+    const { instance, saved } = this.transaction(() => {
       const inst = this.ownedInstance(instanceId, userId);
+      const numbers = (this.db.prepare('SELECT number FROM versions WHERE instance_id = ?').all(inst.id) as unknown as Array<{ number: number }>).map((r) => r.number);
+      this.db.prepare('DELETE FROM versions WHERE instance_id = ?').run(inst.id);
       this.removeInstanceRows(inst);
-      return inst;
+      return { instance: inst, saved: numbers };
     });
     for (const hook of this.deleteHooks) hook(instance);
+    // The saved pages hold this instance's state: they go to the trash with its data.
+    const stamp = new Date().toISOString().replace(/[-:.]/g, '');
+    for (const n of saved) {
+      const source = path.dirname(this.versionFile(instance.appId, n));
+      if (!fs.existsSync(source)) continue;
+      const target = path.join(this.dataDir, 'trash', `version-${instance.appId}-${n}-${stamp}`);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.renameSync(source, target);
+    }
   }
 
   /** Removes the rows of the instance and reserves its slug for the owner (see `claimSlug`). */
