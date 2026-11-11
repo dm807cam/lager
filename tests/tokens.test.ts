@@ -54,4 +54,19 @@ describe('api tokens', () => {
     const c = make();
     expect(() => c.tokens.create(c.users.list()[0].id, '  ')).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
   });
+
+  it('tokens of a disabled user stop working', () => {
+    const c = make();
+    const other = c.users.create({ email: 'o@x.y', name: 'O', password: 'pw', role: 'user' });
+    const { token } = c.tokens.create(other.id, 'laptop');
+    c.oauth.registerClient({ client_id: 'cid', redirect_uris: ['http://localhost/cb'], token_endpoint_auth_method: 'none' } as never);
+    const oauth = c.oauth.issueTokens('cid', other.id, 'grant', 'mcp', null);
+    expect(c.tokens.verify(token)?.id).toBe(other.id);
+    expect(c.oauth.verifyAccessToken(oauth.access_token)?.user.id).toBe(other.id);
+    c.users.setDisabled(other.id, true);
+    expect(c.tokens.verify(token)).toBeNull();
+    expect(c.oauth.verifyAccessToken(oauth.access_token)).toBeNull();
+    c.users.setDisabled(other.id, false);
+    expect(c.tokens.verify(token)?.id).toBe(other.id);
+  });
 });

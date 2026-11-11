@@ -2,7 +2,7 @@ import type { Response } from 'express';
 import { LagerError, type ErrorCode } from '../errors.js';
 
 const STATUS: Record<ErrorCode, number> = {
-  not_found: 404, forbidden: 403, invalid_argument: 400, conflict: 409, unauthenticated: 401,
+  not_found: 404, forbidden: 403, invalid_argument: 400, conflict: 409, unauthenticated: 401, quota_exceeded: 507,
 };
 
 export function sendError(res: Response, err: unknown, extra?: Record<string, unknown>): void {

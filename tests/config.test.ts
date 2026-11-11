@@ -56,4 +56,16 @@ describe('config', () => {
     assertSlug('a');
     assertSlug('workout-2');
   });
+
+  it('mail and quota settings', () => {
+    const env = { LAGER_PUBLIC_URL: 'https://lager.example.org', LAGER_APPS_DOMAIN: 'apps.example.org', LAGER_DATA_DIR: tmp };
+    const c = loadConfig(env);
+    expect(c.instanceQuotaBytes).toBe(50 * 1024 * 1024);
+    expect(c.smtpUrl).toBeUndefined();
+    expect(c.mailFrom).toContain('lager.example.org');
+    const d = loadConfig({ ...env, LAGER_INSTANCE_QUOTA_MB: '1', LAGER_SMTP_URL: 'smtp://u:p@mail.example.org:587', LAGER_MAIL_FROM: 'X <x@example.org>' });
+    expect(d.instanceQuotaBytes).toBe(1048576);
+    expect(d.smtpUrl).toBe('smtp://u:p@mail.example.org:587');
+    expect(d.mailFrom).toBe('X <x@example.org>');
+  });
 });

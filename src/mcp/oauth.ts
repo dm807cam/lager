@@ -156,7 +156,7 @@ export class OAuthStore {
     const row = this.db.prepare("SELECT * FROM oauth_tokens WHERE token_hash = ? AND kind = 'access'").get(hash) as TokenRow | undefined;
     if (!row || !sameHash(row.token_hash, hash) || row.used || expired(row.expires_at)) return null;
     const user = this.users.get(row.user_id);
-    if (!user) return null;
+    if (!user || user.disabled) return null;
     return {
       user, clientId: row.client_id, scopes: row.scopes ? row.scopes.split(' ') : [],
       expiresAt: Math.floor(Date.parse(row.expires_at) / 1000), resource: row.resource,

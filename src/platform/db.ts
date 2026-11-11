@@ -87,6 +87,52 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX oauth_tokens_grant ON oauth_tokens(grant_id);
   `,
+  `
+  ALTER TABLE users ADD COLUMN verified_at TEXT;
+  ALTER TABLE users ADD COLUMN disabled_at TEXT;
+  ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0;
+  UPDATE users SET verified_at = created_at;
+  CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+  CREATE TABLE account_tokens (
+    hash TEXT PRIMARY KEY,
+    id TEXT UNIQUE NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('verify','reset','invite')),
+    user_id TEXT,
+    email TEXT,
+    role TEXT,
+    created_by TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT
+  );
+  CREATE TABLE groups (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE group_members (
+    group_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    PRIMARY KEY (group_id, user_id)
+  );
+  CREATE TABLE grants (
+    instance_id TEXT NOT NULL,
+    principal_type TEXT NOT NULL CHECK (principal_type IN ('user','group')),
+    principal_id TEXT NOT NULL,
+    level TEXT NOT NULL CHECK (level IN ('view','interact','admin')),
+    created_by TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (instance_id, principal_type, principal_id)
+  );
+  CREATE TABLE app_collaborators (
+    app_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    PRIMARY KEY (app_id, user_id)
+  );
+  ALTER TABLE apps ADD COLUMN self_instances TEXT NOT NULL DEFAULT 'off';
+  ALTER TABLE instances ADD COLUMN users_level TEXT NOT NULL DEFAULT 'interact';
+  ALTER TABLE instances ADD COLUMN disabled_at TEXT;
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

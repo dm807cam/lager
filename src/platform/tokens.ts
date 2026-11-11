@@ -50,7 +50,7 @@ export class ApiTokens {
     const row = this.db.prepare('SELECT * FROM api_tokens WHERE token_hash = ?').get(hash) as TokenRow | undefined;
     if (!row || !sameHash(row.token_hash, hash)) return null;
     const user = this.users.get(row.user_id);
-    if (!user) return null;
+    if (!user || user.disabled) return null;
     this.db.prepare('UPDATE api_tokens SET last_used_at = ? WHERE id = ?').run(new Date().toISOString(), row.id);
     return user;
   }

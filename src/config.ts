@@ -14,6 +14,12 @@ export interface Config {
   snapshotKeep: number;
   /** Express `trust proxy` setting: number of trusted proxy hops, or false for none. */
   trustProxy: number | false;
+  /** SMTP connection URL (LAGER_SMTP_URL), e.g. smtp://user:pass@host:587. Mail is disabled without it. */
+  smtpUrl?: string;
+  /** Sender of outgoing mail (LAGER_MAIL_FROM). */
+  mailFrom?: string;
+  /** Maximum size of one instance's data (LAGER_INSTANCE_QUOTA_MB, default 50 MiB). */
+  instanceQuotaBytes: number;
 }
 
 export const SLUG_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -72,6 +78,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const appsDomain = required(env, 'LAGER_APPS_DOMAIN').toLowerCase();
   const dataDir = path.resolve(env.LAGER_DATA_DIR?.trim() || './data');
   fs.mkdirSync(dataDir, { recursive: true });
+  const quotaMb = parseIntEnv(env, 'LAGER_INSTANCE_QUOTA_MB', 50);
+  if (quotaMb < 1) throw new Error('LAGER_INSTANCE_QUOTA_MB must be a positive integer');
   return {
     dataDir,
     port: parseIntEnv(env, 'LAGER_PORT', 8080),
@@ -82,6 +90,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     secret: env.LAGER_SECRET?.trim() || loadSecret(dataDir),
     snapshotKeep: parseIntEnv(env, 'LAGER_SNAPSHOT_KEEP', 20),
     trustProxy: parseTrustProxy(env.LAGER_TRUST_PROXY),
+    smtpUrl: env.LAGER_SMTP_URL?.trim() || undefined,
+    mailFrom: env.LAGER_MAIL_FROM?.trim() || `Lager <no-reply@${publicUrl.hostname}>`,
+    instanceQuotaBytes: quotaMb * 1024 * 1024,
   };
 }
 
