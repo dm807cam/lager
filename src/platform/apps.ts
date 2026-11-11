@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { assertSlug } from '../config.js';
 import { LagerError } from '../errors.js';
-import { lintArtifact } from './lint.js';
+import { checkArtifact } from './check.js';
 import type { Settings } from './settings.js';
 import type { User, Users } from './users.js';
 
@@ -195,7 +195,7 @@ export class Apps {
     const capabilities = input.capabilities ?? {};
     const capabilitiesJson = canonicalJson(capabilities);
     const sha256 = crypto.createHash('sha256').update(input.html).digest('hex');
-    const warnings = lintArtifact(input.html);
+    const warnings = checkArtifact(input.html, capabilities).warnings;
 
     const updated: Instance[] = [];
     const result = this.transaction(() => {

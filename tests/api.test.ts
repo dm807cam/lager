@@ -337,3 +337,192 @@ describe('rest api', () => {
     expect((await call('get', 'nope', token)).status).toBe(404);
   });
 });
+
+describe('export, import, version download and check', () => {
+  const bearer = (h: Harness, userId: string): string => `Bearer ${h.core.tokens.create(userId, 't').token}`;
+  const seed = (h: Harness, slug = 'notes'): { id: string } => {
+    h.core.apps.deploy({ slug, html: '<p>n</p>', userId: h.adminId });
+    const inst = h.core.apps.getInstanceBySlug(slug)!;
+    h.core.data.set(inst.id, 'tasks/t1', { title: 'A' }, null);
+    h.core.data.set(inst.id, 'tasks/t2', { title: 'B', nested: { n: [1, 2] } }, null);
+    h.core.data.set(inst.id, `data/users/${h.adminId}/storage/kv/mine`, { mine: 1 }, null);
+    h.core.data.set(inst.id, 'data/users/someone/storage/kv/theirs', { theirs: 1 }, null);
+    return inst;
+  };
+
+  it('export streams NDJSON with attachment headers', async () => {
+    const { h, token } = setup();
+    seed(h);
+    const res = await request(h.app).get('/api/instances/notes/export').set('Host', h.host).set('Authorization', `Bearer ${token}`).buffer(true).parse((r, cb) => {
+      let t = ''; r.setEncoding('utf8'); r.on('data', (c) => { t += c; }); r.on('end', () => cb(null, t));
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/^application\/x-ndjson/);
+    expect(res.headers['content-disposition']).toMatch(/^attachment; filename="notes-\d{8}\.ndjson"$/);
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['cache-control']).toBe('no-store');
+    const lines = (res.body as string).split('\n');
+    expect(lines.pop()).toBe('');
+    expect(lines.map((l) => JSON.parse(l))).toEqual([
+      { path: `data/users/${h.adminId}/storage/kv/mine`, data: { mine: 1 } },
+      { path: 'tasks/t1', data: { title: 'A' } },
+      { path: 'tasks/t2', data: { title: 'B', nested: { n: [1, 2] } } },
+    ]);
+  });
+
+  it('export of an instance without data is an empty file', async () => {
+    const { h, token } = setup();
+    h.core.apps.deploy({ slug: 'empty', html: '<p>n</p>', userId: h.adminId });
+    const res = await request(h.app).get('/api/instances/empty/export').set('Host', h.host).set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.text).toBe('');
+  });
+
+  it('import accepts NDJSON and a JSON array', async () => {
+    const { h, token } = setup();
+    h.core.apps.deploy({ slug: 'target', html: '<p>n</p>', userId: h.adminId });
+    const inst = h.core.apps.getInstanceBySlug('target')!;
+    const post = () => request(h.app).post('/api/instances/target/import').set('Host', h.host).set('Authorization', `Bearer ${token}`);
+    const nd = await post().type('application/x-ndjson').send('{"path":"a/1","data":{"n":1}}\n\n{"path":"a/2","data":{"n":2}}\n');
+    expect(nd.status).toBe(200);
+    expect(nd.body).toEqual({ imported: 2 });
+    const arr = await post().send([{ path: 'b/1', data: { n: 3 } }]);
+    expect(arr.body).toEqual({ imported: 1 });
+    expect(h.core.data.query(inst.id, 'a').map((d) => d.data)).toEqual([{ n: 1 }, { n: 2 }]);
+    expect(h.core.data.get(inst.id, 'b/1')?.data).toEqual({ n: 3 });
+    // own private area is allowed
+    const own = await post().send([{ path: `data/users/${h.adminId}/storage/kv/k`, data: { v: 1 } }]);
+    expect(own.status).toBe(200);
+  });
+
+  it('import is all-or-nothing and refuses malformed input and other users private areas', async () => {
+    const { h, token } = setup();
+    h.core.apps.deploy({ slug: 'target', html: '<p>n</p>', userId: h.adminId });
+    const inst = h.core.apps.getInstanceBySlug('target')!;
+    const post = (type: string, body: string | object) => request(h.app).post('/api/instances/target/import').set('Host', h.host)
+      .set('Authorization', `Bearer ${token}`).type(type).send(body);
+    const foreign = await post('application/json', [{ path: 'ok/1', data: {} }, { path: 'data/users/someone/storage/kv/x', data: {} }]);
+    expect(foreign.status).toBe(403);
+    expect(foreign.body.error.code).toBe('forbidden');
+    const badLine = await post('application/x-ndjson', '{"path":"ok/1","data":{}}\nnot json\n');
+    expect(badLine.status).toBe(400);
+    expect(badLine.body.error.message).toContain('2');
+    const badShape = await post('application/json', [{ path: 'ok/1', data: [] }]);
+    expect(badShape.status).toBe(400);
+    const notArray = await post('application/json', { path: 'ok/1', data: {} });
+    expect(notArray.status).toBe(400);
+    const noType = await request(h.app).post('/api/instances/target/import').set('Host', h.host).set('Authorization', `Bearer ${token}`).type('text/plain').send('x');
+    expect(noType.status).toBe(400);
+    expect(h.core.data.get(inst.id, 'ok/1')).toBeNull();
+    expect(h.core.data.hasData(inst.id)).toBe(false);
+  });
+
+  it('import allows at most 100000 documents', async () => {
+    const { h, token } = setup();
+    h.core.apps.deploy({ slug: 'target', html: '<p>n</p>', userId: h.adminId });
+    const line = '{"path":"a/1","data":{}}\n';
+    const res = await request(h.app).post('/api/instances/target/import').set('Host', h.host).set('Authorization', `Bearer ${token}`)
+      .type('application/x-ndjson').send(line.repeat(100_001));
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toContain('100000');
+  });
+
+  it('export → import into a second instance reproduces the documents', async () => {
+    const { h, token } = setup();
+    seed(h);
+    h.core.apps.deploy({ slug: 'copy', html: '<p>n</p>', userId: h.adminId });
+    const exported = await request(h.app).get('/api/instances/notes/export').set('Host', h.host).set('Authorization', `Bearer ${token}`);
+    const imp = await request(h.app).post('/api/instances/copy/import').set('Host', h.host).set('Authorization', `Bearer ${token}`)
+      .type('application/x-ndjson').send(exported.text);
+    expect(imp.body).toEqual({ imported: 3 });
+    const a = h.core.apps.getInstanceBySlug('notes')!;
+    const b = h.core.apps.getInstanceBySlug('copy')!;
+    const pick = (id: string) => [...h.core.data.exportDocs(id, { includePrivateOf: h.adminId })];
+    expect(pick(b.id)).toEqual(pick(a.id));
+    expect(h.core.data.get(b.id, 'data/users/someone/storage/kv/theirs')).toBeNull();
+  });
+
+  it('export carries the private area of the caller only', async () => {
+    const { h } = setup();
+    const inst = seed(h);
+    const adm = h.core.users.create({ email: 'a@x.y', name: 'A', password: 'pw-admin-grant', role: 'user' });
+    h.core.access.setGrant(h.core.apps.getInstanceBySlug('notes')!, 'user', adm.id, 'admin', h.core.users.get(h.adminId)!);
+    h.core.data.set(inst.id, `data/users/${adm.id}/storage/kv/hers`, { hers: 1 }, null);
+    const res = await request(h.app).get('/api/instances/notes/export').set('Host', h.host).set('Authorization', bearer(h, adm.id));
+    expect(res.status).toBe(200);
+    expect(res.text.split('\n').filter(Boolean).map((l) => JSON.parse(l).path)).toEqual([`data/users/${adm.id}/storage/kv/hers`, 'tasks/t1', 'tasks/t2']);
+  });
+
+  it('non-manager is refused for export and import', async () => {
+    const { h } = setup();
+    seed(h);
+    const viewer = h.core.users.create({ email: 'v@x.y', name: 'V', password: 'pw-viewer-123', role: 'user' });
+    const act = h.core.users.create({ email: 'i@x.y', name: 'I', password: 'pw-interact-1', role: 'user' });
+    const inst = h.core.apps.getInstanceBySlug('notes')!;
+    h.core.access.setGrant(inst, 'user', act.id, 'interact', h.core.users.get(h.adminId)!);
+    for (const u of [viewer, act]) {
+      const get = await request(h.app).get('/api/instances/notes/export').set('Host', h.host).set('Authorization', bearer(h, u.id));
+      expect(get.status).toBe(403);
+      const post = await request(h.app).post('/api/instances/notes/import').set('Host', h.host).set('Authorization', bearer(h, u.id)).send([{ path: 'x/1', data: {} }]);
+      expect(post.status).toBe(403);
+    }
+    expect(h.core.data.get(inst.id, 'x/1')).toBeNull();
+    const none = await request(h.app).get('/api/instances/notes/export').set('Host', h.host);
+    expect(none.status).toBe(401);
+    const missing = await request(h.app).get('/api/instances/nope/export').set('Host', h.host).set('Authorization', bearer(h, viewer.id));
+    expect(missing.status).toBe(404);
+  });
+
+  it('version html download: owner and collaborator yes, stranger no; self-published only for the instance manager', async () => {
+    const { h } = setup();
+    const collab = h.core.users.create({ email: 'c@x.y', name: 'C', password: 'pw-collab-1', role: 'publisher' });
+    const stranger = h.core.users.create({ email: 's@x.y', name: 'S', password: 'pw-stranger-1', role: 'publisher' });
+    const mgr = h.core.users.create({ email: 'm@x.y', name: 'M', password: 'pw-manager-1', role: 'user' });
+    const app = h.core.apps.deploy({ slug: 'shared', html: '<p>v1</p><script>alert(1)</script>', userId: h.adminId }).app;
+    h.core.apps.addCollaborator(app.id, collab.id, h.adminId);
+    const inst = h.core.apps.getInstanceBySlug('shared')!;
+    h.core.access.setGrant(inst, 'user', mgr.id, 'admin', h.core.users.get(h.adminId)!);
+    const saved = h.core.apps.selfPublish({ instanceId: inst.id, html: '<p>saved</p>', baseVersion: 1, userId: h.adminId }).version.number;
+    const get = (u: string, n: number) => request(h.app).get(`/api/apps/shared/versions/${n}`).set('Host', h.host).set('Authorization', bearer(h, u));
+
+    for (const u of [h.adminId, collab.id]) {
+      const ok = await get(u, 1);
+      expect(ok.status).toBe(200);
+      expect(ok.headers['content-type']).toBe('text/plain; charset=utf-8');
+      expect(ok.headers['content-disposition']).toBe('attachment; filename="shared-v1.html"');
+      expect(ok.headers['x-content-type-options']).toBe('nosniff');
+      expect(ok.text).toBe('<p>v1</p><script>alert(1)</script>');
+    }
+    expect((await get(stranger.id, 1)).status).toBe(403);
+    expect((await get(mgr.id, 1)).status).toBe(403);
+    expect((await get(h.adminId, 99)).status).toBe(404);
+    expect((await get(h.adminId, 1.5 as number)).status).toBe(404);
+    // saved version: the managers of the publishing instance, not the app's collaborators
+    const own = await get(h.adminId, saved);
+    expect(own.status).toBe(200);
+    expect(own.text).toBe('<p>saved</p>');
+    expect((await get(mgr.id, saved)).status).toBe(200);
+    expect((await get(collab.id, saved)).status).toBe(403);
+    expect((await get(stranger.id, saved)).status).toBe(403);
+    expect((await request(h.app).get('/api/apps/shared/versions/1').set('Host', h.host)).status).toBe(401);
+  });
+
+  it('POST /api/check', async () => {
+    const { h, token } = setup();
+    const post = (body: object, auth = `Bearer ${token}`) => request(h.app).post('/api/check').set('Host', h.host).set('Authorization', auth).send(body);
+    const res = await post({ html: '<script>claude.use("db"); claude.use("sample")</script>', capabilities: { user: {} } });
+    expect(res.status).toBe(200);
+    expect(res.body.used).toEqual(['db', 'sample']);
+    expect(res.body.unsupported).toEqual(['sample']);
+    expect(res.body.undeclared).toEqual(['db']);
+    expect(res.body.warnings).toHaveLength(2);
+    expect((await post({ html: '<p>x</p>' })).body).toEqual({ used: [], unsupported: [], undeclared: [], warnings: [] });
+    expect((await post({ html: 5 })).status).toBe(400);
+    expect((await post({ html: '<p/>', capabilities: { db: 'x' } })).status).toBe(400);
+    const plain = h.core.users.create({ email: 'u@x.y', name: 'U', password: 'pw-plain-1234', role: 'user' });
+    expect((await post({ html: '<p/>' }, bearer(h, plain.id))).status).toBe(403);
+    const pub = h.core.users.create({ email: 'p@x.y', name: 'P', password: 'pw-pub-12345', role: 'publisher' });
+    expect((await post({ html: '<p/>' }, bearer(h, pub.id))).status).toBe(200);
+    expect((await request(h.app).post('/api/check').set('Host', h.host).send({ html: 'x' })).status).toBe(401);
+  });
+});

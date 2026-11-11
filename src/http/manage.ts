@@ -3,10 +3,12 @@ import type { Request, RequestHandler, Response } from 'express';
 import { hostUrl, instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
-import type { App, Instance, SelfInstances, UsersLevel, Visibility } from '../platform/apps.js';
+import type { App, Instance, SelfInstances, UsersLevel, Version, Visibility } from '../platform/apps.js';
 import type { GrantLevel } from '../platform/access.js';
 import type { User } from '../platform/users.js';
+import { sendVersionDownload, streamExport, versionParam } from './api.js';
 import { requireUser, type PlatformExtension } from './app.js';
+import { downloadableVersion } from '../mcp/tools.js';
 import {
   esc, forbiddenInstancePage, form, formatDate, formatSize, hiddenField, LEVEL_LABELS, levelLabel, noticeHtml, optionList, page,
   signedInHeader, VISIBILITY_LABELS,
@@ -50,12 +52,19 @@ function shell(user: User, csrf: string, title: string, body: string, flash: Fla
 }
 
 /** Deployed versions, plus the ones `instanceId` saved itself; other instances' saved versions are never listed. */
-function versionsTable(core: Core, app: App, base: string | null, csrf: string, active?: number, instanceId?: string): string {
+function versionsTable(core: Core, user: User, app: App, base: string | null, csrf: string, active?: number, instanceId?: string): string {
   const shown = core.apps.listVersions(app.id).filter((v) => v.instanceId === null || v.instanceId === instanceId);
+  // The same rule as the download itself: deployed versions for those who read the app, saved ones for the managers of the saving instance.
+  const mayDownload = (v: Version): boolean => {
+    if (v.instanceId === null) return core.access.canReadApp(app, user);
+    const saver = core.apps.getInstance(v.instanceId);
+    return saver !== null && core.access.canManageInstance(saver, user);
+  };
   const rows = [...shown].reverse().map((v) => `<tr>
 <td>v${v.number}</td><td>${formatDate(v.createdAt)}</td><td>${v.instanceId !== null ? '<span class="muted">selbst gespeichert</span>' : v.note ? esc(v.note) : '<span class="muted">–</span>'}</td><td>${formatSize(v.sizeBytes)}</td>
+<td>${mayDownload(v) ? `<a href="/apps/${encodeURIComponent(app.slug)}/versions/${v.number}/html">HTML</a>` : ''}</td>
 ${base === null ? '' : `<td>${v.number === active ? '<span class="ok">aktiv</span>' : form(`${base}/activate`, csrf, hiddenField('version', String(v.number)), 'Aktivieren')}</td>`}</tr>`).join('');
-  return `<div class="scroll"><table><thead><tr><th>Nr.</th><th>Datum</th><th>Notiz</th><th>Größe</th>${base === null ? '' : '<th></th>'}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="scroll"><table><thead><tr><th>Nr.</th><th>Datum</th><th>Notiz</th><th>Größe</th><th></th>${base === null ? '' : '<th></th>'}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function grantsSection(core: Core, inst: Instance, base: string, csrf: string): string {
@@ -106,7 +115,7 @@ ${form(`${base}/delete`, csrf, `<label for="confirm">Zur Bestätigung den Namen 
   return shell(user, csrf, `Instanz ${inst.slug}`, `<p><a href="/">Zurück zur Übersicht</a></p>
 <h1>${esc(app.title)} <span class="muted mono">${esc(inst.slug)}</span></h1>
 <p><a href="${esc(url)}">${esc(url)}</a></p>
-<h2>Version</h2><p>Aktive Version: v${inst.activeVersion}</p>${versionsTable(core, app, base, csrf, inst.activeVersion, inst.id)}
+<h2>Version</h2><p>Aktive Version: v${inst.activeVersion}</p>${versionsTable(core, user, app, base, csrf, inst.activeVersion, inst.id)}
 <div class="card">${form(`${base}/auto-update`, csrf,
     `${hiddenField('on', '0')}<label><input type="checkbox" name="on" value="1"${inst.autoUpdate ? ' checked' : ''}> Automatisch auf neue Versionen aktualisieren</label>
 <p class="muted">Mit Häkchen ersetzt der nächste Deploy den selbst gespeicherten Stand dieser Instanz durch die neue Version. Der gespeicherte Stand bleibt in der Versionsliste erhalten.</p>`, 'Speichern')}</div>
@@ -114,6 +123,8 @@ ${form(`${base}/delete`, csrf, `<label for="confirm">Zur Bestätigung den Namen 
     `<label for="visibility">Wer darf die Instanz öffnen?</label><select id="visibility" name="visibility">${optionList(VISIBILITY_LABELS, inst.visibility)}</select>${level}`, 'Speichern')}</div>
 ${grantsSection(core, inst, base, csrf)}
 ${core.domains.canManage(user, core.access.canManageInstance(inst, user)) ? domainsSection(core, inst, base, csrf) : ''}
+<h2>Daten</h2><div class="card"><p><a href="/instances/${encodeURIComponent(inst.slug)}/export">Daten exportieren (NDJSON)</a></p>
+<p class="muted">Eine Zeile pro Dokument, dein eigener privater Bereich ist dabei, die privaten Bereiche anderer Nutzer nicht. Importieren geht über <span class="mono">POST /api/instances/${esc(inst.slug)}/import</span> oder das Werkzeug <span class="mono">import_data</span>.</p></div>
 <h2>Schnappschüsse</h2>${snapshots.length
     ? `<div class="scroll"><table><thead><tr><th>Name</th><th>Datum</th><th>Größe</th><th></th></tr></thead><tbody>${snapRows}</tbody></table></div>`
     : '<p class="muted">Noch keine Schnappschüsse.</p>'}
@@ -142,7 +153,7 @@ ${form(`${base}/delete`, csrf, `<label for="confirm">Zur Bestätigung den Namen 
   }
   return shell(user, csrf, `App ${app.title}`, `<p><a href="/">Zurück zur Übersicht</a></p>
 <h1>${esc(app.title)} <span class="muted mono">${esc(app.slug)}</span></h1>
-<h2>Versionen</h2>${versionsTable(core, app, null, csrf)}
+<h2>Versionen</h2>${versionsTable(core, user, app, null, csrf)}
 <h2>Instanzen</h2>${rows ? `<div class="scroll"><table><thead><tr><th>Instanz</th><th>Besitzer</th><th>Gespeichert</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Keine Instanzen.</p>'}
 <h2>Instanz anlegen</h2><div class="card">${form(`${base}/instances`, csrf,
     `<label for="new-slug">Name der Instanz (Kleinbuchstaben, Ziffern, Bindestriche)</label><input id="new-slug" name="slug" required maxlength="63" autocomplete="off">${ownerField}`, 'Instanz anlegen')}</div>
@@ -221,6 +232,26 @@ export const manageExtension: PlatformExtension = (router, core) => {
     if (!inst) { send(res, 404, notFoundPage('Diese Instanz gibt es nicht.')); return; }
     if (!core.access.canManageInstance(inst, user) && !core.access.canDeleteInstance(inst, user)) { send(res, 403, forbiddenInstancePage()); return; }
     send(res, 200, instancePage(core, user, inst, readFlash(core, user, req.query.flash)));
+  });
+
+  router.get('/instances/:slug/export', noStore, auth, (req, res, next) => {
+    const user = userOf(res);
+    const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
+    if (!inst) { send(res, 404, notFoundPage('Diese Instanz gibt es nicht.')); return; }
+    if (!core.access.canManageInstance(inst, user)) { send(res, 403, forbiddenInstancePage()); return; }
+    streamExport(core, user, inst, res).catch(next);
+  });
+
+  router.get('/apps/:slug/versions/:number/html', noStore, auth, (req, res) => {
+    const slug = param(req, 'slug');
+    try {
+      const number = versionParam(req.params.number);
+      sendVersionDownload(res, slug, number, downloadableVersion(core, userOf(res), slug, number).html);
+    } catch (e) {
+      if (!(e instanceof LagerError)) throw e;
+      if (e.code === 'forbidden') send(res, 403, forbiddenAppPage());
+      else send(res, 404, notFoundPage('Diese Version gibt es nicht.'));
+    }
   });
 
   const instBack = (req: Request): string => `/instances/${encodeURIComponent(param(req, 'slug'))}`;

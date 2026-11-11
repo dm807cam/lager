@@ -23,6 +23,7 @@ const INSTANCE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const LABEL_RE = /^[a-z0-9-]{1,64}$/;
 const SNAPSHOT_FILE_RE = /^(\d{8}T\d{9}Z)-([a-z0-9-]{1,64})\.sqlite$/;
 const SNAPSHOT_ID_RE = /^\d{8}T\d{9}Z-[a-z0-9-]{1,64}$/;
+const EXPORT_BATCH = 500;
 const DEFAULT_TTL_MS = 30_000;
 const MAX_TTL_MS = 300_000;
 
@@ -46,6 +47,16 @@ const toDoc = (r: DocRow): Doc => ({
   path: r.path, id: r.id, data: JSON.parse(r.data) as Record<string, unknown>, version: r.version,
   createdAt: r.created_at, updatedAt: r.updated_at, updatedBy: r.updated_by,
 });
+
+/**
+ * `undefined` for an ordinary path; for anything under `data/users/` (matched case-insensitively, to stay on the safe side)
+ * the id of the user whose area it is, or `null` when it is nobody's (`data/users` itself, other letter case).
+ */
+function privateAreaOwner(segs: string[]): string | null | undefined {
+  if (segs[0].toLowerCase() !== 'data' || segs[1]?.toLowerCase() !== 'users') return undefined;
+  // Only the exact spelling is a real private area; other spellings belong to nobody (and are never exported or imported).
+  return segs[0] === 'data' && segs[1] === 'users' && segs.length >= 3 ? segs[2] : null;
+}
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -259,6 +270,68 @@ export class InstanceData {
     });
     if (result.acquired) this.notify(instanceId, docPath, parent);
     return result;
+  }
+
+  // ---- export and import ----------------------------------------------
+
+  /**
+   * All documents ordered by path, read in keyset-paged batches so an export never holds the instance in memory.
+   * Everything under `data/users/` is left out except the area of `includePrivateOf`.
+   */
+  *exportDocs(instanceId: string, opts: { includePrivateOf?: string } = {}): Generator<{ path: string; data: Record<string, unknown> }> {
+    const db = this.open(instanceId, false);
+    if (!db) return;
+    let after = '';
+    for (;;) {
+      const rows = db.prepare('SELECT path, data FROM docs WHERE path > ? ORDER BY path LIMIT ?').all(after, EXPORT_BATCH) as unknown as Array<{ path: string; data: string }>;
+      for (const r of rows) {
+        const owner = privateAreaOwner(r.path.split('/'));
+        if (owner === undefined || (opts.includePrivateOf !== undefined && owner === opts.includePrivateOf)) {
+          yield { path: r.path, data: JSON.parse(r.data) as Record<string, unknown> };
+        }
+      }
+      if (rows.length < EXPORT_BATCH) return;
+      after = rows[rows.length - 1].path;
+    }
+  }
+
+  /**
+   * Replaces (set semantics) the given documents. Every document is validated first; then all are written in one
+   * transaction, so a failure leaves the instance untouched. A path under `data/users/` is only accepted for the
+   * user `allowPrivateOf`. The quota applies to the result.
+   */
+  importDocs(
+    instanceId: string, docs: Iterable<{ path: string; data: Record<string, unknown> }>, by: string | null,
+    opts: { allowPrivateOf?: string } = {},
+  ): { imported: number } {
+    const checked = new Map<string, { parent: string; id: string; json: string }>();
+    for (const d of docs) {
+      if (typeof d?.path !== 'string') throw new LagerError('invalid_argument', 'Path must be a non-empty string.');
+      // The private-area check comes first so a malformed path under data/users/ is refused as such.
+      const owner = privateAreaOwner(d.path.split('/'));
+      if (owner !== undefined && (owner === null || owner !== opts.allowPrivateOf)) {
+        throw new LagerError('forbidden', `Der private Bereich "${d.path}" gehört einem anderen Nutzer und kann nicht geschrieben werden.`);
+      }
+      const { parent, id } = parseDocPath(d.path);
+      assertDocData(d.data);
+      checked.set(d.path, { parent, id, json: JSON.stringify(d.data) });
+    }
+    if (checked.size === 0) return { imported: 0 };
+    this.assertQuota(instanceId);
+    const db = this.open(instanceId, true)!;
+    this.transaction(db, () => {
+      const now = new Date().toISOString();
+      const upsert = db.prepare(
+        `INSERT INTO docs (path, parent, id, data, version, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+         ON CONFLICT(path) DO UPDATE SET data = excluded.data, version = docs.version + 1, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+      );
+      for (const [p, d] of checked) upsert.run(p, d.parent, d.id, d.json, now, now, by);
+      if (this.quotaBytes > 0 && this.usage(instanceId) + this.extraUsage(instanceId) > this.quotaBytes) {
+        throw new LagerError('quota_exceeded', 'Der Speicher dieser Instanz ist voll.');
+      }
+    });
+    this.hub.publish(instanceId, { type: 'reset' });
+    return { imported: checked.size };
   }
 
   // ---- snapshots -------------------------------------------------------

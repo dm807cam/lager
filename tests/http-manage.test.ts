@@ -418,3 +418,66 @@ describe('self-publishing and versions', () => {
     expect(inst().activeVersion).toBe(3);
   });
 });
+
+describe('data export and version html links', () => {
+  it('export link and html links are present and authorised', async () => {
+    const { p, u, w, pc, uc, wc } = await setup();
+    h.core.access.setGrant(inst(), 'user', u.id, 'admin', p);
+    h.core.data.set(inst().id, 'tasks/t1', { title: 'A' }, null);
+    h.core.data.set(inst().id, `data/users/${u.id}/storage/kv/mine`, { mine: 1 }, null);
+    h.core.data.set(inst().id, `data/users/${p.id}/storage/kv/hers`, { hers: 1 }, null);
+
+    const owner = await page(pc, '/instances/notes');
+    expect(owner.text).toContain('<h2>Daten</h2>');
+    expect(owner.text).toContain('<a href="/instances/notes/export">Daten exportieren (NDJSON)</a>');
+    expect(owner.text).toContain('href="/apps/notes/versions/1/html"');
+    expect(owner.text).toContain('href="/apps/notes/versions/2/html"');
+    const app = await page(pc, '/apps/notes');
+    expect(app.text).toContain('href="/apps/notes/versions/1/html"');
+    expect(app.text).toContain('>HTML</a>');
+
+    // A Verwalter who does not work on the app sees the export link but no links to its deployed versions.
+    const admin = await page(uc, '/instances/notes');
+    expect(admin.text).toContain('Daten exportieren (NDJSON)');
+    expect(admin.text).not.toContain('/versions/1/html');
+
+    const exp = await page(uc, '/instances/notes/export').buffer(true).parse((r, cb) => {
+      let t = ''; r.setEncoding('utf8'); r.on('data', (c) => { t += c; }); r.on('end', () => cb(null, t));
+    });
+    expect(exp.status).toBe(200);
+    expect(exp.headers['content-type']).toMatch(/^application\/x-ndjson/);
+    expect(exp.headers['content-disposition']).toMatch(/^attachment; filename="notes-\d{8}\.ndjson"$/);
+    expect((exp.body as string).split('\n').filter(Boolean).map((l) => JSON.parse(l).path)).toEqual([`data/users/${u.id}/storage/kv/mine`, 'tasks/t1']);
+
+    expect((await page(wc, '/instances/notes/export')).status).toBe(403);
+    expect((await page(pc, '/instances/nope/export')).status).toBe(404);
+    const anon = await page(null, '/instances/notes/export');
+    expect(anon.status).toBe(302);
+    expect(anon.headers.location).toBe('/login?return=%2Finstances%2Fnotes%2Fexport');
+    void w;
+
+    const html = await page(pc, '/apps/notes/versions/1/html');
+    expect(html.status).toBe(200);
+    expect(html.headers['content-type']).toBe('text/plain; charset=utf-8');
+    expect(html.headers['content-disposition']).toBe('attachment; filename="notes-v1.html"');
+    expect(html.headers['x-content-type-options']).toBe('nosniff');
+    expect(html.text).toBe('<p>1</p>');
+    expect((await page(uc, '/apps/notes/versions/1/html')).status).toBe(403);
+    expect((await page(pc, '/apps/notes/versions/9/html')).status).toBe(404);
+    expect((await page(pc, '/apps/notes/versions/x/html')).status).toBe(404);
+    expect((await page(null, '/apps/notes/versions/1/html')).status).toBe(302);
+  });
+
+  it('saved versions get an html link on the instance page for its managers only', async () => {
+    const { p, u, pc, uc } = await setup();
+    h.core.access.setGrant(inst(), 'user', u.id, 'admin', p);
+    const saved = h.core.apps.selfPublish({ instanceId: inst().id, html: '<p>saved</p>', baseVersion: 2, userId: p.id }).version.number;
+    for (const cookie of [pc, uc]) {
+      const res = await page(cookie, '/instances/notes');
+      expect(res.text).toContain(`href="/apps/notes/versions/${saved}/html"`);
+      expect((await page(cookie, `/apps/notes/versions/${saved}/html`)).text).toBe('<p>saved</p>');
+    }
+    // the app page lists deployed versions only, so it has no link for it
+    expect((await page(pc, '/apps/notes')).text).not.toContain(`/versions/${saved}/html`);
+  });
+});

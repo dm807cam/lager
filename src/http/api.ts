@@ -1,12 +1,13 @@
+import { once } from 'node:events';
 import express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import {
-  addDomainTo, appDetail, appSummary, checkCapabilities, createInstanceFor, domainsJson, removeDomainFrom, describeDeploy, grantPrincipal, grantsJson, instanceJson, managedInstance, readableApp,
+  addDomainTo, appDetail, downloadableVersion, runArtifactCheck, appSummary, checkCapabilities, createInstanceFor, domainsJson, removeDomainFrom, describeDeploy, grantPrincipal, grantsJson, instanceJson, managedInstance, readableApp,
 } from '../mcp/tools.js';
 import type { GrantLevel } from '../platform/access.js';
-import type { Visibility } from '../platform/apps.js';
+import type { Instance, Visibility } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 import type { PlatformExtension } from './app.js';
 import { sessionUser } from './session.js';
@@ -14,6 +15,8 @@ import { sessionUser } from './session.js';
 const MAX_HTML = '16mb';
 // JSON escaping inflates HTML; Apps.deploy enforces the 16 MiB limit on the HTML itself.
 const MAX_JSON = '24mb';
+const MAX_IMPORT = '50mb';
+export const MAX_IMPORT_DOCS = 100_000;
 
 /** API token (`lgr_…`) or OAuth access token from `Authorization: Bearer …`. */
 export function bearerUser(core: Core, req: Request): User | null {
@@ -100,6 +103,78 @@ function deployInput(req: Request): { html: string; title?: string; note?: strin
   return { html: body.html, title: optionalString(body, 'title'), note: optionalString(body, 'note'), capabilities: body.capabilities ?? undefined };
 }
 
+/** Streams the instance's documents as NDJSON (one `{path,data}` per line), including the caller's own private area. */
+export async function streamExport(core: Core, user: User, inst: Instance, res: Response): Promise<void> {
+  const d = new Date();
+  const stamp = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
+  res.status(200).set({
+    'Content-Type': 'application/x-ndjson; charset=utf-8', 'Content-Disposition': `attachment; filename="${inst.slug}-${stamp}.ndjson"`,
+    'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store',
+  });
+  let closed = false;
+  res.on('close', () => { closed = true; });
+  try {
+    for (const doc of core.data.exportDocs(inst.id, { includePrivateOf: user.id })) {
+      if (closed) return;
+      if (!res.write(`${JSON.stringify(doc)}\n`)) await once(res, 'drain').catch(() => undefined);
+    }
+    res.end();
+  } catch (e) {
+    console.error(e);
+    res.destroy();
+  }
+}
+
+/** A version's HTML as a download; text/plain and nosniff keep it from ever rendering on the platform origin. */
+export function sendVersionDownload(res: Response, slug: string, number: number, html: string): void {
+  res.status(200).set({
+    'Content-Type': 'text/plain; charset=utf-8', 'Content-Disposition': `attachment; filename="${slug}-v${number}.html"`,
+    'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store',
+  }).send(html);
+}
+
+/** Version number from a route parameter; anything but a positive integer is "not found". */
+export function versionParam(value: unknown): number {
+  const n = typeof value === 'string' && /^\d{1,9}$/.test(value) ? Number(value) : NaN;
+  if (!Number.isInteger(n) || n < 1) throw new LagerError('not_found', 'Version not found.');
+  return n;
+}
+
+type ImportDoc = { path: string; data: Record<string, unknown> };
+
+function importEntry(value: unknown, where: string): ImportDoc {
+  const v = value as { path?: unknown; data?: unknown } | null;
+  if (v === null || typeof v !== 'object' || typeof v.path !== 'string' || v.data === null || typeof v.data !== 'object' || Array.isArray(v.data)) {
+    throw new LagerError('invalid_argument', `${where} must be an object {path, data} with data an object.`);
+  }
+  return { path: v.path, data: v.data as Record<string, unknown> };
+}
+
+/** The documents of an import body: NDJSON (one `{path,data}` per line) or a JSON array. */
+function importDocsOf(req: Request): ImportDoc[] {
+  const body: unknown = req.body;
+  if (typeof body !== 'string') throw new LagerError('invalid_argument', 'Send application/x-ndjson (one {path,data} per line) or a JSON array.');
+  const tooMany = (): LagerError => new LagerError('invalid_argument', `At most ${MAX_IMPORT_DOCS} documents per import.`);
+  if (req.is('application/json')) {
+    let parsed: unknown;
+    try { parsed = JSON.parse(body); } catch { throw new LagerError('invalid_argument', 'The body is not valid JSON.'); }
+    if (!Array.isArray(parsed)) throw new LagerError('invalid_argument', 'The JSON body must be an array of {path, data}.');
+    if (parsed.length > MAX_IMPORT_DOCS) throw tooMany();
+    return parsed.map((v, i) => importEntry(v, `Entry ${i + 1}`));
+  }
+  const docs: ImportDoc[] = [];
+  let n = 0;
+  for (const line of body.split('\n')) {
+    n++;
+    if (line.trim() === '') continue;
+    if (docs.length >= MAX_IMPORT_DOCS) throw tooMany();
+    let parsed: unknown;
+    try { parsed = JSON.parse(line); } catch { throw new LagerError('invalid_argument', `Line ${n} is not valid JSON.`); }
+    docs.push(importEntry(parsed, `Line ${n}`));
+  }
+  return docs;
+}
+
 export const apiExtension: PlatformExtension = (router, core) => {
   const auth = requireApiUser(core);
   const sessionOnly = requireSessionOnly(core);
@@ -156,6 +231,30 @@ export const apiExtension: PlatformExtension = (router, core) => {
     const who = grantPrincipal(core, { email: optionalString(body, 'email'), group: optionalString(body, 'group') });
     core.access.removeGrant(inst, who.type, who.id, user);
     res.json(grantsJson(core, inst));
+  });
+
+  router.get('/api/instances/:slug/export', noStore, auth, (req, res, next) => {
+    const user = userOf(res);
+    streamExport(core, user, managedInstance(core, user, req.params.slug as string), res).catch(next);
+  });
+
+  router.post('/api/instances/:slug/import', noStore, auth,
+    // Authorize before the body is read, so refused callers cannot make the server buffer 50 MiB.
+    (req, res, next) => { res.locals.instance = managedInstance(core, userOf(res), req.params.slug as string); next(); },
+    express.text({ type: ['application/x-ndjson', 'application/json'], limit: MAX_IMPORT }),
+    (req, res) => {
+      res.json(core.data.importDocs((res.locals.instance as Instance).id, importDocsOf(req), userOf(res).id, { allowPrivateOf: userOf(res).id }));
+    });
+
+  router.get('/api/apps/:slug/versions/:number', noStore, auth, (req, res) => {
+    const slug = req.params.slug as string;
+    const number = versionParam(req.params.number);
+    sendVersionDownload(res, slug, number, downloadableVersion(core, userOf(res), slug, number).html);
+  });
+
+  router.post('/api/check', noStore, auth, express.json({ limit: MAX_JSON }), (req, res) => {
+    const body = bodyObject(req);
+    res.json(runArtifactCheck(userOf(res), body.html, body.capabilities));
   });
 
   router.get('/api/instances/:slug/domains', noStore, auth, (req, res) => {

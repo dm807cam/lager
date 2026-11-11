@@ -56,13 +56,13 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 const guide = fs.readFileSync(new URL('../src/guide.md', import.meta.url), 'utf8');
 
 describe('mcp endpoint', () => {
-  it('lists the sixteen tools and exposes instructions', async () => {
+  it('lists the nineteen tools and exposes instructions', async () => {
     const r = await start();
     const client = await connect(r);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'activate_version', 'add_domain', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'get_app', 'get_guide',
-      'list_apps', 'list_shares', 'list_snapshots', 'remove_domain', 'restore_snapshot', 'set_visibility', 'share_instance', 'unshare_instance',
+      'activate_version', 'add_domain', 'check_artifact', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'export_data', 'get_app', 'get_guide',
+      'import_data', 'list_apps', 'list_shares', 'list_snapshots', 'remove_domain', 'restore_snapshot', 'set_visibility', 'share_instance', 'unshare_instance',
     ]);
     expect(client.getServerVersion()?.name).toBe('lager');
     const firstSection = guide.split(/\r?\n---\r?\n/)[0].trim();
@@ -443,6 +443,90 @@ describe('mcp endpoint', () => {
     expect(r.h.core.data.get(inst.id, 'tasks/t2')).toBeNull();
   });
 
+  it('import_data then export_data with prefix and truncation', async () => {
+    const r = await start();
+    const client = await connect(r);
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>1</p>' });
+    const docs = [
+      ...Array.from({ length: 5 }, (_, i) => ({ path: `tasks/t${i}`, data: { n: i } })),
+      { path: 'tasks/t0/notes/n1', data: { sub: true } }, { path: 'tasksx/y', data: { other: true } }, { path: 'settings/main', data: { theme: 'x' } },
+    ];
+    const imp = await call(client, 'import_data', { instance: 'todo', docs });
+    expect(imp.json).toEqual({ imported: 8 });
+    const all = await call(client, 'export_data', { instance: 'todo' });
+    expect(all.json.truncated).toBe(false);
+    expect(all.json.docs.map((d: { path: string }) => d.path)).toEqual(
+      ['settings/main', 'tasks/t0', 'tasks/t0/notes/n1', 'tasks/t1', 'tasks/t2', 'tasks/t3', 'tasks/t4', 'tasksx/y']);
+    const pre = await call(client, 'export_data', { instance: 'todo', prefix: 'tasks' });
+    expect(pre.json.docs.map((d: { path: string }) => d.path)).toEqual(['tasks/t0', 'tasks/t0/notes/n1', 'tasks/t1', 'tasks/t2', 'tasks/t3', 'tasks/t4']);
+    expect(pre.json.docs[0]).toEqual({ path: 'tasks/t0', data: { n: 0 } });
+    const cut = await call(client, 'export_data', { instance: 'todo', prefix: 'tasks/', limit: 2 });
+    expect(cut.json.docs).toHaveLength(2);
+    expect(cut.json.truncated).toBe(true);
+    const exact = await call(client, 'export_data', { instance: 'todo', prefix: 'tasks', limit: 6 });
+    expect(exact.json.truncated).toBe(false);
+    expect((await client.callTool({ name: 'export_data', arguments: { instance: 'todo', limit: 1001 } })).isError).toBe(true);
+    expect((await client.callTool({ name: 'import_data', arguments: { instance: 'todo', docs: Array.from({ length: 1001 }, (_, i) => ({ path: `x/${i}`, data: {} })) } })).isError).toBe(true);
+    expect((await client.callTool({ name: 'import_data', arguments: { instance: 'todo', docs: [] } })).isError).toBe(true);
+    const bad = await call(client, 'import_data', { instance: 'todo', docs: [{ path: 'ok/1', data: {} }, { path: 'a//b', data: {} }] });
+    expect(bad.json.error.code).toBe('invalid_argument');
+    expect(r.h.core.data.get(r.h.core.apps.getInstanceBySlug('todo')!.id, 'ok/1')).toBeNull();
+  });
+
+  it('import_data and export_data keep other users private areas closed', async () => {
+    const r = await start();
+    const client = await connect(r);
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>1</p>' });
+    const inst = r.h.core.apps.getInstanceBySlug('todo')!;
+    r.h.core.data.set(inst.id, 'data/users/someone/storage/kv/s', { secret: 1 }, 'someone');
+    r.h.core.data.set(inst.id, `data/users/${r.h.adminId}/storage/kv/mine`, { mine: 1 }, null);
+    const exp = await call(client, 'export_data', { instance: 'todo' });
+    expect(exp.json.docs.map((d: { path: string }) => d.path)).toEqual([`data/users/${r.h.adminId}/storage/kv/mine`]);
+    for (const prefix of ['data/users/someone', 'data/users', 'data']) {
+      const e = await call(client, 'export_data', { instance: 'todo', prefix });
+      expect(e.json.docs.map((d: { path: string }) => d.path)).not.toContain('data/users/someone/storage/kv/s');
+    }
+    for (const path of ['data/users/someone/storage/kv/s', 'DATA/users/someone/storage/kv/s', 'data/users']) {
+      const w = await call(client, 'import_data', { instance: 'todo', docs: [{ path: 'ok/1', data: {} }, { path, data: { hacked: 1 } }] });
+      expect(w.isError).toBe(true);
+      expect(w.json.error.code).toBe('forbidden');
+    }
+    expect(r.h.core.data.get(inst.id, 'ok/1')).toBeNull();
+    expect(r.h.core.data.get(inst.id, 'data/users/someone/storage/kv/s')!.data).toEqual({ secret: 1 });
+    const own = await call(client, 'import_data', { instance: 'todo', docs: [{ path: `data/users/${r.h.adminId}/storage/kv/mine`, data: { mine: 2 } }] });
+    expect(own.json).toEqual({ imported: 1 });
+  });
+
+  it('import_data and export_data hold a Verwalter to the app rules and refuse interact', async () => {
+    const r = await start();
+    const owner = await connect(r);
+    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>1</p>', capabilities: { db: { rules: [{ path: 'locked', read: 'owner', write: 'owner' }] } } });
+    await call(owner, 'import_data', { instance: 'todo', docs: [{ path: 'locked/a', data: { v: 1 } }, { path: 'open/a', data: { v: 2 } }] });
+    const adm = await asUser(r, 'adm@x.y');
+    const act = await asUser(r, 'act@x.y');
+    await call(owner, 'share_instance', { instance: 'todo', email: 'adm@x.y', level: 'admin' });
+    await call(owner, 'share_instance', { instance: 'todo', email: 'act@x.y', level: 'interact' });
+    const seen = await call(adm.client, 'export_data', { instance: 'todo' });
+    expect(seen.json.docs.map((d: { path: string }) => d.path)).toEqual(['open/a']);
+    const w = await call(adm.client, 'import_data', { instance: 'todo', docs: [{ path: 'locked/b', data: {} }] });
+    expect(w.json.error.code).toBe('forbidden');
+    expect((await call(adm.client, 'import_data', { instance: 'todo', docs: [{ path: 'open/b', data: {} }] })).json).toEqual({ imported: 1 });
+    expect((await call(act.client, 'export_data', { instance: 'todo' })).json.error.code).toBe('forbidden');
+    expect((await call(act.client, 'import_data', { instance: 'todo', docs: [{ path: 'open/c', data: {} }] })).json.error.code).toBe('forbidden');
+  });
+
+  it('check_artifact', async () => {
+    const r = await start();
+    const client = await connect(r);
+    const res = await call(client, 'check_artifact', { html: '<script>claude.use("db"); claude.use("tts"); claude.complete("x")</script>', capabilities: {} });
+    expect(res.isError).toBe(false);
+    expect(res.json).toMatchObject({ used: ['db', 'tts'], unsupported: ['tts'], undeclared: ['db'] });
+    expect(res.json.warnings).toHaveLength(3);
+    expect((await call(client, 'check_artifact', { html: '<p>x</p>' })).json).toEqual({ used: [], unsupported: [], undeclared: [], warnings: [] });
+    const plain = await asUser(r, 'plain@x.y');
+    expect((await call(plain.client, 'check_artifact', { html: '<p>x</p>' })).json.error.code).toBe('forbidden');
+  });
+
   it('no bearer → 401 with WWW-Authenticate resource_metadata', async () => {
     const r = await start();
     const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } });
@@ -501,6 +585,6 @@ describe('mcp endpoint', () => {
     const client = new Client({ name: 't', version: '1' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${r.base}/mcp`), { authProvider: provider }));
     clients.push(client);
-    expect((await client.listTools()).tools).toHaveLength(16);
+    expect((await client.listTools()).tools).toHaveLength(19);
   });
 });

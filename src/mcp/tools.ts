@@ -9,7 +9,8 @@ import type { QuerySpec } from '../data/query.js';
 import { canRead, canWrite, type Viewer } from '../data/rules.js';
 import { LagerError } from '../errors.js';
 import type { GrantLevel } from '../platform/access.js';
-import type { App, Capabilities, DbRule, DeployResult, Instance, Visibility } from '../platform/apps.js';
+import type { App, Capabilities, DbRule, DeployResult, Instance, Version, Visibility } from '../platform/apps.js';
+import { checkArtifact, type ArtifactCheck } from '../platform/check.js';
 import type { User } from '../platform/users.js';
 
 const GUIDE = fs.readFileSync(new URL('../guide.md', import.meta.url), 'utf8');
@@ -21,6 +22,10 @@ const INSTRUCTIONS = (() => {
 })();
 
 export const MAX_DB_OPS = 100;
+export const MAX_IMPORT_DOCS_MCP = 1000;
+const EXPORT_DEFAULT_LIMIT = 200;
+/** An export call stops after this many bytes of document JSON (and says `truncated`), so one answer stays a sensible size. */
+const EXPORT_MAX_BYTES = 8 * 1024 * 1024;
 const GRANT_LEVELS = ['view', 'interact', 'admin'] as const satisfies readonly GrantLevel[];
 const RULE_LEVELS = ['view', 'interact', 'admin', 'owner', 'self', 'none'];
 
@@ -96,6 +101,28 @@ export function managedInstance(core: Core, user: User, slug: string): Instance 
   if (!inst) throw new LagerError('not_found', `Instance "${slug}" not found.`);
   if (!core.access.canManageInstance(inst, user)) throw new LagerError('forbidden', `You may not manage instance "${slug}".`);
   return inst;
+}
+
+/** The HTML of one version for download: deployed versions go to those who read the app, saved ones to the managers of the saving instance. */
+export function downloadableVersion(core: Core, user: User, slug: string, number: number): { html: string; version: Version } {
+  const app = appBySlug(core, slug);
+  const version = core.apps.listVersions(app.id).find((v) => v.number === number);
+  const instance = version?.instanceId ? core.apps.getInstance(version.instanceId) : null;
+  const allowed = version?.instanceId
+    ? instance !== null && core.access.canManageInstance(instance, user)
+    : core.access.canReadApp(app, user);
+  if (!allowed) throw new LagerError('forbidden', `You have no access to version ${number} of app "${slug}".`);
+  if (!version) throw new LagerError('not_found', `Version ${number} not found.`);
+  return { html: core.apps.readVersionHtml(app.id, number), version };
+}
+
+/** The artifact check for a signed-in publisher or administrator. */
+export function runArtifactCheck(user: User, html: unknown, capabilities: unknown): ArtifactCheck {
+  if (user.disabled || (user.role !== 'admin' && user.role !== 'publisher')) {
+    throw new LagerError('forbidden', 'Only administrators and publishers can check artifacts.');
+  }
+  if (typeof html !== 'string') throw new LagerError('invalid_argument', 'html must be a string.');
+  return checkArtifact(html, checkCapabilities(capabilities ?? undefined));
 }
 
 // ---- sharing (REST and MCP) -------------------------------------------------
@@ -347,6 +374,48 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     }
     return { applied };
   }));
+
+  server.registerTool('import_data', {
+    description: `Write many documents at once, e.g. to move the data of an existing artifact here: up to ${MAX_IMPORT_DOCS_MCP} {path, data} documents, all validated first and written in one transaction (existing documents are replaced). You are held to the same rules as db_write; other users' private areas cannot be written. Returns {imported}.`,
+    inputSchema: {
+      instance: slugArg,
+      docs: z.array(z.object({ path: z.string().describe('Document path, e.g. tasks/t1'), data: z.record(z.string(), z.unknown()) })).min(1).max(MAX_IMPORT_DOCS_MCP),
+    },
+  }, ({ instance, docs }) => run(() => {
+    const inst = managedInstance(core, user, instance);
+    const { viewer, rules } = dbAccess(core, user, inst);
+    for (const d of docs) {
+      parseDocPath(d.path);
+      if (!canWrite(rules, viewer, d.path)) throw new LagerError('forbidden', `You may not write "${d.path}" (another user's private area or a rule of the app).`);
+    }
+    return core.data.importDocs(inst.id, docs, user.id, { allowPrivateOf: user.id });
+  }));
+
+  server.registerTool('export_data', {
+    description: `Read documents of an instance ordered by path, optionally only below a path prefix (the document itself and everything beneath it). At most limit documents (default ${EXPORT_DEFAULT_LIMIT}, max ${MAX_IMPORT_DOCS_MCP}); truncated says there is more, so narrow the prefix. Documents you may not read (rules, other users' private areas) are left out. Returns {docs: [{path, data}], truncated}.`,
+    inputSchema: { instance: slugArg, prefix: z.string().optional(), limit: z.number().int().min(1).max(MAX_IMPORT_DOCS_MCP).optional() },
+  }, ({ instance, prefix, limit }) => run(() => {
+    const inst = managedInstance(core, user, instance);
+    const { viewer, rules } = dbAccess(core, user, inst);
+    const base = (prefix ?? '').replace(/\/+$/, '');
+    const max = limit ?? EXPORT_DEFAULT_LIMIT;
+    const docs: Array<{ path: string; data: Record<string, unknown> }> = [];
+    let bytes = 0;
+    let truncated = false;
+    for (const d of core.data.exportDocs(inst.id, { includePrivateOf: user.id })) {
+      if (base !== '' && d.path !== base && !d.path.startsWith(`${base}/`)) continue;
+      if (!canRead(rules, viewer, d.path)) continue;
+      bytes += Buffer.byteLength(JSON.stringify(d.data));
+      if (docs.length >= max || (docs.length > 0 && bytes > EXPORT_MAX_BYTES)) { truncated = true; break; }
+      docs.push(d);
+    }
+    return { docs, truncated };
+  }));
+
+  server.registerTool('check_artifact', {
+    description: 'Check the HTML of an existing artifact before deploying it: which runtime capabilities it uses via claude.use("…"), which of them Lager cannot provide (claude.use returns null), which are missing from the capabilities declaration, and warnings (browser storage, claude.complete). Returns {used, unsupported, undeclared, warnings}.',
+    inputSchema: { html: z.string(), capabilities: capabilitiesArg.optional() },
+  }, ({ html, capabilities }) => run(() => runArtifactCheck(user, html, capabilities)));
 
   server.registerTool('list_snapshots', {
     description: 'List the data snapshots of an instance, newest first.',

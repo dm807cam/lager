@@ -209,3 +209,108 @@ describe('InstanceData quota, usage and trash', () => {
     expect(store.get('u1', 'docs/b')).not.toBeNull();
   });
 });
+
+describe('InstanceData export and import', () => {
+  const paths = (gen: Iterable<{ path: string }>): string[] => [...gen].map((d) => d.path);
+
+  it('exportDocs yields nothing for an instance without data and orders by path', () => {
+    expect(paths(store.exportDocs('none'))).toEqual([]);
+    expect(store.hasData('none')).toBe(false);
+    store.set('e1', 'b/1', { n: 2 }, null);
+    store.set('e1', 'a/1', { n: 1 }, null);
+    store.set('e1', 'a/1/sub/x', { n: 3 }, null);
+    expect([...store.exportDocs('e1')]).toEqual([
+      { path: 'a/1', data: { n: 1 } }, { path: 'a/1/sub/x', data: { n: 3 } }, { path: 'b/1', data: { n: 2 } },
+    ]);
+  });
+
+  it('exportDocs pages through more documents than one batch', () => {
+    store.importDocs('e2', Array.from({ length: 1234 }, (_, i) => ({ path: `c/d${String(i).padStart(5, '0')}`, data: { i } })), null);
+    const out = paths(store.exportDocs('e2'));
+    expect(out).toHaveLength(1234);
+    expect(out).toEqual([...out].sort());
+  });
+
+  it('exportDocs omits other users private areas', () => {
+    store.set('p1', 'tasks/t1', { a: 1 }, null);
+    store.set('p1', 'data/users/u1/storage/kv/main', { mine: true }, null);
+    store.set('p1', 'data/users/u2/storage/kv/main', { theirs: true }, null);
+    store.set('p1', 'data/users/u10/storage/kv/main', { theirs: true }, null);
+    store.set('p1', 'Data/Users/u2/storage/kv/main', { theirs: true }, null);
+    store.set('p1', 'data/usersx/y/z', { fine: true }, null);
+    expect(paths(store.exportDocs('p1'))).toEqual(['data/usersx/y/z', 'tasks/t1']);
+    expect(paths(store.exportDocs('p1', { includePrivateOf: 'u1' }))).toEqual(['data/users/u1/storage/kv/main', 'data/usersx/y/z', 'tasks/t1']);
+    expect(paths(store.exportDocs('p1', { includePrivateOf: 'u' }))).toEqual(['data/usersx/y/z', 'tasks/t1']);
+  });
+
+  it('importDocs is all-or-nothing', () => {
+    store.set('i1', 'keep/k', { v: 1 }, null);
+    const events: HubEvent[] = [];
+    hub.subscribe('i1', (e) => events.push(e));
+    const bad = [{ path: 'a/1', data: { n: 1 } }, { path: 'a/1/x', data: { n: 2 } }, { path: 'keep/k', data: { v: 2 } }];
+    expect(code(() => store.importDocs('i1', bad, null))).toBe('invalid_argument');
+    expect(store.get('i1', 'a/1')).toBeNull();
+    expect(store.get('i1', 'keep/k')?.data).toEqual({ v: 1 });
+    expect(code(() => store.importDocs('i1', [{ path: 'a/1', data: { n: 1 } }, { path: 'a/2', data: [] as never }], null))).toBe('invalid_argument');
+    expect(code(() => store.importDocs('i1', [{ path: 'a/1', data: { n: 1 } }, { path: 'a/2', data: { big: 'x'.repeat(300_000) } }], null))).toBe('invalid_argument');
+    expect(store.get('i1', 'a/1')).toBeNull();
+    expect(events).toEqual([]);
+
+    expect(store.importDocs('i1', [{ path: 'a/1', data: { n: 1 } }, { path: 'keep/k', data: { v: 2 } }], 'u9')).toEqual({ imported: 2 });
+    expect(store.get('i1', 'a/1')?.data).toEqual({ n: 1 });
+    const k = store.get('i1', 'keep/k')!;
+    expect(k.data).toEqual({ v: 2 });
+    expect(k.version).toBe(2);
+    expect(k.updatedBy).toBe('u9');
+    expect(events).toEqual([{ type: 'reset' }]);
+  });
+
+  it('importDocs rolls back when a failure happens during the write', () => {
+    const docs = (function* () {
+      yield { path: 'a/1', data: { n: 1 } };
+      throw new Error('stream broke');
+    })();
+    expect(() => store.importDocs('i2', docs, null)).toThrow('stream broke');
+    expect(store.get('i2', 'a/1')).toBeNull();
+  });
+
+  it('importDocs refuses foreign private paths', () => {
+    const refuse = (p: string, allow?: string): string => code(() => store.importDocs('f1', [{ path: 'ok/doc', data: {} }, { path: p, data: {} }], null, allow ? { allowPrivateOf: allow } : {}));
+    expect(refuse('data/users/u2/x/y/z')).toBe('forbidden');
+    expect(refuse('data/users/u2/x/y/z', 'u1')).toBe('forbidden');
+    expect(refuse('data/users/u1/x/y/z')).toBe('forbidden');
+    expect(refuse('data/users/u1x/x/y/z', 'u1')).toBe('forbidden');
+    expect(refuse('data/users/u/x/y/z', 'u1')).toBe('forbidden');
+    expect(refuse('DATA/users/u1/x/y/z', 'u1')).toBe('forbidden');
+    expect(refuse('data/Users/u1/x/y/z', 'u1')).toBe('forbidden');
+    expect(refuse('data/users/U1/x/y/z', 'u1')).toBe('forbidden');
+    expect(refuse('data/users', 'u1')).toBe('forbidden');
+    expect(refuse('data/users/u1', 'u1')).toBe('invalid_argument');
+    expect(store.get('f1', 'ok/doc')).toBeNull();
+    expect(store.importDocs('f1', [{ path: 'data/users/u1/x/y/z', data: { a: 1 } }, { path: 'data/usersx/q/r', data: {} }], null, { allowPrivateOf: 'u1' })).toEqual({ imported: 2 });
+  });
+
+  it('importDocs respects the quota', () => {
+    store.close();
+    store = new InstanceData(dir, hub, 20, 64 * 1024);
+    const big = { text: 'x'.repeat(2000) };
+    const docs = Array.from({ length: 200 }, (_, i) => ({ path: `docs/d${i}`, data: big }));
+    expect(code(() => store.importDocs('q1', docs, null))).toBe('quota_exceeded');
+    expect(store.query('q1', 'docs')).toEqual([]);
+    expect(store.importDocs('q1', docs.slice(0, 5), null)).toEqual({ imported: 5 });
+    store.setExtraUsage(() => 64 * 1024);
+    expect(code(() => store.importDocs('q1', docs.slice(0, 1), null))).toBe('quota_exceeded');
+  });
+
+  it('importDocs of an empty set writes and announces nothing', () => {
+    const events: HubEvent[] = [];
+    hub.subscribe('z1', (e) => events.push(e));
+    expect(store.importDocs('z1', [], null)).toEqual({ imported: 0 });
+    expect(events).toEqual([]);
+  });
+
+  it('later duplicates of a path win', () => {
+    store.importDocs('d1', [{ path: 'a/1', data: { n: 1 } }, { path: 'a/1', data: { n: 2 } }], null);
+    expect(store.get('d1', 'a/1')?.data).toEqual({ n: 2 });
+  });
+});
