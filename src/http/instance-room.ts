@@ -3,7 +3,7 @@ import express from 'express';
 import type { Response } from 'express';
 import type { Core } from '../core.js';
 import type { Level } from '../data/rules.js';
-import type { RoomEvent } from '../data/rooms.js';
+import { assertRoomName, type RoomEvent } from '../data/rooms.js';
 import { LagerError } from '../errors.js';
 import type { Instance } from '../platform/apps.js';
 import type { Ctx } from './instance.js';
@@ -15,15 +15,29 @@ const POSTS_PER_SECOND = 30;
 const MAX_BUFFERED_BYTES = 1024 * 1024;
 const RANK: Record<Level, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
 
+/** Everything one viewer (a user id, or the client IP of a guest) holds on one instance. */
+interface Viewer {
+  guest: boolean;
+  streams: number;
+  /** room name -> open streams in it */
+  rooms: Map<string, number>;
+  /** POST budget, shared by all streams of the viewer. */
+  tokens: number;
+  refilledAt: number;
+}
+
 interface Stream {
   instanceId: string;
   room: string;
   /** Signed-in viewers are tied to their user id; guests have no id and prove themselves with the stream secret. */
   userId: string | null;
   secretHash: Buffer | null;
-  tokens: number;
-  refilledAt: number;
+  viewer: Viewer;
 }
+
+const MAX_STREAMS_PER_VIEWER = 8;
+const MAX_ROOMS_PER_VIEWER = 8;
+const MAX_GUEST_STREAMS = 100;
 
 const sha256 = (s: string): Buffer => crypto.createHash('sha256').update(s).digest();
 
@@ -47,6 +61,34 @@ export function mountRoomRoutes(
   activeCapabilities: (core: Core, instance: Instance) => Ctx['caps'],
 ): void {
   const streams = new Map<string, Stream>();
+  const viewers = new Map<string, Viewer>();
+  const guestStreams = new Map<string, number>();
+
+  /** Registers a stream for the viewer, or returns null when one of the per-viewer limits is reached. */
+  const admit = (instanceId: string, key: string, guest: boolean, room: string): Viewer | null => {
+    const id = `${instanceId}\n${key}`;
+    let v = viewers.get(id);
+    if (!v) {
+      // Records of viewers without streams only remain until their POST budget is full again.
+      const now = Date.now();
+      for (const [k, o] of viewers) if (o.streams === 0 && o.tokens + ((now - o.refilledAt) / 1000) * POSTS_PER_SECOND >= POSTS_PER_SECOND) viewers.delete(k);
+      v = { guest, streams: 0, rooms: new Map(), tokens: POSTS_PER_SECOND, refilledAt: now };
+      viewers.set(id, v);
+    }
+    const tooMany = v.streams >= MAX_STREAMS_PER_VIEWER || (!v.rooms.has(room) && v.rooms.size >= MAX_ROOMS_PER_VIEWER)
+      || (guest && (guestStreams.get(instanceId) ?? 0) >= MAX_GUEST_STREAMS);
+    if (tooMany) return null;
+    v.streams += 1;
+    v.rooms.set(room, (v.rooms.get(room) ?? 0) + 1);
+    if (guest) guestStreams.set(instanceId, (guestStreams.get(instanceId) ?? 0) + 1);
+    return v;
+  };
+  const release = (instanceId: string, v: Viewer, room: string): void => {
+    v.streams -= 1;
+    const n = (v.rooms.get(room) ?? 1) - 1;
+    if (n <= 0) v.rooms.delete(room); else v.rooms.set(room, n);
+    if (v.guest) guestStreams.set(instanceId, Math.max(0, (guestStreams.get(instanceId) ?? 1) - 1));
+  };
 
   router.get('/__lager/room/events', (req, res) => {
     const first = ctxOf(res);
@@ -54,8 +96,15 @@ export function mountRoomRoutes(
     requireDeclared(first);
     const room = req.query.room === undefined ? '' : req.query.room;
     if (typeof room !== 'string') throw new LagerError('invalid_argument', 'room must be a string.');
+    assertRoomName(room);
     const userId = first.viewer.userId;
     const epoch = first.user?.sessionEpoch;
+    const instanceId = first.instance.id;
+    const viewer = admit(instanceId, userId ?? `ip:${req.ip ?? ''}`, userId === null, room);
+    if (!viewer) {
+      res.status(429).set('Retry-After', '5').json({ error: { code: 'rate_limited', message: 'Zu viele offene Verbindungen.' } });
+      return;
+    }
     let ping: NodeJS.Timeout | undefined;
     let ended = false;
     let leave: (() => void) | undefined;
@@ -66,43 +115,48 @@ export function mountRoomRoutes(
       clearInterval(ping);
       leave?.();
       streams.delete(peerId);
+      release(instanceId, viewer, room);
       res.end();
     };
-    const send = (event: string, payload: unknown): void => {
+    const write = (event: string, json: string): void => {
       if (ended) return;
-      res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+      res.write(`event: ${event}\ndata: ${json}\n\n`);
       if (res.writableLength > MAX_BUFFERED_BYTES) stop();
     };
-    // Throws (before any header is written) for a bad room name or a full instance or room.
-    const conn = core.rooms.connect(first.instance.id, room, { by: userId, guest: userId === null }, (e: RoomEvent) => {
-      const { type, ...rest } = e;
-      send(type, rest);
-    });
+    // The identity is the session's; the user id is only revealed to apps that declared the `user` capability.
+    const by = userId !== null && typeof first.caps.user === 'object' && first.caps.user !== null ? userId : null;
+    let conn: { peerId: string; leave(): void };
+    try {
+      // Throws (before any header is written) for a bad room name or a full instance or room.
+      conn = core.rooms.connect(instanceId, room, { by, guest: userId === null }, (e: RoomEvent, json: string) => write(e.type, json));
+    } catch (e) {
+      release(instanceId, viewer, room);
+      throw e;
+    }
     leave = conn.leave;
     peerId = conn.peerId;
     const secret = userId === null ? crypto.randomBytes(24).toString('base64url') : null;
-    streams.set(peerId, {
-      instanceId: first.instance.id, room, userId, secretHash: secret === null ? null : sha256(secret),
-      tokens: POSTS_PER_SECOND, refilledAt: Date.now(),
-    });
+    streams.set(peerId, { instanceId, room, userId, secretHash: secret === null ? null : sha256(secret), viewer });
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.flushHeaders();
     res.write('retry: 3000\n\n');
-    send('hello', { peer: peerId, peers: core.rooms.peers(first.instance.id, room), ...(secret === null ? {} : { secret }) });
     /** Whether this stream's session still has access to a room-declaring instance. */
     const stillAllowed = (): boolean => {
-      const inst = core.apps.getInstance(first.instance.id);
-      const viewer = userId === null ? null : core.users.get(userId);
+      const inst = core.apps.getInstance(instanceId);
+      const viewerUser = userId === null ? null : core.users.get(userId);
       // The stream belongs to the session it was opened with: logout, password change or disabling ends it.
-      if (userId !== null && (!viewer || viewer.disabled || viewer.sessionEpoch !== epoch)) return false;
-      if (!inst || inst.disabled || RANK[core.access.levelFor(inst, viewer)] < RANK.view) return false;
+      if (userId !== null && (!viewerUser || viewerUser.disabled || viewerUser.sessionEpoch !== epoch)) return false;
+      if (!inst || inst.disabled || RANK[core.access.levelFor(inst, viewerUser)] < RANK.view) return false;
       const decl = activeCapabilities(core, inst).room;
       return decl !== undefined && decl !== null && typeof decl === 'object';
     };
+    // Created before the first write: a write can already end the stream, and a timer made after that would never be cleared.
     ping = setInterval(() => {
+      if (ended) { clearInterval(ping); return; }
       if (!stillAllowed()) { stop(); return; }
       res.write(': ping\n\n');
     }, ROOM_PING_MS);
+    write('hello', JSON.stringify({ peer: peerId, peers: core.rooms.peers(instanceId, room), ...(secret === null ? {} : { secret }) }));
     req.on('close', stop);
   });
 
@@ -123,14 +177,16 @@ export function mountRoomRoutes(
       ? ctx.viewer.userId === stream.userId
       : typeof secret === 'string' && stream.secretHash !== null && crypto.timingSafeEqual(sha256(secret), stream.secretHash));
     if (!mine) throw new LagerError('forbidden', 'Unknown peer.');
+    // The budget belongs to the viewer, so opening more streams does not multiply it.
+    const bucket = stream.viewer;
     const now = Date.now();
-    stream.tokens = Math.min(POSTS_PER_SECOND, stream.tokens + ((now - stream.refilledAt) / 1000) * POSTS_PER_SECOND);
-    stream.refilledAt = now;
-    if (stream.tokens < 1) {
+    bucket.tokens = Math.min(POSTS_PER_SECOND, bucket.tokens + ((now - bucket.refilledAt) / 1000) * POSTS_PER_SECOND);
+    bucket.refilledAt = now;
+    if (bucket.tokens < 1) {
       res.status(429).set('Retry-After', '1').json({ error: { code: 'rate_limited', message: 'Zu viele Anfragen.' } });
       return;
     }
-    stream.tokens -= 1;
+    bucket.tokens -= 1;
     res.set('Cache-Control', 'no-store');
     if (op === 'emit') {
       if (typeof topic !== 'string') throw new LagerError('invalid_argument', 'topic must be a string.');

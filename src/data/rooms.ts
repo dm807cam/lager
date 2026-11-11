@@ -4,16 +4,18 @@ import { LagerError } from '../errors.js';
 export interface PeerInfo { peer: string; by: string | null; guest: boolean; kind: 'viewer'; presence: Record<string, unknown>; updatedAt: number }
 export type RoomEvent =
   | { type: 'message'; topic: string; data: unknown; from: PeerInfo }
-  | { type: 'peers'; peers: PeerInfo[]; joined: PeerInfo[]; left: PeerInfo[]; updated: PeerInfo[] };
+  | { type: 'peers'; joined: PeerInfo[]; left: PeerInfo[]; updated: PeerInfo[] };
 
 export const ROOM_LIMITS = {
-  maxRoomsPerInstance: 50, maxPeersPerRoom: 200, maxPresenceBytes: 8192, maxMessageBytes: 65536, maxRoomNameLength: 64,
+  maxRoomsPerInstance: 50, maxPeersPerRoom: 100, maxPresenceBytes: 2048, maxMessageBytes: 8192, maxRoomNameLength: 64,
 } as const;
 
 const ROOM_NAME_RE = /^[A-Za-z0-9._-]+$/;
 const MAX_TOPIC_LENGTH = 64;
 
-interface Member { info: PeerInfo; send: (e: RoomEvent) => void }
+/** Receives each event with its JSON payload (the event without `type`), serialized once for all receivers. */
+export type RoomSend = (e: RoomEvent, json: string) => void;
+interface Member { info: PeerInfo; send: RoomSend }
 
 /** The lobby is `""`; every other name is 1..64 characters of `[A-Za-z0-9._-]`. */
 export function assertRoomName(room: unknown): asserts room is string {
@@ -42,7 +44,7 @@ export class Rooms {
   private byInstance = new Map<string, Map<string, Map<string, Member>>>();
 
   connect(
-    instanceId: string, room: string, peer: { by: string | null; guest: boolean }, send: (e: RoomEvent) => void,
+    instanceId: string, room: string, peer: { by: string | null; guest: boolean }, send: RoomSend,
   ): { peerId: string; leave(): void } {
     assertRoomName(room);
     let rooms = this.byInstance.get(instanceId);
@@ -58,7 +60,7 @@ export class Rooms {
     const others = [...members.values()];
     members.set(peerId, { info, send });
     // The joiner learns the current state from its hello; the others hear about the joiner.
-    this.broadcast(others, { type: 'peers', peers: this.snapshot(members), joined: [this.view(info)], left: [], updated: [] });
+    this.broadcast(others, { type: 'peers', joined: [this.view(info)], left: [], updated: [] });
     let left = false;
     return {
       peerId,
@@ -74,7 +76,7 @@ export class Rooms {
           if (r.size === 0) this.byInstance.delete(instanceId);
           return;
         }
-        this.broadcast([...m.values()], { type: 'peers', peers: this.snapshot(m), joined: [], left: [gone], updated: [] });
+        this.broadcast([...m.values()], { type: 'peers', joined: [], left: [gone], updated: [] });
       },
     };
   }
@@ -108,7 +110,7 @@ export class Rooms {
     }
     me.info.presence = next;
     me.info.updatedAt = Date.now();
-    this.broadcast([...members.values()], { type: 'peers', peers: this.snapshot(members), joined: [], left: [], updated: [this.view(me.info)] });
+    this.broadcast([...members.values()], { type: 'peers', joined: [], left: [], updated: [this.view(me.info)] });
   }
 
   peers(instanceId: string, room: string): PeerInfo[] {
@@ -129,8 +131,11 @@ export class Rooms {
   }
 
   private broadcast(to: Member[], e: RoomEvent): void {
+    if (to.length === 0) return;
+    const { type: _type, ...payload } = e;
+    const json = JSON.stringify(payload);
     for (const m of to) {
-      try { m.send(e); } catch { /* a failing receiver must never break the others */ }
+      try { m.send(e, json); } catch { /* a failing receiver must never break the others */ }
     }
   }
 }

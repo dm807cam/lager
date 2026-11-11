@@ -830,7 +830,14 @@
     function onPeers(e) {
       var d;
       try { d = JSON.parse(e.data); } catch (_) { return; }
-      if (d && Array.isArray(d.peers)) reconcile(d.peers);
+      if (!d || typeof d !== 'object') return;
+      // The server sends deltas only; the full list was in the hello.
+      var next = new Map(rawPeers);
+      (Array.isArray(d.left) ? d.left : []).forEach(function (p) { if (p && typeof p.peer === 'string') next.delete(p.peer); });
+      [d.joined, d.updated].forEach(function (list) {
+        (Array.isArray(list) ? list : []).forEach(function (p) { if (p && typeof p.peer === 'string') next.set(p.peer, p); });
+      });
+      reconcile(Array.from(next.values()));
     }
 
     function onStreamError() {

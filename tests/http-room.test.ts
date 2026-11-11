@@ -20,13 +20,13 @@ afterEach(async () => {
 
 const HOST = 'room.apps.localhost';
 const PLAIN = 'plain.apps.localhost';
-const CAPS = { room: { topics: { move: 'interact' } } };
+const CAPS = { room: { topics: { move: 'interact' } }, user: {} };
 
 interface SseEvent { event: string; data: any }
 interface Stream { status: number; events: SseEvent[]; ended: Promise<void>; next(event: string): Promise<any>; close(): void; hello: any }
 
 async function setup(visibility: 'private' | 'users' | 'public' = 'private') {
-  h = makeHarness();
+  h = makeHarness({ trustProxy: 1 });
   const core = h.core;
   const inst = core.apps.deploy({ slug: 'room', html: '<p>x</p>', userId: h.adminId, capabilities: CAPS }).instances[0];
   core.apps.deploy({ slug: 'plain', html: '<p>x</p>', userId: h.adminId });
@@ -45,13 +45,13 @@ async function setup(visibility: 'private' | 'users' | 'public' = 'private') {
 }
 type Env = Awaited<ReturnType<typeof setup>>;
 
-function stream(env: Env, cookie: string | undefined, query = '', host = HOST): Promise<Stream> {
+function stream(env: Env, cookie: string | undefined, query = '', host = HOST, extra: Record<string, string> = {}): Promise<Stream> {
   return new Promise((resolve, reject) => {
     const events: SseEvent[] = [];
     const waiters: Array<() => void> = [];
     let buf = '';
     const req = http.get({
-      host: '127.0.0.1', port: env.port, path: `/__lager/room/events${query}`, headers: { Host: host, ...(cookie ? { Cookie: cookie } : {}) },
+      host: '127.0.0.1', port: env.port, path: `/__lager/room/events${query}`, headers: { Host: host, ...extra, ...(cookie ? { Cookie: cookie } : {}) },
     }, (res) => {
       const ended = new Promise<void>((done) => { res.on('end', done); res.on('close', done); });
       if (res.statusCode !== 200) { res.resume(); resolve({ status: res.statusCode!, events, ended, next: () => Promise.reject(new Error('no stream')), close: () => req.destroy(), hello: null }); return; }
@@ -111,8 +111,10 @@ describe('room routes', () => {
     const a = await stream(env, viewer.cookie);
     expect(a.hello.peers).toEqual([expect.objectContaining({ peer: a.hello.peer, by: viewer.user.id, guest: false, kind: 'viewer', presence: {} })]);
     expect(a.hello.secret).toBeUndefined();
+    expect(a.hello.peers).toHaveLength(1);
     const o = await stream(env, env.owner.cookie);
     const joined = await a.next('peers');
+    expect(Object.keys(joined).sort()).toEqual(['joined', 'left', 'updated']); // deltas only, no full list
     expect(joined.joined).toEqual([expect.objectContaining({ peer: o.hello.peer, by: env.admin.id })]);
     const res = await post(env, env.owner.cookie, { room: '', peer: o.hello.peer, op: 'emit', topic: 'hi', data: { n: 1 } });
     expect(res).toEqual({ status: 200, body: { ok: true } });
@@ -284,22 +286,111 @@ describe('room routes', () => {
     await s.ended;
   });
 
-  it('rate limit', async () => {
+  it('rate limit is shared by all streams of a viewer', async () => {
     const env = await setup();
     const s = await stream(env, env.owner.cookie);
+    const t = await stream(env, env.owner.cookie);
+    vi.useFakeTimers({ toFake: ['Date'] }); // a frozen clock: no refill between the posts, whatever the machine load
     const results: number[] = [];
-    for (let i = 0; i < 31; i++) results.push((await post(env, env.owner.cookie, { room: '', peer: s.hello.peer, op: 'presence', patch: { i } })).status);
+    for (let i = 0; i < 31; i++) {
+      const via = i % 2 === 0 ? s : t;
+      results.push((await post(env, env.owner.cookie, { room: '', peer: via.hello.peer, op: 'presence', patch: { i } })).status);
+    }
     expect(results.slice(0, 30).every((x) => x === 200)).toBe(true);
     expect(results[30]).toBe(429);
-    // another peer has its own budget
-    const t = await stream(env, env.owner.cookie);
-    expect((await post(env, env.owner.cookie, { room: '', peer: t.hello.peer, op: 'presence', patch: { i: 1 } })).status).toBe(200);
+    // another viewer has its own budget
+    const other = env.mk('o@x.y', 'view');
+    const u = await stream(env, other.cookie);
+    expect((await post(env, other.cookie, { room: '', peer: u.hello.peer, op: 'presence', patch: { i: 1 } })).status).toBe(200);
+  });
+
+  it('at most 8 streams per user; the 9th is refused with 429 and others are unaffected', async () => {
+    const env = await setup();
+    const a = env.mk('a@x.y', 'view');
+    for (let i = 0; i < 8; i++) expect((await stream(env, a.cookie)).status).toBe(200);
+    const ninth = await stream(env, a.cookie);
+    expect(ninth.status).toBe(429);
+    expect((await stream(env, env.mk('b@x.y', 'view').cookie)).status).toBe(200);
+    // a closed stream frees its slot
+    const lobby = await stream(env, env.owner.cookie);
+    lobby.close();
+    await lobby.ended;
+    for (let i = 0; i < 8; i++) expect((await stream(env, env.owner.cookie)).status).toBe(200);
+  });
+
+  it('a viewer is connected to at most 8 distinct rooms', async () => {
+    const env = await setup();
+    for (let i = 0; i < 8; i++) expect((await stream(env, env.owner.cookie, `?room=r${i}`)).status).toBe(200);
+    expect((await stream(env, env.owner.cookie, '?room=r8')).status).toBe(429);
+    expect((await stream(env, env.owner.cookie, '?room=r0')).status).toBe(429); // streams are capped at 8 as well
+    // another viewer is not affected
+    expect((await stream(env, env.mk('c@x.y', 'view').cookie, '?room=r8')).status).toBe(200);
+  });
+
+  it('guests: 8 streams per IP, 100 in total, other IPs unaffected', async () => {
+    const env = await setup('public');
+    const ip = (n: number) => ({ 'X-Forwarded-For': `10.0.0.${n}` });
+    for (let i = 0; i < 8; i++) expect((await stream(env, undefined, '', HOST, ip(1))).status).toBe(200);
+    expect((await stream(env, undefined, '', HOST, ip(1))).status).toBe(429);
+    expect((await stream(env, undefined, '', HOST, ip(2))).status).toBe(200);
+    // signed-in viewers are counted separately from guests
+    expect((await stream(env, env.owner.cookie, '', HOST, ip(1))).status).toBe(200);
+    // fill up to 100 guest streams (8 + 1 so far) with other addresses, then the total cap applies
+    let n = 3;
+    let count = 9;
+    while (count < 100) {
+      const take = Math.min(8, 100 - count);
+      for (let i = 0; i < take; i++) expect((await stream(env, undefined, `?room=g${n}`, HOST, ip(n))).status).toBe(200);
+      count += take; n += 1;
+    }
+    expect((await stream(env, undefined, `?room=g${n}`, HOST, ip(n))).status).toBe(429);
+    // another instance's guests have their own total
+    expect((await stream(env, undefined, '', PLAIN, ip(n))).status).not.toBe(429);
+  }, 30_000);
+
+  it('by is null unless the app declares the user capability', async () => {
+    const env = await setup();
+    env.core.apps.deploy({ slug: 'plain', html: '<p>x</p>', userId: env.h.adminId, capabilities: { room: {} } });
+    const inst = env.core.apps.getInstanceBySlug('plain')!;
+    const cookie = 'lager_inst=' + signToken({ uid: env.admin.id, iid: inst.id, k: 'inst', ep: 0 }, 'test-secret', 600);
+    const s = await stream(env, cookie, '', PLAIN);
+    expect(s.hello.peers[0]).toMatchObject({ by: null, guest: false });
+    const t = await stream(env, cookie, '', PLAIN);
+    expect((await s.next('peers')).joined[0].by).toBeNull();
+    await post(env, cookie, { room: '', peer: t.hello.peer, op: 'emit', topic: 'x' }, { host: PLAIN });
+    expect((await s.next('message')).from.by).toBeNull();
+  });
+
+  it('a stream stopped while the hello is written leaves no interval running', async () => {
+    const env = await setup();
+    const created: unknown[] = [];
+    const cleared: unknown[] = [];
+    const realSet = globalThis.setInterval;
+    const realClear = globalThis.clearInterval;
+    vi.spyOn(globalThis, 'setInterval').mockImplementation(((...args: Parameters<typeof setInterval>) => { const t = realSet(...args); created.push(t); return t; }) as typeof setInterval);
+    vi.spyOn(globalThis, 'clearInterval').mockImplementation(((t: Parameters<typeof clearInterval>[0]) => { cleared.push(t); realClear(t); }) as typeof clearInterval);
+    // every write looks like a receiver that lags far behind
+    Object.defineProperty(http.ServerResponse.prototype, 'writableLength', { configurable: true, get: () => 2 * 1024 * 1024 });
+    try {
+      const s = await stream(env, env.owner.cookie);
+      await s.ended;
+      expect(created.length).toBeGreaterThan(0);
+      expect(created.filter((t) => !cleared.includes(t))).toEqual([]);
+      // and the slot was given back
+      vi.restoreAllMocks();
+      delete (http.ServerResponse.prototype as { writableLength?: number }).writableLength;
+      for (let i = 0; i < 8; i++) expect((await stream(env, env.owner.cookie)).status).toBe(200);
+    } finally {
+      vi.restoreAllMocks();
+      delete (http.ServerResponse.prototype as { writableLength?: number }).writableLength;
+    }
   });
 
   it('a full room answers 409', async () => {
     const env = await setup();
-    const streams: Stream[] = [];
-    for (let i = 0; i < 200; i++) streams.push(await stream(env, env.owner.cookie, '?room=full'));
+    for (let i = 0; i < 100; i++) env.core.rooms.connect(env.inst.id, 'full', { by: null, guest: true }, () => undefined);
     expect((await stream(env, env.owner.cookie, '?room=full')).status).toBe(409);
-  }, 30_000);
+    // a refused connect gives the viewer's slot back
+    for (let i = 0; i < 8; i++) expect((await stream(env, env.owner.cookie)).status).toBe(200);
+  });
 });

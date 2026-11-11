@@ -47,7 +47,7 @@ describe('Rooms', () => {
     // state is cleared when the peer leaves
     b.events.length = 0;
     a.leave();
-    expect(b.events).toEqual([{ type: 'peers', peers: [expect.objectContaining({ peer: b.peerId })], joined: [], left: [expect.objectContaining({ peer: a.peerId, presence: { cursor: { x: 1 }, color: 'red' } })], updated: [] }]);
+    expect(b.events).toEqual([{ type: 'peers', joined: [], left: [expect.objectContaining({ peer: a.peerId, presence: { cursor: { x: 1 }, color: 'red' } })], updated: [] }]);
     expect(rooms.peers('i1', '').map((p) => p.peer)).toEqual([b.peerId]);
   });
 
@@ -78,6 +78,25 @@ describe('Rooms', () => {
     expect(code(() => rooms.emit('i1', 'x', x.peerId, 't', 1))).toBe('not_found');
   });
 
+  it('peers events carry deltas only and each event is serialized once', () => {
+    const rooms = new Rooms();
+    const seen: string[] = [];
+    const a = rooms.connect('i1', '', viewer(), (_e, json) => seen.push(json));
+    const b = rooms.connect('i1', '', viewer('u2'), (_e, json) => seen.push(json));
+    rooms.setPresence('i1', '', a.peerId, { x: 1 });
+    rooms.emit('i1', '', b.peerId, 't', 1);
+    expect(seen).toHaveLength(1 + 2 + 2); // a hears b join; both hear the presence delta and the message
+    expect(Object.keys(JSON.parse(seen[0])).sort()).toEqual(['joined', 'left', 'updated']);
+    expect(Object.keys(JSON.parse(seen[1])).sort()).toEqual(['joined', 'left', 'updated']);
+    expect(seen[1]).toBe(seen[2]); // the very same string for every receiver
+    expect(Object.keys(JSON.parse(seen[3])).sort()).toEqual(['data', 'from', 'topic']);
+    expect(seen[3]).toBe(seen[4]);
+  });
+
+  it('limits are the agreed ones', () => {
+    expect(ROOM_LIMITS).toEqual({ maxRoomsPerInstance: 50, maxPeersPerRoom: 100, maxPresenceBytes: 2048, maxMessageBytes: 8192, maxRoomNameLength: 64 });
+  });
+
   it('a throwing receiver does not break the others', () => {
     const rooms = new Rooms();
     rooms.connect('i1', '', viewer(), () => { throw new Error('boom'); });
@@ -105,9 +124,9 @@ describe('Rooms', () => {
     const a = join(rooms, 'r0');
     expect(code(() => rooms.setPresence('i1', 'r0', a.peerId, { big: 'x'.repeat(ROOM_LIMITS.maxPresenceBytes) }))).toBe('invalid_argument');
     // the merged state counts, not just the patch
-    rooms.setPresence('i1', 'r0', a.peerId, { a: 'x'.repeat(5000) });
-    expect(code(() => rooms.setPresence('i1', 'r0', a.peerId, { b: 'y'.repeat(5000) }))).toBe('invalid_argument');
-    expect(rooms.peers('i1', 'r0').find((p) => p.peer === a.peerId)!.presence).toEqual({ a: 'x'.repeat(5000) });
+    rooms.setPresence('i1', 'r0', a.peerId, { a: 'x'.repeat(1500) });
+    expect(code(() => rooms.setPresence('i1', 'r0', a.peerId, { b: 'y'.repeat(1000) }))).toBe('invalid_argument');
+    expect(rooms.peers('i1', 'r0').find((p) => p.peer === a.peerId)!.presence).toEqual({ a: 'x'.repeat(1500) });
     expect(code(() => rooms.emit('i1', 'r0', a.peerId, 't', 'x'.repeat(ROOM_LIMITS.maxMessageBytes)))).toBe('invalid_argument');
     expect(code(() => rooms.emit('i1', 'r0', a.peerId, 't', 'x'.repeat(1000)))).toBe('none');
     expect(code(() => rooms.emit('i1', 'r0', a.peerId, '', 1))).toBe('invalid_argument');

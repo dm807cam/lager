@@ -1008,7 +1008,9 @@ describe('room', () => {
     roomReply = () => json({ ok: true });
   artifactReply = () => json({ version: '2' });
     const before = roomPosts().length;
+    vi.useFakeTimers(); // the retry timer must not outlive this test
     es().emit('error');
+    vi.useRealTimers();
     expect(room.connected()).toBe(false);
     expect(await code(room.emit('t', 1))).toBe('resolved');
     expect(roomPosts()).toHaveLength(before);
@@ -1025,27 +1027,56 @@ describe('room', () => {
     expect(changes[0].joined.map((p: any) => p.peer)).toEqual(['p1']);
     expect(changes[0].joined[0]).toMatchObject({ isMe: true, sameTab: true, kind: 'viewer', guest: false, by: 'u1' });
     expect(changes[0].peers).toBe(room.peers());
+    expect(changes[0].peers.map((p: any) => p.peer)).toEqual(['p1']);
     expect(Object.isFrozen(changes[0].peers)).toBe(true);
     const p2 = { peer: 'p2', by: 'u2', guest: true, kind: 'viewer', presence: { cursor: [1, 2] }, updatedAt: 5 };
-    es().emit('peers', { peers: [ME, p2], joined: [p2], left: [], updated: [] });
+    es().emit('peers', { joined: [p2], left: [], updated: [] });
     await tick();
     expect(changes[1].joined).toEqual([expect.objectContaining({ peer: 'p2', isMe: false, guest: true, presence: { cursor: [1, 2] } })]);
     expect(changes[1].updated).toEqual([]);
     expect(Object.isFrozen(changes[1].joined[0].presence)).toBe(true);
     const unchanged = room.peers()[0];
-    es().emit('peers', { peers: [ME, { ...p2, presence: { cursor: [3, 4] } }], joined: [], left: [], updated: [] });
+    es().emit('peers', { joined: [], left: [], updated: [{ ...p2, presence: { cursor: [3, 4] } }] });
     await tick();
     expect(changes[2].updated).toEqual([expect.objectContaining({ peer: 'p2', presence: { cursor: [3, 4] } })]);
     expect(room.peers()[0]).toBe(unchanged); // a peer that did not change keeps its object
-    es().emit('peers', { peers: [ME], joined: [], left: [p2], updated: [] });
+    es().emit('peers', { joined: [], left: [p2], updated: [] });
     await tick();
     expect(changes[3].left).toEqual([expect.objectContaining({ peer: 'p2' })]);
     // joined and left within one frame is neither
     const p3 = { ...p2, peer: 'p3' };
-    es().emit('peers', { peers: [ME, p3], joined: [p3], left: [], updated: [] });
-    es().emit('peers', { peers: [ME], joined: [], left: [p3], updated: [] });
+    es().emit('peers', { joined: [p3], left: [], updated: [] });
+    es().emit('peers', { joined: [], left: [p3], updated: [] });
     await tick();
     expect(changes).toHaveLength(4);
+    // the full list is rebuilt locally from the deltas
+    expect(changes[1].peers.map((p: any) => p.peer)).toEqual(['p1', 'p2']);
+    expect(changes[3].peers.map((p: any) => p.peer)).toEqual(['p1']);
+  });
+
+  it('a new hello resets the peer map', async () => {
+    withRoom();
+    const room = await boot().use('room');
+    const changes: any[] = [];
+    room.onPeers((c: any) => changes.push(c));
+    const p2 = { peer: 'p2', by: 'u2', guest: false, kind: 'viewer', presence: {}, updatedAt: 5 };
+    es().emit('hello', { peer: 'p1', peers: [ME, p2] });
+    await tick();
+    expect(changes[0].joined.map((p: any) => p.peer)).toEqual(['p1', 'p2']);
+    vi.useFakeTimers();
+    try {
+      es().emit('error');
+      await vi.advanceTimersByTimeAsync(1001);
+    } finally { vi.useRealTimers(); }
+    es().emit('hello', { peer: 'p3', peers: [{ ...ME, peer: 'p3' }] });
+    await tick();
+    expect(room.peers().map((p: any) => p.peer)).toEqual(['p3']);
+    expect(changes[1].joined.map((p: any) => p.peer)).toEqual(['p3']);
+    expect(changes[1].left.map((p: any) => p.peer).sort()).toEqual(['p1', 'p2']);
+    // deltas after the reset apply to the new map
+    es().emit('peers', { joined: [], left: [p2], updated: [] });
+    await tick();
+    expect(room.peers().map((p: any) => p.peer)).toEqual(['p3']);
   });
 
   it('presence applies locally at once, is coalesced and merged, and is re-sent after a reconnect', async () => {
@@ -1059,7 +1090,7 @@ describe('room', () => {
     await tick();
     expect(roomPosts()).toEqual([{ room: '', peer: 'p1', op: 'presence', patch: { cursor: { x: 1 }, mode: null, color: 'red' } }]);
     // the server echoes our own state; our local state stays authoritative
-    es().emit('peers', { peers: [{ ...ME, presence: {} }], joined: [], left: [], updated: [] });
+    es().emit('peers', { joined: [], left: [], updated: [{ ...ME, presence: {} }] });
     expect(room.peers()[0].presence).toEqual({ cursor: { x: 1 }, color: 'red' });
     // errors, then a retry with backoff opens a new stream, whose hello brings the full state again
     vi.useFakeTimers();
@@ -1102,7 +1133,9 @@ describe('room', () => {
     await tick(0);
     expect(seen).toEqual([false]);
     es().emit('hello', { peer: 'p1', peers: [ME] });
+    vi.useFakeTimers(); // the retry timer must not outlive this test
     es().emit('error');
+    vi.useRealTimers();
     expect(seen).toEqual([false, true, false]);
     off();
     expect(room.connected()).toBe(false);
