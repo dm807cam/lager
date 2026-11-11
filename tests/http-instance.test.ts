@@ -195,7 +195,8 @@ describe('instance host', () => {
     const all = await search(adaCookie2, '');
     expect(all.body.profiles.map((p: { name: string }) => p.name)).toEqual(['Ada Lovelace', 'Admin', 'Bob']);
     expect(all.body.profiles.find((p: { isMe: boolean }) => p.isMe).id).toBe(adaB.id);
-    expect((await search(ownerCookie, 'bob@x')).body.profiles.map((p: { id: string }) => p.id)).toEqual([bob.id]);
+    // without the email scope only names match: an address-only query finds nobody
+    expect((await search(ownerCookie, 'bob@x')).body).toEqual({ profiles: [] });
     expect((await search(ownerCookie, 'nobody')).body).toEqual({ profiles: [] });
     expect((await search(ownerCookie, 'a')).headers['cache-control']).toBe('no-store');
 
@@ -216,6 +217,8 @@ describe('instance host', () => {
     const cookie = await h.enter('workout', await h.login());
     const res = await request(h.app).get('/__lager/users').query({ q: 'ada' }).set('Host', W).set('Cookie', cookie);
     expect(res.body.profiles).toEqual([{ id: ada.id, name: 'Ada', email: 'ada@x.y', isMe: false }]);
+    const byAddress = await request(h.app).get('/__lager/users').query({ q: 'ada@x' }).set('Host', W).set('Cookie', cookie);
+    expect(byAddress.body.profiles.map((p: { id: string }) => p.id)).toEqual([ada.id]);
   });
 
   it('serves the runtime with ETag', async () => {

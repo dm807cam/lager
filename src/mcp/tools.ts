@@ -218,12 +218,12 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }, ({ app, slug, visibility, owner_email }) => run(() => instanceJson(core, createInstanceFor(core, user, { app, slug, ownerEmail: owner_email, visibility }))));
 
   server.registerTool('set_visibility', {
-    description: 'Set who can open an instance: private (only you), users (all signed-in users), public (anyone).',
+    description: 'Set who can open an instance: private (the owner and those it is shared with), users (all signed-in users), public (anyone).',
     inputSchema: { instance: slugArg, visibility: visibilityArg },
   }, ({ instance, visibility }) => run(() => instanceJson(core, core.apps.setVisibility(managedInstance(core, user, instance).id, visibility, user.id))));
 
   server.registerTool('share_instance', {
-    description: 'Give an account (email) or a group (name) access to an instance, or change their level: view (look), interact (also write data per the app\'s rules) or admin (also manage sharing, versions and data). Returns the shares.',
+    description: 'Give an account (email) or a group (name) access to an instance, or change their level: view (look), interact (also write data per the app\'s rules) or admin (also manage sharing, versions and data). Exactly one of email or group is required. Returns the shares.',
     inputSchema: { instance: slugArg, email: z.string().optional(), group: z.string().optional(), level: z.enum(GRANT_LEVELS) },
   }, ({ instance, email, group, level }) => run(() => {
     const inst = managedInstance(core, user, instance);
@@ -233,7 +233,7 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }));
 
   server.registerTool('unshare_instance', {
-    description: 'Withdraw the access of an account (email) or a group (name) from an instance. Returns the remaining shares.',
+    description: 'Withdraw the access of an account (email) or a group (name) from an instance. Exactly one of email or group is required. Returns the remaining shares.',
     inputSchema: { instance: slugArg, email: z.string().optional(), group: z.string().optional() },
   }, ({ instance, email, group }) => run(() => {
     const inst = managedInstance(core, user, instance);

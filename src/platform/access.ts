@@ -141,7 +141,8 @@ export class Access {
   }
 
   /** Active users who can open the instance: owner, direct grantees and members of granted groups. */
-  usersWithAccess(instance: Instance, query?: string, limit = DEFAULT_LIMIT): User[] {
+  /** `matchEmail = false` matches the query against names only (so addresses cannot be probed). */
+  usersWithAccess(instance: Instance, query?: string, limit = DEFAULT_LIMIT, matchEmail = true): User[] {
     const ids = new Set<string>([instance.ownerId]);
     for (const g of this.listGrants(instance.id)) {
       if (g.principalType === 'user') ids.add(g.principalId);
@@ -151,7 +152,7 @@ export class Access {
     const max = Number.isInteger(limit) && limit > 0 ? limit : DEFAULT_LIMIT;
     return [...ids].map((id) => this.users.get(id))
       .filter((u): u is User => u !== null && !u.disabled
-        && (needle === '' || u.name.toLowerCase().includes(needle) || u.email.toLowerCase().includes(needle)))
+        && (needle === '' || u.name.toLowerCase().includes(needle) || (matchEmail && u.email.toLowerCase().includes(needle))))
       .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, max);
   }

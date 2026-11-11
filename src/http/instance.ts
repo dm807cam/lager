@@ -172,7 +172,7 @@ export function createInstanceRouter(core: Core): express.Router {
       if (typeof req.query.q !== 'string' || req.query.q.length > MAX_SEARCH_QUERY) {
         throw new LagerError('invalid_argument', `q must be a string of at most ${MAX_SEARCH_QUERY} characters.`);
       }
-      const found = hasScope(ctx, 'profile') ? core.access.usersWithAccess(ctx.instance, req.query.q, MAX_SEARCH_RESULTS) : [];
+      const found = hasScope(ctx, 'profile') ? core.access.usersWithAccess(ctx.instance, req.query.q, MAX_SEARCH_RESULTS, emailAllowed(ctx)) : [];
       res.set('Cache-Control', 'no-store').json({
         profiles: found.map((u) => ({ id: u.id, name: u.name, email: emailAllowed(ctx) ? u.email : null, isMe: u.id === ctx.user?.id })),
       });
