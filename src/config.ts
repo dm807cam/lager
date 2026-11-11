@@ -12,7 +12,8 @@ export interface Config {
   adminPassword?: string;
   secret: string;
   snapshotKeep: number;
-  trustProxy: boolean;
+  /** Express `trust proxy` setting: number of trusted proxy hops, or false for none. */
+  trustProxy: number | false;
 }
 
 export const SLUG_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -54,23 +55,33 @@ function parseIntEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): nu
   return n;
 }
 
+/** `false`/`0` → no proxy, `true`/empty → one hop, a positive integer → that many hops. */
+function parseTrustProxy(raw: string | undefined): number | false {
+  const v = raw?.trim().toLowerCase();
+  if (!v || v === 'true') return 1;
+  if (v === 'false' || v === '0') return false;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1) throw new Error('LAGER_TRUST_PROXY must be true, false or a positive integer');
+  return n;
+}
+
+export const ADMIN_PASSWORD_PLACEHOLDER = 'bitte-aendern';
+
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const publicUrl = new URL(required(env, 'LAGER_PUBLIC_URL'));
   const appsDomain = required(env, 'LAGER_APPS_DOMAIN').toLowerCase();
   const dataDir = path.resolve(env.LAGER_DATA_DIR?.trim() || './data');
   fs.mkdirSync(dataDir, { recursive: true });
-  const defaultPort = publicUrl.port ? Number(publicUrl.port) : publicUrl.protocol === 'https:' ? 443 : 80;
-  const trust = env.LAGER_TRUST_PROXY?.trim().toLowerCase();
   return {
     dataDir,
-    port: parseIntEnv(env, 'LAGER_PORT', defaultPort),
+    port: parseIntEnv(env, 'LAGER_PORT', 8080),
     publicUrl,
     appsDomain,
     adminEmail: env.LAGER_ADMIN_EMAIL?.trim() || undefined,
     adminPassword: env.LAGER_ADMIN_PASSWORD || undefined,
     secret: env.LAGER_SECRET?.trim() || loadSecret(dataDir),
     snapshotKeep: parseIntEnv(env, 'LAGER_SNAPSHOT_KEEP', 20),
-    trustProxy: !(trust === 'false' || trust === '0'),
+    trustProxy: parseTrustProxy(env.LAGER_TRUST_PROXY),
   };
 }
 

@@ -26,6 +26,22 @@ describe('dashboard', () => {
     expect(res.headers.location).toBe('/login?return=%2F');
   });
 
+  it('POST without a session redirects to /login?return=/ (not the form path)', async () => {
+    const h = setup();
+    const res = await request(h.app).post('/ui/tokens').set('Host', h.host).type('form').send({ name: 'x' });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/login?return=%2F');
+  });
+
+  it('the logout form carries a csrf token', async () => {
+    const h = setup();
+    const res = await get(h, await h.login());
+    const m = /action="\/logout"><input type="hidden" name="csrf" value="([^"]+)"/.exec(res.text);
+    expect(m).not.toBeNull();
+    const out = await request(h.app).post('/logout').set('Host', h.host).set('Cookie', await h.login()).type('form').send({ csrf: m![1] });
+    expect(out.status).toBe(302);
+  });
+
   it('shows empty state', async () => {
     const h = setup();
     const res = await get(h, await h.login());

@@ -226,7 +226,19 @@ describe('instance host', () => {
     await db(h, W, inst, { op: 'set', path: 'tasks/secret', data: { a: 2 } });
     const anon = await db(h, W, undefined, { op: 'query', path: 'tasks' });
     expect(anon.body.docs.map((d: { id: string }) => d.id)).toEqual(['open']);
-    expect((await db(h, W, undefined, { op: 'get', path: 'tasks/secret' })).status).toBe(403);
+    // reads the viewer may not perform look like missing data; writes stay forbidden
+    expect((await db(h, W, undefined, { op: 'get', path: 'tasks/secret' })).body).toEqual({ doc: null });
+    expect((await db(h, W, undefined, { op: 'set', path: 'locked/y', data: {} })).status).toBe(403);
+  });
+
+  it('a collection the viewer cannot read at all queries as empty', async () => {
+    const { h } = setup({ caps: { db: { rules: [{ path: 'vault', read: 'owner' }] } }, visibility: 'public' });
+    const inst = await h.enter('workout', await h.login());
+    await db(h, W, inst, { op: 'set', path: 'vault/a', data: { a: 1 } });
+    expect((await db(h, W, inst, { op: 'query', path: 'vault' })).body.docs).toHaveLength(1);
+    const anon = await db(h, W, undefined, { op: 'query', path: 'vault' });
+    expect(anon.status).toBe(200);
+    expect(anon.body).toEqual({ docs: [] });
   });
 
   it('serves the newly active version after rollback, data intact', async () => {

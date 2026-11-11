@@ -1,4 +1,4 @@
-import type { Config } from './config.js';
+import { ADMIN_PASSWORD_PLACEHOLDER, type Config } from './config.js';
 import { Hub } from './data/hub.js';
 import { InstanceData } from './data/store.js';
 import { OAuthStore } from './mcp/oauth.js';
@@ -19,6 +19,11 @@ export interface Core {
 export function createCore(config: Config): Core {
   const db = openPlatformDb(config.dataDir);
   const users = new Users(db);
+  if (config.adminPassword === ADMIN_PASSWORD_PLACEHOLDER && config.publicUrl.protocol === 'https:' && users.count() === 0) {
+    db.close();
+    throw new Error('LAGER_ADMIN_PASSWORD hat noch den Platzhalter-Wert "bitte-aendern". Setze vor dem ersten Start ein eigenes Passwort, '
+      + 'denn Lager ist über https öffentlich erreichbar. Das Admin-Konto wurde nicht angelegt.');
+  }
   users.ensureAdmin(config.adminEmail, config.adminPassword);
   const apps = new Apps(db, config.dataDir, users);
   const tokens = new ApiTokens(db, users);

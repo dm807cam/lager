@@ -32,10 +32,10 @@ Konfiguration (nur Umgebungsvariablen, Vorlage in `.env.example`):
 | `LAGER_APPS_DOMAIN` | Domain der Apps; Instanzen laufen unter `<slug>.<Domain>` | Pflicht |
 | `LAGER_ADMIN_EMAIL`, `LAGER_ADMIN_PASSWORD` | Admin-Konto beim ersten Start | keins |
 | `LAGER_DATA_DIR` | Datenverzeichnis | `./data` (im Container `/data`) |
-| `LAGER_PORT` | Port des Servers | Port aus `LAGER_PUBLIC_URL` (im Container 8080) |
+| `LAGER_PORT` | Port des Servers | `8080` |
 | `LAGER_SECRET` | Schlüssel für Sitzungen; sonst erzeugt und in `secret.key` gespeichert | erzeugt |
 | `LAGER_SNAPSHOT_KEEP` | Aufbewahrte Daten-Schnappschüsse pro Instanz | `20` |
-| `LAGER_TRUST_PROXY` | `X-Forwarded-*` des Proxys vertrauen | `true` |
+| `LAGER_TRUST_PROXY` | Anzahl der Proxy-Stationen vor Lager, deren `X-Forwarded-*` vertraut wird: `false`/`0` keine, `true` = 1, oder eine Zahl | `true` (1) |
 
 ## Lokal ausprobieren
 
@@ -90,7 +90,7 @@ location /__lager/db/events {
 
 Alternativ kannst du die Zeile `proxy_buffering off;` direkt in die „Custom Nginx Configuration“ des Hosts setzen. Ohne diese Einstellung erscheinen Änderungen anderer Nutzer verzögert oder erst nach einem Neuladen.
 
-Lager vertraut den `X-Forwarded-*`-Headern des Proxys (`LAGER_TRUST_PROXY=true`). Setze es auf `false`, wenn Lager direkt aus dem Internet erreichbar ist.
+Lager vertraut standardmäßig genau einem Proxy vor sich (`LAGER_TRUST_PROXY=true`, also eine Station) und nimmt als Client-Adresse den letzten Eintrag von `X-Forwarded-For`. Stehen mehrere Proxys hintereinander, setze die Anzahl (zum Beispiel `2`). Setze `false`, wenn Lager direkt aus dem Internet erreichbar ist, sonst kann jeder die Client-Adresse fälschen und die Begrenzung der Anmeldeversuche umgehen.
 
 ## Claude verbinden
 

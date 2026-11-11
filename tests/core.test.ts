@@ -18,7 +18,22 @@ function make(): Core {
   return core;
 }
 
+function makeWith(overrides: Partial<Config>): Core {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-core-'));
+  return createCore({
+    dataDir, port: 0, publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test',
+    adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 's', snapshotKeep: 20, trustProxy: false, ...overrides,
+  });
+}
+
 describe('core', () => {
+  it('refuses the placeholder admin password on https, but allows it on http', () => {
+    expect(() => makeWith({ publicUrl: new URL('https://lager.example.org'), adminPassword: 'bitte-aendern' }))
+      .toThrow(/bitte-aendern/);
+    core = makeWith({ publicUrl: new URL('http://lager.localhost:8080'), adminPassword: 'bitte-aendern' });
+    expect(core.users.count()).toBe(1);
+  });
+
   it('bootstraps admin', () => {
     expect(make().users.count()).toBe(1);
   });

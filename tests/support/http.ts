@@ -20,18 +20,20 @@ export interface Harness {
   enter(slug: string, platformCookie: string): Promise<string>;
 }
 
-export interface HarnessOptions { publicUrl?: string; extensions?: PlatformExtension[] }
+export interface HarnessOptions { publicUrl?: string; extensions?: PlatformExtension[]; trustProxy?: number | false }
 
 export function makeHarness(opts: HarnessOptions = {}): Harness {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-http-'));
   const config: Config = {
     dataDir, port: 0, publicUrl: new URL(opts.publicUrl ?? 'http://lager.localhost:8080'), appsDomain: 'apps.localhost',
-    adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 'test-secret', snapshotKeep: 20, trustProxy: false,
+    adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 'test-secret', snapshotKeep: 20, trustProxy: opts.trustProxy ?? false,
   };
   const core = createCore(config);
   const app = createHttpApp(core, opts.extensions ?? []);
   const host = config.publicUrl.host;
   const adminId = core.users.list()[0].id;
+  const sessionName = config.publicUrl.protocol === 'https:' ? '__Host-lager_session' : 'lager_session';
+  const instanceName = config.publicUrl.protocol === 'https:' ? '__Host-lager_inst' : 'lager_inst';
   const cookiePair = (res: request.Response, name: string): string => {
     const raw = ([] as string[]).concat(res.headers['set-cookie'] ?? []).find((c) => c.startsWith(name + '='));
     if (!raw) throw new Error(`no ${name} cookie`);
@@ -41,14 +43,14 @@ export function makeHarness(opts: HarnessOptions = {}): Harness {
     core, app, adminId, host,
     async login(email = 'admin@x.y', password = 'pw') {
       const res = await request(app).post('/login').set('Host', host).type('form').send({ email, password });
-      return cookiePair(res, 'lager_session');
+      return cookiePair(res, sessionName);
     },
     async enter(slug, platformCookie) {
       const auth = await request(app).get('/auth/instance').query({ slug, return: '/' })
         .set('Host', host).set('Cookie', platformCookie);
       const loc = new URL(auth.headers.location);
       const cb = await request(app).get(loc.pathname + loc.search).set('Host', loc.host);
-      return cookiePair(cb, 'lager_inst');
+      return cookiePair(cb, instanceName);
     },
   };
 }

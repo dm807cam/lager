@@ -5,6 +5,7 @@ import { LagerError } from '../errors.js';
 import type { User } from '../platform/users.js';
 import { sendError } from './errors.js';
 import { createInstanceRouter } from './instance.js';
+import { notFoundPage } from './pages.js';
 import { createPlatformRouter } from './platform.js';
 import { sessionUser } from './session.js';
 
@@ -21,7 +22,8 @@ export function requireUser(core: Core): RequestHandler {
     } else if (req.originalUrl.startsWith('/api')) {
       sendError(res, new LagerError('unauthenticated', 'Sign in required.'));
     } else {
-      res.redirect('/login?return=' + encodeURIComponent(req.originalUrl));
+      // Only a GET can be replayed after login; a form POST would end on a 404.
+      res.redirect('/login?return=' + encodeURIComponent(req.method === 'GET' ? req.originalUrl : '/'));
     }
   };
 }
@@ -45,7 +47,7 @@ export function createHttpApp(core: Core, extensions: PlatformExtension[] = []):
       res.locals.slug = host.slice(0, -suffix.length);
       instances(req, res, next);
     } else {
-      res.status(404).type('text/plain').send('Not found');
+      res.status(404).type('html').send(notFoundPage());
     }
   });
 

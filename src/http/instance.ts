@@ -8,7 +8,7 @@ import type { HubEvent } from '../data/hub.js';
 import { LagerError } from '../errors.js';
 import type { Capabilities, DbRule, Instance } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
-import { INSTANCE_COOKIE, readCookie, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
+import { instanceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
 import { safeReturnPath, sendError } from './errors.js';
 import { injectRuntime } from './inject.js';
 import { badCodePage, forbiddenPage, notFoundPage } from './pages.js';
@@ -28,7 +28,7 @@ export function levelFor(instance: Instance, userId: string | null): Level {
 }
 
 function instanceUser(core: Core, req: Request, instance: Instance): User | null {
-  const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown }>(readCookie(req, INSTANCE_COOKIE), core.config.secret);
+  const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown }>(readCookie(req, instanceCookieName(core.config)), core.config.secret);
   if (!t || t.k !== 'inst' || t.iid !== instance.id || typeof t.uid !== 'string') return null;
   return core.users.get(t.uid);
 }
@@ -103,7 +103,7 @@ export function createInstanceRouter(core: Core): express.Router {
       return;
     }
     usedCodes.set(t.jti, t.exp);
-    setCookie(res, config, INSTANCE_COOKIE, signToken({ uid: t.uid, iid: instance.id, k: 'inst' }, config.secret, THIRTY_DAYS_SECONDS));
+    setCookie(res, config, instanceCookieName(config), signToken({ uid: t.uid, iid: instance.id, k: 'inst' }, config.secret, THIRTY_DAYS_SECONDS));
     res.redirect(safeReturnPath(req.query.return));
   });
 
@@ -194,11 +194,12 @@ export function createInstanceRouter(core: Core): express.Router {
     res.set('Cache-Control', 'no-store');
     switch (op) {
       case 'get':
-        if (!canRead(ctx.rules, ctx.viewer, path)) deny();
+        // A document the viewer may not read behaves like a missing one.
+        if (!canRead(ctx.rules, ctx.viewer, path)) { res.json({ doc: null }); return; }
         res.json({ doc: core.data.get(id, path) });
         return;
       case 'query': {
-        if (!canRead(ctx.rules, ctx.viewer, path)) deny();
+        if (!canRead(ctx.rules, ctx.viewer, path)) { res.json({ docs: [] }); return; }
         const spec = query === undefined ? {} : obj(query, 'query');
         // A rule on a document path does not apply to its collection, so filter per document.
         const docs = core.data.query(id, path, spec).filter((d) => canRead(ctx.rules, ctx.viewer, d.path));

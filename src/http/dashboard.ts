@@ -7,17 +7,9 @@ import type { Instance, Visibility } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
 import { esc, page } from './pages.js';
-import { signToken, verifyToken } from './tokens.js';
+import { csrfToken, csrfValid } from './session.js';
 
-const CSRF_TTL_SECONDS = 12 * 3600;
 const VISIBILITY_LABELS: Array<[Visibility, string]> = [['private', 'Privat'], ['users', 'Alle Angemeldeten'], ['public', 'Öffentlich']];
-
-const csrfToken = (core: Core, user: User): string => signToken({ uid: user.id, k: 'ui' }, core.config.secret, CSRF_TTL_SECONDS);
-
-function csrfValid(core: Core, user: User, value: unknown): boolean {
-  const t = verifyToken<{ uid?: unknown; k?: unknown }>(typeof value === 'string' ? value : undefined, core.config.secret);
-  return t !== null && t.k === 'ui' && t.uid === user.id;
-}
 
 const formatDate = (iso: string): string => esc(iso.slice(0, 16).replace('T', ' ') + ' UTC');
 const formatSize = (bytes: number): string => (bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1024 / 1024).toFixed(1)} MiB`);
@@ -67,7 +59,7 @@ function dashboardPage(core: Core, user: User, newToken?: { name: string; token:
   const created = newToken ? `<div class="card" role="status"><strong>Token „${esc(newToken.name)}“ erstellt.</strong>
 <span class="token mono">${esc(newToken.token)}</span><span class="err">Kopiere ihn jetzt: Er wird nur dieses eine Mal angezeigt.</span></div>` : '';
 
-  const headerExtra = `<div class="who"><span>${esc(user.email)}</span><form method="post" action="/logout"><button type="submit" class="quiet">Abmelden</button></form></div>`;
+  const headerExtra = `<div class="who"><span>${esc(user.email)}</span><form method="post" action="/logout"><input type="hidden" name="csrf" value="${esc(csrf)}"><button type="submit" class="quiet">Abmelden</button></form></div>`;
   return page('Lager', `<h1>Lager</h1>
 <h2>Claude verbinden</h2>
 <div class="card"><p>Trage diese Adresse in Claude als benutzerdefinierten Connector ein:</p><code>${esc(new URL('/mcp', core.config.publicUrl).href)}</code></div>

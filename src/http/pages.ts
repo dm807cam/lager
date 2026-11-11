@@ -56,7 +56,7 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ''}
 </form>`);
 }
 
-export const notFoundPage = (): string => page('Nicht gefunden', '<h1>Nicht gefunden</h1><p>Diese Seite gibt es nicht.</p>');
+export const notFoundPage = (): string => page('Nicht gefunden', '<h1>Nicht gefunden</h1><p>Seite nicht gefunden.</p>');
 export const forbiddenPage = (): string =>
   page('Kein Zugriff', '<h1>Kein Zugriff</h1><p>Du hast keinen Zugriff auf diese Anwendung. Bitte wende dich an die Besitzerin oder den Besitzer.</p>');
 export const badCodePage = (): string =>

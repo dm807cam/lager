@@ -6,7 +6,13 @@ import { createHttpApp } from './http/app.js';
 import { mcpExtension } from './mcp/http.js';
 
 const config = loadConfig(process.env);
-const core = createCore(config);
+let core: ReturnType<typeof createCore>;
+try {
+  core = createCore(config);
+} catch (e) {
+  console.error(e instanceof Error ? e.message : e);
+  process.exit(1);
+}
 const app = createHttpApp(core, [apiExtension, mcpExtension, dashboardExtension]);
 const server = app.listen(config.port, () => {
   console.log(`Lager listening on port ${config.port}, platform at ${config.publicUrl.origin}`);
