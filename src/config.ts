@@ -68,7 +68,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     appsDomain,
     adminEmail: env.LAGER_ADMIN_EMAIL?.trim() || undefined,
     adminPassword: env.LAGER_ADMIN_PASSWORD || undefined,
-    secret: loadSecret(dataDir),
+    secret: env.LAGER_SECRET?.trim() || loadSecret(dataDir),
     snapshotKeep: parseIntEnv(env, 'LAGER_SNAPSHOT_KEEP', 20),
     trustProxy: !(trust === 'false' || trust === '0'),
   };

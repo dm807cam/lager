@@ -20,6 +20,11 @@ describe('config', () => {
     expect(fs.readFileSync(path.join(tmp, 'secret.key'), 'utf8').trim()).toBe(c.secret);
   });
 
+  it('takes the secret from LAGER_SECRET when set', () => {
+    const c = loadConfig({ LAGER_PUBLIC_URL: 'http://lager.localhost:8080', LAGER_APPS_DOMAIN: 'apps.localhost', LAGER_DATA_DIR: tmp, LAGER_SECRET: ' from-env ' });
+    expect(c.secret).toBe('from-env');
+  });
+
   it('requires LAGER_PUBLIC_URL and LAGER_APPS_DOMAIN', () => {
     expect(() => loadConfig({})).toThrow(/LAGER_PUBLIC_URL/);
     expect(() => loadConfig({ LAGER_PUBLIC_URL: 'http://a.test' })).toThrow(/LAGER_APPS_DOMAIN/);

@@ -1,12 +1,13 @@
 import { loadConfig } from './config.js';
 import { createCore } from './core.js';
 import { apiExtension } from './http/api.js';
+import { dashboardExtension } from './http/dashboard.js';
 import { createHttpApp } from './http/app.js';
 import { mcpExtension } from './mcp/http.js';
 
 const config = loadConfig(process.env);
 const core = createCore(config);
-const app = createHttpApp(core, [apiExtension, mcpExtension]);
+const app = createHttpApp(core, [apiExtension, mcpExtension, dashboardExtension]);
 const server = app.listen(config.port, () => {
   console.log(`Lager listening on port ${config.port}, platform at ${config.publicUrl.origin}`);
 });
