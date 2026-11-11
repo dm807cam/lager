@@ -74,6 +74,10 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
     if (session === 'network-error') throw new TypeError('network down');
     return json(session.body, session.status);
   }
+  if (url.startsWith('/__lager/users?q=')) {
+    const q = decodeURIComponent(url.slice('/__lager/users?q='.length)).toLowerCase();
+    return json({ profiles: Object.values(users).filter((u) => u.name.toLowerCase().includes(q)) });
+  }
   if (url.startsWith('/__lager/users?ids=')) {
     const ids = decodeURIComponent(url.slice('/__lager/users?ids='.length)).split(',');
     const profiles: Record<string, unknown> = {};
@@ -606,6 +610,74 @@ describe('user', () => {
     expect(userCalls()).toHaveLength(2);
     expect(userCalls()[1]).toBe('/__lager/users?ids=u3');
     expect(await user.profiles([])).toEqual({});
+  });
+
+  it('user.search calls the endpoint and never rejects', async () => {
+    users = {
+      u1: { id: 'u1', name: 'Ada', email: 'ada@example.org', isMe: true },
+      u2: { id: 'u2', name: 'Bob', email: null, isMe: false },
+    };
+    const user = await boot().use('user');
+    const searchCalls = (): [string, any][] => calls.filter(([u]) => u.startsWith('/__lager/users?q='));
+    const hits = await user.search('b');
+    expect(hits).toEqual([{ id: 'u2', name: 'Bob', avatarUrl: '', color: expect.stringMatching(/^hsl\(/), email: null, isMe: false, guest: false }]);
+    expect(Object.isFrozen(hits[0])).toBe(true);
+    expect(hits[0]).toEqual((await user.profiles(['u2'])).u2);
+    expect(searchCalls().map(([u]) => u)).toEqual(['/__lager/users?q=b']);
+    expect(searchCalls()[0][1]).toEqual({ credentials: 'same-origin' });
+    // a hit is warm: profiles() needs no further request
+    expect(calls.filter(([u]) => u.startsWith('/__lager/users?ids='))).toEqual([]);
+
+    // the query is encoded; an empty query is sent as it is
+    await user.search('a b&c=d');
+    expect(searchCalls()[1][0]).toBe('/__lager/users?q=a%20b%26c%3Dd');
+    expect((await user.search('')).map((p: { id: string }) => p.id)).toEqual(['u1', 'u2']);
+    expect(searchCalls()[2][0]).toBe('/__lager/users?q=');
+    expect(await user.search(undefined)).toEqual([]);
+    expect(await user.search(42)).toEqual([]);
+    expect(searchCalls()).toHaveLength(3);
+  });
+
+  it('user.search returns at most eight profiles and skips malformed and unnamed entries', async () => {
+    users = {};
+    for (let i = 1; i <= 12; i++) users['p' + i] = { id: 'p' + i, name: 'Person ' + i, email: null, isMe: false };
+    const user = await boot().use('user');
+    const hits = await user.search('person');
+    expect(hits.map((p: { id: string }) => p.id)).toEqual(['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8']);
+    g.fetch = async () => json({ profiles: [{ name: 'No id' }, null, 'x', { id: 'nameless', name: '' }, { id: 'ok', name: 'Fine', email: 'f@x.y', isMe: false }] });
+    const odd = await user.search('x');
+    expect(odd.map((p: { id: string }) => p.id)).toEqual(['ok']);
+    expect(odd[0].email).toBe('f@x.y');
+  });
+
+  it('user.search never rejects', async () => {
+    const user = await boot().use('user');
+    g.fetch = async () => { throw new TypeError('offline'); };
+    expect(await user.search('a')).toEqual([]);
+    g.fetch = async () => json({ error: { code: 'unauthenticated', message: 'no' } }, 401);
+    expect(await user.search('a')).toEqual([]);
+    g.fetch = async () => json({ profiles: 5 });
+    expect(await user.search('a')).toEqual([]);
+    g.fetch = async () => ({ ok: true, json: async () => { throw new SyntaxError('bad json'); } });
+    expect(await user.search('a')).toEqual([]);
+    // without a session there is nothing to ask
+    session = 'network-error';
+    calls = [];
+    g.fetch = fakeFetch;
+    const anonymous = await boot().use('user');
+    expect(await anonymous.search('a')).toEqual([]);
+    expect(calls.filter(([u]) => u.startsWith('/__lager/users'))).toEqual([]);
+  });
+
+  it('a superseded user.search resolves with the newer result', async () => {
+    const user = await boot().use('user');
+    const reply = (name: string, delay: number) => new Promise<Response>((r) => {
+      setTimeout(() => r(json({ profiles: [{ id: 'x-' + name, name, email: null, isMe: false }] })), delay);
+    });
+    g.fetch = (url: string) => (url.endsWith('q=a') ? reply('Old', 20) : reply('New', 0));
+    const [first, second] = await Promise.all([user.search('a'), user.search('ab')]);
+    expect(first.map((p: { name: string }) => p.name)).toEqual(['New']);
+    expect(second.map((p: { name: string }) => p.name)).toEqual(['New']);
   });
 
   it('profiles never rejects', async () => {

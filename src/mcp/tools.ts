@@ -8,7 +8,8 @@ import { assertDocData, parseDocPath } from '../data/paths.js';
 import type { QuerySpec } from '../data/query.js';
 import { canRead, canWrite, type Viewer } from '../data/rules.js';
 import { LagerError } from '../errors.js';
-import type { App, Capabilities, DeployResult, Instance } from '../platform/apps.js';
+import type { GrantLevel } from '../platform/access.js';
+import type { App, Capabilities, DeployResult, Instance, Visibility } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 
 const GUIDE = fs.readFileSync(new URL('../guide.md', import.meta.url), 'utf8');
@@ -20,6 +21,7 @@ const INSTRUCTIONS = (() => {
 })();
 
 export const MAX_DB_OPS = 100;
+const GRANT_LEVELS = ['view', 'interact', 'admin'] as const satisfies readonly GrantLevel[];
 const RULE_LEVELS = ['view', 'interact', 'admin', 'owner', 'self', 'none'];
 
 // ---- shared shapes (REST and MCP) -----------------------------------------
@@ -81,6 +83,48 @@ export function managedInstance(core: Core, user: User, slug: string): Instance 
   if (!inst) throw new LagerError('not_found', `Instance "${slug}" not found.`);
   if (!core.access.canManageInstance(inst, user)) throw new LagerError('forbidden', `You may not manage instance "${slug}".`);
   return inst;
+}
+
+// ---- sharing (REST and MCP) -------------------------------------------------
+
+/** Exactly one of `email` / `group` names who a grant is about; groups are addressed by name. */
+export function grantPrincipal(core: Core, input: { email?: string; group?: string }): { type: 'user' | 'group'; id: string } {
+  const email = input.email?.trim() || undefined;
+  const group = input.group?.trim() || undefined;
+  if ((email === undefined) === (group === undefined)) throw new LagerError('invalid_argument', 'Give exactly one of email or group.');
+  if (email !== undefined) {
+    const user = core.users.getByEmail(email);
+    if (!user || user.disabled) throw new LagerError('not_found', `No account with the address "${email}".`);
+    return { type: 'user', id: user.id };
+  }
+  const found = core.groups.getByName(group!);
+  if (!found) throw new LagerError('not_found', `Group "${group}" not found.`);
+  return { type: 'group', id: found.id };
+}
+
+export function grantsJson(core: Core, inst: Instance): { grants: Array<{ type: string; label: string; level: string }> } {
+  return { grants: core.access.listGrants(inst.id).map((g) => ({ type: g.principalType, label: g.principalLabel, level: g.level })) };
+}
+
+export function sharesJson(core: Core, inst: Instance): object {
+  return { ...grantsJson(core, inst), visibility: inst.visibility, usersLevel: inst.usersLevel };
+}
+
+/**
+ * Creates an instance for `user`, or for the account `ownerEmail` if given. Handing an instance to someone
+ * else is reserved to those who deploy the app (as on the app page).
+ */
+export function createInstanceFor(core: Core, user: User, input: { app: string; slug: string; ownerEmail?: string; visibility?: Visibility }): Instance {
+  const app = instantiableApp(core, user, input.app);
+  const email = input.ownerEmail?.trim();
+  let owner = user;
+  if (email) {
+    if (!core.access.canDeploy(app, user)) throw new LagerError('forbidden', 'Only people who deploy this app may create instances for others.');
+    const found = core.users.getByEmail(email);
+    if (!found || found.disabled) throw new LagerError('not_found', `No account with the address "${email}".`);
+    owner = found;
+  }
+  return core.apps.createInstance({ appId: app.id, slug: input.slug, ownerId: owner.id, visibility: input.visibility });
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -167,15 +211,41 @@ export function buildMcpServer(core: Core, user: User): McpServer {
 
   server.registerTool('create_instance', {
     description: 'Create another instance of an app with its own subdomain and its own data.',
-    inputSchema: { app: slugArg, slug: slugArg.describe('Slug of the new instance (globally unique)'), visibility: visibilityArg.optional() },
-  }, ({ app, slug, visibility }) => run(() => instanceJson(core, core.apps.createInstance({
-    appId: instantiableApp(core, user, app).id, slug, ownerId: user.id, visibility,
-  }))));
+    inputSchema: {
+      app: slugArg, slug: slugArg.describe('Slug of the new instance (globally unique)'), visibility: visibilityArg.optional(),
+      owner_email: z.string().optional().describe('E-mail of the account that should own the instance (only for those who deploy the app); default: you'),
+    },
+  }, ({ app, slug, visibility, owner_email }) => run(() => instanceJson(core, createInstanceFor(core, user, { app, slug, ownerEmail: owner_email, visibility }))));
 
   server.registerTool('set_visibility', {
     description: 'Set who can open an instance: private (only you), users (all signed-in users), public (anyone).',
     inputSchema: { instance: slugArg, visibility: visibilityArg },
   }, ({ instance, visibility }) => run(() => instanceJson(core, core.apps.setVisibility(managedInstance(core, user, instance).id, visibility, user.id))));
+
+  server.registerTool('share_instance', {
+    description: 'Give an account (email) or a group (name) access to an instance, or change their level: view (look), interact (also write data per the app\'s rules) or admin (also manage sharing, versions and data). Returns the shares.',
+    inputSchema: { instance: slugArg, email: z.string().optional(), group: z.string().optional(), level: z.enum(GRANT_LEVELS) },
+  }, ({ instance, email, group, level }) => run(() => {
+    const inst = managedInstance(core, user, instance);
+    const who = grantPrincipal(core, { email, group });
+    core.access.setGrant(inst, who.type, who.id, level, user);
+    return sharesJson(core, inst);
+  }));
+
+  server.registerTool('unshare_instance', {
+    description: 'Withdraw the access of an account (email) or a group (name) from an instance. Returns the remaining shares.',
+    inputSchema: { instance: slugArg, email: z.string().optional(), group: z.string().optional() },
+  }, ({ instance, email, group }) => run(() => {
+    const inst = managedInstance(core, user, instance);
+    const who = grantPrincipal(core, { email, group });
+    core.access.removeGrant(inst, who.type, who.id, user);
+    return sharesJson(core, inst);
+  }));
+
+  server.registerTool('list_shares', {
+    description: 'Who has access to an instance: the grants (accounts and groups with their level), the visibility and the level given to all signed-in users.',
+    inputSchema: { instance: slugArg },
+  }, ({ instance }) => run(() => sharesJson(core, managedInstance(core, user, instance))));
 
   server.registerTool('db_read', {
     description: 'Read instance data. A document path (even number of segments, e.g. tasks/t1) returns {doc}; a collection path (odd, e.g. tasks) returns {docs}.',
@@ -217,10 +287,16 @@ export function buildMcpServer(core: Core, user: User): McpServer {
       }
     }
     let applied = 0;
-    for (const o of ops) {
-      if (o.op === 'delete') core.data.delete(inst.id, o.path);
-      else core.data[o.op](inst.id, o.path, o.data!, user.id);
-      applied++;
+    try {
+      for (const o of ops) {
+        if (o.op === 'delete') core.data.delete(inst.id, o.path);
+        else core.data[o.op](inst.id, o.path, o.data!, user.id);
+        applied++;
+      }
+    } catch (e) {
+      // The loop is not atomic: tell the caller how far it got.
+      if (e instanceof LagerError) throw new LagerError(e.code, `${e.message} ${applied} of ${ops.length} operations were applied before the error.`);
+      throw e;
     }
     return { applied };
   }));

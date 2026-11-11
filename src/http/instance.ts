@@ -17,6 +17,8 @@ import { signToken, verifyToken } from './tokens.js';
 
 const RUNTIME_FILE = new URL('../runtime/runtime.js', import.meta.url);
 const MAX_PROFILE_IDS = 100;
+const MAX_SEARCH_RESULTS = 20;
+const MAX_SEARCH_QUERY = 100;
 const PING_MS = 25_000;
 const RANK: Record<Level, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
 
@@ -69,7 +71,8 @@ export function createInstanceRouter(core: Core): express.Router {
   const runtimeEtag = `"${crypto.createHash('sha256').update(runtime).digest('base64url').slice(0, 27)}"`;
 
   const ctxOf = (res: Response): Ctx => res.locals.ctx as Ctx;
-  const emailAllowed = (ctx: Ctx): boolean => Array.isArray(ctx.caps.user?.scopes) && ctx.caps.user.scopes.includes('email');
+  const hasScope = (ctx: Ctx, scope: string): boolean => Array.isArray(ctx.caps.user?.scopes) && ctx.caps.user.scopes.includes(scope);
+  const emailAllowed = (ctx: Ctx): boolean => hasScope(ctx, 'email');
 
   router.use((req, res, next) => {
     const instance = core.apps.getInstanceBySlug(res.locals.slug as string);
@@ -163,6 +166,18 @@ export function createInstanceRouter(core: Core): express.Router {
   router.get('/__lager/users', (req, res) => {
     const ctx = ctxOf(res);
     requireAccess(ctx);
+    if (req.query.q !== undefined) {
+      // Search among the people who can open this instance; only for signed-in viewers and apps that declared the profile scope.
+      if (!ctx.user) throw new LagerError('unauthenticated', 'Sign in required.');
+      if (typeof req.query.q !== 'string' || req.query.q.length > MAX_SEARCH_QUERY) {
+        throw new LagerError('invalid_argument', `q must be a string of at most ${MAX_SEARCH_QUERY} characters.`);
+      }
+      const found = hasScope(ctx, 'profile') ? core.access.usersWithAccess(ctx.instance, req.query.q, MAX_SEARCH_RESULTS) : [];
+      res.set('Cache-Control', 'no-store').json({
+        profiles: found.map((u) => ({ id: u.id, name: u.name, email: emailAllowed(ctx) ? u.email : null, isMe: u.id === ctx.user?.id })),
+      });
+      return;
+    }
     const raw = typeof req.query.ids === 'string' ? req.query.ids : '';
     const ids = [...new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))];
     if (ids.length > MAX_PROFILE_IDS) throw new LagerError('invalid_argument', `At most ${MAX_PROFILE_IDS} ids are allowed.`);

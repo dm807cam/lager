@@ -2,7 +2,11 @@ import express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
-import { appDetail, appSummary, checkCapabilities, describeDeploy, instanceJson, managedInstance, readableApp } from '../mcp/tools.js';
+import {
+  appDetail, appSummary, checkCapabilities, createInstanceFor, describeDeploy, grantPrincipal, grantsJson, instanceJson, managedInstance, readableApp,
+} from '../mcp/tools.js';
+import type { GrantLevel } from '../platform/access.js';
+import type { Visibility } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 import type { PlatformExtension } from './app.js';
 import { sessionUser } from './session.js';
@@ -128,6 +132,42 @@ export const apiExtension: PlatformExtension = (router, core) => {
     if (typeof version !== 'number' || !Number.isInteger(version)) throw new LagerError('invalid_argument', 'version must be an integer.');
     const inst = managedInstance(core, user, req.params.slug as string);
     res.json(instanceJson(core, core.apps.activate(inst.id, version, user.id)));
+  });
+
+  router.get('/api/instances/:slug/grants', noStore, auth, (req, res) => {
+    res.json(grantsJson(core, managedInstance(core, userOf(res), req.params.slug as string)));
+  });
+
+  router.put('/api/instances/:slug/grants', noStore, auth, express.json({ limit: '10kb' }), (req, res) => {
+    const user = userOf(res);
+    const body = bodyObject(req);
+    const inst = managedInstance(core, user, req.params.slug as string);
+    const who = grantPrincipal(core, { email: optionalString(body, 'email'), group: optionalString(body, 'group') });
+    const level = optionalString(body, 'level');
+    if (level === undefined) throw new LagerError('invalid_argument', 'level is required.');
+    core.access.setGrant(inst, who.type, who.id, level as GrantLevel, user);
+    res.json(grantsJson(core, inst));
+  });
+
+  router.delete('/api/instances/:slug/grants', noStore, auth, express.json({ limit: '10kb' }), (req, res) => {
+    const user = userOf(res);
+    const body = bodyObject(req);
+    const inst = managedInstance(core, user, req.params.slug as string);
+    const who = grantPrincipal(core, { email: optionalString(body, 'email'), group: optionalString(body, 'group') });
+    core.access.removeGrant(inst, who.type, who.id, user);
+    res.json(grantsJson(core, inst));
+  });
+
+  router.post('/api/apps/:slug/instances', noStore, auth, express.json({ limit: '10kb' }), (req, res) => {
+    const user = userOf(res);
+    const body = bodyObject(req);
+    const slug = optionalString(body, 'slug');
+    if (slug === undefined) throw new LagerError('invalid_argument', 'slug is required.');
+    const inst = createInstanceFor(core, user, {
+      app: req.params.slug as string, slug, ownerEmail: optionalString(body, 'ownerEmail'),
+      visibility: optionalString(body, 'visibility') as Visibility | undefined,
+    });
+    res.json(instanceJson(core, inst));
   });
 
   router.post('/api/tokens', noStore, sessionOnly, express.json({ limit: '10kb' }), (req, res) => {

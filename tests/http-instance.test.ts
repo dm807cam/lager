@@ -160,6 +160,64 @@ describe('instance host', () => {
     expect((await request(h.app).get('/__lager/users').query({ ids: many }).set('Host', W).set('Cookie', inst)).status).toBe(400);
   });
 
+  it('user search is empty without the profile scope', async () => {
+    const { h } = setup({ visibility: 'users' });
+    h.core.users.create({ email: 'ada@x.y', name: 'Ada Lovelace', password: 'pw-ada-12345', role: 'user' });
+    const adaCookie = await h.enter('workout', await h.login('ada@x.y', 'pw-ada-12345'));
+    const none = await request(h.app).get('/__lager/users').query({ q: 'a' }).set('Host', W).set('Cookie', adaCookie);
+    expect(none.status).toBe(200);
+    expect(none.body).toEqual({ profiles: [] });
+    // a scope list without "profile" does not count either
+    h.core.apps.deploy({ slug: 'workout', html: '<p>2</p>', userId: h.adminId, capabilities: { user: { scopes: ['email'] } } });
+    const emailOnly = await request(h.app).get('/__lager/users').query({ q: 'a' }).set('Host', W).set('Cookie', adaCookie);
+    expect(emailOnly.body).toEqual({ profiles: [] });
+  });
+
+  it('user search needs the profile scope', async () => {
+    const { h: hh, inst } = setup({ caps: { user: { scopes: ['profile'] } } });
+    const owner = hh.core.users.get(hh.adminId)!;
+    const adaB = hh.core.users.create({ email: 'ada@x.y', name: 'Ada Lovelace', password: 'pw-ada-12345', role: 'user' });
+    const bob = hh.core.users.create({ email: 'bob@x.y', name: 'Bob', password: 'pw-bob-12345', role: 'user' });
+    hh.core.users.create({ email: 'eve@x.y', name: 'Eve Adams', password: 'pw-eve-12345', role: 'user' });
+    hh.core.access.setGrant(inst, 'user', adaB.id, 'view', owner);
+    hh.core.access.setGrant(inst, 'user', bob.id, 'interact', owner);
+    const ownerCookie = await hh.enter('workout', await hh.login());
+    const adaCookie2 = await hh.enter('workout', await hh.login('ada@x.y', 'pw-ada-12345'));
+    const search = (cookie: string | undefined, q: string) => {
+      const r = request(hh.app).get('/__lager/users').query({ q }).set('Host', W);
+      return cookie ? r.set('Cookie', cookie) : r;
+    };
+
+    // owner and grantees only (Eve has no access), matched by name; no e-mail without the scope
+    const hit = await search(ownerCookie, 'ada');
+    expect(hit.status).toBe(200);
+    expect(hit.body.profiles).toEqual([{ id: adaB.id, name: 'Ada Lovelace', email: null, isMe: false }]);
+    const all = await search(adaCookie2, '');
+    expect(all.body.profiles.map((p: { name: string }) => p.name)).toEqual(['Ada Lovelace', 'Admin', 'Bob']);
+    expect(all.body.profiles.find((p: { isMe: boolean }) => p.isMe).id).toBe(adaB.id);
+    expect((await search(ownerCookie, 'bob@x')).body.profiles.map((p: { id: string }) => p.id)).toEqual([bob.id]);
+    expect((await search(ownerCookie, 'nobody')).body).toEqual({ profiles: [] });
+    expect((await search(ownerCookie, 'a')).headers['cache-control']).toBe('no-store');
+
+    // anonymous: 401, also on a public instance where anonymous viewers have view access
+    const anon = await search(undefined, 'a');
+    expect(anon.status).toBe(401);
+    hh.core.apps.setVisibility(inst.id, 'public', hh.adminId);
+    expect((await search(undefined, 'a')).status).toBe(401);
+    // the ids form is unchanged
+    const ids = await request(hh.app).get('/__lager/users').query({ ids: bob.id }).set('Host', W).set('Cookie', ownerCookie);
+    expect(ids.body.profiles[bob.id]).toMatchObject({ name: 'Bob' });
+  });
+
+  it('user search shows e-mail addresses only with the email scope', async () => {
+    const { h, inst } = setup({ caps: { user: { scopes: ['profile', 'email'] } } });
+    const ada = h.core.users.create({ email: 'ada@x.y', name: 'Ada', password: 'pw-ada-12345', role: 'user' });
+    h.core.access.setGrant(inst, 'user', ada.id, 'view', h.core.users.get(h.adminId)!);
+    const cookie = await h.enter('workout', await h.login());
+    const res = await request(h.app).get('/__lager/users').query({ q: 'ada' }).set('Host', W).set('Cookie', cookie);
+    expect(res.body.profiles).toEqual([{ id: ada.id, name: 'Ada', email: 'ada@x.y', isMe: false }]);
+  });
+
   it('serves the runtime with ETag', async () => {
     const { h } = setup();
     const res = await request(h.app).get('/__lager/runtime.js').set('Host', W);

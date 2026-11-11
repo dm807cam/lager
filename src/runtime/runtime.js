@@ -10,6 +10,8 @@
   var RETRY_MIN_MS = 1000;
   var RETRY_MAX_MS = 30000;
   var MAX_PROFILE_IDS = 100;
+  var MAX_SEARCH_HITS = 8;
+  var SEARCH_URL = '/__lager/users?q=';
   var META = Object.freeze({ fromCache: false, hasPendingWrites: false });
   var ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -432,6 +434,32 @@
       });
     }
 
+    var searchSeq = 0;
+    var latestSearch = null;
+
+    // A typeahead over the people who can open this instance; never rejects. A call that a newer one
+    // supersedes resolves with the newer call's result, so handlers wired straight to oninput paint the final list.
+    function search(query) {
+      var mine = ++searchSeq;
+      var run = typeof query !== 'string' || !session ? Promise.resolve([]) : fetch(SEARCH_URL + encodeURIComponent(query), { credentials: 'same-origin' })
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (body) {
+          var list = body && Array.isArray(body.profiles) ? body.profiles : [];
+          var out = [];
+          for (var n = 0; n < list.length && out.length < MAX_SEARCH_HITS; n++) {
+            var entry = list[n];
+            if (!entry || typeof entry.id !== 'string' || entry.id === '' || typeof entry.name !== 'string' || entry.name === '') continue;
+            var hit = toProfile(entry);
+            cache.set(hit.id, hit);
+            out.push(hit);
+          }
+          return out;
+        })
+        .catch(function () { return []; });
+      latestSearch = run;
+      return run.then(function (hits) { return mine === searchSeq ? hits : latestSearch; });
+    }
+
     function me() {
       return Object.freeze({
         id: id, name: typeof v.name === 'string' ? v.name : '', avatarUrl: '', color: colorFor(id),
@@ -453,7 +481,7 @@
       email: function () { return Promise.resolve(me().email); },
       avatarUrl: function () { return Promise.resolve(null); },
       profiles: profiles,
-      search: function () { return Promise.resolve([]); },
+      search: search,
     });
   }
 

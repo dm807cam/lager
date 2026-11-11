@@ -24,11 +24,11 @@ afterEach(async () => {
   }
 });
 
-async function start(): Promise<Running> {
+async function start(instanceQuotaBytes?: number): Promise<Running> {
   const server = http.createServer();
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as AddressInfo).port;
-  const h = makeHarness({ publicUrl: `http://127.0.0.1:${port}`, extensions: [apiExtension, mcpExtension] });
+  const h = makeHarness({ publicUrl: `http://127.0.0.1:${port}`, extensions: [apiExtension, mcpExtension], instanceQuotaBytes });
   server.on('request', h.app);
   running = { h, server, base: `http://127.0.0.1:${port}`, token: h.core.tokens.create(h.adminId, 'mcp').token };
   return running;
@@ -56,13 +56,13 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 const guide = fs.readFileSync(new URL('../src/guide.md', import.meta.url), 'utf8');
 
 describe('mcp endpoint', () => {
-  it('lists the eleven tools and exposes instructions', async () => {
+  it('lists the fourteen tools and exposes instructions', async () => {
     const r = await start();
     const client = await connect(r);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'activate_version', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'get_app', 'get_guide',
-      'list_apps', 'list_snapshots', 'restore_snapshot', 'set_visibility',
+      'list_apps', 'list_shares', 'list_snapshots', 'restore_snapshot', 'set_visibility', 'share_instance', 'unshare_instance',
     ]);
     expect(client.getServerVersion()?.name).toBe('lager');
     const firstSection = guide.split(/\r?\n---\r?\n/)[0].trim();
@@ -199,6 +199,9 @@ describe('mcp endpoint', () => {
       ['db_write', { instance: 'theirs', ops: [{ op: 'set', path: 'tasks/a', data: {} }] }],
       ['list_snapshots', { instance: 'theirs' }],
       ['restore_snapshot', { instance: 'theirs', snapshot: '20260101T000000000Z-x' }],
+      ['share_instance', { instance: 'theirs', email: 'admin@x.y', level: 'view' }],
+      ['unshare_instance', { instance: 'theirs', email: 'admin@x.y' }],
+      ['list_shares', { instance: 'theirs' }],
     ];
     for (const [name, args] of attempts) {
       const res = await call(client, name, args);
@@ -208,6 +211,178 @@ describe('mcp endpoint', () => {
     expect((await call(client, 'list_apps')).json.apps).toEqual([]);
     expect(r.h.core.apps.getInstanceBySlug('theirs')!.activeVersion).toBe(2);
     expect(r.h.core.apps.getInstanceBySlug('mine-now')).toBeNull();
+  });
+
+  /** Creates an account and returns a client signed in as that account. */
+  async function asUser(r: Running, email: string, role: 'user' | 'publisher' | 'admin' = 'user'): Promise<{ id: string; client: Client }> {
+    const u = r.h.core.users.create({ email, name: email.split('@')[0], password: 'pw-' + email + '-123', role });
+    return { id: u.id, client: await connect(r, r.h.core.tokens.create(u.id, 'mcp').token) };
+  }
+
+  it('share_instance, list_shares, unshare_instance', async () => {
+    const r = await start();
+    const client = await connect(r);
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>1</p>' });
+    const ada = r.h.core.users.create({ email: 'ada@x.y', name: 'Ada', password: 'pw-ada-12345', role: 'user' });
+    r.h.core.groups.create('team');
+    const inst = (): ReturnType<typeof r.h.core.apps.getInstanceBySlug> => r.h.core.apps.getInstanceBySlug('todo');
+    const levelOfAda = (): string => r.h.core.access.levelFor(inst()!, ada);
+
+    expect((await call(client, 'list_shares', { instance: 'todo' })).json).toEqual({ grants: [], visibility: 'private', usersLevel: 'interact' });
+    const shared = await call(client, 'share_instance', { instance: 'todo', email: 'ada@x.y', level: 'view' });
+    expect(shared.isError).toBe(false);
+    expect(shared.json.grants).toEqual([{ type: 'user', label: 'ada@x.y', level: 'view' }]);
+    expect(levelOfAda()).toBe('view');
+    await call(client, 'share_instance', { instance: 'todo', email: 'ada@x.y', level: 'admin' });
+    expect(levelOfAda()).toBe('admin');
+    const grp = await call(client, 'share_instance', { instance: 'todo', group: 'team', level: 'interact' });
+    expect(grp.json.grants).toEqual([{ type: 'user', label: 'ada@x.y', level: 'admin' }, { type: 'group', label: 'team', level: 'interact' }]);
+    await call(client, 'set_visibility', { instance: 'todo', visibility: 'users' });
+    const listed = await call(client, 'list_shares', { instance: 'todo' });
+    expect(listed.json).toMatchObject({ visibility: 'users', usersLevel: 'interact' });
+    expect(listed.json.grants).toHaveLength(2);
+
+    const unshared = await call(client, 'unshare_instance', { instance: 'todo', email: 'ada@x.y' });
+    expect(unshared.json.grants).toEqual([{ type: 'group', label: 'team', level: 'interact' }]);
+    // visibility 'users' still lets her in at the users level
+    expect(levelOfAda()).toBe('interact');
+    await call(client, 'set_visibility', { instance: 'todo', visibility: 'private' });
+    expect(levelOfAda()).toBe('none');
+    expect((await call(client, 'unshare_instance', { instance: 'todo', group: 'team' })).json.grants).toEqual([]);
+
+    for (const args of [{ email: 'ada@x.y', group: 'team', level: 'view' }, { level: 'view' }]) {
+      const bad = await call(client, 'share_instance', { instance: 'todo', ...args });
+      expect(bad.isError, JSON.stringify(args)).toBe(true);
+      expect(bad.json.error.code).toBe('invalid_argument');
+    }
+    // the schema only offers the grantable levels
+    expect((await client.callTool({ name: 'share_instance', arguments: { instance: 'todo', email: 'ada@x.y', level: 'owner' } })).isError).toBe(true);
+    expect((await call(client, 'unshare_instance', { instance: 'todo' })).json.error.code).toBe('invalid_argument');
+    expect((await call(client, 'share_instance', { instance: 'todo', email: 'ghost@x.y', level: 'view' })).json.error.code).toBe('not_found');
+    expect((await call(client, 'share_instance', { instance: 'todo', group: 'nogroup', level: 'view' })).json.error.code).toBe('not_found');
+    expect((await call(client, 'list_shares', { instance: 'nope' })).json.error.code).toBe('not_found');
+  });
+
+  it('create_instance with owner_email', async () => {
+    const r = await start();
+    const client = await connect(r);
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>1</p>' });
+    const pub = r.h.core.users.create({ email: 'pub@x.y', name: 'Pub', password: 'pw-pub-12345', role: 'publisher' });
+    const made = await call(client, 'create_instance', { app: 'todo', slug: 'todo-pub', owner_email: 'pub@x.y' });
+    expect(made.isError).toBe(false);
+    expect(made.json.slug).toBe('todo-pub');
+    expect(r.h.core.apps.getInstanceBySlug('todo-pub')!.ownerId).toBe(pub.id);
+    const own = await call(client, 'create_instance', { app: 'todo', slug: 'todo-own' });
+    expect(r.h.core.apps.getInstanceBySlug('todo-own')!.ownerId).toBe(r.h.adminId);
+    expect(own.isError).toBe(false);
+    expect((await call(client, 'create_instance', { app: 'todo', slug: 'todo-x', owner_email: 'ghost@x.y' })).json.error.code).toBe('not_found');
+    expect(r.h.core.apps.getInstanceBySlug('todo-x')).toBeNull();
+
+    // someone who may only use self-service cannot create for others
+    const plain = await asUser(r, 'plain@x.y');
+    r.h.core.apps.setSelfInstances(r.h.core.apps.getApp('todo')!.id, 'users', r.h.adminId);
+    const other = await call(plain.client, 'create_instance', { app: 'todo', slug: 'todo-p', owner_email: 'pub@x.y' });
+    expect(other.json.error.code).toBe('forbidden');
+    expect(r.h.core.apps.getInstanceBySlug('todo-p')).toBeNull();
+    expect((await call(plain.client, 'create_instance', { app: 'todo', slug: 'todo-p' })).isError).toBe(false);
+    expect(r.h.core.apps.getInstanceBySlug('todo-p')!.ownerId).toBe(plain.id);
+  });
+
+  it('create_instance is refused for an app without self-service when the caller cannot deploy', async () => {
+    const r = await start();
+    await call(await connect(r), 'deploy_app', { slug: 'todo', html: '<p>1</p>' });
+    const plain = await asUser(r, 'plain@x.y');
+    const pub = await asUser(r, 'pub@x.y', 'publisher');
+    for (const who of [plain, pub]) {
+      const res = await call(who.client, 'create_instance', { app: 'todo', slug: 'todo-x' });
+      expect(res.isError).toBe(true);
+      expect(res.json.error.code).toBe('forbidden');
+    }
+    expect(r.h.core.apps.getInstanceBySlug('todo-x')).toBeNull();
+    // once the publisher collaborates on the app, deploying rights suffice
+    r.h.core.apps.addCollaborator(r.h.core.apps.getApp('todo')!.id, pub.id, r.h.adminId);
+    expect((await call(pub.client, 'create_instance', { app: 'todo', slug: 'todo-x' })).isError).toBe(false);
+  });
+
+  it('get_app is allowed for a collaborator and refused for an unrelated user', async () => {
+    const r = await start();
+    await call(await connect(r), 'deploy_app', { slug: 'todo', html: '<p>1</p>' });
+    const collab = await asUser(r, 'collab@x.y', 'publisher');
+    const stranger = await asUser(r, 'stranger@x.y', 'publisher');
+    r.h.core.apps.addCollaborator(r.h.core.apps.getApp('todo')!.id, collab.id, r.h.adminId);
+    const ok = await call(collab.client, 'get_app', { slug: 'todo' });
+    expect(ok.isError).toBe(false);
+    expect(ok.json.slug).toBe('todo');
+    const no = await call(stranger.client, 'get_app', { slug: 'todo' });
+    expect(no.isError).toBe(true);
+    expect(no.json.error.code).toBe('forbidden');
+  });
+
+  it('activate_version and db_write need an instance admin grant; interact is refused', async () => {
+    const r = await start();
+    const owner = await connect(r);
+    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>1</p>', capabilities: { db: {} } });
+    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>2</p>', capabilities: { db: {} } });
+    const adm = await asUser(r, 'adm@x.y');
+    const act = await asUser(r, 'act@x.y');
+    await call(owner, 'share_instance', { instance: 'todo', email: 'adm@x.y', level: 'admin' });
+    await call(owner, 'share_instance', { instance: 'todo', email: 'act@x.y', level: 'interact' });
+    const inst = r.h.core.apps.getInstanceBySlug('todo')!;
+    const write = { instance: 'todo', ops: [{ op: 'set', path: 'tasks/t1', data: { v: 1 } }] };
+
+    for (const [tool, args] of [['activate_version', { instance: 'todo', version: 1 }], ['db_write', write]] as const) {
+      const denied = await call(act.client, tool, args);
+      expect(denied.isError, tool).toBe(true);
+      expect(denied.json.error.code, tool).toBe('forbidden');
+    }
+    expect(r.h.core.apps.getInstanceBySlug('todo')!.activeVersion).toBe(2);
+    expect(r.h.core.data.get(inst.id, 'tasks/t1')).toBeNull();
+
+    expect((await call(adm.client, 'activate_version', { instance: 'todo', version: 1 })).isError).toBe(false);
+    expect(r.h.core.apps.getInstanceBySlug('todo')!.activeVersion).toBe(1);
+    expect((await call(adm.client, 'db_write', write)).json).toEqual({ applied: 1 });
+    expect(r.h.core.data.get(inst.id, 'tasks/t1')!.data).toEqual({ v: 1 });
+  });
+
+  it('sharing tools on a foreign instance are forbidden', async () => {
+    const r = await start();
+    await call(await connect(r), 'deploy_app', { slug: 'todo', html: '<p>1</p>' });
+    const ada = await asUser(r, 'ada@x.y');
+    const act = await asUser(r, 'act@x.y');
+    r.h.core.access.setGrant(r.h.core.apps.getInstanceBySlug('todo')!, 'user', act.id, 'interact', r.h.core.users.get(r.h.adminId)!);
+    for (const who of [ada, act]) {
+      for (const [tool, args] of [
+        ['share_instance', { instance: 'todo', email: 'ada@x.y', level: 'admin' }],
+        ['unshare_instance', { instance: 'todo', email: 'act@x.y' }],
+        ['list_shares', { instance: 'todo' }],
+      ] as const) {
+        const res = await call(who.client, tool, args);
+        expect(res.isError, tool).toBe(true);
+        expect(res.json.error.code, tool).toBe('forbidden');
+      }
+    }
+    expect(r.h.core.access.listGrants(r.h.core.apps.getInstanceBySlug('todo')!.id)).toHaveLength(1);
+  });
+
+  it('db_write reports how many operations were applied when one fails midway', async () => {
+    // A quota of one byte: the first write creates the database, every later one is refused.
+    const r = await start(1);
+    const client = await connect(r);
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>1</p>', capabilities: { db: {} } });
+    const inst = r.h.core.apps.getInstanceBySlug('todo')!;
+    const res = await call(client, 'db_write', {
+      instance: 'todo',
+      ops: [
+        { op: 'set', path: 'tasks/t1', data: { n: 1 } },
+        { op: 'set', path: 'tasks/t2', data: { n: 2 } },
+        { op: 'set', path: 'tasks/t3', data: { n: 3 } },
+      ],
+    });
+    expect(res.isError).toBe(true);
+    expect(res.json.error.code).toBe('quota_exceeded');
+    expect(res.json.error.message).toContain('1 of 3 operations were applied before the error');
+    expect(r.h.core.data.get(inst.id, 'tasks/t1')!.data).toEqual({ n: 1 });
+    expect(r.h.core.data.get(inst.id, 'tasks/t2')).toBeNull();
   });
 
   it('no bearer → 401 with WWW-Authenticate resource_metadata', async () => {
@@ -268,6 +443,6 @@ describe('mcp endpoint', () => {
     const client = new Client({ name: 't', version: '1' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${r.base}/mcp`), { authProvider: provider }));
     clients.push(client);
-    expect((await client.listTools()).tools).toHaveLength(11);
+    expect((await client.listTools()).tools).toHaveLength(14);
   });
 });
