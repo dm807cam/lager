@@ -502,7 +502,11 @@
   }
 
   function checkKey(key) {
-    if (typeof key !== 'string' || key === '' || key.length > 200) throw new Error('Key must be a non-empty string of at most 200 characters.');
+    if (typeof key !== 'string' || key === '') throw new Error('Key must be a non-empty string.');
+    // The key becomes one path segment in its encoded form, and the server allows at most 200 bytes per segment.
+    var encoded;
+    try { encoded = encodeURIComponent(key); } catch (e) { throw new Error('Invalid key'); }
+    if (encoded.length > 200) throw new Error('Key too long');
   }
 
   /** Resolves the base collection path for a storage call, or throws. */

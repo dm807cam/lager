@@ -23,7 +23,7 @@ Einzelheiten (Regeln, Grenzen, Versionen, Instanzen, Daten vorbefüllen): Werkze
 `window.claude.use(name)` liefert ein Promise auf einen Namensraum oder `null`:
 
 - `db` – Dokumenten-Datenbank nach dem Vertrag der Claude-Artefakte: `db.collection("tasks")`, `db.doc("tasks/t1")`, `get/set/update/delete/add`, `where/orderBy/limit`, `onSnapshot` (Live-Updates), `acquire` (Sperre mit Ablaufzeit).
-- `user` – `id`, `name`, `email` (nur mit `user: {scopes: ["email"]}`), `isOwner`, `canEdit`, `can`, `me`, `profiles`, `search`, `avatarUrl`.
+- `user` – `id`, `name`, `email` (nur mit `user: {scopes: ["email"]}`), `isOwner`, `canEdit`, `can`, `me`, `profiles`, `search`, `avatarUrl`. Jedes Mitglied von `user` ist eine asynchrone Funktion, auch `name`: `const name = await user.name();`.
 - `permissions` – `state`, `request`, `manage`; alles gilt als gewährt.
 - Alles andere (z. B. `assets`, `room`, `artifact`) liefert `null`. Baue das Artefakt so, dass es ohne diese Namensräume funktioniert: prüfe auf `null` und blende die Funktion aus.
 
@@ -94,4 +94,4 @@ Höchstens 100 Operationen pro Aufruf (`set` ersetzt, `update` führt zusammen, 
 
 ## Kompatibilität mit `window.storage`
 
-Artefakte aus dem claude.ai-Chat, die `window.storage.get/set/delete/list(key | prefix, shared)` benutzen, laufen weiter: Mit `shared = true` landen die Werte in der Sammlung `kv` (für alle Betrachter der Instanz), sonst unter `data/users/<id>/kv` (nur für den Betrachter). Werte sind Zeichenketten. Für neue Artefakte ist `claude.use("db")` die bessere Wahl.
+Artefakte aus dem claude.ai-Chat, die `window.storage.get/set/delete/list(key | prefix, shared)` benutzen, laufen weiter: Mit `shared = true` landen die Werte in der Sammlung `kv` (für alle Betrachter der Instanz), sonst unter `data/users/<id>/storage/kv/<key>` (nur für den Betrachter); geteilte Werte liegen unter `kv/<key>`. Werte sind Zeichenketten. Ein gelöschtes Dokument nimmt seine Unter-Sammlungen nicht mit: `delete` entfernt nur das Dokument selbst. Für neue Artefakte ist `claude.use("db")` die bessere Wahl.

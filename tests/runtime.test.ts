@@ -675,6 +675,16 @@ describe('window.storage', () => {
     expect((await g.storage.set('x'.repeat(200), 'v')).key).toHaveLength(200);
   });
 
+  it('storage rejects keys whose encoded form exceeds 200 bytes', async () => {
+    boot();
+    const before = dbCalls().length;
+    await expect(g.storage.set('x'.repeat(201), 'v')).rejects.toThrow('Key too long');
+    await expect(g.storage.get('ä'.repeat(100))).rejects.toThrow('Key too long'); // 100 chars, 600 encoded bytes
+    await expect(g.storage.delete('/'.repeat(67))).rejects.toThrow('Key too long'); // %2F x 67 = 201
+    expect((await g.storage.set('/'.repeat(66), 'v')).key).toHaveLength(66); // 198 encoded
+    expect(dbCalls().length).toBe(before + 1);
+  });
+
   it('storage.list filters by prefix', async () => {
     boot();
     await g.storage.set('b2', '1');

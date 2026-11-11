@@ -24,7 +24,9 @@
 (async () => {
   const db = await claude.use("db");
   const user = await claude.use("user");
-  if (user && user.name) document.getElementById("who").textContent = "Angemeldet als " + user.name;
+  // Every member of the user namespace is an async function.
+  const name = user ? await user.name() : "";
+  if (name) document.getElementById("who").textContent = "Angemeldet als " + name;
   const list = document.getElementById("notes");
 
   function render(docs) {
