@@ -83,7 +83,16 @@ Data belongs to the instance, never to the version: new code must cope with the 
 
 Every app has an icon, and every app can be added to a phone's home screen. Pass these three arguments of `deploy_app` when you deploy a new app (`set_app_icon` changes them later; on REST: `icon_svg` in the JSON body of `PUT /api/apps/<slug>`, `description` and `theme_color` in the query or the JSON body, `PUT /api/apps/<slug>/icon` with `Content-Type: image/svg+xml`, `PATCH /api/apps/<slug>` with `{description, theme_color}`):
 
-- `icon_svg`: the icon as SVG. A square `viewBox="0 0 512 512"` with a filled background that covers the whole square (phones crop the icon to their own shape, so keep the motif away from the edges). One bold, simple motif that stays legible at 48 px. Two or three colours. Shapes and paths only: no `<text>` (the renderer has no fonts, draw letters as paths if you need them), no images, no `<foreignObject>`, no scripts or `on…` attributes, no external references (`href` and `url()` may only point to `#id` inside the icon), no DOCTYPE or entities. At most 64 KiB, 2000 elements and 32 levels of nesting.
+- `icon_svg`: the icon as SVG. The root must be `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">` (the `xmlns` attribute is required; the viewBox must be square; `width` and `height`, if you give them, must be equal plain numbers). A filled background that covers the whole square (phones crop the icon to their own shape, so keep the motif away from the edges). One bold, simple motif that stays legible at 48 px. Two or three colours. Only these elements are allowed: `svg` (root only), `g`, `defs`, `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`, `linearGradient`, `radialGradient`, `stop`, `clipPath`, `mask`, `use`, `symbol`, `title`, `desc`. Filters, patterns, markers, `<style>`, text, images, links, animation and a nested `<svg>` are not allowed (the renderer has no fonts: draw letters as paths), and neither are scripts, `on…` attributes, `filter`, `stroke-dasharray`, a `stroke-width` below 0.01, DOCTYPE or entities. `href` and `url()` may only point to `#id` inside the icon. At most 64 KiB, 2000 elements and 32 levels of nesting. In short: filters, patterns, text and nested svg are not allowed. Example:
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b3a8c"/><stop offset="1" stop-color="#1f2a5c"/></linearGradient></defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="120" fill="#f58220"/>
+  <path d="M206 256l36 36 70-80" fill="none" stroke="#ffffff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+```
 - `theme_color`: a hex colour such as `#1f2a5c` that matches the icon's background. It colours the status bar and the start screen of the installed app.
 - `description`: one plain sentence (at most 200 characters) saying what the app does.
 

@@ -46,5 +46,35 @@ describe('injectRuntime', () => {
   it('an unusable icon version becomes 0', () => {
     expect(injectRuntime('<head></head>', { ...META, iconVersion: Number.NaN })).toContain('icon-180.png?v=0');
   });
+
+  it('does not add a second theme-color or apple-touch-icon', () => {
+    const own = injectRuntime('<head><meta name="theme-color" content="#000"><link rel="apple-touch-icon" href="/t.png"></head>', META);
+    expect(own.match(/name="theme-color"/g)).toHaveLength(1);
+    expect(own.match(/apple-touch-icon/g)).toHaveLength(1);
+    expect(own).toContain('rel="manifest" href="/__lager/manifest.webmanifest"');
+    const onlyColor = injectRuntime("<head><META NAME='Theme-Color' content=red></head>", META);
+    expect(onlyColor.match(/theme-color/gi)).toHaveLength(1);
+    expect(onlyColor).toContain('apple-touch-icon');
+    const onlyTouch = injectRuntime('<head><link href="/t.png" rel="Apple-Touch-Icon"></head>', META);
+    expect(onlyTouch.match(/apple-touch-icon/gi)).toHaveLength(1);
+    expect(onlyTouch).toContain('name="theme-color"');
+  });
+
+  it('scans only the start of a document and stays fast on adversarial input', () => {
+    for (const piece of ['<link ', '<meta ', '<head ', '<link rel="', '<head', '<!doctype ']) {
+      const html = piece.repeat(Math.ceil(500 * 1024 / piece.length));
+      const started = Date.now();
+      const out = injectRuntime(html, META);
+      expect(Date.now() - started, piece).toBeLessThan(500);
+      expect(out).toContain(TAG);
+    }
+  });
+
+  it('ignores a manifest link or head tag that only appears after the first 64 KiB', () => {
+    const late = '<!doctype html><html><head></head><body>' + 'x'.repeat(70 * 1024) + '<link rel="manifest" href="/late.json"></body></html>';
+    expect(injectRuntime(late, META)).toContain('/__lager/manifest.webmanifest');
+    const noHead = 'y'.repeat(70 * 1024) + '<head>';
+    expect(injectRuntime(noHead, META).startsWith(TAG)).toBe(true);
+  });
 });
 

@@ -122,23 +122,30 @@ export async function deployWithIcon(core: Core, user: User, input: {
   });
   let app = result.app;
   const warnings = [...result.warnings];
-  let drawn = false;
-  if (input.iconSvg !== undefined) {
-    await core.icons.ready();
-    try {
-      await core.icons.set(app.id, input.iconSvg, app.themeColor);
-      app = core.apps.bumpIconVersion(app.id);
-      drawn = true;
-    } catch (e) {
-      if (!isIconInvalid(e)) throw e;
-      warnings.push(`${e.message} ${core.icons.has(app.id) ? 'The previous icon stays.' : 'A generated icon is used instead.'}`);
+  // The deploy is committed by now: whatever goes wrong with the icon is reported, never turned into a failed deploy.
+  try {
+    let drawn = false;
+    if (input.iconSvg !== undefined) {
+      await core.icons.ready();
+      try {
+        await core.icons.set(app.id, input.iconSvg, app.themeColor);
+        app = core.apps.bumpIconVersion(app.id);
+        drawn = true;
+      } catch (e) {
+        if (!isIconInvalid(e)) throw e;
+        warnings.push(`${e.message} ${core.icons.has(app.id) ? 'The previous icon stays.' : 'A generated icon is used instead.'}`);
+      }
     }
-  }
-  if (!core.icons.has(app.id)) {
-    app = await ensureDefaultIcon(core, app);
-    if (input.iconSvg === undefined) warnings.push(NO_ICON_WARNING);
-  } else if (!drawn && prior && prior.themeColor !== app.themeColor) {
-    app = await redrawIcon(core, app);
+    if (!core.icons.has(app.id)) {
+      app = await ensureDefaultIcon(core, app);
+      if (input.iconSvg === undefined) warnings.push(NO_ICON_WARNING);
+    } else if (!drawn && prior && prior.themeColor !== app.themeColor) {
+      app = await redrawIcon(core, app);
+    }
+  } catch (e) {
+    console.error(e);
+    warnings.push(`The icon could not be stored (${e instanceof Error ? e.message : String(e)}); the deploy itself succeeded. Try set_app_icon again.`);
+    app = core.apps.getApp(app.id) ?? app;
   }
   return describeDeploy(core, user, { ...result, app, warnings });
 }

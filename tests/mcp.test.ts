@@ -691,7 +691,7 @@ describe('mcp endpoint', () => {
     it('an invalid icon does not fail the deploy but is reported', async () => {
       const r = await start();
       const client = await connect(r);
-      const first = await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>', icon_svg: '<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>' });
+      const first = await call(client, 'deploy_app', { slug: 'todo', html: '<p>t</p>', icon_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><script>1</script></svg>' });
       expect(first.isError).toBe(false);
       expect(first.json.version).toBe(1);
       expect(first.json.warnings).toHaveLength(1);

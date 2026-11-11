@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { LagerError } from '../src/errors.js';
 import { defaultIconSvg } from '../src/platform/default-icon.js';
@@ -12,6 +13,7 @@ afterEach(() => { for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true
 
 const GOOD = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#1f2a5c"/><circle cx="256" cy="256" r="120" fill="#f58220"/></svg>';
 const ID = '11111111-2222-3333-4444-555555555555';
+const root = (attrs: string): string => `<svg xmlns="http://www.w3.org/2000/svg" ${attrs}><rect width="1" height="1"/></svg>`;
 const wrap = (inner: string, attrs = ''): string => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"${attrs}>${inner}</svg>`;
 
 function pngSize(file: string): { w: number; h: number } {
@@ -63,7 +65,8 @@ describe('AppIcons', () => {
   it('maskable icon is the icon scaled to 80 percent on the theme colour', async () => {
     const id = 'aaaaaaaa-2222-3333-4444-555555555555';
     await icons.set(id, wrap('<rect width="512" height="512" fill="#ff0000"/>'), '#00ff00');
-    const { Resvg } = await import('@resvg/resvg-wasm');
+    const { Resvg, initWasm } = await import('@resvg/resvg-wasm');
+    try { await initWasm(fs.promises.readFile(createRequire(import.meta.url).resolve('@resvg/resvg-wasm/index_bg.wasm'))); } catch { /* already initialised in this process */ }
     const b64 = fs.readFileSync(icons.png(id, 512, true)!).toString('base64');
     const px = new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><image width="512" height="512" href="data:image/png;base64,${b64}"/></svg>`).render().pixels;
     const at = (x: number, y: number): number[] => [...px.subarray((y * 512 + x) * 4, (y * 512 + x) * 4 + 4)];
@@ -137,7 +140,7 @@ describe('validate', () => {
   it('accepts a plain icon, with comments, a declaration, single quotes and a local gradient', () => {
     expect(() => icons.validate(GOOD)).not.toThrow();
     expect(() => icons.validate(`<?xml version="1.0" encoding="UTF-8"?>\n<!-- hi -->\n<svg\n  xmlns='http://www.w3.org/2000/svg'\n  viewBox = "0 0 512 512" >\n<defs><linearGradient id="g"><stop offset="0" stop-color="#fff"/></linearGradient></defs>\n<rect width="512" height="512" fill="url(#g)" style="fill:url( '#g' )"/></svg>\n`)).not.toThrow();
-    expect(() => icons.validate(wrap('<use href="#a"/><use xlink:href="#a" xmlns:xlink="http://www.w3.org/1999/xlink"/><style>rect{fill:url(#g)}</style>'))).not.toThrow();
+    expect(() => icons.validate(wrap('<symbol id="a"><title>t</title><desc>d</desc></symbol><use href="#a"/><use xlink:href="#a" xmlns:xlink="http://www.w3.org/1999/xlink"/><g><mask id="m"><clipPath id="c"><ellipse rx="1" ry="1"/><line/><polyline/><polygon/><path d="M0 0"/></clipPath></mask><radialGradient id="r"><stop/></radialGradient></g>'))).not.toThrow();
   });
 
   const hostile: Array<[string, string]> = [
@@ -191,6 +194,44 @@ describe('validate', () => {
     ['text before the root', 'hello' + GOOD],
     ['control character', wrap('<rect width="1"/>\u0000')],
     ['xml:base', wrap('<rect width="1" xml:base="http://evil.example/"/>')],
+    ['filter with feMorphology', wrap('<filter id="f"><feMorphology radius="200"/></filter><rect width="1" height="1" filter="url(#f)"/>')],
+    ['feTurbulence', wrap('<defs><feTurbulence numOctaves="100000"/></defs>')],
+    ['feConvolveMatrix', wrap('<defs><feConvolveMatrix order="150"/></defs>')],
+    ['pattern', wrap('<pattern id="p" width="1" height="1"><rect width="1" height="1"/></pattern>')],
+    ['marker', wrap('<marker id="m"><rect width="1" height="1"/></marker>')],
+    ['style element', wrap('<style>rect{fill:red}</style>')],
+    ['nested svg', wrap('<svg viewBox="0 0 1 1"><rect width="1" height="1"/></svg>')],
+    ['animate', wrap('<rect width="1" height="1"><animate attributeName="width" to="2"/></rect>')],
+    ['set', wrap('<rect width="1" height="1"><set attributeName="width" to="2"/></rect>')],
+    ['a element', wrap('<a href="#x"><rect width="1" height="1"/></a>')],
+    ['switch', wrap('<switch><rect width="1" height="1"/></switch>')],
+    ['a namespace prefix on an element', wrap('<s:rect xmlns:s="http://www.w3.org/2000/svg" width="1" height="1"/>')],
+    ['filter attribute', wrap('<rect width="1" height="1" filter="url(#f)"/>')],
+    ['filter attribute without url', wrap('<rect width="1" height="1" filter="blur(500px)"/>')],
+    ['filter inside a style attribute', wrap('<rect width="1" height="1" style="fill:red;FILTER:blur(900px)"/>')],
+    ['stroke-dasharray', wrap('<rect width="1" height="1" stroke="#000" stroke-dasharray="0.0001"/>')],
+    ['stroke-dasharray in a style attribute', wrap('<rect width="1" height="1" style="stroke-dasharray:0.0001"/>')],
+    ['a tiny stroke-width', wrap('<rect width="1" height="1" stroke-width="0.001"/>')],
+    ['a zero stroke-width in a style attribute', wrap('<rect width="1" height="1" style="stroke-width:0"/>')],
+    ['a non-numeric stroke-width', wrap('<rect width="1" height="1" stroke-width="NaN"/>')],
+    ['missing xmlns', '<svg viewBox="0 0 512 512"><rect width="1" height="1"/></svg>'],
+    ['wrong xmlns', '<svg xmlns="http://example.com/svg" viewBox="0 0 512 512"><rect width="1" height="1"/></svg>'],
+    ['a tall viewBox', root('viewBox="0 0 1 1500"')],
+    ['a wide viewBox', root('viewBox="0 0 1500 1"')],
+    ['a missing viewBox', root('')],
+    ['a viewBox with three numbers', root('viewBox="0 0 512"')],
+    ['a viewBox with text', root('viewBox="0 0 a b"')],
+    ['a viewBox with Infinity', root('viewBox="0 0 Infinity Infinity"')],
+    ['a viewBox with exponent overflow', root('viewBox="0 0 1e999 1e999"')],
+    ['an oversized viewBox', root('viewBox="0 0 100001 100001"')],
+    ['a zero viewBox', root('viewBox="0 0 0 0"')],
+    ['a negative viewBox', root('viewBox="0 0 -5 -5"')],
+    ['a nearly square viewBox beyond the tolerance', root('viewBox="0 0 512 520"')],
+    ['width and height that differ', root('viewBox="0 0 512 512" width="512" height="256"')],
+    ['a width in percent', root('viewBox="0 0 512 512" width="100%" height="100%"')],
+    ['a width with an exotic unit', root('viewBox="0 0 512 512" width="10em" height="10em"')],
+    ['a width that is not finite', root('viewBox="0 0 512 512" width="1e999" height="1e999"')],
+    ['only a width that is too large', root('viewBox="0 0 512 512" width="100001" height="100001"')],
     ['not svg at all', '<html><body>hi</body></html>'],
     ['an empty string', ''],
     ['plain text', 'just some text'],
@@ -198,7 +239,9 @@ describe('validate', () => {
   ];
   for (const [name, svg] of hostile) {
     it(`refuses ${name}`, () => {
+      const before = icons.jobsStarted;
       const e = refusal(icons, svg);
+      expect(icons.jobsStarted).toBe(before);
       expect(e).toBeInstanceOf(LagerError);
       expect(e.code).toBe('invalid_argument');
       expect(e.reason).toBe('icon_invalid');
@@ -241,3 +284,76 @@ describe('validate', () => {
       .rejects.toMatchObject({ code: 'invalid_argument', reason: 'icon_invalid' });
   });
 });
+
+describe('accepted shapes of the root', () => {
+  it('takes a square viewBox within tolerance, commas, and equal plain or px sizes', () => {
+    for (const attrs of ['viewBox="0 0 512 512"', 'viewBox="0,0,24,24"', 'viewBox="-10 -10 100 100.4"', 'viewBox="0 0 512 512" width="64" height="64px"', 'viewBox="0 0 512 512" width="100000" height="100000"']) {
+      expect(() => icons.validate(root(attrs)), attrs).not.toThrow();
+    }
+  });
+  it('an icon written exactly as the guide example passes', () => {
+    const guide = fs.readFileSync(new URL('../src/guide.md', import.meta.url), 'utf8');
+    const example = /```svg\n([\s\S]*?)\n```/.exec(guide)?.[1];
+    expect(example).toBeTruthy();
+    expect(() => icons.validate(example!)).not.toThrow();
+    expect(guide).toContain('xmlns="http://www.w3.org/2000/svg"');
+    expect(guide).toMatch(/filters?, patterns?, text and nested svg/i);
+  });
+  it('the missing xmlns message says what to add', () => {
+    expect(refusal(icons, '<svg viewBox="0 0 512 512"></svg>').message).toContain('xmlns="http://www.w3.org/2000/svg"');
+  });
+});
+
+describe('rendering happens in a worker with a hard limit', () => {
+  const HANG = "const { parentPort } = require('node:worker_threads'); parentPort.postMessage({ type: 'ready' }); parentPort.on('message', () => { for (;;) {} });";
+  const open: AppIcons[] = [];
+  afterEach(() => { for (const i of open.splice(0)) i.close(); });
+  const make = (dir: string, opts: ConstructorParameters<typeof AppIcons>[1]): AppIcons => { const i = new AppIcons(dir, opts); open.push(i); return i; };
+
+  it('a render that does not finish is terminated, rejected as icon_invalid, and leaves the old icon', async () => {
+    const dir = tmp();
+    const good = make(dir, undefined);
+    await good.set(ID, GOOD, '#1f2a5c');
+    const before = fs.readFileSync(good.png(ID, 512)!);
+    const slow = make(dir, { timeoutMs: 300, workerSource: HANG });
+    const started = Date.now();
+    await expect(slow.set(ID, GOOD.replace('#f58220', '#00ff00'), '#1f2a5c')).rejects.toMatchObject({ code: 'invalid_argument', reason: 'icon_invalid' });
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(fs.readFileSync(good.png(ID, 512)!).equals(before)).toBe(true);
+    expect(fs.readdirSync(path.dirname(good.png(ID, 512)!)).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('a worker that crashes is reported the same way, and the next job gets a fresh worker', async () => {
+    const dir = tmp();
+    const crash = make(dir, { timeoutMs: 2000, workerSource: "const { parentPort } = require('node:worker_threads'); parentPort.postMessage({ type: 'ready' }); parentPort.on('message', () => { process.exit(3); });" });
+    await expect(crash.set(ID, GOOD, '#1f2a5c')).rejects.toMatchObject({ reason: 'icon_invalid' });
+    const real = make(dir, undefined);
+    await real.set(ID, GOOD, '#1f2a5c');
+    expect(real.has(ID)).toBe(true);
+  });
+
+  it('the real worker is reused for several jobs and one job at a time', async () => {
+    const dir = tmp();
+    const i = make(dir, undefined);
+    await Promise.all([1, 2, 3].map((n) => i.set(`id-${n}`, GOOD, '#1f2a5c')));
+    expect([1, 2, 3].every((n) => i.has(`id-${n}`))).toBe(true);
+    expect(i.jobsStarted).toBe(3);
+  });
+
+  it('refuses more than 20 queued jobs with conflict', async () => {
+    const i = make(tmp(), { timeoutMs: 60_000, workerSource: HANG });
+    const jobs = Array.from({ length: 21 }, (_, n) => i.set(`id-${n}`, GOOD, '#1f2a5c').catch((e: unknown) => e));
+    await expect(i.set('id-over', GOOD, '#1f2a5c')).rejects.toMatchObject({ code: 'conflict' });
+    i.close();
+    const results = await Promise.all(jobs);
+    expect(results.every((r) => r instanceof LagerError)).toBe(true);
+  });
+
+  it('close() ends the worker', async () => {
+    const i = make(tmp(), undefined);
+    await i.ready();
+    i.close();
+    await expect(i.set(ID, GOOD, '#1f2a5c')).rejects.toBeInstanceOf(LagerError);
+  });
+});
+

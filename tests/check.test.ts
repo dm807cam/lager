@@ -105,4 +105,22 @@ describe('icon warning on deploy', () => {
       h.core.close();
     }
   });
+
+  it('an icon step that fails for another reason does not undo the deploy', async () => {
+    const { makeHarness } = await import('./support/http.js');
+    const { deployWithIcon } = await import('../src/mcp/tools.js');
+    const { vi } = await import('vitest');
+    const h = makeHarness();
+    try {
+      vi.spyOn(h.core.icons, 'set').mockRejectedValue(new Error('ENOSPC: no space left'));
+      const user = h.core.users.get(h.adminId)!;
+      const out = await deployWithIcon(h.core, user, { slug: 'todo', html: '<p>x</p>', iconSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"/>' }) as { version: number; warnings: string[] };
+      expect(out.version).toBe(1);
+      expect(out.warnings.some((w) => /icon/i.test(w))).toBe(true);
+      expect(h.core.apps.getApp('todo')).not.toBeNull();
+    } finally {
+      vi.restoreAllMocks();
+      h.core.close();
+    }
+  });
 });

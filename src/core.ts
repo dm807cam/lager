@@ -61,6 +61,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
   accounts.onPasswordReset((id) => { tokens.revokeAll(id); });
   users.onDisabled((id) => { oauth.revokeUser(id); });
   users.onDemoted((id) => { accounts.deleteInvitesBy(id); });
+  const icons = new AppIcons(config.dataDir);
   const hub = new Hub();
   const data = new InstanceData(config.dataDir, hub, config.snapshotKeep, config.instanceQuotaBytes);
   // Pages an instance saved itself count like its documents and uploads against the one instance quota.
@@ -81,8 +82,9 @@ export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
   apps.onActivated((inst) => { hub.publish(inst.id, { type: 'reload', version: inst.activeVersion }); });
   return {
     config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, accounts, groups, domains, access,
-    icons: new AppIcons(config.dataDir),
+    icons,
     close() {
+      icons.close();
       assets.close();
       data.close();
       db.close();
