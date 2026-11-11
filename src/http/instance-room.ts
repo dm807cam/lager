@@ -7,6 +7,8 @@ import { assertRoomName, type RoomEvent } from '../data/rooms.js';
 import { LagerError } from '../errors.js';
 import type { Instance } from '../platform/apps.js';
 import type { Ctx } from './instance.js';
+import { assertOwnOrigin } from './origin.js';
+import { StreamLimiter, type Viewer } from './stream-limit.js';
 
 export const ROOM_PING_MS = 25_000;
 const BODY_LIMIT = '128kb';
@@ -14,17 +16,6 @@ const POSTS_PER_SECOND = 30;
 /** A receiver that lags this far behind is dropped; it reconnects and gets a fresh hello. */
 const MAX_BUFFERED_BYTES = 1024 * 1024;
 const RANK: Record<Level, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
-
-/** Everything one viewer (a user id, or the client IP of a guest) holds on one instance. */
-interface Viewer {
-  guest: boolean;
-  streams: number;
-  /** room name -> open streams in it */
-  rooms: Map<string, number>;
-  /** POST budget, shared by all streams of the viewer. */
-  tokens: number;
-  refilledAt: number;
-}
 
 interface Stream {
   instanceId: string;
@@ -38,6 +29,7 @@ interface Stream {
 const MAX_STREAMS_PER_VIEWER = 8;
 const MAX_ROOMS_PER_VIEWER = 8;
 const MAX_GUEST_STREAMS = 100;
+export const STREAM_LIMITS = { perViewer: MAX_STREAMS_PER_VIEWER, roomsPerViewer: MAX_ROOMS_PER_VIEWER, guestTotal: MAX_GUEST_STREAMS, postsPerSecond: POSTS_PER_SECOND };
 
 const sha256 = (s: string): Buffer => crypto.createHash('sha256').update(s).digest();
 
@@ -61,36 +53,10 @@ export function mountRoomRoutes(
   activeCapabilities: (core: Core, instance: Instance) => Ctx['caps'],
 ): void {
   const streams = new Map<string, Stream>();
-  const viewers = new Map<string, Viewer>();
-  const guestStreams = new Map<string, number>();
-
-  /** Registers a stream for the viewer, or returns null when one of the per-viewer limits is reached. */
-  const admit = (instanceId: string, key: string, guest: boolean, room: string): Viewer | null => {
-    const id = `${instanceId}\n${key}`;
-    let v = viewers.get(id);
-    if (!v) {
-      // Records of viewers without streams only remain until their POST budget is full again.
-      const now = Date.now();
-      for (const [k, o] of viewers) if (o.streams === 0 && o.tokens + ((now - o.refilledAt) / 1000) * POSTS_PER_SECOND >= POSTS_PER_SECOND) viewers.delete(k);
-      v = { guest, streams: 0, rooms: new Map(), tokens: POSTS_PER_SECOND, refilledAt: now };
-      viewers.set(id, v);
-    }
-    const tooMany = v.streams >= MAX_STREAMS_PER_VIEWER || (!v.rooms.has(room) && v.rooms.size >= MAX_ROOMS_PER_VIEWER)
-      || (guest && (guestStreams.get(instanceId) ?? 0) >= MAX_GUEST_STREAMS);
-    if (tooMany) return null;
-    v.streams += 1;
-    v.rooms.set(room, (v.rooms.get(room) ?? 0) + 1);
-    if (guest) guestStreams.set(instanceId, (guestStreams.get(instanceId) ?? 0) + 1);
-    return v;
-  };
-  const release = (instanceId: string, v: Viewer, room: string): void => {
-    v.streams -= 1;
-    const n = (v.rooms.get(room) ?? 1) - 1;
-    if (n <= 0) v.rooms.delete(room); else v.rooms.set(room, n);
-    if (v.guest) guestStreams.set(instanceId, Math.max(0, (guestStreams.get(instanceId) ?? 1) - 1));
-  };
+  const limiter = new StreamLimiter(STREAM_LIMITS);
 
   router.get('/__lager/room/events', (req, res) => {
+    assertOwnOrigin(req);
     const first = ctxOf(res);
     requireAccess(first);
     requireDeclared(first);
@@ -100,9 +66,9 @@ export function mountRoomRoutes(
     const userId = first.viewer.userId;
     const epoch = first.user?.sessionEpoch;
     const instanceId = first.instance.id;
-    const viewer = admit(instanceId, userId ?? `ip:${req.ip ?? ''}`, userId === null, room);
+    const viewer = limiter.admit(instanceId, userId ?? `ip:${req.ip ?? ''}`, userId === null, room);
     if (!viewer) {
-      res.status(429).set('Retry-After', '5').json({ error: { code: 'rate_limited', message: 'Zu viele offene Verbindungen.' } });
+      res.status(429).set('Retry-After', '5').json({ error: { code: 'rate_limited', message: 'Too many open connections.' } });
       return;
     }
     let ping: NodeJS.Timeout | undefined;
@@ -115,7 +81,7 @@ export function mountRoomRoutes(
       clearInterval(ping);
       leave?.();
       streams.delete(peerId);
-      release(instanceId, viewer, room);
+      limiter.release(instanceId, viewer, room);
       res.end();
     };
     const write = (event: string, json: string): void => {
@@ -130,7 +96,7 @@ export function mountRoomRoutes(
       // Throws (before any header is written) for a bad room name or a full instance or room.
       conn = core.rooms.connect(instanceId, room, { by, guest: userId === null }, (e: RoomEvent, json: string) => write(e.type, json));
     } catch (e) {
-      release(instanceId, viewer, room);
+      limiter.release(instanceId, viewer, room);
       throw e;
     }
     leave = conn.leave;

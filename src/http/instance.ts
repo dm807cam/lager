@@ -13,7 +13,9 @@ import { safeReturnPath, sendError } from './errors.js';
 import { injectRuntime } from './inject.js';
 import { mountArtifactRoutes } from './instance-artifact.js';
 import { mountAssetRoutes } from './instance-assets.js';
-import { mountRoomRoutes } from './instance-room.js';
+import { mountRoomRoutes, STREAM_LIMITS } from './instance-room.js';
+import { assertOwnOrigin } from './origin.js';
+import { StreamLimiter } from './stream-limit.js';
 import { requestLocale } from './locale.js';
 import { badCodePage, disabledPage, forbiddenPage, notFoundPage } from './pages.js';
 import { epochValid } from './session.js';
@@ -260,22 +262,34 @@ export function createInstanceRouter(core: Core): express.Router {
     }
   });
 
+  const dbStreams = new StreamLimiter(STREAM_LIMITS);
+
   router.get('/__lager/db/events', (req, res) => {
+    assertOwnOrigin(req);
     const first = ctxOf(res);
     requireAccess(first);
+    const userId = first.viewer.userId;
+    const viewer = dbStreams.admit(first.instance.id, userId ?? `ip:${req.ip ?? ''}`, userId === null, '');
+    if (!viewer) {
+      res.status(429).set('Retry-After', '5').json({ error: { code: 'rate_limited', message: 'Too many open connections.' } });
+      return;
+    }
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.flushHeaders();
     res.write('retry: 3000\n\n');
     const send = (event: string, payload?: unknown): void => {
       res.write(`event: ${event}\n${payload === undefined ? '' : `data: ${JSON.stringify(payload)}\n`}\n`);
     };
-    const userId = first.viewer.userId;
     const epoch = first.user?.sessionEpoch;
     let ping: NodeJS.Timeout | undefined;
     let unsubscribe: (() => void) | undefined;
+    let ended = false;
     const stop = (): void => {
+      if (ended) return;
+      ended = true;
       clearInterval(ping);
       unsubscribe?.();
+      dbStreams.release(first.instance.id, viewer, '');
       res.end();
     };
     /** The instance while this stream's session still has access to it, else null. Re-resolved on every event and every ping. */
@@ -300,7 +314,7 @@ export function createInstanceRouter(core: Core): express.Router {
       if (!current()) { stop(); return; }
       res.write(': ping\n\n');
     }, PING_MS);
-    req.on('close', () => { clearInterval(ping); unsubscribe?.(); });
+    req.on('close', stop);
   });
 
   mountAssetRoutes(router, core, ctxOf, requireAccess);

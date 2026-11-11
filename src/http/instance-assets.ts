@@ -6,6 +6,7 @@ import { AssetError, ASSET_LIMITS, isTextType, type AssetInfo } from '../data/as
 import { LagerError } from '../errors.js';
 import { sendError } from './errors.js';
 import type { Ctx } from './instance.js';
+import { assertOwnOrigin } from './origin.js';
 
 const BODY_LIMIT = ASSET_LIMITS.maxBytes + 1;
 const SANDBOX_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
@@ -94,6 +95,8 @@ export function mountAssetRoutes(
   });
 
   router.get('/_blob/:id', (req, res, next) => {
+    // Another instance's page may not embed this instance's files with the visitor's cookies.
+    assertOwnOrigin(req, { checkOrigin: false });
     const ctx = ctxOf(res);
     requireAccess(ctx);
     const found = core.assets.get(ctx.instance.id, req.params.id);

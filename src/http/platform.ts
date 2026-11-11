@@ -98,7 +98,8 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
       httpOnly: true, sameSite: 'lax', path: '/', secure: config.publicUrl.protocol === 'https:', maxAge: ONE_YEAR_SECONDS * 1000,
     });
     const user = sessionUser(core, req);
-    if (user) core.users.setLocale(user.id, locale);
+    // A cross-site link or image must not change the stored language of a signed-in account.
+    if (user && req.get('Sec-Fetch-Site') !== 'cross-site') core.users.setLocale(user.id, locale);
     res.set('Cache-Control', 'no-store').redirect(safeReturnPath(req.query.return));
   });
 

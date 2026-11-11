@@ -7,7 +7,7 @@ export type RoomEvent =
   | { type: 'peers'; joined: PeerInfo[]; left: PeerInfo[]; updated: PeerInfo[] };
 
 export const ROOM_LIMITS = {
-  maxRoomsPerInstance: 50, maxPeersPerRoom: 100, maxPresenceBytes: 2048, maxMessageBytes: 8192, maxRoomNameLength: 64,
+  maxRoomsPerInstance: 50, maxPeersPerRoom: 100, maxPresenceBytes: 2048, maxMessageBytes: 4096, maxRoomNameLength: 64,
 } as const;
 
 const ROOM_NAME_RE = /^[A-Za-z0-9._-]+$/;

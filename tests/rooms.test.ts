@@ -94,7 +94,7 @@ describe('Rooms', () => {
   });
 
   it('limits are the agreed ones', () => {
-    expect(ROOM_LIMITS).toEqual({ maxRoomsPerInstance: 50, maxPeersPerRoom: 100, maxPresenceBytes: 2048, maxMessageBytes: 8192, maxRoomNameLength: 64 });
+    expect(ROOM_LIMITS).toEqual({ maxRoomsPerInstance: 50, maxPeersPerRoom: 100, maxPresenceBytes: 2048, maxMessageBytes: 4096, maxRoomNameLength: 64 });
   });
 
   it('a throwing receiver does not break the others', () => {

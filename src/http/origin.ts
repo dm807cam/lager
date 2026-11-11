@@ -1,5 +1,6 @@
-import type { RequestHandler } from 'express';
+import type { Request, RequestHandler } from 'express';
 import type { Core } from '../core.js';
+import { LagerError } from '../errors.js';
 import { t } from '../i18n/index.js';
 import { requestLocale } from './locale.js';
 import { esc, page } from './pages.js';
@@ -21,4 +22,19 @@ export function sameOriginGuard(core: Core): RequestHandler {
     }
     next();
   };
+}
+
+/**
+ * Instances under the apps domain are same-site, so a page of one instance could otherwise open streams or embed
+ * files of another with the visitor's cookies. Browsers always send `Sec-Fetch-Site`; `Origin` is sent on
+ * `EventSource` requests. Non-browser clients send neither and pass.
+ * The own origin follows the same trust-proxy rules as the rest of the app (`req.protocol`, `req.host`).
+ */
+export function assertOwnOrigin(req: Request, opts: { checkOrigin: boolean } = { checkOrigin: true }): void {
+  const site = req.get('Sec-Fetch-Site');
+  if (site !== undefined && site !== 'same-origin' && site !== 'none') throw new LagerError('forbidden', 'Cross-origin request refused.');
+  const origin = req.get('Origin');
+  if (opts.checkOrigin && origin !== undefined && origin.toLowerCase() !== `${req.protocol}://${req.host}`.toLowerCase()) {
+    throw new LagerError('forbidden', 'Cross-origin request refused.');
+  }
 }
