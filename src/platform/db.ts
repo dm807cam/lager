@@ -42,6 +42,51 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX instances_app ON instances(app_id);
   `,
+  `
+  CREATE TABLE api_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT
+  );
+  CREATE INDEX api_tokens_user ON api_tokens(user_id);
+  CREATE TABLE oauth_clients (
+    client_id TEXT PRIMARY KEY,
+    secret_hash TEXT,
+    secret_expires_at INTEGER,
+    metadata TEXT NOT NULL,
+    issued_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE oauth_codes (
+    code_hash TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL REFERENCES oauth_clients(client_id),
+    user_id TEXT NOT NULL REFERENCES users(id),
+    redirect_uri TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    resource TEXT,
+    grant_id TEXT NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE oauth_tokens (
+    token_hash TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('access','refresh')),
+    client_id TEXT NOT NULL REFERENCES oauth_clients(client_id),
+    user_id TEXT NOT NULL REFERENCES users(id),
+    grant_id TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    resource TEXT,
+    used INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX oauth_tokens_grant ON oauth_tokens(grant_id);
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

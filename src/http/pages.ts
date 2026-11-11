@@ -1,4 +1,4 @@
-const esc = (s: string): string =>
+export const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 export function page(title: string, body: string): string {
@@ -27,3 +27,21 @@ export const forbiddenPage = (): string =>
   page('Kein Zugriff', '<h1>Kein Zugriff</h1><p>Du hast keinen Zugriff auf diese Anwendung. Bitte wende dich an die Besitzerin oder den Besitzer.</p>');
 export const badCodePage = (): string =>
   page('Anmeldung ungültig', '<h1>Anmeldung ungültig</h1><p>Der Anmeldelink ist ungültig oder abgelaufen. Bitte öffne die Anwendung erneut.</p>');
+
+const hidden = (fields: Record<string, string>): string =>
+  Object.entries(fields).map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join('\n');
+
+/** OAuth consent: names the connecting client and where the browser is sent afterwards. */
+export function consentPage(clientName: string, redirectHost: string, userName: string, fields: Record<string, string>): string {
+  return page('Zugriff erlauben', `<h1>Zugriff erlauben?</h1>
+<p><strong>${esc(clientName)}</strong> möchte in deinem Namen auf Lager zugreifen: Apps deployen, Versionen aktivieren und die Daten deiner Instanzen lesen und ändern.</p>
+<p>Angemeldet als ${esc(userName)}. Nach der Entscheidung geht es weiter zu <strong>${esc(redirectHost)}</strong>.</p>
+<form method="post" action="/authorize">
+${hidden(fields)}
+<button type="submit" name="decision" value="approve">Erlauben</button>
+<button type="submit" name="decision" value="deny">Ablehnen</button>
+</form>`);
+}
+
+export const consentInvalidPage = (): string =>
+  page('Anfrage ungültig', '<h1>Anfrage ungültig</h1><p>Die Zugriffsanfrage ist abgelaufen oder ungültig. Bitte starte die Verbindung erneut.</p>');
