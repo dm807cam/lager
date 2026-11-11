@@ -129,14 +129,16 @@ export class Accounts {
 
   async resendVerification(email: string): Promise<void> {
     const user = typeof email === 'string' ? this.users.getByEmail(email) : null;
-    if (user && !user.verified) await this.sendVerification(user);
+    // Delivery is started but not awaited, so response time does not reveal whether the address exists.
+    if (user && !user.verified) void this.sendVerification(user);
   }
 
   async requestPasswordReset(email: string): Promise<void> {
     const user = typeof email === 'string' ? this.users.getByEmail(email) : null;
     if (!user) return;
     const { token } = this.issue('reset', { userId: user.id });
-    await this.deliver(user.email, 'Lager: Passwort zurücksetzen',
+    // Started but not awaited (see resendVerification); `deliver` catches send errors, so nothing is left unhandled.
+    void this.deliver(user.email, 'Lager: Passwort zurücksetzen',
       `Hallo ${user.name},\nfür dein Konto wurde ein neues Passwort angefordert. Über den folgenden Link kannst du es festlegen. Wenn du das nicht warst, ignoriere diese Nachricht.`,
       this.link('/reset', 'token', token), 'reset');
   }
@@ -154,6 +156,7 @@ export class Accounts {
     }
     if (!this.consume(row)) throw invalidToken();
     this.users.setPassword(row.user_id, password);
+    this.db.prepare("DELETE FROM account_tokens WHERE kind = 'reset' AND user_id = ? AND used_at IS NULL").run(row.user_id);
     this.users.markVerified(row.user_id);
     return this.users.get(row.user_id)!;
   }

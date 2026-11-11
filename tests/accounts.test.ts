@@ -206,6 +206,60 @@ describe('Accounts', () => {
     expect(accounts.listInvites().map((i) => i.id)).toEqual([b.id]);
   });
 
+  it('tokens are bound to their kind', async () => {
+    const admin = users.create({ email: 'root@x.y', name: 'R', password: 'x', role: 'admin' });
+    const u = users.create({ email: 'ann@x.y', name: 'Ann', password: 'old-password', role: 'user', verified: false });
+    const reset = tokenIn(accounts.createResetLink(u.id), 'token');
+    const invite = tokenIn((await accounts.createInvite({ role: 'user', createdBy: admin.id })).url, 'invite');
+    const bad = expect.objectContaining({ code: 'invalid_argument' });
+    expect(() => accounts.verifyEmail(reset)).toThrow(bad);
+    expect(() => accounts.verifyEmail(invite)).toThrow(bad);
+    expect(() => accounts.resetPassword(invite, 'brand-new-password')).toThrow(bad);
+    expect(accounts.getInvite(reset)).toBeNull();
+    // none of the failed attempts consumed anything
+    expect(accounts.resetPassword(reset, 'brand-new-password').id).toBe(u.id);
+    expect(accounts.getInvite(invite)).not.toBeNull();
+  });
+
+  it('using a reset link invalidates other outstanding reset links', () => {
+    const u = users.create({ email: 'ann@x.y', name: 'Ann', password: 'old-password', role: 'user' });
+    const a = tokenIn(accounts.createResetLink(u.id), 'token');
+    const b = tokenIn(accounts.createResetLink(u.id), 'token');
+    accounts.resetPassword(a, 'brand-new-password');
+    expect(() => accounts.resetPassword(b, 'another-new-password')).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+  });
+
+  it('reset and resend do not wait for delivery', async () => {
+    users.create({ email: 'un@x.y', name: 'U', password: 'x', role: 'user', verified: false });
+    const started: string[] = [];
+    const slow = {
+      enabled: true,
+      send: (m: { subject: string }) => { started.push(m.subject); return new Promise<void>(() => {}); },
+    };
+    accounts = new Accounts(db, users, settings, slow, config);
+    await accounts.resendVerification('un@x.y');
+    await accounts.requestPasswordReset('un@x.y');
+    await accounts.resendVerification('nobody@x.y');
+    await accounts.requestPasswordReset('nobody@x.y');
+    expect(started).toEqual(['Lager: E-Mail-Adresse bestätigen', 'Lager: Passwort zurücksetzen']);
+  });
+
+  it('a failing detached send is not an unhandled rejection', async () => {
+    users.create({ email: 'un@x.y', name: 'U', password: 'x', role: 'user', verified: false });
+    const failing = { enabled: true, send: () => Promise.reject(new Error('smtp down')) };
+    accounts = new Accounts(db, users, settings, failing, config);
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    await accounts.requestPasswordReset('un@x.y');
+    await accounts.resendVerification('un@x.y');
+    await new Promise((r) => setTimeout(r, 20));
+    process.off('unhandledRejection', unhandled);
+    expect(unhandled).not.toHaveBeenCalled();
+    expect(err).toHaveBeenCalledTimes(2);
+    err.mockRestore();
+  });
+
   it('only stores token hashes', async () => {
     await accounts.register({ name: 'Ann', email: 'ann@x.y', password: PW });
     const token = tokenIn(mailer.sent[0].text, 'token');
