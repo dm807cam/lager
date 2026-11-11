@@ -22,6 +22,10 @@ main:not(.wide) input{width:100%}
 button{font:inherit;font-weight:600;padding:.45rem .9rem;border:0;border-radius:6px;background:var(--accent);color:var(--on-accent);cursor:pointer}
 button.quiet{background:transparent;color:inherit;border:1px solid currentColor;font-weight:400}
 header.top button.quiet{color:#fff}
+nav.tabs{display:flex;flex-wrap:wrap;gap:.25rem .75rem;margin:0 0 1rem;border-bottom:1px solid var(--border)}
+nav.tabs a{padding:.4rem .2rem;text-decoration:none;border-bottom:3px solid transparent}
+nav.tabs a.current{border-bottom-color:var(--accent);font-weight:600}
+form.inline{margin:0;display:flex;gap:.5rem;align-items:center}
 button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 main:not(.wide) button{margin-top:1.25rem}
 .err{color:var(--err)}.ok{color:var(--ok)}.muted{color:var(--muted)}
@@ -66,12 +70,14 @@ ${opts.resendEmail !== undefined ? resendForm(opts.resendEmail) : ''}
 }
 
 /** Header block of signed-in pages: navigation, the account's address and the CSRF-protected logout. */
-export const signedInHeader = (email: string, csrf: string): string =>
-  `<div class="who"><a href="/" class="nav">Übersicht</a><a href="/account" class="nav">Konto</a><span>${esc(email)}</span><form method="post" action="/logout"><input type="hidden" name="csrf" value="${esc(csrf)}"><button type="submit" class="quiet">Abmelden</button></form></div>`;
+export const signedInHeader = (email: string, csrf: string, isAdmin = false): string =>
+  `<div class="who"><a href="/" class="nav">Übersicht</a>${isAdmin ? '<a href="/admin" class="nav">Verwaltung</a>' : ''}<a href="/account" class="nav">Konto</a><span>${esc(email)}</span><form method="post" action="/logout"><input type="hidden" name="csrf" value="${esc(csrf)}"><button type="submit" class="quiet">Abmelden</button></form></div>`;
 
 export const notFoundPage = (): string => page('Nicht gefunden', '<h1>Nicht gefunden</h1><p>Seite nicht gefunden.</p>');
 export const forbiddenPage = (): string =>
   page('Kein Zugriff', '<h1>Kein Zugriff</h1><p>Du hast keinen Zugriff auf diese Anwendung. Bitte wende dich an die Besitzerin oder den Besitzer.</p>');
+export const forbiddenAdminPage = (): string =>
+  page('Kein Zugriff', '<h1>Kein Zugriff</h1><p>Die Verwaltung ist nur für Administratoren zugänglich.</p><p><a href="/">Zurück zur Übersicht</a></p>');
 export const disabledPage = (): string =>
   page('Instanz deaktiviert', '<h1>Instanz deaktiviert</h1><p>Diese Instanz wurde deaktiviert.</p>');
 export const badCodePage = (): string =>

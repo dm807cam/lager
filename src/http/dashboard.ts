@@ -69,7 +69,7 @@ function dashboardPage(core: Core, user: User, newToken?: { name: string; token:
   const created = newToken ? `<div class="card" role="status"><strong>Token „${esc(newToken.name)}“ erstellt.</strong>
 <span class="token mono">${esc(newToken.token)}</span><span class="err">Kopiere ihn jetzt: Er wird nur dieses eine Mal angezeigt.</span></div>` : '';
 
-  const headerExtra = signedInHeader(user.email, csrf);
+  const headerExtra = signedInHeader(user.email, csrf, user.role === 'admin');
   return page('Lager', `<h1>Übersicht</h1>
 <h2>Claude verbinden</h2>
 <div class="card"><p>Trage diese Adresse in Claude als benutzerdefinierten Connector ein:</p><code>${esc(new URL('/mcp', core.config.publicUrl).href)}</code></div>
