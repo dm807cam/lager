@@ -257,7 +257,7 @@ function run(fn: () => unknown): CallToolResult {
 
 /**
  * db_read/db_write act with the caller's own level on the instance. The owner ignores the app's rules (to seed data); an instance
- * administrator ("Verwalter") is held to them like at runtime, so rules that require `owner` stay closed. `data/users/<other>/…` is closed for everyone.
+ * administrator (level `admin`) is held to them like at runtime, so rules that require `owner` stay closed. `data/users/<other>/…` is closed for everyone.
  */
 export function dbAccess(core: Core, user: User, inst: Instance): { viewer: Viewer; rules: DbRule[] | undefined } {
   const level = core.access.levelFor(inst, user);
