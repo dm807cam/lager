@@ -10,11 +10,20 @@ import { ICON_WORKER_SOURCE } from './icon-worker-code.js';
 export const ICON_SIZES = [512, 192, 180, 64] as const;
 export const MAX_ICON_SVG_BYTES = 65536;
 export const DEFAULT_THEME_COLOR = '#1f2a5c';
-const MAX_ELEMENTS = 2000;
-const MAX_DEPTH = 32;
+const MAX_ELEMENTS = 500;
+const MAX_DEPTH = 16;
+const MAX_GRADIENTS = 64;
+const MAX_STOPS = 32;
+const MAX_NUMBER = 100000;
+const MAX_NUMBER_CHARS = 20;
+const MAX_PATH_CHARS = 20000;
 /** Wall-clock limit for all sizes of one `set`, enforced by terminating the worker. */
 const RENDER_TIMEOUT_MS = 3000;
 const MAX_QUEUED = 20;
+/** Waiting jobs one user may have, so a single publisher cannot hold the whole queue. */
+const MAX_QUEUED_PER_OWNER = 2;
+const RECYCLE_AFTER_JOBS = 50;
+const RECYCLE_RSS_GROWTH = 256 * 1024 * 1024;
 const WORKER_HEAP_MB = 128;
 const MAX_VIEWBOX = 100000;
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -23,14 +32,14 @@ const MASKABLE_SCALE = 0.8;
 const MAX_ID_LENGTH = 64;
 
 /**
- * The only elements an icon may use: shapes, groups, gradients, clipping and masking. Everything else is refused, which removes
- * filters (a single `feMorphology` can keep a renderer busy for minutes), patterns, markers, CSS, links, animation, text, images,
- * scripts and foreign content. Compared by lower-cased name.
+ * The icon subset: flat shapes, groups, gradients. No masks, clip paths, `use`, filters, patterns, markers, CSS, links, animation,
+ * text, images or scripts. Every cost a renderer can be driven into (nested masks, `use` fan-out, filter radii, dash arrays, huge
+ * coordinates) comes from something outside this set, so the cost of an accepted icon is bounded by construction.
  */
 const ALLOWED_ELEMENTS = new Set([
-  'svg', 'g', 'defs', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'lineargradient', 'radialgradient', 'stop',
-  'clippath', 'mask', 'use', 'symbol', 'title', 'desc',
+  'svg', 'g', 'defs', 'linearGradient', 'radialGradient', 'stop', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'title', 'desc',
 ]);
+const GRADIENTS = new Set(['linearGradient', 'radialGradient']);
 
 const iconInvalid = (message: string): never => {
   throw new LagerError('invalid_argument', `The icon cannot be used: ${message}`, 'icon_invalid');
@@ -67,42 +76,124 @@ function decode(text: string): string {
   return out;
 }
 
-/** CSS (a style attribute or any attribute value): references may only point to a fragment of the same document. */
-function scanCss(text: string, strict: boolean): void {
-  if (strict && text.includes('\\')) iconInvalid('CSS escapes are not allowed.');
-  const lower = text.toLowerCase();
-  if (strict) for (const word of ['@import', 'image-set(', 'expression(', 'src(', 'filter', 'stroke-dasharray']) {
-    if (lower.includes(word)) iconInvalid(`"${word}" is not allowed in CSS.`);
-  }
-  for (const m of lower.matchAll(/url\s*\(/g)) {
-    const rest = lower.slice(m.index + m[0].length).replace(/^\s+/, '').replace(/^["']\s*/, '');
-    if (!rest.startsWith('#')) iconInvalid('url() may only point to an element of the icon itself (#id).');
-  }
-}
-
 const PLAIN_NUMBER = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
+const NUMBER_TOKEN = /[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/y;
+const COLOR = /^(?:#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|(?:rgb|rgba)\(\s*[0-9.,%\s+-]{1,60}\)|[A-Za-z]{1,30})$/;
+const FILL_URL = /^url\(\s*#([A-Za-z_][A-Za-z0-9_.-]{0,63})\s*\)$/;
+const ENUMS: Record<string, string[]> = {
+  'fill-rule': ['nonzero', 'evenodd'], 'stroke-linecap': ['butt', 'round', 'square'], 'stroke-linejoin': ['miter', 'round', 'bevel'],
+  gradientUnits: ['userSpaceOnUse', 'objectBoundingBox'], spreadMethod: ['pad', 'reflect', 'repeat'],
+};
+const LENGTHS = new Set(['x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'fx', 'fy', 'width', 'height']);
+const OPACITIES = new Set(['fill-opacity', 'stroke-opacity', 'opacity', 'stop-opacity']);
+const ALLOWED_ATTRIBUTES = new Set([
+  'xmlns', 'viewBox', 'id', 'd', 'points', 'fill', 'stroke', 'stroke-width', 'stroke-miterlimit', 'transform', 'gradientTransform', 'offset',
+  'stop-color', ...LENGTHS, ...OPACITIES, ...Object.keys(ENUMS),
+]);
 
-/** A stroke-width must be a finite plain number of at least 0.01: hairline strokes make a renderer slow. */
-function checkStrokeWidth(value: string): void {
-  const m = /^\s*(.*?)\s*(?:px)?\s*$/.exec(value);
-  const text = m ? m[1] : value;
-  const n = PLAIN_NUMBER.test(text) ? Number(text) : Number.NaN;
-  if (!Number.isFinite(n) || n < 0.01) iconInvalid('stroke-width must be a number of at least 0.01.');
+/** A finite plain number of at most 20 characters with an absolute value of at most 100000. */
+function boundedNumber(text: string, what: string): number {
+  if (text.length > MAX_NUMBER_CHARS || !PLAIN_NUMBER.test(text)) iconInvalid(`${what} must be a plain number of at most ${MAX_NUMBER_CHARS} characters.`);
+  const n = Number(text);
+  if (!Number.isFinite(n) || Math.abs(n) > MAX_NUMBER) iconInvalid(`${what} must be between -${MAX_NUMBER} and ${MAX_NUMBER}.`);
+  return n;
 }
 
-function checkAttribute(name: string, raw: string): void {
-  const value = decode(raw);
-  const local = localName(name);
-  if (local.startsWith('on')) iconInvalid(`the event handler attribute "${name}" is not allowed.`);
-  if (name.toLowerCase() === 'xml:base') iconInvalid('xml:base is not allowed.');
-  if (local === 'href' && !value.replace(/^[\u0000- ]+/, '').startsWith('#')) {
-    iconInvalid('href may only point to an element of the icon itself (#id).');
+/** A length: a bounded number, optionally followed by `px` or `%`. */
+function checkLength(name: string, value: string): void {
+  boundedNumber(value.trim().replace(/(?:px|%)$/, ''), name);
+}
+
+/** Numbers separated by whitespace and commas (`points`). */
+function checkNumberList(name: string, value: string): void {
+  if (value.length > MAX_PATH_CHARS) iconInvalid(`${name} is longer than ${MAX_PATH_CHARS} characters.`);
+  for (const part of value.trim().split(/[\s,]+/)) if (part !== '') boundedNumber(part, name);
+}
+
+/** Path data: the standard command letters and bounded numbers only. */
+function checkPathData(value: string): void {
+  if (value.length > MAX_PATH_CHARS) iconInvalid(`path data is longer than ${MAX_PATH_CHARS} characters.`);
+  let i = 0;
+  while (i < value.length) {
+    const c = value[i];
+    if (c === ' ' || c === ',' || c === '\t' || c === '\r' || c === '\n') { i++; continue; }
+    if ('MmLlHhVvCcSsQqTtAaZz'.includes(c)) { i++; continue; }
+    NUMBER_TOKEN.lastIndex = i;
+    const m = NUMBER_TOKEN.exec(value);
+    if (!m) iconInvalid('path data contains something other than commands and numbers.');
+    boundedNumber(m![0], 'a number in path data');
+    i += m![0].length;
   }
-  if (local === 'filter') iconInvalid('filters are not allowed.');
-  if (local === 'stroke-dasharray') iconInvalid('stroke-dasharray is not allowed.');
-  if (local === 'stroke-width') checkStrokeWidth(value);
-  if (local === 'style') for (const m of value.matchAll(/stroke-width\s*:\s*([^;]*)/gi)) checkStrokeWidth(m[1]);
-  scanCss(value, local === 'style');
+}
+
+const TRANSFORM_ARGS: Record<string, number[]> = { translate: [1, 2], scale: [1, 2], rotate: [1, 3], skewX: [1], skewY: [1], matrix: [6] };
+
+/** `translate`, `scale`, `rotate`, `skewX`, `skewY` and `matrix` with bounded numeric arguments. */
+function checkTransform(value: string): void {
+  if (value.length > 1000) iconInvalid('a transform is too long.');
+  let rest = value.trim();
+  const re = /^(translate|scale|rotate|skewX|skewY|matrix)\s*\(([^()]*)\)[\s,]*/;
+  while (rest !== '') {
+    const m = re.exec(rest);
+    if (!m) { iconInvalid('transform may only use translate, scale, rotate, skewX, skewY and matrix.'); return; }
+    const args = m[2].trim().split(/[\s,]+/).filter((a) => a !== '');
+    if (!TRANSFORM_ARGS[m[1]].includes(args.length)) iconInvalid(`${m[1]}() has the wrong number of arguments.`);
+    for (const a of args) boundedNumber(a, `an argument of ${m[1]}()`);
+    rest = rest.slice(m[0].length);
+  }
+}
+
+function checkOpacity(name: string, value: string): void {
+  const n = boundedNumber(value.trim(), name);
+  if (n < 0 || n > 1) iconInvalid(`${name} must be between 0 and 1.`);
+}
+
+interface Refs { ids: Set<string>; gradients: Set<string>; uses: string[] }
+
+/** One attribute of the fixed list: its value is checked for its own type. Everything else is refused. */
+function checkAttribute(name: string, raw: string, refs: Refs, element: string): void {
+  if (!ALLOWED_ATTRIBUTES.has(name)) {
+    iconInvalid(`the attribute "${name}" is not allowed (only plain geometry, fill/stroke colours, gradients and transforms; no style, class, href, mask, clip-path or filter).`);
+  }
+  const value = decode(raw);
+  if (name === 'xmlns') {
+    if (value !== SVG_NS) iconInvalid(`xmlns must be "${SVG_NS}".`);
+  } else if (name === 'viewBox') {
+    // Checked as part of the root.
+  } else if (name === 'id') {
+    if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/.test(value)) iconInvalid('an id must be letters, digits, "_", "-" or "." (at most 64).');
+    if (refs.ids.has(value)) iconInvalid(`the id "${value}" is used twice.`);
+    refs.ids.add(value);
+    if (GRADIENTS.has(element)) refs.gradients.add(value);
+  } else if (name === 'd') {
+    checkPathData(value);
+  } else if (name === 'points') {
+    checkNumberList(name, value);
+  } else if (name === 'transform' || name === 'gradientTransform') {
+    checkTransform(value);
+  } else if (name === 'fill' || name === 'stroke') {
+    const ref = FILL_URL.exec(value.trim());
+    if (ref) refs.uses.push(ref[1]);
+    else if (!COLOR.test(value.trim())) iconInvalid(`${name} must be a colour or url(#gradient-id).`);
+  } else if (name === 'stop-color') {
+    if (!COLOR.test(value.trim())) iconInvalid('stop-color must be a colour.');
+  } else if (name === 'stroke-width') {
+    const n = boundedNumber(value.trim().replace(/px$/, ''), name);
+    if (n < 0 || n > 1000) iconInvalid('stroke-width must be between 0 and 1000.');
+  } else if (name === 'stroke-miterlimit') {
+    const n = boundedNumber(value.trim(), name);
+    if (n < 0 || n > 100) iconInvalid('stroke-miterlimit must be between 0 and 100.');
+  } else if (name === 'offset') {
+    const pct = value.trim().endsWith('%');
+    const n = boundedNumber(value.trim().replace(/%$/, ''), name);
+    if (n < 0 || n > (pct ? 100 : 1)) iconInvalid('offset must be between 0 and 1 (or 0% and 100%).');
+  } else if (OPACITIES.has(name)) {
+    checkOpacity(name, value);
+  } else if (name in ENUMS) {
+    if (!ENUMS[name].includes(value.trim())) iconInvalid(`${name} must be one of ${ENUMS[name].join(', ')}.`);
+  } else if (LENGTHS.has(name)) {
+    checkLength(name, value);
+  }
 }
 
 /** A positive finite number within the size limit, or null. Units other than a trailing `px` are not accepted. */
@@ -147,7 +238,9 @@ function checkRoot(attributes: Array<[string, string]>): void {
 function tokenize(svg: string): void {
   const n = svg.length;
   const start = svg.charCodeAt(0) === 0xfeff ? 1 : 0;
-  const stack: Array<{ name: string; local: string }> = [];
+  const stack: Array<{ name: string; local: string; stops: number }> = [];
+  const refs: Refs = { ids: new Set(), gradients: new Set(), uses: [] };
+  let gradients = 0;
   let elements = 0;
   let rootSeen = false;
   let i = start;
@@ -207,7 +300,7 @@ function tokenize(svg: string): void {
     const m = NAME.exec(svg);
     if (!m) { iconInvalid('a tag is malformed.'); return; }
     const name = m[0];
-    const local = localName(name);
+    const local = name;
     let j = i + 1 + name.length;
     const seen = new Set<string>();
     const attributes: Array<[string, string]> = [];
@@ -241,7 +334,7 @@ function tokenize(svg: string): void {
 
     if (name.includes(':')) iconInvalid(`<${name}> uses a namespace prefix; write plain SVG elements.`);
     if (!ALLOWED_ELEMENTS.has(local)) {
-      iconInvalid(`<${local}> is not allowed. Allowed elements: svg, g, defs, path, rect, circle, ellipse, line, polyline, polygon, linearGradient, radialGradient, stop, clipPath, mask, use, symbol, title, desc (no filters, patterns, text, images, styles or scripts).`);
+      iconInvalid(`<${local}> is not allowed. Allowed elements: svg, g, defs, linearGradient, radialGradient, stop, path, rect, circle, ellipse, line, polyline, polygon, title, desc (no masks, clip paths, use, filters, patterns, styles, text, images or scripts).`);
     }
     if (stack.length === 0) {
       if (rootSeen) iconInvalid('there is more than one root element.');
@@ -253,11 +346,23 @@ function tokenize(svg: string): void {
     }
     if (++elements > MAX_ELEMENTS) iconInvalid(`it has more than ${MAX_ELEMENTS} elements.`);
     if (stack.length + 1 > MAX_DEPTH) iconInvalid(`it is nested deeper than ${MAX_DEPTH} levels.`);
-    for (const [k, v] of attributes) checkAttribute(k, v);
-    if (!selfClosing) stack.push({ name, local });
+    if (GRADIENTS.has(local) && ++gradients > MAX_GRADIENTS) iconInvalid(`it has more than ${MAX_GRADIENTS} gradients.`);
+    if (local === 'stop') {
+      const parent = stack[stack.length - 1];
+      if (!parent || !GRADIENTS.has(parent.local)) iconInvalid('<stop> must be inside a gradient.');
+      if (++parent.stops > MAX_STOPS) iconInvalid(`a gradient has more than ${MAX_STOPS} stops.`);
+    }
+    for (const [k, v] of attributes) {
+      if (k === 'viewBox' && stack.length > 0) iconInvalid('viewBox belongs on the root <svg> only.');
+      // The root's size attributes were checked together with its viewBox.
+      if (stack.length === 0 && (k === 'width' || k === 'height' || k === 'viewBox' || k === 'xmlns')) { if (k === 'xmlns') checkAttribute(k, v, refs, local); continue; }
+      checkAttribute(k, v, refs, local);
+    }
+    if (!selfClosing) stack.push({ name, local, stops: 0 });
     i = j;
   }
   if (stack.length > 0) iconInvalid('an element is not closed.');
+  for (const id of refs.uses) if (!refs.gradients.has(id)) iconInvalid(`url(#${id}) must refer to a linearGradient or radialGradient of the icon.`);
   if (!rootSeen) iconInvalid('the root element must be <svg>.');
 }
 
@@ -268,11 +373,15 @@ export interface AppIconsOptions {
   timeoutMs?: number;
   /** Jobs that may wait behind the running one (default 20). */
   queueLimit?: number;
-  /** Replaces the worker program; for tests of the timeout and crash paths only. */
-  workerSource?: string;
+  /** Replaces the worker program (a source text, or a function of the number of workers started so far); for tests only. */
+  workerSource?: string | ((started: number) => string);
+  /** Successful jobs after which the worker is replaced (default 50). */
+  recycleAfter?: number;
+  /** Waiting jobs per owner (default 2). */
+  perOwnerLimit?: number;
 }
 
-interface Job { svg: string; color: string; resolve(files: Record<string, Uint8Array>): void; reject(e: unknown): void }
+interface Job { svg: string; color: string; owner?: string; resolve(files: Record<string, Uint8Array>): void; reject(e: unknown): void }
 type WorkerMessage = { type: 'ready' } | { type: 'done'; id: number; files: Record<string, Uint8Array> } | { type: 'failed'; id: number; message: string };
 
 export class AppIcons {
@@ -286,12 +395,20 @@ export class AppIcons {
   private jobId = 0;
   private readonly timeoutMs: number;
   private readonly queueLimit: number;
-  private readonly workerSource: string;
+  private readonly workerSource: string | ((started: number) => string);
+  private readonly recycleAfter: number;
+  private readonly perOwnerLimit: number;
+  /** Workers started so far (tests watch recycling). */
+  workersStarted = 0;
+  private jobsOnWorker = 0;
+  private inflight = new Map<string, Promise<void>>();
 
   constructor(private dataDir: string, opts: AppIconsOptions = {}) {
     this.timeoutMs = opts.timeoutMs ?? RENDER_TIMEOUT_MS;
     this.queueLimit = opts.queueLimit ?? MAX_QUEUED;
     this.workerSource = opts.workerSource ?? ICON_WORKER_SOURCE;
+    this.recycleAfter = opts.recycleAfter ?? RECYCLE_AFTER_JOBS;
+    this.perOwnerLimit = opts.perOwnerLimit ?? MAX_QUEUED_PER_OWNER;
   }
 
   /** Starts the render worker (which loads the wasm) and waits until it is ready. Safe to call repeatedly. */
@@ -317,7 +434,10 @@ export class AppIcons {
     if (this.closed) return Promise.reject(new LagerError('conflict', 'The icon renderer is shutting down.'));
     if (this.workerReady) return this.workerReady;
     const require = createRequire(import.meta.url);
-    const worker = new Worker(this.workerSource, {
+    const source = typeof this.workerSource === 'function' ? this.workerSource(this.workersStarted) : this.workerSource;
+    this.workersStarted++;
+    this.jobsOnWorker = 0;
+    const worker = new Worker(source, {
       eval: true,
       workerData: { module: require.resolve('@resvg/resvg-wasm'), wasm: require.resolve('@resvg/resvg-wasm/index_bg.wasm') },
       resourceLimits: { maxOldGenerationSizeMb: WORKER_HEAP_MB },
@@ -343,13 +463,16 @@ export class AppIcons {
   }
 
   /** Draws all sizes and the maskable variant in the worker, within the wall-clock limit. */
-  private draw(svg: string, color: string): Promise<Record<string, Uint8Array>> {
+  private draw(svg: string, color: string, owner?: string): Promise<Record<string, Uint8Array>> {
     if (this.closed) return Promise.reject(new LagerError('conflict', 'The icon renderer is shutting down.'));
     if (this.queue.length >= this.queueLimit) {
       return Promise.reject(new LagerError('conflict', 'Too many icons are waiting to be drawn. Try again in a moment.'));
     }
+    if (owner !== undefined && this.queue.filter((j) => j.owner === owner).length >= this.perOwnerLimit) {
+      return Promise.reject(new LagerError('conflict', 'You already have icons waiting to be drawn. Try again in a moment.'));
+    }
     return new Promise((resolve, reject) => {
-      this.queue.push({ svg, color, resolve, reject });
+      this.queue.push({ svg, color, owner, resolve, reject });
       void this.pump();
     });
   }
@@ -385,6 +508,7 @@ export class AppIcons {
     }
     const id = ++this.jobId;
     this.jobsStarted++;
+    const rssBefore = process.memoryUsage.rss();
     return new Promise((resolve, reject) => {
       const done = (fn: () => void): void => {
         clearTimeout(timer);
@@ -399,8 +523,15 @@ export class AppIcons {
         done(() => reject(failed('it takes too long to draw.')));
       }, Math.max(1, deadline - Date.now()));
       const onMessage = (m: WorkerMessage): void => {
-        if (m.type === 'done' && m.id === id) done(() => resolve(m.files));
-        else if (m.type === 'failed' && m.id === id) done(() => reject(failed(`it could not be drawn (${m.message}).`)));
+        if (m.type === 'done' && m.id === id) {
+          // A worker is replaced after a number of jobs, or when the process grew by a lot while it drew: wasm memory is never given back.
+          if (++this.jobsOnWorker >= this.recycleAfter || process.memoryUsage.rss() - rssBefore > RECYCLE_RSS_GROWTH) this.discardWorker();
+          done(() => resolve(m.files));
+        } else if (m.type === 'failed' && m.id === id) {
+          // A failed drawing may have left the renderer in a broken state (a wasm trap poisons it): never reuse the worker.
+          this.discardWorker();
+          done(() => reject(failed(`it could not be drawn (${m.message}).`)));
+        }
       };
       const onError = (e: Error): void => { this.discardWorker(); done(() => reject(failed(`the renderer failed (${e.message}).`))); };
       const onExit = (): void => { this.discardWorker(); done(() => reject(failed('the renderer stopped.'))); };
@@ -424,11 +555,21 @@ export class AppIcons {
   }
 
   /** Validates, renders every size plus the maskable 512 in the worker, and swaps the files in; on any failure the previous icon stays. */
-  async set(appId: string, svg: string, themeColor: string): Promise<void> {
-    if (!validId(appId)) throw new LagerError('invalid_argument', 'Invalid app id.');
-    this.validate(svg);
+  set(appId: string, svg: string, themeColor: string, owner?: string): Promise<void> {
+    if (!validId(appId)) return Promise.reject(new LagerError('invalid_argument', 'Invalid app id.'));
+    try { this.validate(svg); } catch (e) { return Promise.reject(e); }
     const color = /^#[0-9a-f]{6}$/i.test(themeColor) ? themeColor : DEFAULT_THEME_COLOR;
-    const drawn = await this.draw(svg, color);
+    // Identical requests for one app that are in flight at the same time share one job.
+    const key = `${appId}\0${color}\0${svg}`;
+    const running = this.inflight.get(key);
+    if (running) return running;
+    const job = this.store(appId, svg, color, owner).finally(() => { this.inflight.delete(key); });
+    this.inflight.set(key, job);
+    return job;
+  }
+
+  private async store(appId: string, svg: string, color: string, owner?: string): Promise<void> {
+    const drawn = await this.draw(svg, color, owner);
     const files = new Map<string, Uint8Array | string>(Object.entries(drawn));
     files.set('icon.svg', svg);
 
@@ -451,9 +592,9 @@ export class AppIcons {
     }
   }
   /** Writes the generated icon for `slug`, only when the app has none yet. */
-  async setDefault(appId: string, slug: string, themeColor: string): Promise<void> {
+  async setDefault(appId: string, slug: string, themeColor: string, owner?: string): Promise<void> {
     if (this.has(appId)) return;
-    await this.set(appId, defaultIconSvg(slug), themeColor);
+    await this.set(appId, defaultIconSvg(slug), themeColor, owner);
   }
 
   has(appId: string): boolean {

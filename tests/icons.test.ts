@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { LagerError } from '../src/errors.js';
 import { defaultIconSvg } from '../src/platform/default-icon.js';
+import { ICON_WORKER_SOURCE } from '../src/platform/icon-worker-code.js';
 import { AppIcons, ICON_SIZES, MAX_ICON_SVG_BYTES } from '../src/platform/icons.js';
 
 const dirs: string[] = [];
@@ -14,6 +15,7 @@ afterEach(() => { for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true
 const GOOD = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#1f2a5c"/><circle cx="256" cy="256" r="120" fill="#f58220"/></svg>';
 const ID = '11111111-2222-3333-4444-555555555555';
 const root = (attrs: string): string => `<svg xmlns="http://www.w3.org/2000/svg" ${attrs}><rect width="1" height="1"/></svg>`;
+const root2 = (inner: string): string => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">${inner}</svg>`;
 const wrap = (inner: string, attrs = ''): string => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"${attrs}>${inner}</svg>`;
 
 function pngSize(file: string): { w: number; h: number } {
@@ -139,8 +141,17 @@ describe('AppIcons', () => {
 describe('validate', () => {
   it('accepts a plain icon, with comments, a declaration, single quotes and a local gradient', () => {
     expect(() => icons.validate(GOOD)).not.toThrow();
-    expect(() => icons.validate(`<?xml version="1.0" encoding="UTF-8"?>\n<!-- hi -->\n<svg\n  xmlns='http://www.w3.org/2000/svg'\n  viewBox = "0 0 512 512" >\n<defs><linearGradient id="g"><stop offset="0" stop-color="#fff"/></linearGradient></defs>\n<rect width="512" height="512" fill="url(#g)" style="fill:url( '#g' )"/></svg>\n`)).not.toThrow();
-    expect(() => icons.validate(wrap('<symbol id="a"><title>t</title><desc>d</desc></symbol><use href="#a"/><use xlink:href="#a" xmlns:xlink="http://www.w3.org/1999/xlink"/><g><mask id="m"><clipPath id="c"><ellipse rx="1" ry="1"/><line/><polyline/><polygon/><path d="M0 0"/></clipPath></mask><radialGradient id="r"><stop/></radialGradient></g>'))).not.toThrow();
+    expect(() => icons.validate(`<?xml version="1.0" encoding="UTF-8"?>\n<!-- hi -->\n<svg\n  xmlns='http://www.w3.org/2000/svg'\n  viewBox = "0 0 512 512" >\n<defs><linearGradient id="g"><stop offset="0" stop-color="#fff"/></linearGradient></defs>\n<rect width="512" height="512" fill="url(#g)"/></svg>\n`)).not.toThrow();
+  });
+
+  it('accepts every allowed element and attribute family', () => {
+    expect(() => icons.validate(wrap('<title>t</title><desc>d</desc><defs><radialGradient id="r" cx="50%" cy="50%" r="50%" fx="0.5" fy="0.5" gradientUnits="objectBoundingBox" spreadMethod="pad" gradientTransform="rotate(45)"><stop offset="25%" stop-color="rgb(1, 2, 3)" stop-opacity="0.5"/><stop offset="1" stop-color="rgba(1,2,3,.5)"/></radialGradient></defs>'
+      + '<g opacity="0.9" transform="translate(10 20) scale(2) rotate(10, 5, 5) skewX(3) skewY(4) matrix(1 0 0 1 0 0)"><ellipse cx="1" cy="1" rx="1" ry="1" fill="url(#r)"/><line x1="0" y1="0" x2="1" y2="1" stroke="red" stroke-width="12" stroke-linecap="round" stroke-miterlimit="4"/>'
+      + '<polyline points="0,0 5,5 10,0" fill="none" stroke="#fff8" stroke-linejoin="bevel" stroke-opacity="1"/><polygon points="0 0 5 5 10 0" fill="currentColor" fill-opacity=".5" fill-rule="evenodd"/><path d="M0 0l1.5-2e1H5V6C1 2 3 4 5 6s1 1 2 2Q1 1 2 2T3 3A1 1 0 0 1 4 4z" fill="none" stroke="none" stroke-width="0.001"/><circle id="c1" cx="0" cy="0" r="1"/></g>'))).not.toThrow();
+  });
+
+  it('a stroke-width may be tiny, because dash arrays are gone, but not above 1000', () => {
+    expect(() => icons.validate(wrap('<rect width="1" height="1" stroke="#000" stroke-width="0.0001"/>'))).not.toThrow();
   });
 
   const hostile: Array<[string, string]> = [
@@ -211,8 +222,8 @@ describe('validate', () => {
     ['filter inside a style attribute', wrap('<rect width="1" height="1" style="fill:red;FILTER:blur(900px)"/>')],
     ['stroke-dasharray', wrap('<rect width="1" height="1" stroke="#000" stroke-dasharray="0.0001"/>')],
     ['stroke-dasharray in a style attribute', wrap('<rect width="1" height="1" style="stroke-dasharray:0.0001"/>')],
-    ['a tiny stroke-width', wrap('<rect width="1" height="1" stroke-width="0.001"/>')],
-    ['a zero stroke-width in a style attribute', wrap('<rect width="1" height="1" style="stroke-width:0"/>')],
+    ['a huge stroke-width', wrap('<rect width="1" height="1" stroke-width="1001"/>')],
+    ['a negative stroke-width', wrap('<rect width="1" height="1" stroke-width="-1"/>')],
     ['a non-numeric stroke-width', wrap('<rect width="1" height="1" stroke-width="NaN"/>')],
     ['missing xmlns', '<svg viewBox="0 0 512 512"><rect width="1" height="1"/></svg>'],
     ['wrong xmlns', '<svg xmlns="http://example.com/svg" viewBox="0 0 512 512"><rect width="1" height="1"/></svg>'],
@@ -232,6 +243,46 @@ describe('validate', () => {
     ['a width with an exotic unit', root('viewBox="0 0 512 512" width="10em" height="10em"')],
     ['a width that is not finite', root('viewBox="0 0 512 512" width="1e999" height="1e999"')],
     ['only a width that is too large', root('viewBox="0 0 512 512" width="100001" height="100001"')],
+    // regression tests named after the attacks (none of them may reach the worker)
+    ['the 120-mask chain', root2(Array.from({ length: 120 }, (_, n) => `<mask id="m${n}"${n ? ` mask="url(#m${n - 1})"` : ''}><rect width="2000000" height="2000000"/></mask>`).join(''))],
+    ['the 120-clipPath chain', root2(Array.from({ length: 120 }, (_, n) => `<clipPath id="c${n}"${n ? ` clip-path="url(#c${n - 1})"` : ''}><rect width="2000000" height="2000000"/></clipPath>`).join(''))],
+    ['the 5-level use fan-out', root2('<defs><g id="l0"><rect width="1" height="1"/></g></defs>' + Array.from({ length: 5 }, (_, l) => `<g id="l${l + 1}">${`<use href="#l${l}"/>`.repeat(10)}</g>`).join('') + '<use href="#l5"/>')],
+    ['the huge-arc path', wrap('<path d="M0 0 a1e9 1 45 1 1 3 3 z"/>')],
+    ['a mask element', wrap('<mask id="m"><rect width="1" height="1"/></mask>')],
+    ['a clipPath element', wrap('<clipPath id="c"><rect width="1" height="1"/></clipPath>')],
+    ['a use element', wrap('<rect id="a" width="1" height="1"/><use href="#a"/>')],
+    ['a symbol element', wrap('<symbol id="s"><rect width="1" height="1"/></symbol>')],
+    ['a style attribute', wrap('<rect width="1" height="1" style="fill:red"/>')],
+    ['a class attribute', wrap('<rect width="1" height="1" class="a"/>')],
+    ['a mask attribute', wrap('<rect width="1" height="1" mask="url(#m)"/>')],
+    ['a clip-path attribute', wrap('<rect width="1" height="1" clip-path="url(#c)"/>')],
+    ['an href on a shape', wrap('<rect width="1" height="1" href="#a"/>')],
+    ['an xlink:href', wrap('<rect width="1" height="1" xlink:href="#a" xmlns:xlink="http://www.w3.org/1999/xlink"/>')],
+    ['an xml:space attribute', wrap('<rect width="1" height="1" xml:space="preserve"/>')],
+    ['preserveAspectRatio', wrap('<rect width="1" height="1" preserveAspectRatio="none"/>')],
+    ['a viewBox on a group', wrap('<g viewBox="0 0 1 1"/>')],
+    ['a coordinate of 1e9', wrap('<rect width="1e9" height="1"/>')],
+    ['a coordinate of NaN', wrap('<rect width="NaN" height="1"/>')],
+    ['a coordinate of Infinity', wrap('<rect width="Infinity" height="1"/>')],
+    ['a number of 21 characters', wrap('<rect width="0.00000000000000000001" height="1"/>')],
+    ['scale(1e30)', wrap('<g transform="scale(1e30)"/>')],
+    ['a transform that is not on the list', wrap('<g transform="translate(1) foo(2)"/>')],
+    ['a transform with too many arguments', wrap('<g transform="matrix(1 2 3)"/>')],
+    ['a huge number in points', wrap('<polygon points="0,0 1e9,1 2,2"/>')],
+    ['a letter that is not a path command', wrap('<path d="M0 0 X 1 1"/>')],
+    ['path data over 20000 characters', wrap(`<path d="M0 0${' L1 1'.repeat(5001)}"/>`)],
+    ['a huge number in path data', wrap('<path d="M0 0 L 1e9 1"/>')],
+    ['fill="url(#missing)"', wrap('<rect width="1" height="1" fill="url(#missing)"/>')],
+    ['fill="url(#aRect)"', wrap('<rect id="aRect" width="1" height="1"/><rect width="1" height="1" fill="url(#aRect)"/>')],
+    ['an external fill url', wrap('<rect width="1" height="1" fill="url(http://x.y/a)"/>')],
+    ['a stroke that is not a colour', wrap('<rect width="1" height="1" stroke="1 2 3"/>')],
+    ['a duplicated id', wrap('<rect id="a" width="1" height="1"/><rect id="a" width="1" height="1"/>')],
+    ['an opacity above 1', wrap('<rect width="1" height="1" opacity="1.5"/>')],
+    ['a miter limit above 100', wrap('<rect width="1" height="1" stroke-miterlimit="101"/>')],
+    ['an unknown spreadMethod', wrap('<linearGradient id="g" spreadMethod="foo"/>')],
+    ['a stop outside a gradient', wrap('<stop offset="0"/>')],
+    ['65 gradients', wrap(Array.from({ length: 65 }, (_, n) => `<linearGradient id="g${n}"/>`).join(''))],
+    ['33 stops', wrap(`<linearGradient id="g">${'<stop offset="0"/>'.repeat(33)}</linearGradient>`)],
     ['not svg at all', '<html><body>hi</body></html>'],
     ['an empty string', ''],
     ['plain text', 'just some text'],
@@ -260,18 +311,17 @@ describe('validate', () => {
     expect(() => icons.validate(wrap(`<!--${'ä'.repeat(40000)}-->`))).toThrow(/64 KiB/);
   });
 
-  it('refuses 2001 elements and accepts 2000', () => {
-    expect(() => icons.validate(wrap('<rect width="1" height="1"/>'.repeat(1999)))).not.toThrow();
-    const e = refusal(icons, wrap('<rect width="1" height="1"/>'.repeat(2000)));
+  it('refuses 501 elements and accepts 500', () => {
+    expect(() => icons.validate(wrap('<rect width="1" height="1"/>'.repeat(499)))).not.toThrow();
+    const e = refusal(icons, wrap('<rect width="1" height="1"/>'.repeat(500)));
     expect(e.reason).toBe('icon_invalid');
-    expect(e.message).toMatch(/2000/);
+    expect(e.message).toMatch(/500/);
   });
 
-  it('refuses nesting of 33 levels and accepts 32', () => {
+  it('refuses nesting of 17 levels and accepts 16', () => {
     const nested = (levels: number): string => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">${'<g>'.repeat(levels - 1)}${'</g>'.repeat(levels - 1)}</svg>`;
-    expect(() => icons.validate(nested(32))).not.toThrow();
-    const e = refusal(icons, nested(33));
-    expect(e.message).toMatch(/32/);
+    expect(() => icons.validate(nested(16))).not.toThrow();
+    expect(refusal(icons, nested(17)).message).toMatch(/16/);
   });
 
   it('a non-square icon is refused when rendered', async () => {
@@ -342,8 +392,8 @@ describe('rendering happens in a worker with a hard limit', () => {
 
   it('refuses more than 20 queued jobs with conflict', async () => {
     const i = make(tmp(), { timeoutMs: 60_000, workerSource: HANG });
-    const jobs = Array.from({ length: 21 }, (_, n) => i.set(`id-${n}`, GOOD, '#1f2a5c').catch((e: unknown) => e));
-    await expect(i.set('id-over', GOOD, '#1f2a5c')).rejects.toMatchObject({ code: 'conflict' });
+    const jobs = Array.from({ length: 21 }, (_, n) => i.set(`id-${n}`, GOOD, '#1f2a5c', `user-${n}`).catch((e: unknown) => e));
+    await expect(i.set('id-over', GOOD, '#1f2a5c', 'someone')).rejects.toMatchObject({ code: 'conflict' });
     i.close();
     const results = await Promise.all(jobs);
     expect(results.every((r) => r instanceof LagerError)).toBe(true);
@@ -354,6 +404,43 @@ describe('rendering happens in a worker with a hard limit', () => {
     await i.ready();
     i.close();
     await expect(i.set(ID, GOOD, '#1f2a5c')).rejects.toBeInstanceOf(LagerError);
+  });
+
+  it('a worker that reports failed is replaced, and the next normal render succeeds', async () => {
+    const fail = "const { parentPort } = require('node:worker_threads'); parentPort.postMessage({ type: 'ready' }); parentPort.on('message', (j) => parentPort.postMessage({ type: 'failed', id: j.id, message: 'unreachable' }));";
+    const i = make(tmp(), { workerSource: (n) => (n === 0 ? fail : ICON_WORKER_SOURCE) });
+    await expect(i.set(ID, GOOD, '#1f2a5c')).rejects.toMatchObject({ reason: 'icon_invalid' });
+    expect(i.workersStarted).toBe(1);
+    await i.set(ID, GOOD, '#1f2a5c');
+    expect(i.workersStarted).toBe(2);
+    expect(i.has(ID)).toBe(true);
+  });
+
+  it('the worker is replaced after the configured number of jobs', async () => {
+    const i = make(tmp(), { recycleAfter: 2 });
+    for (let n = 0; n < 5; n++) await i.set(`id-${n}`, GOOD, '#1f2a5c');
+    expect(i.jobsStarted).toBe(5);
+    expect(i.workersStarted).toBe(3);
+  });
+
+  it('identical concurrent requests for one app share a single job', async () => {
+    const i = make(tmp(), undefined);
+    await Promise.all(Array.from({ length: 10 }, () => i.set(ID, GOOD, '#1f2a5c')));
+    expect(i.jobsStarted).toBe(1);
+    await Promise.all(Array.from({ length: 10 }, () => i.setDefault('dddddddd-0000-0000-0000-000000000001', 'todo', '#1f2a5c')));
+    expect(i.jobsStarted).toBe(2);
+  });
+
+  it('one owner may have two jobs waiting; another owner is not affected', async () => {
+    const i = make(tmp(), { timeoutMs: 60_000, workerSource: HANG });
+    const catchAll = (p: Promise<void>): Promise<unknown> => p.catch((e: unknown) => e);
+    const running = catchAll(i.set('a-0', GOOD, '#1f2a5c', 'ann'));
+    await new Promise((r) => setTimeout(r, 100));
+    const waiting = [catchAll(i.set('a-1', GOOD, '#1f2a5c', 'ann')), catchAll(i.set('a-2', GOOD, '#1f2a5c', 'ann'))];
+    await expect(i.set('a-3', GOOD, '#1f2a5c', 'ann')).rejects.toMatchObject({ code: 'conflict' });
+    const bob = catchAll(i.set('b-0', GOOD, '#1f2a5c', 'bob'));
+    i.close();
+    await Promise.all([running, ...waiting, bob]);
   });
 });
 

@@ -13,7 +13,7 @@ import { sameOriginGuard } from './origin.js';
 import { signToken } from './tokens.js';
 import { hostUrl, instanceUrl } from '../config.js';
 import { normalizeHost } from '../platform/domains.js';
-import { ensureDefaultIcon } from '../mcp/tools.js';
+import { fallbackIconPath } from '../platform/fallback-icon.js';
 import type { PlatformExtension } from './app.js';
 
 // dist/assets after a build, ../../assets next to src when running from source.
@@ -111,17 +111,16 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
       res.status(404).type('text/plain').send('Not found');
       return;
     }
-    const app = await ensureDefaultIcon(core, found);
+    const app = found;
     if (req.params.version !== String(app.iconVersion)) {
       res.set('Cache-Control', 'no-cache').redirect(`/app-icons/${app.id}/${app.iconVersion}/${m[1]}.png`);
       return;
     }
-    const file = core.icons.png(app.id, Number(m[1]) as 64 | 192 | 512);
-    if (!file) {
-      res.status(404).type('text/plain').send('Not found');
-      return;
-    }
-    res.set({ 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'cross-origin' });
+    const size = Number(m[1]) as 64 | 192 | 512;
+    const own = core.icons.png(app.id, size);
+    // No drawn icon yet: the bundled one, for a short time. A public request never queues rendering.
+    const file = own ?? fallbackIconPath(size);
+    res.set({ 'Cache-Control': own ? 'public, max-age=31536000, immutable' : 'public, max-age=300', 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'cross-origin' });
     res.type('image/png').sendFile(file, { dotfiles: 'allow', cacheControl: false });
   });
 

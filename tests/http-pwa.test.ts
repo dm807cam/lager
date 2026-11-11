@@ -1,7 +1,7 @@
 import fs from 'node:fs';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
-import { deployWithIcon } from '../src/mcp/tools.js';
+import { backfillIcons, deployWithIcon } from '../src/mcp/tools.js';
 import { makeHarness, type Harness } from './support/http.js';
 
 let h: Harness | undefined;
@@ -124,14 +124,51 @@ describe('instance manifest and icons', () => {
     for (const url of ['/__lager/icon.svg', '/__lager/icon-512.svg', '/icon.svg']) expect((await request(h.app).get(url).set('Host', HOST)).status, url).toBe(404);
   });
 
-  it('an app deployed before icons existed gets its generated icon on first request', async () => {
+  it('an app without a drawn icon is served the bundled placeholder and nothing is queued', async () => {
     h = makeHarness();
     h.core.apps.deploy({ slug: 'todo', html: PAGE, userId: h.adminId });
-    expect(h.core.icons.has(h.core.apps.getApp('todo')!.id)).toBe(false);
-    const res = await get(h, HOST, '/__lager/icon-192.png');
-    expect(res.status).toBe(200);
-    expect(pngSize(res.body as Buffer)).toEqual({ w: 192, h: 192 });
-    expect(h.core.apps.getApp('todo')!.iconVersion).toBe(1);
+    const app = h.core.apps.getApp('todo')!;
+    expect(h.core.icons.has(app.id)).toBe(false);
+    const jobs = h.core.icons.jobsStarted;
+    for (const [url, size] of [['/__lager/icon-192.png', 192], ['/__lager/icon-180.png', 180], ['/__lager/icon-512.png', 512], ['/__lager/icon-512-maskable.png', 512], ['/apple-touch-icon.png', 180], ['/favicon.ico', 64]] as const) {
+      const res = await get(h, HOST, url);
+      expect(res.status, url).toBe(200);
+      expect(res.headers['cache-control'], url).toBe('no-cache');
+      expect(pngSize(res.body as Buffer)).toEqual({ w: size, h: size });
+    }
+    expect((await request(h.app).get('/__lager/manifest.webmanifest').set('Host', HOST)).status).toBe(200);
+    const platform = await get(h, h.host, `/app-icons/${app.id}/${app.iconVersion}/192.png`);
+    expect(platform.status).toBe(200);
+    expect(platform.headers['cache-control']).toBe('public, max-age=300');
+    expect(pngSize(platform.body as Buffer)).toEqual({ w: 192, h: 192 });
+    // Many anonymous visitors at once: still no drawing, no new version.
+    await Promise.all(Array.from({ length: 30 }, () => request(h!.app).get('/__lager/icon-192.png').set('Host', HOST)));
+    expect(h.core.icons.jobsStarted).toBe(jobs);
+    expect(h.core.icons.has(app.id)).toBe(false);
+    expect(h.core.apps.getApp('todo')!.iconVersion).toBe(app.iconVersion);
+  });
+
+  it('the background backfill draws the missing icons one at a time and stops after three failures', async () => {
+    h = makeHarness();
+    for (const slug of ['a1', 'a2', 'a3', 'a4', 'a5']) h.core.apps.deploy({ slug, html: PAGE, userId: h.adminId });
+    await backfillIcons(h.core);
+    for (const slug of ['a1', 'a2', 'a3', 'a4', 'a5']) {
+      const app = h.core.apps.getApp(slug)!;
+      expect(h.core.icons.has(app.id), slug).toBe(true);
+      expect(app.iconVersion, slug).toBe(1);
+    }
+    const broken = makeHarness();
+    try {
+      for (const slug of ['b1', 'b2', 'b3', 'b4', 'b5']) broken.core.apps.deploy({ slug, html: PAGE, userId: broken.adminId });
+      const spy = vi.spyOn(broken.core.icons, 'setDefault').mockRejectedValue(new Error('no'));
+      const log = vi.fn();
+      await backfillIcons(broken.core, log);
+      expect(spy).toHaveBeenCalledTimes(3);
+      expect(log).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.restoreAllMocks();
+      broken.core.close();
+    }
   });
 });
 
@@ -170,6 +207,13 @@ describe('head injection on the page', () => {
     expect(html).toContain('<link rel="manifest" href="/mine.json">');
     expect(html.match(/name="viewport"/g)).toHaveLength(1);
     expect(html).toContain('<script src="/__lager/runtime.js"></script>');
+  });
+
+  it('an artifact with its own icon link keeps it', async () => {
+    const h = await setup({ html: '<!doctype html><html><head><link rel="shortcut icon" href="/mine.ico"></head><body>x</body></html>' });
+    const html = await sessionPage(h);
+    expect(html).not.toContain('/__lager/icon-192.png');
+    expect(html).toContain('rel="manifest"');
   });
 
   it('title and colour cannot inject markup', async () => {

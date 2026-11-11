@@ -8,7 +8,7 @@ import { manageExtension } from './http/manage.js';
 import { staticExtension } from './http/static.js';
 import { createHttpApp } from './http/app.js';
 import { startTrashPurge } from './data/trash.js';
-import { ensureDefaultIcon } from './mcp/tools.js';
+import { backfillIcons } from './mcp/tools.js';
 import { mcpExtension } from './mcp/http.js';
 
 const config = loadConfig(process.env);
@@ -19,14 +19,11 @@ try {
   console.error(e instanceof Error ? e.message : e);
   process.exit(1);
 }
-// Load the renderer once, and give apps from before icons existed their generated icon.
-await core.icons.ready();
-for (const existing of core.apps.listAllApps()) {
-  try { await ensureDefaultIcon(core, existing); } catch (e) { console.error(`Could not draw an icon for "${existing.slug}":`, e); }
-}
 const app = createHttpApp(core, [staticExtension, authExtension, adminExtension, apiExtension, mcpExtension, dashboardExtension, manageExtension]);
 const server = app.listen(config.port, () => {
   console.log(`Lager listening on port ${config.port}, platform at ${config.publicUrl.origin}`);
+  // Apps from before icons existed get their generated icon in the background; public routes serve a bundled one meanwhile.
+  void backfillIcons(core);
 });
 
 const stopTrashPurge = startTrashPurge(config.dataDir, config.trashDays ?? 30);

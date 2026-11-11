@@ -76,5 +76,42 @@ describe('injectRuntime', () => {
     const noHead = 'y'.repeat(70 * 1024) + '<head>';
     expect(injectRuntime(noHead, META).startsWith(TAG)).toBe(true);
   });
+
+  it('a commented-out head, script or style content is never chosen', () => {
+    const out = injectRuntime('<!doctype html><!-- <head> --><html><head><title>x</title></head></html>', META);
+    expect(out.indexOf(TAG)).toBeGreaterThan(out.indexOf('--><html><head>'));
+    expect(out).toContain('<head>' + TAG);
+    const inScript = injectRuntime('<html><script>var a = "<head>";</script><head></head></html>', META);
+    expect(inScript).toContain('<head>' + TAG);
+    expect(injectRuntime('<html><style>/* <head> */</style><head></head>', META)).toContain('<head>' + TAG);
+    expect(injectRuntime('<![CDATA[ <head> ]]><head>', META)).toContain('<head>' + TAG);
+  });
+
+  it('a commented-out manifest link does not count, a real one does', () => {
+    expect(injectRuntime('<head><!-- <link rel="manifest" href="/a.json"> --></head>', META)).toContain('/__lager/manifest.webmanifest');
+    expect(injectRuntime('<head></head><body><link rel="manifest" href="/a.json"></body>', META)).toContain('/__lager/manifest.webmanifest');
+  });
+
+  it('a head beyond 64 KiB: tags go after <html> or the doctype, and the late head is not used', () => {
+    const pad = '<!-- ' + 'x'.repeat(70 * 1024) + ' -->';
+    expect(injectRuntime('<!doctype html><html>' + pad + '<head></head>', META).startsWith('<!doctype html><html>' + TAG)).toBe(true);
+    expect(injectRuntime('<!doctype html>' + pad + '<head></head>', META).startsWith('<!doctype html>' + TAG)).toBe(true);
+    expect(injectRuntime(pad + '<head></head>', META).startsWith(TAG)).toBe(true);
+  });
+
+  it('own links are found in a head that ends within 256 KiB, and ignored in a longer one', () => {
+    const own = '<link rel="manifest" href="/a.json">';
+    expect(injectRuntime('<head>' + '<!-- ' + 'x'.repeat(100 * 1024) + ' -->' + own + '</head>', META)).not.toContain('/__lager/manifest.webmanifest');
+    expect(injectRuntime('<head>' + '<!-- ' + 'x'.repeat(300 * 1024) + ' -->' + own + '</head>', META)).toContain('/__lager/manifest.webmanifest');
+  });
+
+  it('adversarial documents with quotes and unterminated tags stay fast', () => {
+    for (const piece of ['<a href="', "<a '", '<!-- ', '<![CDATA[', '<script>', '<style ', '<title>', '<a b=">', '<<<<', '<head"']) {
+      const html = piece.repeat(Math.ceil(500 * 1024 / piece.length));
+      const started = Date.now();
+      injectRuntime(html, META);
+      expect(Date.now() - started, piece).toBeLessThan(500);
+    }
+  });
 });
 

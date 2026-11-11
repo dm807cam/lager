@@ -88,19 +88,36 @@ export function describeDeploy(core: Core, user: User, r: DeployResult): object 
 }
 
 /** The app's generated icon, written when it has none yet (apps from before icons existed, or a first deploy). Returns the current row. */
-export async function ensureDefaultIcon(core: Core, app: App): Promise<App> {
+export async function ensureDefaultIcon(core: Core, app: App, owner?: string): Promise<App> {
   if (core.icons.has(app.id)) return app;
   await core.icons.ready();
-  await core.icons.setDefault(app.id, app.slug, app.themeColor);
+  await core.icons.setDefault(app.id, app.slug, app.themeColor, owner);
   return core.apps.bumpIconVersion(app.id);
 }
 
 /** Draws the stored icon again, e.g. because the theme colour behind the maskable variant changed. */
-async function redrawIcon(core: Core, app: App): Promise<App> {
+async function redrawIcon(core: Core, app: App, owner?: string): Promise<App> {
   const source = core.icons.source(app.id);
   if (source === null) return app;
-  await core.icons.set(app.id, source, app.themeColor);
+  await core.icons.set(app.id, source, app.themeColor, owner);
   return core.apps.bumpIconVersion(app.id);
+}
+
+/**
+ * Gives apps without a drawn icon their generated one, one at a time, in the background (after the server listens). Stops after
+ * three failures in a row and logs that once.
+ */
+export async function backfillIcons(core: Core, log: (message: string, error?: unknown) => void = console.error): Promise<void> {
+  let failures = 0;
+  for (const app of core.apps.listAllApps()) {
+    if (core.icons.has(app.id)) continue;
+    try {
+      await ensureDefaultIcon(core, app, 'backfill');
+      failures = 0;
+    } catch (e) {
+      if (++failures >= 3) { log('Stopped drawing icons for existing apps after three failures in a row:', e); return; }
+    }
+  }
 }
 
 const isIconInvalid = (e: unknown): e is LagerError => e instanceof LagerError && e.reason === 'icon_invalid';
@@ -128,7 +145,7 @@ export async function deployWithIcon(core: Core, user: User, input: {
     if (input.iconSvg !== undefined) {
       await core.icons.ready();
       try {
-        await core.icons.set(app.id, input.iconSvg, app.themeColor);
+        await core.icons.set(app.id, input.iconSvg, app.themeColor, user.id);
         app = core.apps.bumpIconVersion(app.id);
         drawn = true;
       } catch (e) {
@@ -137,10 +154,10 @@ export async function deployWithIcon(core: Core, user: User, input: {
       }
     }
     if (!core.icons.has(app.id)) {
-      app = await ensureDefaultIcon(core, app);
+      app = await ensureDefaultIcon(core, app, user.id);
       if (input.iconSvg === undefined) warnings.push(NO_ICON_WARNING);
     } else if (!drawn && prior && prior.themeColor !== app.themeColor) {
-      app = await redrawIcon(core, app);
+      app = await redrawIcon(core, app, user.id);
     }
   } catch (e) {
     console.error(e);
@@ -166,14 +183,14 @@ export async function updateAppLook(core: Core, user: User, app: App, input: { i
   if (input.iconSvg !== undefined) {
     await core.icons.ready();
     // Drawn before anything is stored: a refused icon changes nothing.
-    await core.icons.set(app.id, input.iconSvg, themeColor ?? app.themeColor);
+    await core.icons.set(app.id, input.iconSvg, themeColor ?? app.themeColor, user.id);
     fresh = core.apps.bumpIconVersion(app.id);
   }
   if (description !== undefined || themeColor !== undefined) {
     fresh = core.apps.setAppMeta(app.id, { description, themeColor }, user.id);
-    if (input.iconSvg === undefined && themeColor !== undefined && themeColor !== app.themeColor) fresh = await redrawIcon(core, fresh);
+    if (input.iconSvg === undefined && themeColor !== undefined && themeColor !== app.themeColor) fresh = await redrawIcon(core, fresh, user.id);
   }
-  fresh = await ensureDefaultIcon(core, fresh);
+  fresh = await ensureDefaultIcon(core, fresh, user.id);
   return appSummary(core, user, fresh);
 }
 

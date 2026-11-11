@@ -4,7 +4,7 @@ import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import type { App, Instance } from '../platform/apps.js';
 import { DEFAULT_THEME_COLOR, type ICON_SIZES } from '../platform/icons.js';
-import { ensureDefaultIcon } from '../mcp/tools.js';
+import { fallbackIconPath } from '../platform/fallback-icon.js';
 import { sendError } from './errors.js';
 
 const YEAR = 'public, max-age=31536000, immutable';
@@ -22,18 +22,19 @@ const themeOf = (app: App): string => (/^#[0-9a-f]{6}$/i.test(app.themeColor) ? 
 export function mountPwaRoutes(router: express.Router, core: Core): void {
   const notFound = (res: Response): void => sendError(res, new LagerError('not_found', 'Not found.'));
 
-  /** The app of the instance this host serves, with its icon in place, or null (answered with 404). */
+  /** The app of the instance this host serves, or null (answered with 404). */
   const resolve = async (res: Response): Promise<{ instance: Instance; app: App } | null> => {
     const instance = core.apps.getInstanceBySlug(res.locals.slug as string);
     const app = instance && !instance.disabled ? core.apps.getApp(instance.appId) : null;
     if (!instance || !app) { notFound(res); return null; }
-    return { instance, app: await ensureDefaultIcon(core, app) };
+    return { instance, app };
   };
 
   const png = (req: Request, res: Response, app: App, size: (typeof ICON_SIZES)[number], maskable = false): void => {
-    const file = core.icons.png(app.id, size, maskable);
-    if (!file) { notFound(res); return; }
-    const current = req.query.v === String(app.iconVersion);
+    const own = core.icons.png(app.id, size, maskable);
+    // No drawn icon yet: serve the bundled one. A public request never queues rendering.
+    const file = own ?? fallbackIconPath(size);
+    const current = own !== null && req.query.v === String(app.iconVersion);
     res.set({
       'Content-Type': 'image/png', 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'cross-origin',
       'Cache-Control': current ? YEAR : 'no-cache',
