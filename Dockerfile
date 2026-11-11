@@ -14,7 +14,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 ENV LAGER_DATA_DIR=/data LAGER_PORT=8080
-RUN mkdir -p /data && chown node:node /data
+RUN chmod -R a+rX /app/dist && mkdir -p /data && chown node:node /data
 VOLUME /data
 USER node
 EXPOSE 8080
