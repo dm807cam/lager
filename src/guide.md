@@ -1,44 +1,44 @@
-Lager ist ein selbst gehosteter Server für Claude-Artefakte: Jede App bekommt eine eigene Subdomain, nummerierte Versionen mit Zurückrollen und einen dauerhaften Datenspeicher pro Instanz.
-Baue das Artefakt genau wie ein Claude-Artefakt: eine einzige HTML-Datei, Skripte und Styles inline oder von einem CDN.
-Dauerhafte Daten nur über `const db = await claude.use("db")` – niemals `localStorage`, `sessionStorage` oder `indexedDB`, die gehen beim Gerätewechsel verloren.
-Angaben zum Nutzer liefert `await claude.use("user")`.
-Gib beim Deploy die `capabilities` an, die das Artefakt nutzt, meist `{"db": {}, "user": {}}`.
-Deploye mit dem Werkzeug `deploy_app` (slug, html, title, capabilities, note), statt ein claude.ai-Artefakt zu veröffentlichen.
-Hast du eine Shell und ein `LAGER_TOKEN`, lade die Datei direkt hoch, statt ihren Inhalt als Argument zu senden:
-`curl -X PUT -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: text/html" --data-binary @index.html "<Lager-Adresse>/api/apps/<slug>?title=...&capabilities=..."`
-Nenne dem Nutzer danach die zurückgegebene URL und jede Warnung aus `warnings`.
-Teilen: dieselbe Instanz mit `share_instance` (gemeinsame Daten) oder eine eigene Instanz mit `create_instance` (getrennte Daten); der Abschnitt „Teilen und Instanzen" in `get_guide` erklärt den Unterschied.
-Soll ein vorhandenes claude.ai-Artefakt hierher umziehen: erst `check_artifact`, dann dem Abschnitt „Bestehende Artefakte übernehmen“ in `get_guide` folgen.
-Einzelheiten (Regeln, Grenzen, Versionen, Instanzen, Daten vorbefüllen): Werkzeug `get_guide`.
+Lager is a self-hosted server for Claude artifacts: every app gets its own subdomain, numbered versions with rollback, and durable data storage per instance.
+Build the artifact exactly like a Claude artifact: a single HTML file, with scripts and styles inline or from a CDN.
+Keep durable data only through `const db = await claude.use("db")` – never `localStorage`, `sessionStorage` or `indexedDB`, which are lost when the device changes.
+Information about the user comes from `await claude.use("user")`.
+When deploying, pass the `capabilities` the artifact uses, usually `{"db": {}, "user": {}}`.
+Deploy with the `deploy_app` tool (slug, html, title, capabilities, note) instead of publishing a claude.ai artifact.
+If you have a shell and a `LAGER_TOKEN`, upload the file directly instead of sending its content as an argument:
+`curl -X PUT -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: text/html" --data-binary @index.html "<Lager-address>/api/apps/<slug>?title=...&capabilities=..."`
+Afterwards tell the user the URL that comes back and every warning in `warnings`.
+Sharing: the same instance with `share_instance` (shared data) or a separate instance with `create_instance` (separate data); the section "Sharing and instances" in `get_guide` explains the difference.
+To move an existing claude.ai artifact here: first `check_artifact`, then follow the section "Moving existing artifacts" in `get_guide`.
+Details (rules, limits, versions, instances, pre-filling data): the `get_guide` tool.
 
 ---
 
-# Lager – Anleitung für Claude
+# Lager – guide for Claude
 
 ## Capabilities
 
-`window.claude.use(name)` liefert ein Promise auf einen Namensraum oder `null` und wirft nie. Ein Namensraum erscheint nur, wenn die aktive Version ihn in `capabilities` deklariert; Namen, die Lager nicht kennt, liefern immer `null`. Deklariere deshalb jeden benutzten Namensraum und prüfe das Ergebnis auf `null`; `check_artifact` zeigt vor dem Deploy, was fehlt.
+`window.claude.use(name)` returns a promise for a namespace or `null` and never throws. A namespace appears only when the active version declares it in `capabilities`; names Lager does not know always return `null`. So declare every namespace you use and check the result for `null`; `check_artifact` shows what is missing before the deploy.
 
-- `db` (`{"db": {}}`, Regeln in `db.rules`) – Dokumenten-Datenbank nach dem Vertrag der Claude-Artefakte: `db.collection("tasks")`, `db.doc("tasks/t1")`, `get/set/update/delete/add`, `where/orderBy/limit`, `onSnapshot` (Live-Updates), `acquire` (Sperre mit Ablaufzeit). `null` ohne Zugriffsstufe auf die Instanz.
-- `user` (`{"user": {}}`) – `id`, `name`, `email` (nur mit `user: {scopes: ["email"]}`), `isOwner`, `canEdit`, `can`, `me`, `profiles`, `search`, `avatarUrl`. `search` braucht `user: {scopes: ["profile"]}`. Jedes Mitglied von `user` ist eine asynchrone Funktion, auch `name`: `const name = await user.name();`.
-- `permissions` (keine Deklaration nötig) – `state`, `request`, `manage`; zeigt die verfügbaren Namensräume als gewährt, alles andere als `unavailable`.
-- `assets` (`{"assets": {}}`) – `upload(blob, {type?})`, `list()`, `delete(idOrUrl)`; Dateien liegen unter `/_blob/<id>` und zählen zum Speicher der Instanz. Hochladen dürfen Verwalter und Besitzer; mit `{"assets": {"upload": "interact"}}` auch Mitwirkende. Sonst `null`. Grenzen: 20 MiB je Datei (CSS und JavaScript 16 MiB, SVG 2 MiB), höchstens 2000 Dateien je Instanz; erlaubt sind Bilder, Video, Audio, PDF, Schriften, CSS, JavaScript, CSV, Markdown, JSON und Text.
-- `room` (`{"room": {}}`, optional `{"topics": {"<Thema>": "interact"}}`) – flüchtige Räume mit Nachrichten und Anwesenheit, nur im Arbeitsspeicher, ohne Verlauf: `room.join(name)` liefert ein Raumobjekt mit `emit(topic, data)`, `on(topic, handler)`, `presence(patch)`, `peers()`, `onPeers`, `connected`, `onConnection`, `leave()`. Senden dürfen Verwalter und Besitzer auf jedem Thema, Mitwirkende nur auf Themen, die mit `"interact"` deklariert sind; Betrachter hören nur zu. `null` ohne Zugriffsstufe. Grenzen: Raumname `^[a-z0-9][a-z0-9_.-]{0,47}$`, Thema `^[a-z][a-z0-9_.-]{0,47}$`, Nachricht höchstens 4 KiB JSON und 8 Ebenen tief, Anwesenheit höchstens 2 KiB, höchstens 16 benannte Räume je Seite.
-- `artifact` oder `self` (gleichwertig; `{"artifact": {}}`, mit `{"publish": false}` gesperrt) – die Seite speichert sich selbst: `artifact.publish(html)` (ein vollständiges Dokument, das mit `<!doctype html` beginnt) legt eine neue Version an, die nur dieser Instanz gehört und sofort dort aktiv ist. Nur Verwalter und Besitzer dürfen speichern; höchstens 16 MiB, 60 Speicherungen pro Stunde und Instanz, die letzten 20 gespeicherten Versionen bleiben erhalten. `publish` mit mehreren Dateien sowie `edit`, `sync` und `metadata` lehnen mit einem Fehlercode ab. Bei `null` fehlt die Deklaration.
-- `downloads` (`{"downloads": {}}`) – `downloads.save({filename, data})` bietet dem Betrachter nach seiner Bestätigung eine Datei zum Speichern an. Erlaubte Endungen: gif, png, jpg, jpeg, webp, mp4, webm, mov, txt, json, md, docx, pptx, epub, csv, ttf, html, svg, pdf, xlsx, zip, fig; höchstens 50 MiB.
-- Alles andere (z. B. `sample`, `tts`) liefert `null`. Baue das Artefakt so, dass es ohne diese Namensräume funktioniert: prüfe auf `null` und blende die Funktion aus.
+- `db` (`{"db": {}}`, rules in `db.rules`) – document database following the contract of Claude artifacts: `db.collection("tasks")`, `db.doc("tasks/t1")`, `get/set/update/delete/add`, `where/orderBy/limit`, `onSnapshot` (live updates), `acquire` (lock with an expiry). `null` without an access level on the instance.
+- `user` (`{"user": {}}`) – `id`, `name`, `email` (only with `user: {scopes: ["email"]}`), `isOwner`, `canEdit`, `can`, `me`, `profiles`, `search`, `avatarUrl`. `search` needs `user: {scopes: ["profile"]}`. Every member of `user` is an asynchronous function, `name` too: `const name = await user.name();`.
+- `permissions` (no declaration needed) – `state`, `request`, `manage`; shows the available namespaces as granted and everything else as `unavailable`.
+- `assets` (`{"assets": {}}`) – `upload(blob, {type?})`, `list()`, `delete(idOrUrl)`; files live at `/_blob/<id>` and count toward the instance's storage. Managers and owners may upload; with `{"assets": {"upload": "interact"}}` contributors may too. Otherwise `null`. Limits: 20 MiB per file (CSS and JavaScript 16 MiB, SVG 2 MiB), at most 2000 files per instance; allowed are images, video, audio, PDF, fonts, CSS, JavaScript, CSV, Markdown, JSON and text.
+- `room` (`{"room": {}}`, optionally `{"topics": {"<topic>": "interact"}}`) – ephemeral rooms with messages and presence, in memory only, without history: `room.join(name)` returns a room object with `emit(topic, data)`, `on(topic, handler)`, `presence(patch)`, `peers()`, `onPeers`, `connected`, `onConnection`, `leave()`. Managers and owners may send on any topic, contributors only on topics declared with `"interact"`; viewers only listen. `null` without an access level. Limits: room name `^[a-z0-9][a-z0-9_.-]{0,47}$`, topic `^[a-z][a-z0-9_.-]{0,47}$`, message at most 4 KiB of JSON and 8 levels deep, presence at most 2 KiB, at most 16 named rooms per page.
+- `artifact` or `self` (equivalent; `{"artifact": {}}`, disabled with `{"publish": false}`) – the page saves itself: `artifact.publish(html)` (a complete document that starts with `<!doctype html`) creates a new version that belongs to this instance only and is active there at once. Only managers and owners may save; at most 16 MiB, 60 saves per hour and instance, the last 20 saved versions are kept. `publish` with several files, as well as `edit`, `sync` and `metadata`, reject with an error code. `null` means the declaration is missing.
+- `downloads` (`{"downloads": {}}`) – `downloads.save({filename, data})` offers the viewer a file to save after they confirm. Allowed extensions: gif, png, jpg, jpeg, webp, mp4, webm, mov, txt, json, md, docx, pptx, epub, csv, ttf, html, svg, pdf, xlsx, zip, fig; at most 50 MiB.
+- Everything else (for example `sample`, `tts`) returns `null`. Build the artifact so that it works without these namespaces: check for `null` and hide the feature.
 
-`window.claude.complete` gibt es nicht; der Aufruf lehnt mit einer Fehlermeldung ab.
+`window.claude.complete` does not exist; the call rejects with an error.
 
-## Zugriffsregeln der Datenbank
+## Database access rules
 
-Stufen: `view < interact < admin < owner`, dazu `self` (hält niemand für sich allein). Wer was erreicht: Besitzer der Instanz → `owner`; wer per Freigabe (`share_instance`, einzeln oder über eine Gruppe) eine Stufe hält → diese Stufe, bei mehreren Wegen die höchste; bei Sichtbarkeit `users` jeder Angemeldete → die Stufe für Angemeldete (Standard `interact`, siehe `list_shares`); bei `public` auch Anonyme → `view`.
+Levels: `view < interact < admin < owner`, plus `self` (nobody holds it by themselves). Who reaches what: the instance owner → `owner`; whoever holds a level through a share (`share_instance`, individually or via a group) → that level, the highest one if there are several ways; with visibility `users` every signed-in user → the level for signed-in users (default `interact`, see `list_shares`); with `public` anonymous visitors too → `view`.
 
-Ohne Regeln: lesen ab `view`, schreiben ab `interact`. Anonyme schreiben nie.
+Without rules: read from `view`, write from `interact`. Anonymous visitors never write.
 
-Regeln stehen in `capabilities.db.rules` als `{path, read?, write?}` und setzen Mindeststufen pro Pfad-Präfix. Die spezifischste passende Regel gewinnt. Das Segment `{self}` passt nur auf die ID des Betrachters.
+Rules live in `capabilities.db.rules` as `{path, read?, write?}` and set minimum levels per path prefix. The most specific matching rule wins. The segment `{self}` matches only the viewer's own ID.
 
-Beispiel Abstimmung – jeder darf nur seine eigene Stimme schreiben, der Besitzer alle:
+Example poll – everyone may write only their own vote, the owner may write all:
 
 ```json
 {"db": {"rules": [
@@ -47,7 +47,7 @@ Beispiel Abstimmung – jeder darf nur seine eigene Stimme schreiben, der Besitz
 ]}}
 ```
 
-Beispiel Abzeichnen – jeder zeichnet nur für sich selbst ab, auch der Besitzer kann nicht für andere unterschreiben:
+Example sign-off – everyone signs off only for themselves, and even the owner cannot sign for others:
 
 ```json
 {"db": {"rules": [
@@ -56,75 +56,74 @@ Beispiel Abzeichnen – jeder zeichnet nur für sich selbst ab, auch der Besitze
 ]}}
 ```
 
-`data/users/<id>/…` gehört immer nur Nutzer `<id>` – lesen und schreiben, auch nicht für den Besitzer, und Regeln können das nicht lockern. Dort liegen private Einstellungen und Entwürfe.
+`data/users/<id>/…` always belongs to user `<id>` alone – reading and writing, not even for the owner, and rules cannot loosen that. Private settings and drafts live there.
 
-## Grenzen
+## Limits
 
-- Pfad: höchstens 16 Segmente, jedes höchstens 200 Byte, keine leeren Segmente.
-- Dokumentpfade haben eine gerade Zahl von Segmenten (`tasks/t1`), Sammlungspfade eine ungerade (`tasks`).
-- Dokument: höchstens 256 KiB als JSON und 32 Ebenen tief; Zahlen müssen endlich sein.
-- Abfragen: höchstens 1000 Treffer.
-- HTML: höchstens 16 MiB.
-- Import: REST höchstens 50 MiB und 100000 Dokumente je Aufruf, `import_data` höchstens 1000 Dokumente; `export_data` liefert standardmäßig 200, höchstens 1000 Dokumente.
+- Path: at most 16 segments, each at most 200 bytes, no empty segments.
+- Document paths have an even number of segments (`tasks/t1`), collection paths an odd number (`tasks`).
+- Document: at most 256 KiB as JSON and 32 levels deep; numbers must be finite.
+- Queries: at most 1000 results.
+- HTML: at most 16 MiB.
+- Import: REST at most 50 MiB and 100000 documents per call, `import_data` at most 1000 documents; `export_data` returns 200 documents by default, at most 1000.
 
-## Versionen und Zurückrollen
+## Versions and rollback
 
-Jeder Deploy mit geändertem Inhalt oder geänderten Capabilities erzeugt die nächste Version und aktiviert sie auf allen Instanzen mit automatischer Aktualisierung. Gleicher Inhalt erzeugt keine neue Version (`createdVersion: false`).
+Every deploy with changed content or changed capabilities creates the next version and activates it on all instances with automatic updates. Identical content creates no new version (`createdVersion: false`).
 
-- `get_app {slug}` zeigt alle Versionen und Instanzen.
-- `activate_version {instance, version}` aktiviert eine beliebige vorhandene Version – zurück und vor.
-- Vor jedem Versionswechsel legt Lager automatisch einen Schnappschuss der Instanz-Daten an. `list_snapshots {instance}` zeigt sie, `restore_snapshot {instance, snapshot}` stellt einen wieder her (der aktuelle Stand wird vorher gesichert).
+- `get_app {slug}` shows all versions and instances.
+- `activate_version {instance, version}` activates any existing version – backwards and forwards.
+- Before every version change Lager automatically takes a snapshot of the instance's data. `list_snapshots {instance}` shows them, `restore_snapshot {instance, snapshot}` restores one (the current state is saved first).
 
-Daten gehören zur Instanz, nie zur Version: Ein neuer Code muss mit den vorhandenen Daten zurechtkommen. Ändere Datenformate abwärtsverträglich (fehlende Felder mit Standardwerten lesen).
+Data belongs to the instance, never to the version: new code must cope with the existing data. Change data formats in a backward-compatible way (read missing fields with default values).
 
-## Teilen und Instanzen
+## Sharing and instances
 
-Der erste Deploy legt die Standard-Instanz mit dem Slug der App an (Sichtbarkeit `private`). Instanz-Slugs sind global eindeutig. Es gibt zwei Arten zu teilen; wähle nach der Frage, ob die Beteiligten dieselben Daten sehen sollen.
+The first deploy creates the default instance with the slug of the app (visibility `private`). Instance slugs are globally unique. There are two ways to share; choose by asking whether the people involved should see the same data.
 
-**Dieselbe Instanz – gemeinsame Daten** (Abstimmung, Familienliste, Teamboard):
-- `share_instance {instance, email? | group?, level}` gibt einem Konto (E-Mail) oder einer Gruppe (Name) Zugriff oder ändert die Stufe; genau eines von `email` und `group`. `unshare_instance {instance, email? | group?}` nimmt den Zugriff zurück, `list_shares {instance}` zeigt Freigaben, `visibility` und `usersLevel`.
-- Stufen: `view` (Betrachter: ansehen), `interact` (Mitwirkender: auch Daten schreiben, soweit die Regeln der App es erlauben), `admin` (Verwalter: zusätzlich Freigaben, Versionen, Sichtbarkeit und Daten verwalten). `owner` (Besitzer) kann nicht vergeben werden; er legt auch die Instanz an und löscht sie.
-- `set_visibility {instance, visibility}`: `private` (nur Besitzer und Freigegebene), `users` (alle Angemeldeten) oder `public` (ohne Anmeldung).
-- Das Konto muss existieren. Wer noch keins hat, muss vom Administrator eingeladen werden; sage das dem Nutzer, statt eine Freigabe zu erfinden.
+**The same instance – shared data** (poll, family list, team board):
+- `share_instance {instance, email? | group?, level}` gives an account (email) or a group (name) access or changes the level; exactly one of `email` and `group`. `unshare_instance {instance, email? | group?}` takes the access back, `list_shares {instance}` shows shares, `visibility` and `usersLevel`.
+- Levels: `view` (viewer: look), `interact` (contributor: also write data, as far as the app's rules allow), `admin` (manager: additionally manage shares, versions, visibility and data). `owner` cannot be granted; the owner also creates and deletes the instance.
+- `set_visibility {instance, visibility}`: `private` (only the owner and people it is shared with), `users` (all signed-in users) or `public` (no sign-in).
+- The account must exist. Whoever has none must be invited by the administrator; tell the user that instead of inventing a share.
 
-**Eigene Instanz – getrennte Daten** (jeder soll seine eigene Kopie, etwa ein Trainingstagebuch pro Person):
-- `create_instance {app, slug, visibility?, owner_email?}` legt eine weitere Instanz mit eigener Subdomain und eigenen Daten an. Mit `owner_email` gehört sie dem Konto mit dieser Adresse (nur, wer die App deployen darf); ohne gehört sie dem Aufrufer. Für Nutzer ohne Deploy-Recht geht es nur, wenn der Besitzer der App Selbstbedienung erlaubt hat; sonst antwortet Lager mit `forbidden`.
-- Per Shell: `GET|PUT|DELETE /api/instances/<slug>/grants` (Körper `{email|group, level}`) und `POST /api/apps/<slug>/instances` (Körper `{slug, ownerEmail?, visibility?}`) mit demselben Bearer-Token.
+**A separate instance – separate data** (everyone should have their own copy, such as a training diary per person):
+- `create_instance {app, slug, visibility?, owner_email?}` creates another instance with its own subdomain and its own data. With `owner_email` it belongs to the account with that address (only for those who may deploy the app); without, it belongs to the caller. For users without deploy rights it works only if the app's owner has allowed self-service; otherwise Lager answers `forbidden`.
+- From a shell: `GET|PUT|DELETE /api/instances/<slug>/grants` (body `{email|group, level}`) and `POST /api/apps/<slug>/instances` (body `{slug, ownerEmail?, visibility?}`) with the same bearer token.
 
-**Eigene Domain:** `add_domain {instance, host}` und `remove_domain {instance, host}` lassen eine Instanz zusätzlich unter einem eigenen Hostnamen antworten (per Shell `GET|PUT|DELETE /api/instances/<slug>/domains`, Körper `{host}`). Das dürfen Administratoren, und Publisher, die die Instanz verwalten, nur wenn der Administrator es erlaubt hat; sonst antwortet Lager mit `forbidden`. DNS, Proxy-Eintrag und Zertifikat richtet der Nutzer selbst ein, Lager prüft nicht, wem die Domain gehört. Die erste URL bleibt die Adresse unter der Apps-Domain.
+**Custom domain:** `add_domain {instance, host}` and `remove_domain {instance, host}` let an instance also answer on a hostname of its own (from a shell `GET|PUT|DELETE /api/instances/<slug>/domains`, body `{host}`). Administrators may do this, and publishers who manage the instance only if the administrator has allowed it; otherwise Lager answers `forbidden`. The user sets up DNS, proxy entry and certificate themselves; Lager does not check who owns the domain. The first URL stays the address under the apps domain.
 
-Der Speicher einer Instanz ist begrenzt (Standard 50 MB). Ist er voll, lehnen Schreibzugriffe mit dem Fehlercode `quota_exceeded` ab; dann Daten löschen oder dem Nutzer Bescheid geben. `db_write` führt die Operationen nacheinander aus; scheitert eine mittendrin, nennt die Fehlermeldung, wie viele vorher schon angewendet wurden.
+An instance's storage is limited (default 50 MB). When it is full, writes are rejected with the error code `quota_exceeded`; then delete data or tell the user. `db_write` runs the operations one after another; if one fails midway, the error message says how many were applied before.
 
-`user.search(q)` im Artefakt (Personenwahl, `@`-Erwähnung) findet Besitzer und Freigegebene der eigenen Instanz und braucht `user: {scopes: ["profile"]}`; höchstens 8 Treffer, bei fehlendem Scope oder ohne Anmeldung `[]`. Speichere nur `id`, nie den Namen; E-Mail-Adressen kommen nur mit zusätzlichem Scope `"email"`.
+`user.search(q)` in the artifact (person picker, `@` mention) finds the owner and the people the instance is shared with, and needs `user: {scopes: ["profile"]}`; at most 8 results, `[]` without the scope or without a sign-in. Store only the `id`, never the name; email addresses come only with the additional scope `"email"`.
 
-## Daten vorbefüllen
+## Pre-filling data
 
-Schreibe Start- und Beispieldaten nicht fest ins HTML, sondern lege sie nach dem Deploy mit `db_write` an:
+Do not hard-code starter and sample data into the HTML; create it after the deploy with `db_write`:
 
 ```json
 {"instance": "todo", "ops": [
-  {"op": "set", "path": "tasks/t1", "data": {"title": "Erste Aufgabe", "done": false}},
-  {"op": "update", "path": "settings/main", "data": {"theme": "hell"}}
+  {"op": "set", "path": "tasks/t1", "data": {"title": "First task", "done": false}},
+  {"op": "update", "path": "settings/main", "data": {"theme": "light"}}
 ]}
 ```
 
-Mehr Dokumente auf einmal (Umzug, Sicherung) schreibt `import_data`, siehe unten. Höchstens 100 Operationen pro Aufruf (`set` ersetzt, `update` führt zusammen, `delete` löscht). `db_read {instance, path, where?, orderBy?, limit?}` liest ein Dokument (`{doc}`) oder eine Sammlung (`{docs}`). Beide handeln mit deiner eigenen Stufe auf der Instanz: der Besitzer ohne die Regeln der App, ein Verwalter nach den Regeln der App (Regeln, die `owner` verlangen, bleiben ihm verschlossen). Private Bereiche anderer Nutzer bleiben immer gesperrt.
+`import_data` writes more documents at once (migration, backup), see below. At most 100 operations per call (`set` replaces, `update` merges, `delete` deletes). `db_read {instance, path, where?, orderBy?, limit?}` reads a document (`{doc}`) or a collection (`{docs}`). Both act with your own level on the instance: the owner without the app's rules, a manager according to the app's rules (rules that require `owner` stay closed to them). Other users' private areas always stay locked.
 
-## Kompatibilität mit `window.storage`
+## Compatibility with `window.storage`
 
-Artefakte aus dem claude.ai-Chat, die `window.storage.get/set/delete/list(key | prefix, shared)` benutzen, laufen weiter: Mit `shared = true` landen die Werte in der Sammlung `kv` (für alle Betrachter der Instanz), sonst unter `data/users/<id>/storage/kv/<key>` (nur für den Betrachter); geteilte Werte liegen unter `kv/<key>`. Werte sind Zeichenketten. Ein gelöschtes Dokument nimmt seine Unter-Sammlungen nicht mit: `delete` entfernt nur das Dokument selbst. Für neue Artefakte ist `claude.use("db")` die bessere Wahl.
+Artifacts from the claude.ai chat that use `window.storage.get/set/delete/list(key | prefix, shared)` keep working: with `shared = true` the values land in the collection `kv` (for all viewers of the instance), otherwise under `data/users/<id>/storage/kv/<key>` (for the viewer only); shared values live under `kv/<key>`. Values are strings. Deleting a document does not take its sub-collections with it: `delete` removes only the document itself. For new artifacts `claude.use("db")` is the better choice.
 
-## Bestehende Artefakte übernehmen
+## Moving existing artifacts
 
-Ein vorhandenes Artefakt (aus dem claude.ai-Chat oder von anderswo) zieht so um:
+An existing artifact (from the claude.ai chat or from elsewhere) moves like this:
 
-1. **Quelltext lesen.** Hole das vollständige HTML des bestehenden Artefakts. Bei einer früheren Lager-Version lädt der Nutzer es unter „HTML“ in der Versionsliste herunter (`GET /api/apps/<slug>/versions/<n>`).
-2. **Prüfen.** `check_artifact {html, capabilities?}` (oder `POST /api/check`) nennt `used` (benutzte Namensräume), `unsupported` (Namensräume, die Lager nicht bietet und die `null` liefern), `undeclared` (benutzt, aber nicht deklariert) und `warnings` (Browser-Speicher, `claude.complete`).
-3. **Ersetzen.** Baue alles um, was `unsupported` nennt: prüfe auf `null` und blende die Funktion aus oder ersetze sie. `localStorage`, `sessionStorage` und `indexedDB` wechseln zu `claude.use("db")`; `window.storage` läuft unverändert weiter (siehe unten), `claude.complete` gibt es nicht. Sage dem Nutzer, welche Funktionen dadurch entfallen.
-4. **Deklarieren.** Trage jeden benutzten Namensraum in `capabilities` ein (`db`, `user`, `assets`, `room`, `artifact`, `downloads`; `permissions` braucht nichts), samt Regeln und Scopes. Prüfe noch einmal mit `check_artifact`, bis `undeclared` und `unsupported` leer sind.
-5. **Deployen.** `deploy_app`; nenne dem Nutzer die URL und alle Warnungen.
-6. **Daten übernehmen.** Lies die Daten mit den Mitteln der alten Umgebung aus und schreibe sie mit `import_data {instance, docs: [{path, data}]}` (höchstens 1000 Dokumente je Aufruf, in Teilen wiederholbar; vorhandene Dokumente werden ersetzt). Per Shell geht `POST /api/instances/<slug>/import` mit Körper `application/x-ndjson` (eine Zeile `{"path":…,"data":…}` je Dokument) oder einem JSON-Array. Lebt der Bestand nur im Browser des Nutzers, baue in das alte Artefakt einmalig eine Schaltfläche „Daten exportieren“, die den Bestand als Datei speichert, und importiere diese Datei über die REST-Schnittstelle. Ein Export aus Lager: `export_data {instance, prefix?, limit?}` oder `GET /api/instances/<slug>/export` (NDJSON, auch als Link „Daten exportieren (NDJSON)“ auf der Instanzseite).
-7. **Prüfen.** Öffne die Instanz, lies mit `db_read` oder `export_data` stichprobenartig nach und bitte den Nutzer, die wichtigsten Abläufe auszuprobieren.
+1. **Read the source.** Get the complete HTML of the existing artifact. For an earlier Lager version the user downloads it under "HTML" in the version list (`GET /api/apps/<slug>/versions/<n>`).
+2. **Check.** `check_artifact {html, capabilities?}` (or `POST /api/check`) names `used` (namespaces used), `unsupported` (namespaces Lager does not offer, which return `null`), `undeclared` (used but not declared) and `warnings` (browser storage, `claude.complete`).
+3. **Replace.** Rework everything `unsupported` names: check for `null` and hide the feature or replace it. `localStorage`, `sessionStorage` and `indexedDB` switch to `claude.use("db")`; `window.storage` keeps working unchanged (see above), `claude.complete` does not exist. Tell the user which features are lost as a result.
+4. **Declare.** Enter every namespace used in `capabilities` (`db`, `user`, `assets`, `room`, `artifact`, `downloads`; `permissions` needs nothing), with rules and scopes. Check again with `check_artifact` until `undeclared` and `unsupported` are empty.
+5. **Deploy.** `deploy_app`; tell the user the URL and all warnings.
+6. **Transfer the data.** Read the data with the means of the old environment and write it with `import_data {instance, docs: [{path, data}]}` (at most 1000 documents per call, repeatable in parts; existing documents are replaced). From a shell, `POST /api/instances/<slug>/import` works with a body of `application/x-ndjson` (one line `{"path":…,"data":…}` per document) or a JSON array. If the data lives only in the user's browser, build a one-off "Export data" button into the old artifact that saves the data as a file, and import that file through the REST interface. An export from Lager: `export_data {instance, prefix?, limit?}` or `GET /api/instances/<slug>/export` (NDJSON, also as the link "Export data (NDJSON)" on the instance page).
+7. **Verify.** Open the instance, spot-check with `db_read` or `export_data`, and ask the user to try the most important workflows.
 
-Grenzen: Private Bereiche anderer Nutzer (`data/users/<id>/…`) lassen sich weder importieren noch exportieren; geschrieben werden kann nur der eigene. Hochgeladene Dateien wandern nicht mit: lade sie über die App (`assets.upload`) erneut hoch und ersetze die Verweise. Ein Import ersetzt Dokumente mit gleichem Pfad, löscht aber keine anderen. Vor einem Import legt Lager keinen Schnappschuss an; sichere vorhandene Daten bei Bedarf vorher mit `export_data`.
-
+Limits: other users' private areas (`data/users/<id>/…`) can be neither imported nor exported; only your own can be written. Uploaded files do not move with it: upload them again through the app (`assets.upload`) and replace the references. An import replaces documents with the same path but deletes no others. Lager takes no snapshot before an import; back up existing data first with `export_data` if needed.

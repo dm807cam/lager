@@ -37,7 +37,7 @@ describe('examples/notes.html with the real runtime', () => {
     (0, eval)(script);
     const who = document.getElementById('who')!;
     for (let i = 0; i < 50 && !who.textContent; i++) await new Promise((r) => setTimeout(r, 5));
-    expect(who.textContent).toBe('Angemeldet als Ada Lovelace');
+    expect(who.textContent).toBe('Signed in as Ada Lovelace');
     expect(who.textContent).not.toContain('function');
   });
 });

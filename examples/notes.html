@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Notizen</title>
+<title>Notes</title>
 <style>
   :root { color-scheme: light dark; }
   body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; }
@@ -15,10 +15,10 @@
 </style>
 </head>
 <body>
-<h1>Notizen</h1>
+<h1>Notes</h1>
 <p id="who" class="muted"></p>
-<p id="nodb" class="muted" hidden>Kein Speicher verfügbar: Notizen werden nicht gesichert.</p>
-<form id="add"><input id="text" placeholder="Neue Notiz" required><button>Hinzufügen</button></form>
+<p id="nodb" class="muted" hidden>No storage available: notes are not saved.</p>
+<form id="add"><input id="text" placeholder="New note" required><button>Add</button></form>
 <ul id="notes"></ul>
 <script>
 (async () => {
@@ -26,7 +26,7 @@
   const user = await claude.use("user");
   // Every member of the user namespace is an async function.
   const name = user ? await user.name() : "";
-  if (name) document.getElementById("who").textContent = "Angemeldet als " + name;
+  if (name) document.getElementById("who").textContent = "Signed in as " + name;
   const list = document.getElementById("notes");
 
   function render(docs) {
@@ -35,7 +35,7 @@
       const span = document.createElement("span");
       span.textContent = d.data().text;
       const del = document.createElement("button");
-      del.textContent = "Löschen";
+      del.textContent = "Delete";
       del.onclick = () => db.doc("notes/" + d.id).delete();
       li.append(span, del);
       return li;
