@@ -4,6 +4,7 @@ import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import { MIN_PASSWORD_LENGTH, type User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
+import { sameOriginGuard } from './origin.js';
 import { esc, page, resendForm, signedInHeader } from './pages.js';
 import { RateLimiter } from './ratelimit.js';
 import { csrfToken, csrfValid, issueSession } from './session.js';
@@ -47,6 +48,12 @@ ${errorLine(error)}
 <button type="submit">Passwort speichern</button>
 </form>`);
 
+const verifyForm = (token: string): string => page('E-Mail-Adresse bestätigen', `<h1>E-Mail-Adresse bestätigen</h1>
+<form method="post" action="/verify">
+<input type="hidden" name="token" value="${esc(token)}">
+<button type="submit">E-Mail-Adresse bestätigen</button>
+</form>`);
+
 const invalidLinkPage = (): string => notice('Link ungültig', INVALID_LINK, resendForm());
 
 function accountPage(core: Core, user: User, msg: { ok?: string; error?: string } = {}): string {
@@ -85,20 +92,15 @@ export const authExtension: PlatformExtension = (router, core) => {
   const ipOf = (req: Request): string => req.ip ?? 'unknown';
   const html = (res: Response, status: number, body: string): void => { res.status(status).type('html').send(body); };
 
-  /** Pages here carry one-time links: never cache them and never leak the URL as a referrer. */
+  /**
+   * Pages here carry one-time links: never cache them. `same-origin` keeps the URL (and its token) from leaving the origin
+   * while letting browsers send the real Origin on the form posts that `sameOrigin` checks (`no-referrer` would turn it into `null`).
+   */
   const hardened: RequestHandler = (_req, res, next) => {
-    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'same-origin' });
     next();
   };
-  /** Forms without a session cannot carry a CSRF token; a cross-origin browser post is refused instead. */
-  const sameOrigin: RequestHandler = (req, res, next) => {
-    const o = req.headers.origin;
-    if (o !== undefined && o !== origin) {
-      html(res, 403, notice('Das hat nicht geklappt', 'Die Anfrage kam von einer fremden Seite und wurde abgelehnt.'));
-      return;
-    }
-    next();
-  };
+  const sameOrigin = sameOriginGuard(origin);
   const publicForm = [hardened, formBody, sameOrigin];
 
   const tooMany = (res: Response): void => html(res, 429, notice('Zu viele Anfragen', 'Bitte warte eine Weile und versuche es später erneut.'));
@@ -149,16 +151,23 @@ export const authExtension: PlatformExtension = (router, core) => {
 
   // --- e-mail verification ---
 
+  // Showing the form consumes nothing: a link opened by a mail scanner or by the wrong person verifies and signs in nobody.
   router.get('/verify', hardened, (req, res) => {
+    const token = typeof req.query.token === 'string' ? req.query.token.slice(0, MAX_TOKEN) : '';
+    if (!core.accounts.checkVerificationToken(token)) { html(res, 400, invalidLinkPage()); return; }
+    html(res, 200, verifyForm(token));
+  });
+
+  router.post('/verify', ...publicForm, (req, res) => {
     try {
-      const user = core.accounts.verifyEmail(typeof req.query.token === 'string' ? req.query.token : '');
-      if (user.disabled) { res.redirect('/login'); return; }
-      issueSession(core, res, user);
-      res.redirect('/');
+      core.accounts.verifyEmail(field(req, 'token', MAX_TOKEN));
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
       html(res, 400, invalidLinkPage());
+      return;
     }
+    // No session is issued: whoever clicked the link proved the mailbox, not the password.
+    res.redirect('/login?verified=1');
   });
 
   router.post('/verify/resend', ...publicForm, async (req, res) => {

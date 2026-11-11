@@ -7,6 +7,7 @@ import { csrfValid, issueSession, sessionUser } from './session.js';
 import { disabledPage, forbiddenPage, loginPage, notFoundPage, page } from './pages.js';
 import { LagerError } from '../errors.js';
 import { safeReturnPath, sendError } from './errors.js';
+import { sameOriginGuard } from './origin.js';
 import { signToken } from './tokens.js';
 import { instanceUrl } from '../config.js';
 import type { PlatformExtension } from './app.js';
@@ -77,16 +78,25 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
     res.set('Cache-Control', 'public, max-age=604800').type('image/webp').send(ICON);
   });
 
-  router.get('/login', (req, res) => {
-    res.set('Cache-Control', 'no-store').type('html').send(loginPage(safeReturnPath(req.query.return), undefined, { registration: core.settings.registration }));
+  // `same-origin` lets browsers send the real Origin on the login post (`no-referrer` would make it `null`, which the guard refuses).
+  const loginHeaders: express.RequestHandler = (_req, res, next) => {
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'same-origin' });
+    next();
+  };
+
+  router.get('/login', loginHeaders, (req, res) => {
+    res.type('html').send(loginPage(safeReturnPath(req.query.return), undefined, {
+      registration: core.settings.registration,
+      notice: req.query.verified === '1' ? 'E-Mail-Adresse bestätigt. Du kannst dich jetzt anmelden.' : undefined,
+    }));
   });
 
-  router.post('/login', express.urlencoded({ extended: false, limit: '10kb' }), (req, res) => {
+  // Artifact code on an instance origin is same-site and could post this form to sign a visitor into another account.
+  router.post('/login', loginHeaders, sameOriginGuard(config.publicUrl.origin), express.urlencoded({ extended: false, limit: '10kb' }), (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const ret = safeReturnPath(body.return);
     const ip = req.ip ?? 'unknown';
     const account = typeof body.email === 'string' ? body.email.trim().toLowerCase().slice(0, 254) : '';
-    res.set('Cache-Control', 'no-store');
     if (limiter.blocked(ip, account)) {
       res.status(429).type('html').send(loginPage(ret, 'Zu viele fehlgeschlagene Versuche. Bitte warte einige Minuten.', { registration: core.settings.registration }));
       return;

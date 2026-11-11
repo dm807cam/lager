@@ -35,25 +35,64 @@ function setup(opts: { mode?: 'open' | 'invite' | 'closed' } = {}) {
     post('/register', { name: 'Ann', email, password: PASSWORD, ...extra });
   const registerVerified = async (email = 'ann@example.org'): Promise<string> => {
     await register(email);
-    const res = await get(linkOf());
-    return cookieOf(res)!;
+    await post('/verify', { token: new URL(linkOf(), 'http://x').searchParams.get('token')! });
+    return await h!.login(email, PASSWORD);
   };
   return { h, mailer, post, get, linkOf, register, registerVerified };
 }
 
 describe('registration and verification', () => {
-  it('register → mail → verify → signed in', async () => {
+  it('register → mail → verify → sign in', async () => {
     const s = setup();
     const res = await s.register();
     expect(res.status).toBe(200);
     expect(res.text).toContain('Wir haben dir eine E-Mail geschickt. Bestätige deine Adresse über den Link darin.');
     expect(s.mailer.sent).toHaveLength(1);
-    const verify = await s.get(s.linkOf());
+    expect(s.mailer.sent[0].text).toContain('Wenn du dich nicht bei Lager registriert hast, ignoriere diese E-Mail.');
+    const link = s.linkOf();
+    const token = new URL(link, 'http://x').searchParams.get('token')!;
+    // Opening the link only shows a form: nothing is consumed and nobody is signed in.
+    const shown = await s.get(link);
+    expect(shown.status).toBe(200);
+    expect(shown.text).toContain('E-Mail-Adresse bestätigen');
+    expect(shown.text).toContain('action="/verify"');
+    expect(cookieOf(shown)).toBeUndefined();
+    expect(h!.core.users.getByEmail('ann@example.org')!.verified).toBe(false);
+    expect((await s.get(link)).status).toBe(200);
+    const verify = await s.post('/verify', { token });
     expect(verify.status).toBe(302);
-    expect(verify.headers.location).toBe('/');
-    const cookie = cookieOf(verify)!;
-    expect(cookie).toBeTruthy();
+    expect(verify.headers.location).toBe('/login?verified=1');
+    expect(([] as string[]).concat(verify.headers['set-cookie'] ?? [])).toEqual([]);
+    expect(h!.core.users.getByEmail('ann@example.org')!.verified).toBe(true);
+    expect((await s.get('/login?verified=1')).text).toContain('E-Mail-Adresse bestätigt. Du kannst dich jetzt anmelden.');
+    const cookie = await h!.login('ann@example.org', PASSWORD);
     expect((await s.get('/', cookie)).status).toBe(200);
+    // The link is spent now.
+    expect((await s.get(link)).text).toContain('Der Link ist ungültig oder abgelaufen.');
+    expect((await s.post('/verify', { token })).status).toBe(400);
+  });
+
+  it('verify refuses a reset token and cross-origin posts', async () => {
+    const s = setup();
+    await s.registerVerified();
+    const reset = new URL(h!.core.accounts.createResetLink(h!.core.users.getByEmail('ann@example.org')!.id)).searchParams.get('token')!;
+    const res = await s.post('/verify', { token: reset });
+    expect(res.status).toBe(400);
+    expect(res.text).toContain('Der Link ist ungültig oder abgelaufen.');
+    expect((await s.get(`/verify?token=${reset}`)).status).toBe(400);
+    expect((await s.post('/verify', { token: reset }, { origin: 'https://evil.example' })).status).toBe(403);
+  });
+
+  it('no mail contains the registered name', async () => {
+    const s = setup();
+    await s.post('/register', { name: 'Mallory-Evil-Name', email: 'v@example.org', password: PASSWORD });
+    await s.post('/forgot', { email: 'v@example.org' });
+    await h!.core.accounts.createInvite({ email: 'i@example.org', role: 'user', createdBy: h!.adminId });
+    expect(s.mailer.sent.length).toBeGreaterThanOrEqual(3);
+    for (const m of s.mailer.sent) {
+      expect(m.text).not.toContain('Mallory');
+      expect(m.subject).not.toContain('Mallory');
+    }
   });
 
   it('a bad verify link offers a resend form that always answers the same', async () => {
@@ -148,6 +187,66 @@ describe('registration and verification', () => {
     expect(h!.core.users.getByEmail('a@example.org')).toBeNull();
     const same = await s.post('/forgot', { email: 'a@example.org' }, { origin: 'http://lager.localhost:8080' });
     expect(same.status).toBe(200);
+  });
+
+  it('every public form page is served with Referrer-Policy same-origin', async () => {
+    const s = setup();
+    await s.register();
+    const verifyLink = s.linkOf();
+    const pages = ['/register', '/forgot', '/reset?token=x', '/verify?token=nope', verifyLink, '/login'];
+    for (const path of pages) {
+      const res = await s.get(path);
+      expect(res.headers['referrer-policy'], path).toBe('same-origin');
+      expect(res.headers['cache-control'], path).toBe('no-store');
+    }
+    // Pages answering a form post (which re-render a form) carry it too.
+    expect((await s.post('/register', { name: 'A', email: 'z@example.org', password: 'x' })).headers['referrer-policy']).toBe('same-origin');
+    expect((await s.post('/login', { email: 'nobody@example.org', password: 'x' })).headers['referrer-policy']).toBe('same-origin');
+  });
+
+  it('the platform origin is accepted on register, forgot, reset and verify; Origin null and foreign origins are refused', async () => {
+    const s = setup();
+    const own = 'http://lager.localhost:8080';
+    expect((await s.post('/register', { name: 'Ann', email: 'ann@example.org', password: PASSWORD }, { origin: own })).status).toBe(200);
+    expect(h!.core.users.getByEmail('ann@example.org')).not.toBeNull();
+    expect((await s.post('/forgot', { email: 'ann@example.org' }, { origin: own })).status).toBe(200);
+    const token = new URL(s.linkOf(0), 'http://x').searchParams.get('token')!;
+    expect((await s.post('/verify', { token }, { origin: own })).status).toBe(302);
+    const reset = new URL(h!.core.accounts.createResetLink(h!.core.users.getByEmail('ann@example.org')!.id)).searchParams.get('token')!;
+    expect((await s.post('/reset', { token: reset, password: 'a brand new password' }, { origin: own })).status).toBe(200);
+    for (const path of ['/register', '/forgot', '/reset', '/verify', '/verify/resend']) {
+      const res = await s.post(path, { name: 'B', email: 'b@example.org', password: PASSWORD, token: 'x' }, { origin: 'null' });
+      expect(res.status, path).toBe(403);
+    }
+    expect(h!.core.users.getByEmail('b@example.org')).toBeNull();
+  });
+
+  it('POST /login: platform origin and no Origin work, foreign origin and Origin null are refused', async () => {
+    const s = setup();
+    const creds = { email: 'admin@x.y', password: 'pw' };
+    expect((await s.post('/login', creds, { origin: 'http://lager.localhost:8080' })).status).toBe(302);
+    expect((await s.post('/login', creds)).status).toBe(302);
+    for (const origin of ['https://evil.example', 'null', 'http://other.apps.localhost:8080']) {
+      const res = await s.post('/login', creds, { origin });
+      expect(res.status, origin).toBe(403);
+      expect(cookieOf(res), origin).toBeUndefined();
+    }
+  });
+
+  it('a JSON POST /register still reaches client registration, a form post never does', async () => {
+    const { mcpExtension } = await import('../src/mcp/http.js');
+    h = makeHarness({ publicUrl: 'http://localhost:8080', extensions: [mcpExtension] });
+    h.core.settings.setRegistration('open');
+    const json = await request(h.app).post('/register').set('Host', h.host).set('Content-Type', 'application/json')
+      .send({ redirect_uris: ['http://localhost:9/cb'], token_endpoint_auth_method: 'none', client_name: 'x' });
+    expect(json.status).toBe(201);
+    expect(json.body.client_id).toBeTruthy();
+    expect(h.core.oauth.getClient(json.body.client_id)).toBeDefined();
+    const form = await request(h.app).post('/register').set('Host', h.host).type('form')
+      .send({ name: 'F', email: 'f@example.org', password: PASSWORD, redirect_uris: 'http://localhost:9/cb' });
+    expect(form.status).toBe(302); // the account page flow, not a 201 client registration
+    expect(form.body.client_id).toBeUndefined();
+    expect(h.core.users.getByEmail('f@example.org')).not.toBeNull();
   });
 });
 

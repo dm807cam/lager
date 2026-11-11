@@ -78,7 +78,7 @@ export class Accounts {
   private async sendVerification(user: User): Promise<void> {
     const { token } = this.issue('verify', { userId: user.id });
     await this.deliver(user.email, 'Lager: E-Mail-Adresse bestätigen',
-      `Hallo ${user.name},\nwillkommen bei Lager. Bitte bestätige deine E-Mail-Adresse über den folgenden Link.`,
+      'Willkommen bei Lager. Bitte bestätige deine E-Mail-Adresse über den folgenden Link. Wenn du dich nicht bei Lager registriert hast, ignoriere diese E-Mail.',
       this.link('/verify', 'token', token), 'verify');
   }
 
@@ -120,6 +120,12 @@ export class Accounts {
     return { user, needsVerification: !verified };
   }
 
+  /** True while the token is an unused, unexpired verification link; consumes nothing. */
+  checkVerificationToken(token: string): boolean {
+    const row = this.find('verify', token);
+    return row !== null && row.user_id !== null && this.users.get(row.user_id) !== null;
+  }
+
   verifyEmail(token: string): User {
     const row = this.find('verify', token);
     if (!row?.user_id || !this.users.get(row.user_id) || !this.consume(row)) throw invalidToken();
@@ -139,7 +145,7 @@ export class Accounts {
     const { token } = this.issue('reset', { userId: user.id });
     // Started but not awaited (see resendVerification); `deliver` catches send errors, so nothing is left unhandled.
     void this.deliver(user.email, 'Lager: Passwort zurücksetzen',
-      `Hallo ${user.name},\nfür dein Konto wurde ein neues Passwort angefordert. Über den folgenden Link kannst du es festlegen. Wenn du das nicht warst, ignoriere diese Nachricht.`,
+      'Für dein Konto wurde ein neues Passwort angefordert. Über den folgenden Link kannst du es festlegen. Wenn du das nicht warst, ignoriere diese Nachricht.',
       this.link('/reset', 'token', token), 'reset');
   }
 

@@ -79,11 +79,14 @@ describe('multi-user end to end', () => {
       expect(res.status).toBe(302);
       return cookiePair(res, 'lager_session');
     };
-    /** The only place that knows how a verification link signs the browser in; returns the platform session cookie. */
-    const verifyEmail = async (link: string): Promise<string> => {
-      const res = await call(PLATFORM, 'GET', pathOf(link));
-      expect(res.status).toBe(302);
-      return cookiePair(res, 'lager_session');
+    /** The only place that knows how a verification link works: the page shows a form, the post verifies, then the user signs in. */
+    const verifyEmail = async (link: string, email: string, password: string): Promise<string> => {
+      const shown = await call(PLATFORM, 'GET', pathOf(link));
+      expect(shown.status).toBe(200);
+      const token = new URL(link).searchParams.get('token')!;
+      const done = await call(PLATFORM, 'POST', '/verify', { headers: FORM, body: form({ token }) });
+      expect(done.status).toBe(302);
+      return await login(email, password);
     };
     /** Platform handshake for an instance; returns the instance cookie, or the failing platform response. */
     const openInstance = async (session: string, slug: string): Promise<{ cookie: string } | { denied: Res }> => {
@@ -126,7 +129,7 @@ describe('multi-user end to end', () => {
     const pSession = cookiePair(reg, 'lager_session');
     expect((await home(call, pSession)).status).toBe(200);
 
-    // 2. A user registers openly, gets a verification mail and is signed in by the link.
+    // 2. A user registers openly, gets a verification mail, confirms the address and signs in.
     const uReg = await call(PLATFORM, 'POST', '/register', {
       headers: FORM, body: form({ name: 'Uwe', email: 'u@x.y', password: 'uwe-password-12' }),
     });
@@ -134,7 +137,7 @@ describe('multi-user end to end', () => {
     const mail = mailer.sent.filter((m) => m.to === 'u@x.y').at(-1);
     expect(mail).toBeDefined();
     const verifyLink = /https?:\/\/\S+\/verify\?token=\S+/.exec(mail!.text)![0];
-    const uSession = await verifyEmail(verifyLink);
+    const uSession = await verifyEmail(verifyLink, 'u@x.y', 'uwe-password-12');
     expect((await home(call, uSession)).status).toBe(200);
     // The user role cannot deploy.
     const uHome = (await home(call, uSession)).body;

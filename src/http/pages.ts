@@ -56,9 +56,9 @@ export const resendForm = (email = ''): string => `<form method="post" action="/
 <button type="submit" class="quiet">Bestätigungs-E-Mail erneut senden</button>
 </form>`;
 
-export function loginPage(returnPath: string, error?: string, opts: { registration?: 'open' | 'invite' | 'closed'; resendEmail?: string } = {}): string {
+export function loginPage(returnPath: string, error?: string, opts: { registration?: 'open' | 'invite' | 'closed'; resendEmail?: string; notice?: string } = {}): string {
   return page('Anmelden', `<h1>Anmelden</h1>
-${error ? `<p class="err" role="alert">${esc(error)}</p>` : ''}
+${opts.notice ? `<p class="ok" role="status">${esc(opts.notice)}</p>` : ''}${error ? `<p class="err" role="alert">${esc(error)}</p>` : ''}
 <form method="post" action="/login">
 <input type="hidden" name="return" value="${esc(returnPath)}">
 <label for="email">E-Mail</label><input id="email" name="email" type="email" autocomplete="username" required autofocus>
