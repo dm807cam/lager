@@ -2,172 +2,199 @@
 
 # Lager
 
-Lager ist ein selbst gehosteter Server für Claude-Artefakte, also kleine HTML-Apps, die Claude für dich baut. Statt ein Artefakt nur in claude.ai zu behalten, veröffentlicht Claude es auf deinem Server:
+Lager is a self-hosted server for Claude artifacts, the small HTML apps that Claude builds for you. Instead of keeping an artifact only inside claude.ai, Claude publishes it to your server:
 
-- Jede App bekommt eine eigene Subdomain (`<slug>.apps.example.com`).
-- Jeder Deploy erzeugt eine nummerierte Version. Du kannst jederzeit auf eine ältere Version zurückgehen.
-- Jede App-Instanz hat einen eigenen Datenspeicher (Dokumente mit Live-Updates), den das Artefakt über `claude.use("db")` anspricht. Beim Wechsel der aktiven Version legt Lager vorher einen Schnappschuss der Daten an.
-- Mehrere Konten mit Rollen. Zugriff pro Instanz: privat, alle Angemeldeten oder öffentlich, dazu Freigaben für einzelne Konten und Gruppen in vier Stufen.
-- Bedient wird Lager über ein Dashboard im Browser, eine REST-API und einen MCP-Endpunkt für Claude.
+- Every app gets its own subdomain (`<slug>.apps.example.com`).
+- Every deploy creates a numbered version. You can go back to an older version at any time.
+- Every app instance has its own data store (documents with live updates) that the artifact uses through `claude.use("db")`. Before the active version changes, Lager takes a snapshot of the documents.
+- More building blocks in the style of Claude artifacts: file uploads, realtime rooms with presence, pages that save themselves, and file downloads (see "Building blocks").
+- An instance can also answer on a custom domain, and data can be exported, imported and moved along with the app.
+- Several accounts with roles. Access per instance: private, all signed-in users, or public, plus grants for single accounts and groups at four levels.
+- Lager is operated through a browser dashboard, a REST API and an MCP endpoint for Claude.
 
-Lager läuft als ein einzelner Node-Prozess mit SQLite und Dateien in einem Datenverzeichnis. Es gibt keine weiteren Dienste.
+Lager runs as a single Node process with SQLite and files in one data directory. There are no other services.
 
-## Schnellstart mit Docker
+## Quick start with Docker
 
-Voraussetzung: Docker mit Compose.
+Requirement: Docker with Compose.
 
 ```sh
 cp .env.example .env
-# .env anpassen: mindestens LAGER_PUBLIC_URL, LAGER_APPS_DOMAIN, LAGER_ADMIN_EMAIL, LAGER_ADMIN_PASSWORD
+# edit .env: at least LAGER_PUBLIC_URL, LAGER_APPS_DOMAIN, LAGER_ADMIN_EMAIL, LAGER_ADMIN_PASSWORD
 docker compose up -d --build
 ```
 
-Der Container lauscht auf Port 8080 und ist nur auf dem Rechner selbst erreichbar (`127.0.0.1:8080`): Davor gehört ein Reverse Proxy mit TLS. Läuft der Proxy auf einem anderen Rechner oder in einem anderen Docker-Netzwerk, ändere in `docker-compose.yml` die Zeile `ports` (zum Beispiel auf `"8080:8080"`) und schütze den Port dann mit einer Firewall, damit niemand Lager am Proxy vorbei erreicht.
+The container listens on port 8080 and is reachable only from the machine itself (`127.0.0.1:8080`): a reverse proxy with TLS belongs in front of it. If the proxy runs on another machine or in another Docker network, change the `ports` line in `docker-compose.yml` (for example to `"8080:8080"`) and protect the port with a firewall so nobody can reach Lager around the proxy.
 
-Alles wird im benannten Docker-Volume `lager-data` gespeichert. Willst du stattdessen ein Verzeichnis neben der Compose-Datei verwenden, ersetze `"lager-data:/data"` durch `"./data:/data"`, entferne den Abschnitt `volumes:` am Ende und lege das Verzeichnis vorher mit passenden Rechten an, weil der Container als Benutzer `node` (UID 1000) läuft:
+Everything is stored in the named Docker volume `lager-data`. If you prefer a directory next to the Compose file, replace `"lager-data:/data"` with `"./data:/data"`, remove the `volumes:` section at the end, and create the directory beforehand with suitable permissions, because the container runs as user `node` (UID 1000):
 
 ```sh
 mkdir -p data && sudo chown 1000:1000 data
 ```
 
-Beim ersten Start entsteht der erste Administrator aus `LAGER_ADMIN_EMAIL` und `LAGER_ADMIN_PASSWORD`. Danach öffnest du `LAGER_PUBLIC_URL` im Browser und meldest dich an. Weitere Konten legst du über Einladungen oder die Registrierung an (siehe „Konten und Rollen“).
+On first start the first administrator is created from `LAGER_ADMIN_EMAIL` and `LAGER_ADMIN_PASSWORD`. Then open `LAGER_PUBLIC_URL` in a browser and sign in. Further accounts are created through invitations or registration (see "Accounts and roles").
 
-Konfiguration (nur Umgebungsvariablen, Vorlage in `.env.example`):
+Configuration (environment variables only, template in `.env.example`):
 
-| Variable | Bedeutung | Standard |
+| Variable | Meaning | Default |
 | --- | --- | --- |
-| `LAGER_PUBLIC_URL` | Öffentliche Adresse der Plattform (Login, Dashboard, API, MCP) | Pflicht |
-| `LAGER_APPS_DOMAIN` | Domain der Apps; Instanzen laufen unter `<slug>.<Domain>` | Pflicht |
-| `LAGER_ADMIN_EMAIL`, `LAGER_ADMIN_PASSWORD` | Erster Administrator; wird nur angelegt, solange es noch kein Konto gibt | keins |
-| `LAGER_DATA_DIR` | Datenverzeichnis | `./data` (im Container `/data`) |
-| `LAGER_PORT` | Port des Servers | `8080` |
-| `LAGER_SECRET` | Schlüssel für Sitzungen; sonst erzeugt und in `secret.key` gespeichert | erzeugt |
-| `LAGER_SNAPSHOT_KEEP` | Aufbewahrte Daten-Schnappschüsse pro Instanz | `20` |
-| `LAGER_TRASH_DAYS` | Tage, die gelöschte Instanzen und Apps im Papierkorb bleiben (`0` = nie aufräumen) | `30` |
-| `LAGER_SMTP_URL` | SMTP-Zugang für ausgehende Mails, zum Beispiel `smtps://user:passwort@smtp.example.com:465`; ohne Wert kein Mailversand | keins |
-| `LAGER_MAIL_FROM` | Absender der Mails | `Lager <no-reply@<Host von LAGER_PUBLIC_URL>>` |
-| `LAGER_INSTANCE_QUOTA_MB` | Größe der Daten einer Instanz in MiB, ganze Zahl ab 1 | `50` |
-| `LAGER_TRUST_PROXY` | Anzahl der Proxy-Stationen vor Lager, deren `X-Forwarded-*` vertraut wird: `false`/`0` keine, `true` = 1, oder eine Zahl | `true` (1) |
+| `LAGER_PUBLIC_URL` | Public address of the platform (login, dashboard, API, MCP) | required |
+| `LAGER_APPS_DOMAIN` | Domain of the apps; instances run at `<slug>.<domain>` | required |
+| `LAGER_ADMIN_EMAIL`, `LAGER_ADMIN_PASSWORD` | First administrator; only created while no account exists | none |
+| `LAGER_DATA_DIR` | Data directory | `./data` (`/data` in the container) |
+| `LAGER_PORT` | Port of the server | `8080` |
+| `LAGER_SECRET` | Key for sessions; otherwise generated and stored in `secret.key` | generated |
+| `LAGER_SNAPSHOT_KEEP` | Data snapshots kept per instance | `20` |
+| `LAGER_TRASH_DAYS` | Days that deleted instances and apps stay in the trash (`0` = never clean up) | `30` |
+| `LAGER_SMTP_URL` | SMTP access for outgoing mail, for example `smtps://user:password@smtp.example.com:465`; without a value no mail is sent | none |
+| `LAGER_MAIL_FROM` | Sender of the mails | `Lager <no-reply@<host of LAGER_PUBLIC_URL>>` |
+| `LAGER_INSTANCE_QUOTA_MB` | Size of an instance's data in MiB, integer from 1 | `50` |
+| `LAGER_TRUST_PROXY` | Number of proxy hops in front of Lager whose `X-Forwarded-*` headers are trusted: `false`/`0` none, `true` = 1, or a number | `true` (1) |
 
-## Konten und Rollen
+## Accounts and roles
 
-Lager kennt mehrere Konten. Jedes Konto hat genau eine Rolle:
+Lager has several accounts. Each account has exactly one role:
 
-| Rolle | Darf |
+| Role | May |
 | --- | --- |
-| Administrator | Nutzer, Rollen, Einladungen, Gruppen und Einstellungen verwalten, Instanzen deaktivieren, Rücksetz-Links erzeugen; außerdem alles, was ein Publisher darf |
-| Publisher | Apps deployen (Dashboard, REST-API, MCP), API-Tokens anlegen, für seine Apps Instanzen auf andere Konten anlegen, Apps mit anderen Publishern oder Administratoren gemeinsam pflegen (Mitarbeit) |
-| Nutzer | Instanzen öffnen, die für ihn freigegeben sind oder allen Angemeldeten offenstehen; eigene Instanzen von Apps anlegen, die Selbstbedienung erlauben |
+| Administrator | Manage users, roles, invitations, groups and settings, disable instances, create reset links; also everything a publisher may do |
+| Publisher | Deploy apps (dashboard, REST API, MCP), create API tokens, create instances of their apps for other accounts, maintain apps together with other publishers or administrators (collaboration) |
+| User | Open instances that are shared with them or open to all signed-in users; create their own instances of apps that allow self-service |
 
-Wie ein Konto entsteht, hängt vom Registrierungsmodus ab. Ihn stellt ein Administrator unter „Verwaltung → Einstellungen“ ein:
+How an account comes into being depends on the registration mode, which an administrator sets in the administration area under Settings:
 
-- **Offen:** Jeder kann sich unter `/register` ein Konto als Nutzer anlegen.
-- **Nur mit Einladung:** Registrieren geht nur über einen Einladungslink.
-- **Geschlossen:** Niemand kann sich registrieren; auch Einladungslinks gelten dann nicht.
+- **Open:** Anyone can create a user account at `/register`.
+- **Invitation only:** Registering works only through an invitation link.
+- **Closed:** Nobody can register; invitation links do not work either.
 
-Der Standard hängt vom Mailversand ab: Ist `LAGER_SMTP_URL` gesetzt, ist die Registrierung offen, sonst nur mit Einladung. Hat ein Administrator den Modus einmal gespeichert, gilt seine Wahl.
+The default depends on mail: if `LAGER_SMTP_URL` is set, registration is open, otherwise invitation only. Once an administrator has saved a mode, that choice applies.
 
-Einladungen erstellt ein Administrator unter „Verwaltung → Einladungen“, mit einer Rolle und optional einer E-Mail-Adresse, an die der Link gebunden ist. Der Link ist 7 Tage gültig und funktioniert einmal. Wer über ihn ein Konto anlegt, ist sofort angemeldet. Passwörter brauchen mindestens 10 Zeichen.
+An administrator creates invitations in the administration area (Invitations), with a role and optionally an email address that the link is bound to. The link is valid for 7 days and works once. Whoever creates an account through it is signed in immediately. Passwords need at least 10 characters.
 
-Den ersten Administrator legt Lager beim Start aus `LAGER_ADMIN_EMAIL` und `LAGER_ADMIN_PASSWORD` an, aber nur, solange es noch gar kein Konto gibt. Weitere Administratoren ernennst du über die Rolle eines bestehenden Kontos. Der letzte aktive Administrator lässt sich weder herabstufen noch deaktivieren. Ein deaktiviertes Konto kann sich nicht mehr anmelden, und seine Sitzungen auf Plattform und Instanzen enden sofort.
+Lager creates the first administrator at startup from `LAGER_ADMIN_EMAIL` and `LAGER_ADMIN_PASSWORD`, but only while there is no account at all. You appoint further administrators by changing the role of an existing account. The last active administrator can be neither demoted nor disabled. A disabled account can no longer sign in, and its sessions on the platform and on instances end immediately.
 
-Die Oberfläche zeigt Administratoren nur Metadaten: welche Apps und Instanzen es gibt, wem sie gehören und wie viel Speicher sie belegen. Sie können eine Instanz deaktivieren, aber die Oberfläche bietet ihnen keinen Weg, die Daten einer fremden Instanz zu öffnen; eine private Instanz eines anderen Kontos öffnen sie nicht, und Daten lesen sie nur, wenn man ihnen eine Stufe freigegeben hat wie jedem anderen Konto. Das ist eine Voreinstellung der Oberfläche, keine technische Garantie gegen einen böswilligen Administrator: Administratoren steuern die Konten (Links zum Zurücksetzen von Passwörtern, Gruppenmitgliedschaften) und haben Zugriff auf den Server und das Datenverzeichnis. Vergib die Administrator-Rolle nur an Menschen, denen du die Daten aller Instanzen anvertrauen würdest.
+The interface shows administrators metadata only: which apps and instances exist, who owns them and how much storage they use. They can disable an instance, but the interface offers no way to open the data of someone else's instance; they cannot open another account's private instance, and they read data only if they have been granted a level, like any other account. This is a default of the interface, not a technical guarantee against a malicious administrator: administrators control the accounts (links to reset passwords, group memberships) and have access to the server and the data directory. Give the administrator role only to people whose access to the data of all instances you would accept.
 
-## Mailversand
+## Mail
 
-Lager verschickt Mails für die Bestätigung der E-Mail-Adresse, das Zurücksetzen von Passwörtern und Einladungen mit angegebener Adresse. Dafür setzt du zwei Variablen:
+Lager sends mail for verifying email addresses, resetting passwords and invitations with an address. You set two variables for this:
 
 ```sh
-LAGER_SMTP_URL=smtps://lager%40example.com:geheim@smtp.example.com:465
+LAGER_SMTP_URL=smtps://lager%40example.com:secret@smtp.example.com:465
 LAGER_MAIL_FROM=Lager <lager@example.com>
 ```
 
-Sonderzeichen in Benutzername und Passwort der URL musst du prozentcodieren (`@` wird `%40`). Fehlt `LAGER_MAIL_FROM`, ist der Absender `Lager <no-reply@<Host von LAGER_PUBLIC_URL>>`. Schlägt der Versand fehl, schreibt Lager den Fehler ins Log und zeigt den Nutzern keine Fehlermeldung.
+Special characters in the user name and password of the URL must be percent-encoded (`@` becomes `%40`). If `LAGER_MAIL_FROM` is missing, the sender is `Lager <no-reply@<host of LAGER_PUBLIC_URL>>`. If sending fails, Lager writes the error to the log and shows users no error message.
 
-Ohne `LAGER_SMTP_URL` läuft Lager vollständig, nur ohne Mails:
+Without `LAGER_SMTP_URL` Lager runs completely, just without mail:
 
-- E-Mail-Adressen werden nicht bestätigt; neue Konten sind sofort nutzbar. Die Registrierung steht deshalb standardmäßig auf „Nur mit Einladung“.
-- Einladungen funktionieren: Der Link wird dem Administrator einmal in der Verwaltung angezeigt, und er gibt ihn selbst weiter.
-- „Passwort vergessen“ verschickt nichts. Ein Administrator erzeugt stattdessen unter „Verwaltung → Nutzer“ einen Rücksetz-Link (1 Stunde gültig, einmal verwendbar) und gibt ihn weiter.
+- Email addresses are not verified; new accounts are usable at once. For this reason registration defaults to "invitation only".
+- Invitations work: the link is shown once to the administrator in the administration area, who passes it on.
+- "Forgot password" sends nothing. Instead an administrator creates a reset link in the administration area (Users; valid for 1 hour, usable once) and passes it on.
 
-Schaltest du den Mailversand später ein, bleiben bestehende Konten bestätigt.
+If you enable mail later, existing accounts stay verified.
 
-## Teilen
+## Sharing
 
-Es gibt zwei Arten, eine App mit anderen zu nutzen:
+There are two ways to let others use an app:
 
-- **Dieselbe Instanz:** Alle arbeiten in denselben Daten. Der Besitzer der Instanz gibt sie frei: für einzelne Konten (über E-Mail-Adresse), für Gruppen, oder über die Sichtbarkeit für alle Angemeldeten oder öffentlich. Das geht auf der Instanzseite im Dashboard, über `PUT /api/instances/<slug>/grants` mit `{"email": …, "level": …}` oder `{"group": …, "level": …}` und über die MCP-Werkzeuge `share_instance`, `unshare_instance` und `list_shares`.
-- **Eigene Instanz:** Jeder bekommt eine eigene Instanz derselben App mit getrennten Daten. Ein Publisher kann Instanzen für andere Konten anlegen. Außerdem kann der Besitzer einer App unter „App → Selbstbedienung“ erlauben, dass alle Angemeldeten selbst eine Instanz anlegen; sie finden die App dann im Katalog auf ihrer Übersichtsseite und sind Besitzer ihrer Instanz.
+- **The same instance:** Everyone works in the same data. The owner of the instance shares it: with single accounts (by email address), with groups, or through the visibility "all signed-in users" or "public". This works on the instance page in the dashboard, through `PUT /api/instances/<slug>/grants` with `{"email": …, "level": …}` or `{"group": …, "level": …}`, and through the MCP tools `share_instance`, `unshare_instance` and `list_shares`.
+- **A separate instance:** Everyone gets their own instance of the same app with separate data. A publisher can create instances for other accounts. In addition, the owner of an app can allow all signed-in users to create an instance themselves (the self-service setting on the app page); they then find the app in the catalog on their overview page and own their instance.
 
-Die Stufen auf einer Instanz:
+The levels on an instance:
 
-| Stufe | Darf |
+| Level | May |
 | --- | --- |
-| Betrachter (`view`) | Die App öffnen und Daten lesen |
-| Mitwirkender (`interact`) | zusätzlich Daten schreiben, soweit die Regeln der App es erlauben |
-| Verwalter (`admin`) | zusätzlich Freigaben, Sichtbarkeit, Versionen und Schnappschüsse verwalten |
-| Besitzer (`owner`) | alles, außerdem die Instanz löschen; nicht vergebbar |
+| Viewer (`view`) | Open the app and read data |
+| Contributor (`interact`) | additionally write data, as far as the app's rules allow |
+| Manager (`admin`) | additionally manage grants, visibility, versions and snapshots |
+| Owner (`owner`) | everything, and delete the instance; cannot be granted |
 
-Bei mehreren Wegen zur selben Instanz (direkte Freigabe, Gruppe, Sichtbarkeit „Alle Angemeldeten“) gilt die höchste Stufe. Bei „Alle Angemeldeten“ stellt der Besitzer ein, ob diese Konten Betrachter oder Mitwirkende sind (Standard: Mitwirkende). Ohne App-Regeln lesen alle ab Betrachter und schreiben ab Mitwirkender; öffentliche Besucher können nie schreiben.
+With several routes to the same instance (direct grant, group, visibility "all signed-in users"), the highest level applies. For "all signed-in users" the owner chooses whether these accounts are viewers or contributors (default: contributors). Without app rules, everyone from viewer level reads and everyone from contributor level writes; public visitors can never write.
 
-Gruppen legen Administratoren unter „Verwaltung → Gruppen“ an und füllen sie mit Konten. Eine Freigabe an eine Gruppe gilt für alle ihre Mitglieder.
+Administrators create groups in the administration area (Groups) and fill them with accounts. A grant to a group applies to all its members.
 
-Eine App selbst, also ihre Versionen, sehen und verändern nur ihr Besitzer und die Mitarbeiter, die er auf der App-Seite hinzufügt (Administratoren oder Publisher).
+An app itself, that is its versions, can be seen and changed only by its owner and the collaborators the owner adds on the app page (administrators or publishers).
 
-## Grenzen
+## Building blocks
 
-- **Speicher pro Instanz:** Die Daten einer Instanz sind auf `LAGER_INSTANCE_QUOTA_MB` begrenzt (Standard 50 MiB). Ist die Grenze erreicht, lehnt Lager weitere Schreibzugriffe mit dem Fehler `quota_exceeded` (HTTP 507) ab; Lesen und Löschen funktionieren weiter. Die Grenze gilt für die Daten, nicht für die Versionen der App.
-- **Instanzen pro Nutzer:** Jedes Konto, das kein Administrator ist, darf höchstens so viele Instanzen besitzen, wie ein Administrator unter „Verwaltung → Einstellungen“ festlegt (1 bis 1000, Standard 20). Das gilt beim Anlegen weiterer Instanzen, auch bei Selbstbedienung.
-- **Neue Instanzen pro Tag:** Konten, die keine Administratoren sind, dürfen höchstens 10 Instanzen innerhalb von 24 Stunden anlegen; gelöschte Instanzen zählen mit, ebenso die Instanz, die beim ersten Deploy einer App entsteht. So lässt sich der Speicher nicht durch Anlegen, Füllen und Löschen in Schleife füllen.
-- **Gesperrte Namen:** Der Name einer gelöschten Instanz bleibt für ihren früheren Besitzer reserviert. Andere Konten können ihn nicht übernehmen, weil sonst gespeicherte Browserdaten und Service Worker der alten Instanz auf die neue übergingen.
+An artifact gets additional functions through `await claude.use("<name>")`. The call never throws and returns `null` when the instance does not offer the building block. A building block is available only if the active version declares it in `capabilities` (except `permissions`). At deploy time you pass `capabilities` as JSON, for example as a query parameter of `PUT /api/apps/<slug>` or as an argument of `deploy_app`. The example `examples/board.html` (a shared pin board) uses `db`, `user`, `assets`, `room` and `downloads`:
 
-## Löschen und Papierkorb
+```sh
+curl -X PUT -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: text/html" \
+  --data-binary @examples/board.html \
+  "https://lager.example.com/api/apps/board?title=Pin%20board&capabilities=%7B%22db%22%3A%7B%7D%2C%22user%22%3A%7B%7D%2C%22assets%22%3A%7B%7D%2C%22room%22%3A%7B%7D%2C%22downloads%22%3A%7B%7D%7D"
+```
 
-Löscht der Besitzer eine Instanz oder eine App im Dashboard, entfernt Lager sie aus der Plattform, verschiebt die Dateien aber nur in `<Datenverzeichnis>/trash` (im Container `/data/trash`): die Daten einer Instanz als `<Instanz-ID>-<Zeitstempel>`, die Versionen einer App als `app-<App-ID>-<Zeitstempel>`. Lager bietet keine Wiederherstellung dafür; ein Rückholen geht nur durch Kopieren der Dateien. Beim Start und danach alle 24 Stunden entfernt Lager Einträge, die älter als `LAGER_TRASH_DAYS` Tage sind (Standard 30; `0` schaltet das Aufräumen ab, dann leerst du das Verzeichnis von Hand). Das Alter ergibt sich aus dem Zeitstempel im Namen. Pro Durchlauf schreibt Lager eine Zeile ins Log. Eine App lässt sich nur löschen, solange keine fremden Instanzen von ihr existieren. Instanzen, die ein Administrator deaktiviert hat, kann ihr Besitzer trotzdem löschen.
+| Building block | What it does on Lager | Declaration | Limits |
+| --- | --- | --- | --- |
+| `db` | Document database of the instance with live updates | `{"db": {}}`, optionally `{"db": {"rules": [...]}}` | Document 256 KiB, query 1000 results; instance storage is limited (see "Limits") |
+| `user` | Name and id of the viewer, profiles, people search | `{"user": {}}`; email addresses only with `{"user": {"scopes": ["email"]}}`, search with scope `"profile"` | Every member is async, including `name()` |
+| `permissions` | Shows which building blocks are available | none | none |
+| `assets` | Upload, list and delete files; they are served from `/_blob/<id>` on the instance | `{"assets": {}}` | Managers and owners may upload; with `{"assets": {"upload": "interact"}}` contributors too (they see and delete only their own files). At most 20 MiB per file (CSS and JavaScript 16 MiB, SVG 2 MiB) and 2000 files per instance. Allowed are images, video, audio, PDF, fonts, CSS, JavaScript, CSV, Markdown, JSON and text; HTML is refused, and the content must match the stated type. Files count toward the instance's storage |
+| `room` | Ephemeral rooms with messages and presence; nothing is stored, and a server restart empties all rooms | `{"room": {}}`; contributors may send only on topics opened with `{"room": {"topics": {"<topic>": "interact"}}}` | Otherwise managers and owners send, viewers only listen. Message at most 4 KiB, presence at most 2 KiB; per viewer and instance at most 8 open connections and 30 sends per second; at most 50 rooms per instance and 100 participants per room |
+| `artifact` (also `self`) | The page saves itself: `artifact.publish(html)` creates a version that belongs only to this instance and is active there at once | `{"artifact": {}}`; `{"artifact": {"publish": false}}` blocks saving | Managers and owners only. The document must start with `<!doctype html`, at most 16 MiB, 60 saves per hour and instance, the last 20 saved versions are kept (older ones go to the trash). Saved pages count toward the instance's storage |
+| `downloads` | `downloads.save({filename, data})` offers the viewer a file to save after a confirmation in the browser; the server is not involved | `{"downloads": {}}` | At most 50 MiB; allowed extensions: gif, png, jpg, jpeg, webp, mp4, webm, mov, txt, json, md, docx, pptx, epub, csv, ttf, html, svg, pdf, xlsx, zip, fig |
 
-## Lokal ausprobieren
+Whoever saves a page with `artifact.publish` detaches that instance from the app's deploys: it no longer follows new deploys automatically. A deploy lists such instances in the field `pinned` and in its warnings. The saved versions do not appear in the app's version list; only the managers of the instance that saved them can download their HTML.
 
-Browser lösen `*.localhost` von selbst auf `127.0.0.1` auf. Ein DNS-Eintrag ist lokal deshalb nicht nötig.
+Everything else stays unavailable: for other names (for example `sample` or `tts`) `claude.use` always returns `null`, and `claude.complete` does not exist (the call rejects with an error message). In the `artifact` building block, `publish` with several files, `edit`, `sync` and `metadata` reject with an error code, and `room.sendToClaudeSession` rejects because Lager has no conversation with Claude beside the page. `check_artifact` (MCP) and `POST /api/check` show before a deploy what an artifact uses, what Lager does not offer and what is not yet declared.
+
+## Limits
+
+- **Storage per instance:** The data of an instance is limited to `LAGER_INSTANCE_QUOTA_MB` (default 50 MiB). This size includes the documents, the uploaded files (`assets`) and the pages an instance saved itself (`artifact`). When the limit is reached, Lager refuses further writes, uploads and saves with the error `quota_exceeded` (HTTP 507 for the database); reading and deleting keep working. Versions created by deploys, snapshots and the trash are not counted.
+- **Instances per user:** Every account that is not an administrator may own at most as many instances as an administrator sets in the administration area under Settings (1 to 1000, default 20). This applies when creating further instances, including self-service.
+- **New instances per day:** Accounts that are not administrators may create at most 10 instances within 24 hours; deleted instances count, and so does the instance created by the first deploy of an app. This stops anyone from filling the storage by creating, filling and deleting in a loop.
+- **Snapshots:** They contain only the documents of the instance. `restore_snapshot` does not restore uploaded files or self-saved pages.
+- **Reserved names:** The name of a deleted instance stays reserved for its former owner. Other accounts cannot take it over, because otherwise stored browser data and service workers of the old instance would carry over to the new one.
+
+## Deleting and trash
+
+When the owner deletes an instance or an app in the dashboard, Lager removes it from the platform but only moves the files to `<data directory>/trash` (`/data/trash` in the container): the data of an instance, including its uploads, as `<instance id>-<timestamp>`, and the versions of an app as `app-<app id>-<timestamp>`. Lager offers no restore for this; recovering is possible only by copying the files back. At startup and every 24 hours afterwards, Lager removes entries older than `LAGER_TRASH_DAYS` days (default 30; `0` turns the cleanup off, and you then empty the directory by hand). The age is taken from the timestamp in the name. Per run Lager writes one line to the log. An app can be deleted only while no instances of other accounts exist for it. Instances that an administrator has disabled can still be deleted by their owner.
+
+## Trying it locally
+
+Browsers resolve `*.localhost` to `127.0.0.1` on their own, so no DNS entry is needed locally.
 
 ```sh
 npm ci
-cp .env.example .env     # die Werte für lokal sind schon eingetragen
+cp .env.example .env     # the values for local use are already filled in
 set -a; . ./.env; set +a
 LAGER_DATA_DIR=./data npm run dev
 ```
 
-- Plattform: `http://localhost:8080`
-- Instanzen: `http://<slug>.apps.localhost:8080`
+- Platform: `http://localhost:8080`
+- Instances: `http://<slug>.apps.localhost:8080`
 
-Die Plattform heißt hier `localhost` und nicht `lager.localhost`, weil das MCP-SDK für OAuth eine Adresse ohne https nur für den Hostnamen `localhost` akzeptiert.
+The platform is called `localhost` and not `lager.localhost` because the MCP SDK accepts an address without https for OAuth only for the host name `localhost`.
 
-Voraussetzung ist Node.js 22.13 oder neuer. Mit `npm test` laufen die Tests, mit `npm run build && npm start` startest du den gebauten Server.
+Node.js 22.13 or newer is required. `npm test` runs the tests; `npm run build && npm start` starts the built server.
 
-## Betrieb hinter Nginx Proxy Manager
+## Running behind Nginx Proxy Manager
 
-Lager braucht zwei Hostnamen, beide zeigen auf denselben Port:
+Lager needs two host names, both pointing at the same port:
 
-1. Die Plattform, zum Beispiel `lager.example.com`.
-2. Alle Apps: `*.apps.example.com` (Wildcard).
+1. The platform, for example `lager.example.com`.
+2. All apps: `*.apps.example.com` (wildcard).
 
-Vorbereitung:
+Preparation:
 
-- DNS: `lager.example.com` und `*.apps.example.com` zeigen auf den Proxy.
-- Zertifikat: Für `*.apps.example.com` brauchst du ein Wildcard-Zertifikat. Das geht nur mit DNS-Challenge, in Nginx Proxy Manager unter „SSL Certificates → Add → Let's Encrypt“ mit „Use a DNS Challenge“ und dem Anbieter deiner Domain.
-- `.env`: `LAGER_PUBLIC_URL=https://lager.example.com`, `LAGER_APPS_DOMAIN=apps.example.com`. Instanzen erhalten dann Adressen wie `https://notes.apps.example.com`.
+- DNS: `lager.example.com` and `*.apps.example.com` point to the proxy.
+- Certificate: for `*.apps.example.com` you need a wildcard certificate. That works only with a DNS challenge, in Nginx Proxy Manager under "SSL Certificates → Add → Let's Encrypt" with "Use a DNS Challenge" and the provider of your domain.
+- `.env`: `LAGER_PUBLIC_URL=https://lager.example.com`, `LAGER_APPS_DOMAIN=apps.example.com`. Instances then get addresses like `https://notes.apps.example.com`.
 
-In Nginx Proxy Manager legst du zwei Proxy Hosts an:
+In Nginx Proxy Manager you create two proxy hosts:
 
-| Domain Names | Forward | Optionen |
+| Domain Names | Forward | Options |
 | --- | --- | --- |
-| `lager.example.com` | `http`, Host des Containers, Port 8080 | Websockets Support an, SSL-Zertifikat, Force SSL |
-| `*.apps.example.com` | `http`, Host des Containers, Port 8080 | Websockets Support an, Wildcard-Zertifikat, Force SSL |
+| `lager.example.com` | `http`, host of the container, port 8080 | Websockets Support on, SSL certificate, Force SSL |
+| `*.apps.example.com` | `http`, host of the container, port 8080 | Websockets Support on, wildcard certificate, Force SSL |
 
-Live-Updates der Datenbank laufen als Server-Sent Events über `/__lager/db/events`. Der Proxy darf diese Antworten nicht puffern. Trage im Reiter „Advanced“ des Proxy Hosts `*.apps.example.com` ein:
+Live updates of the database (`/__lager/db/events`) and of the realtime rooms (`/__lager/room/events`) are delivered as Server-Sent Events. The proxy must not buffer these responses. On the "Advanced" tab of the proxy host `*.apps.example.com`, enter:
 
 ```nginx
-location /__lager/db/events {
-    proxy_pass http://<Host des Containers>:8080;
+location ~ ^/__lager/(db|room)/events$ {
+    proxy_pass http://<host of the container>:8080;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
     proxy_buffering off;
@@ -176,44 +203,84 @@ location /__lager/db/events {
 }
 ```
 
-Alternativ kannst du die Zeile `proxy_buffering off;` direkt in die „Custom Nginx Configuration“ des Hosts setzen. Ohne diese Einstellung erscheinen Änderungen anderer Nutzer verzögert oder erst nach einem Neuladen.
+Alternatively you can put the line `proxy_buffering off;` directly into the host's "Custom Nginx Configuration". Without this setting, changes and presence of other users show up late or only after a reload. The same applies to the proxy host of every custom domain (see below).
 
-Lager vertraut standardmäßig genau einem Proxy vor sich (`LAGER_TRUST_PROXY=true`, also eine Station) und nimmt als Client-Adresse den letzten Eintrag von `X-Forwarded-For`. Stehen mehrere Proxys hintereinander, setze die Anzahl (zum Beispiel `2`). Setze `false`, wenn Lager direkt aus dem Internet erreichbar ist, sonst kann jeder die Client-Adresse fälschen und die Begrenzung der Anmeldeversuche umgehen.
+By default Lager trusts exactly one proxy in front of it (`LAGER_TRUST_PROXY=true`, one hop) and takes the last entry of `X-Forwarded-For` as the client address. If several proxies are chained, set the number (for example `2`). Set `false` if Lager is reachable directly from the internet; otherwise anyone can forge the client address and get around the limit on sign-in attempts.
 
-## Claude verbinden
+## Custom domains
 
-Das Dashboard zeigt die Adresse deines Connectors: `<LAGER_PUBLIC_URL>/mcp`.
+An instance can answer on its own host name in addition to `<slug>.apps.example.com`, for example `notes.example.org`. The address under the apps domain stays and is the first URL of the instance.
 
-OAuth, das claude.ai und Claude Desktop beim Verbinden benutzen, funktioniert nur, wenn `LAGER_PUBLIC_URL` mit `https` beginnt oder der Host `localhost` ist. API-Tokens funktionieren mit jeder Adresse.
+**Who may do this:** By default only administrators. An administrator can switch the setting for custom domains in the administration area (Settings) to also allow publishers; then publishers may do it too. In both cases the account must manage the instance, that is be its owner or a manager (`admin`). An administrator who does not own the instance needs a grant as manager for that. You enter the domain on the instance page in the dashboard, with `PUT /api/instances/<slug>/domains` and the body `{"host": "notes.example.org"}` (plus `GET` and `DELETE`), or with the MCP tools `add_domain` and `remove_domain`. A host name belongs to at most one instance on the whole server. The host name of the platform and all names under `LAGER_APPS_DOMAIN` are not allowed.
 
-- **claude.ai und Claude Desktop:** Einstellungen → Connectors → benutzerdefinierten Connector hinzufügen, die Adresse `<LAGER_PUBLIC_URL>/mcp` eintragen. Beim Verbinden meldest du dich bei Lager an und erlaubst den Zugriff.
+**Lager does not verify who owns the domain.** It only decides that requests with this host name go to the instance. Whoever may enter a domain can therefore claim any host name whose DNS points to your proxy. Grant the right with care, and leave it at administrators only if you do not trust your publishers.
+
+The steps outside Lager:
+
+1. DNS: create an A or CNAME record for the domain that points to your proxy.
+2. Certificate: in Nginx Proxy Manager, request a certificate for this domain under "SSL Certificates → Add → Let's Encrypt" (the domain must already point to the proxy; a DNS challenge is needed only for wildcards).
+3. Proxy host: in Nginx Proxy Manager create a proxy host for the domain: `http`, host of the container, port 8080, Websockets Support on, the certificate from step 2, Force SSL. The proxy must pass the `Host` header on unchanged (Nginx Proxy Manager does this by default). On the "Advanced" tab, add the same `location` block for the event streams as for the apps proxy host.
+4. Only then enter the domain in Lager.
+
+**Sign-in:** Sign-in still goes through the platform (`LAGER_PUBLIC_URL`). A visitor without a session is sent from the custom domain to the platform, signs in there and returns with a one-time code to the domain they started on. The instance cookie is per host name: someone who has opened the instance at `<slug>.apps.example.com` is not yet signed in on the custom domain and goes through the flow there once. Access rights are the same as under the apps domain. If you remove the domain or delete the instance, Lager answers requests for the host name with "not found".
+
+## Connecting Claude
+
+The dashboard shows the address of your connector: `<LAGER_PUBLIC_URL>/mcp`.
+
+OAuth, which claude.ai and Claude Desktop use when connecting, works only if `LAGER_PUBLIC_URL` starts with `https` or the host is `localhost`. API tokens work with any address.
+
+- **claude.ai and Claude Desktop:** Settings → Connectors → add a custom connector and enter the address `<LAGER_PUBLIC_URL>/mcp`. When connecting, you sign in to Lager and allow access.
 - **Claude Code:**
   ```sh
   claude mcp add --transport http lager https://lager.example.com/mcp
   ```
-  Danach `/mcp` in Claude Code öffnen und die Anmeldung abschließen.
-- **API-Token statt OAuth:** Im Dashboard unter „API-Tokens“ einen Token erstellen. Er wird nur einmal angezeigt. Damit funktionieren beide Wege:
+  Then open `/mcp` in Claude Code and complete the sign-in.
+- **API token instead of OAuth:** Create a token in the dashboard under API tokens. It is shown only once. Both of these work with it:
   ```sh
   claude mcp add --transport http lager https://lager.example.com/mcp \
     --header "Authorization: Bearer lgr_..."
 
   curl -X PUT -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: text/html" \
     --data-binary @examples/notes.html \
-    "https://lager.example.com/api/apps/notes?title=Notizen&capabilities=%7B%22db%22%3A%7B%7D%2C%22user%22%3A%7B%7D%7D"
+    "https://lager.example.com/api/apps/notes?title=Notes&capabilities=%7B%22db%22%3A%7B%7D%2C%22user%22%3A%7B%7D%7D"
   ```
 
-Die Antwort des Deploys enthält die Adresse der neuen Instanz. `examples/notes.html` ist ein kleines Beispiel-Artefakt (Notizliste mit `claude.use("db")`).
+The deploy response contains the addresses of the instance (first the one under the apps domain, then custom domains), the warnings, and the instances that were not updated (`pinned`). `examples/notes.html` is a small example artifact (a note list with `claude.use("db")`), and `examples/board.html` is a shared pin board with uploads, presence and export (see "Building blocks").
 
-## Skill installieren
+## Installing the skill
 
-Der Skill `skill/lager/SKILL.md` bringt Claude bei, Artefakte mit Lager zu bauen und zu deployen. Sein Inhalt ist dieselbe Anleitung, die der MCP-Endpunkt ausliefert (`src/guide.md`).
+The skill `skill/lager/SKILL.md` teaches Claude to build and deploy artifacts with Lager. Its content is the same guide that the MCP endpoint serves (`src/guide.md`).
 
 - **Claude Code:** `cp -r skill/lager ~/.claude/skills/lager`
-- **claude.ai und Desktop:** Den Ordner `skill/lager` als ZIP packen und unter Einstellungen → Fähigkeiten (Skills) hochladen.
+- **claude.ai and Desktop:** Pack the folder `skill/lager` as a ZIP and upload it under Settings → Skills.
 
-## Datensicherung
+## Export, import and moving
 
-Alles liegt im Datenverzeichnis (bei Docker Compose das Volume `lager-data`, bei einem Bind-Mount `./data`): Datenbank der Plattform, alle Versionen, die Daten und Schnappschüsse der Instanzen und `secret.key`. Zum Sichern den Dienst stoppen und das Volume beziehungsweise Verzeichnis kopieren. Mit dem Volume (Compose-Projektname `lager`, sonst `<Verzeichnisname>_lager-data`; `docker volume ls` zeigt ihn):
+**Exporting data:** The instance page in the dashboard has a link to export the data as NDJSON. `GET /api/instances/<slug>/export` with a bearer token returns the same, as does the MCP tool `export_data`. The file contains one line `{"path": …, "data": …}` per document, plus the exporting account's own private area (`data/users/<id>/…`) but not the private areas of others. The account must manage the instance (owner or manager). Lager exports only the database as documents: uploads, snapshots, grants and domains are not included.
+
+**Importing data:** `POST /api/instances/<slug>/import` with `Content-Type: application/x-ndjson` (one line per document, ideally the export file) or a JSON array of `{path, data}`; at most 50 MiB and 100000 documents per call. The MCP tool `import_data` takes at most 1000 documents per call. An import replaces documents with the same path and deletes no others. Lager takes no snapshot before an import; back up existing data beforehand with an export if needed. You can import into the same instance or another one, also one of a different app, and so move data between servers. You create the second instance with `POST /api/apps/<slug>/instances` or `create_instance`.
+
+```sh
+curl -H "Authorization: Bearer $LAGER_TOKEN" https://lager.example.com/api/instances/board/export > board.ndjson
+curl -X POST -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: application/x-ndjson" \
+  --data-binary @board.ndjson https://lager.example.com/api/instances/board-2/import
+```
+
+**Downloading the HTML of a version:** The version list of an app has an HTML link per version; over REST it is `GET /api/apps/<slug>/versions/<n>`. The file arrives as an attachment (`text/plain`, with `X-Content-Type-Options: nosniff`) and is never rendered on the platform. Everyone who may read the app (owner and collaborators) can download deployed versions; self-saved versions only the managers of the instance that saved them.
+
+**Moving an existing artifact with Claude:** Give Claude the source of the artifact and let it, with the Lager connector connected or the skill installed, follow the guide "Taking over existing artifacts" from `get_guide`. Claude checks the HTML with `check_artifact` (used, unsupported and undeclared building blocks, browser storage, `claude.complete`), converts what is supported, declares the building blocks, deploys, transfers data with `import_data` and spot-checks the result.
+
+**What cannot be moved automatically:**
+
+- Data that lives only in the user's browser (`localStorage`, `sessionStorage`, `indexedDB`): the old artifact must save it once as a file, which you then import.
+- Building blocks that Lager does not offer (`claude.complete`, `sample`, `tts` and similar): the feature is dropped or must be replaced.
+- Uploaded files: they must be uploaded again through the app, and the references to them change.
+- Private areas of other users, grants, domains, snapshots and earlier versions from another platform.
+
+## Backup
+
+Everything lives in the data directory (with Docker Compose the volume `lager-data`, with a bind mount `./data`): the platform database, all versions, the data, uploads and snapshots of the instances, and `secret.key`. To back up, stop the service and copy the volume or directory. With the volume (Compose project name `lager`, otherwise `<directory name>_lager-data`; `docker volume ls` shows it):
 
 ```sh
 docker compose stop
@@ -221,15 +288,18 @@ docker run --rm -v lager_lager-data:/data -v "$PWD":/backup alpine tar czf /back
 docker compose start
 ```
 
-Bei einem Bind-Mount genügt `cp -a data data-backup-$(date +%F)`.
+With a bind mount, `cp -a data data-backup-$(date +%F)` is enough.
 
-Zum Wiederherstellen den Inhalt zurückkopieren (beziehungsweise das Archiv in ein leeres Volume entpacken). Behalte `secret.key` (oder `LAGER_SECRET`), sonst werden alle Sitzungen ungültig.
+To restore, copy the contents back (or unpack the archive into an empty volume). Keep `secret.key` (or `LAGER_SECRET`), otherwise all sessions become invalid.
 
-## Was Lager nicht kann
+## What Lager cannot do
 
-- Keine Anmeldung über externe Anbieter (Single Sign-on); Konten haben E-Mail und Passwort.
-- Der Quota gilt nur für die Daten einer Instanz, nicht für Versionen, Schnappschüsse oder den Papierkorb (der nach der Aufbewahrungszeit geleert wird). Eine Begrenzung für die Gesamtgröße gibt es nicht.
-- Der Papierkorb wird nach `LAGER_TRASH_DAYS` Tagen geleert (Standard 30) und lässt sich nicht über Lager wiederherstellen.
-- Keine Capabilities außer `db` und `user`; alle anderen liefern `null`.
-- Kein eigenes TLS: HTTPS übernimmt der vorgeschaltete Proxy.
-- Keine automatische Datensicherung und keine Replikation.
+- No sign-in through external providers (single sign-on); accounts use email and password.
+- The quota applies to the data of an instance (documents, uploaded files, self-saved pages), not to deployed versions, snapshots or the trash (which is emptied after the retention period). There is no limit on the total size.
+- Snapshots back up only documents, not uploaded files and not self-saved pages.
+- The trash is emptied after `LAGER_TRASH_DAYS` days (default 30) and cannot be restored through Lager.
+- Only the building blocks `db`, `user`, `permissions`, `assets`, `room`, `artifact` (`self`) and `downloads`; all other names return `null`, `claude.complete` is missing, and there are no messages to Claude from the page.
+- Realtime rooms live only in memory: no history, nothing survives a restart, and several Lager processes do not share rooms.
+- For custom domains, Lager does not check who owns the host name.
+- No TLS of its own: HTTPS is handled by the proxy in front.
+- No automatic backup and no replication.
