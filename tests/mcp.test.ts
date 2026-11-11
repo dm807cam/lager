@@ -318,6 +318,31 @@ describe('mcp endpoint', () => {
     expect(no.json.error.code).toBe('forbidden');
   });
 
+  it('db_read and db_write use the caller\'s own level: a Verwalter is held to owner-only rules, the owner is not', async () => {
+    const r = await start();
+    const owner = await connect(r);
+    const rules = [{ path: 'locked', read: 'owner', write: 'owner' }];
+    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>1</p>', capabilities: { db: { rules } } });
+    const adm = await asUser(r, 'adm@x.y');
+    await call(owner, 'share_instance', { instance: 'todo', email: 'adm@x.y', level: 'admin' });
+    const inst = r.h.core.apps.getInstanceBySlug('todo')!;
+    const lockedWrite = { instance: 'todo', ops: [{ op: 'set', path: 'locked/a', data: { v: 1 } }] };
+
+    expect((await call(owner, 'db_write', lockedWrite)).json).toEqual({ applied: 1 });
+    expect((await call(owner, 'db_read', { instance: 'todo', path: 'locked/a' })).json.doc.data).toEqual({ v: 1 });
+
+    const denied = await call(adm.client, 'db_write', { instance: 'todo', ops: [{ op: 'set', path: 'locked/b', data: { v: 2 } }] });
+    expect(denied.isError).toBe(true);
+    expect(denied.json.error.code).toBe('forbidden');
+    expect(r.h.core.data.get(inst.id, 'locked/b')).toBeNull();
+    const read = await call(adm.client, 'db_read', { instance: 'todo', path: 'locked/a' });
+    expect(read.isError).toBe(true);
+    expect(read.json.error.code).toBe('forbidden');
+    // Everything else stays open to the Verwalter.
+    expect((await call(adm.client, 'db_write', { instance: 'todo', ops: [{ op: 'set', path: 'tasks/t1', data: { v: 3 } }] })).json).toEqual({ applied: 1 });
+    expect((await call(adm.client, 'db_read', { instance: 'todo', path: 'tasks/t1' })).json.doc.data).toEqual({ v: 3 });
+  });
+
   it('activate_version and db_write need an instance admin grant; interact is refused', async () => {
     const r = await start();
     const owner = await connect(r);

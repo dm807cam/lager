@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Config } from '../src/config.js';
 import { createCore, type Core } from '../src/core.js';
 import { LagerError } from '../src/errors.js';
+import { CATALOG_LIMIT } from '../src/platform/access.js';
 import type { Instance } from '../src/platform/apps.js';
 import type { User } from '../src/platform/users.js';
 
@@ -178,6 +179,22 @@ describe('Access', () => {
     expect(cat.apps.map((p) => p.slug)).toEqual(['usr']);
     core.apps.setInstanceDisabled(inst.id, true);
     expect(core.access.sharedWith(e)).toEqual([]);
+  });
+
+  it('catalog is capped at 100 entries per list, newest first, with app title and owner name', () => {
+    for (let i = 0; i < 105; i++) {
+      const slug = `c-${String(i).padStart(3, '0')}`;
+      const r = core.apps.deploy({ slug, html: '<p>p</p>', title: `Titel ${i}`, userId: a.id });
+      core.apps.setVisibility(r.instances[0].id, 'public', a.id);
+      core.apps.setSelfInstances(r.app.id, 'users', a.id);
+    }
+    const cat = core.access.catalog(e);
+    expect(cat.instances).toHaveLength(CATALOG_LIMIT);
+    expect(cat.apps).toHaveLength(CATALOG_LIMIT);
+    expect(cat.instances[0]).toMatchObject({ slug: 'c-104', appTitle: 'Titel 104', ownerName: 'Admin' });
+    expect(cat.instances.at(-1)!.slug).toBe('c-005');
+    expect(cat.apps[0].slug).toBe('c-104');
+    expect(cat.apps.at(-1)!.slug).toBe('c-005');
   });
 
   it('usersWithAccess', () => {

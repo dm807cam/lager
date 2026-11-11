@@ -9,7 +9,7 @@ import type { QuerySpec } from '../data/query.js';
 import { canRead, canWrite, type Viewer } from '../data/rules.js';
 import { LagerError } from '../errors.js';
 import type { GrantLevel } from '../platform/access.js';
-import type { App, Capabilities, DeployResult, Instance, Visibility } from '../platform/apps.js';
+import type { App, Capabilities, DbRule, DeployResult, Instance, Visibility } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 
 const GUIDE = fs.readFileSync(new URL('../guide.md', import.meta.url), 'utf8');
@@ -173,8 +173,17 @@ function run(fn: () => unknown): CallToolResult {
   }
 }
 
-/** db_read/db_write act with full rights (without the app's rules) for those who manage the instance, but `data/users/<other>/…` stays closed. */
-const ownerViewer = (user: User): Viewer => ({ userId: user.id, level: 'owner' });
+/**
+ * db_read/db_write act with the caller's own level on the instance. The owner ignores the app's rules (to seed data); an instance
+ * administrator ("Verwalter") is held to them like at runtime, so rules that require `owner` stay closed. `data/users/<other>/…` is closed for everyone.
+ */
+function dbAccess(core: Core, user: User, inst: Instance): { viewer: Viewer; rules: DbRule[] | undefined } {
+  const level = core.access.levelFor(inst, user);
+  const viewer: Viewer = { userId: user.id, level };
+  if (level === 'owner') return { viewer, rules: [] };
+  const caps = core.apps.listVersions(inst.appId).find((v) => v.number === inst.activeVersion)?.capabilities;
+  return { viewer, rules: caps?.db?.rules };
+}
 
 const slugArg = z.string().describe('Slug (lowercase letters, digits, hyphens)');
 const visibilityArg = z.enum(['private', 'users', 'public']);
@@ -258,11 +267,11 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     },
   }, ({ instance, path, where, orderBy, limit }) => run(() => {
     const inst = managedInstance(core, user, instance);
-    const viewer = ownerViewer(user);
-    if (!canRead([], viewer, path)) throw new LagerError('forbidden', 'This path belongs to another user\'s private area.');
+    const { viewer, rules } = dbAccess(core, user, inst);
+    if (!canRead(rules, viewer, path)) throw new LagerError('forbidden', 'You may not read this path (another user\'s private area or a rule of the app).');
     if (path.split('/').length % 2 === 0) return { doc: core.data.get(inst.id, path) };
     const spec: QuerySpec = { where: where as QuerySpec['where'], orderBy, limit };
-    return { docs: core.data.query(inst.id, path, spec).filter((d) => canRead([], viewer, d.path)) };
+    return { docs: core.data.query(inst.id, path, spec).filter((d) => canRead(rules, viewer, d.path)) };
   }));
 
   server.registerTool('db_write', {
@@ -276,11 +285,11 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     },
   }, ({ instance, ops }) => run(() => {
     const inst = managedInstance(core, user, instance);
-    const viewer = ownerViewer(user);
+    const { viewer, rules } = dbAccess(core, user, inst);
     // Validate every operation before applying any of them.
     for (const o of ops) {
       parseDocPath(o.path);
-      if (!canWrite([], viewer, o.path)) throw new LagerError('forbidden', `"${o.path}" belongs to another user's private area.`);
+      if (!canWrite(rules, viewer, o.path)) throw new LagerError('forbidden', `You may not write "${o.path}" (another user's private area or a rule of the app).`);
       if (o.op !== 'delete') {
         if (o.data === undefined) throw new LagerError('invalid_argument', `${o.op} on "${o.path}" needs data.`);
         assertDocData(o.data);

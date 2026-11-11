@@ -105,7 +105,7 @@ Schreibe Start- und Beispieldaten nicht fest ins HTML, sondern lege sie nach dem
 ]}
 ```
 
-Höchstens 100 Operationen pro Aufruf (`set` ersetzt, `update` führt zusammen, `delete` löscht). `db_read {instance, path, where?, orderBy?, limit?}` liest ein Dokument (`{doc}`) oder eine Sammlung (`{docs}`). Beide handeln als Besitzer ohne die Regeln der App, private Bereiche anderer Nutzer bleiben aber gesperrt.
+Höchstens 100 Operationen pro Aufruf (`set` ersetzt, `update` führt zusammen, `delete` löscht). `db_read {instance, path, where?, orderBy?, limit?}` liest ein Dokument (`{doc}`) oder eine Sammlung (`{docs}`). Beide handeln mit deiner eigenen Stufe auf der Instanz: der Besitzer ohne die Regeln der App, ein Verwalter nach den Regeln der App (Regeln, die `owner` verlangen, bleiben ihm verschlossen). Private Bereiche anderer Nutzer bleiben immer gesperrt.
 
 ## Kompatibilität mit `window.storage`
 

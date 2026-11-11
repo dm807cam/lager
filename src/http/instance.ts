@@ -267,19 +267,27 @@ export function createInstanceRouter(core: Core): express.Router {
       unsubscribe?.();
       res.end();
     };
-    unsubscribe = core.hub.subscribe(first.instance.id, (e: HubEvent) => {
-      // Re-resolve access on every event so revoked visibility or changed rules take effect immediately.
+    /** The instance while this stream's session still has access to it, else null. Re-resolved on every event and every ping. */
+    const current = (): { inst: Instance; level: Level } | null => {
       const inst = core.apps.getInstance(first.instance.id);
       const viewer = userId === null ? null : core.users.get(userId);
       // The stream belongs to the session it was opened with: logout, password change or disabling ends it.
-      if (userId !== null && (!viewer || viewer.disabled || viewer.sessionEpoch !== epoch)) { stop(); return; }
+      if (userId !== null && (!viewer || viewer.disabled || viewer.sessionEpoch !== epoch)) return null;
       const level = inst ? core.access.levelFor(inst, viewer) : 'none';
-      if (!inst || RANK[level] < RANK.view) { stop(); return; }
+      return inst && RANK[level] >= RANK.view ? { inst, level } : null;
+    };
+    unsubscribe = core.hub.subscribe(first.instance.id, (e: HubEvent) => {
+      const now = current();
+      if (!now) { stop(); return; }
       if (e.type === 'reset') { send('reset'); return; }
-      const rules = activeCapabilities(core, inst).db?.rules;
-      if (canRead(rules, { userId, level }, e.path)) send('change', { path: e.path, parent: e.parent });
+      const rules = activeCapabilities(core, now.inst).db?.rules;
+      if (canRead(rules, { userId, level: now.level }, e.path)) send('change', { path: e.path, parent: e.parent });
     });
-    ping = setInterval(() => { res.write(': ping\n\n'); }, PING_MS);
+    // An idle stream has no events to notice a revoked session or grant, so the ping checks too.
+    ping = setInterval(() => {
+      if (!current()) { stop(); return; }
+      res.write(': ping\n\n');
+    }, PING_MS);
     req.on('close', () => { clearInterval(ping); unsubscribe?.(); });
   });
 

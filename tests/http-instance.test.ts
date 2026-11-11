@@ -1,6 +1,6 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { signToken } from '../src/http/tokens.js';
 import { makeHarness, PLATFORM_HOST, type Harness } from './support/http.js';
@@ -338,6 +338,53 @@ describe('instance host', () => {
       expect(received).toContain('"path":"tasks/a"');
       expect(received).toContain('"parent":"tasks"');
     } finally {
+      server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it('an idle events stream ends at the next ping once access is gone', async () => {
+    const { h, inst } = setup();
+    const admin = h.core.users.get(h.adminId)!;
+    const mk = (email: string) => h.core.users.create({ email, name: email, password: 'pw', role: 'user' });
+    const e = mk('e@x.y');
+    const f = mk('f@x.y');
+    h.core.access.setGrant(inst, 'user', e.id, 'view', admin);
+    h.core.access.setGrant(inst, 'user', f.id, 'view', admin);
+    const ec = await h.enter('workout', await h.login('e@x.y', 'pw'));
+    const fc = await h.enter('workout', await h.login('f@x.y', 'pw'));
+    const server = http.createServer(h.app);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as AddressInfo).port;
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const open = (cookie: string) => new Promise<{ ended: Promise<void>; req: http.ClientRequest }>((resolve, reject) => {
+      const req = http.get({ host: '127.0.0.1', port, path: '/__lager/db/events', headers: { Host: W, Cookie: cookie } }, (res) => {
+        const ended = new Promise<void>((done) => { res.on('end', done); res.on('close', done); });
+        res.on('data', () => undefined);
+        resolve({ ended, req });
+      });
+      req.on('error', reject);
+    });
+    try {
+      const streamE = await open(ec);
+      const streamF = await open(fc);
+      const state = { e: false, f: false };
+      void streamE.ended.then(() => { state.e = true; });
+      void streamF.ended.then(() => { state.f = true; });
+      // Nothing changed: pings keep both streams open.
+      vi.advanceTimersByTime(25_001);
+      await vi.advanceTimersByTimeAsync(10);
+      await new Promise((r) => setImmediate(r));
+      expect(state).toEqual({ e: false, f: false });
+      // e's grant is withdrawn, f's session ends (logout); no data event follows, only the next ping.
+      h.core.access.removeGrant(inst, 'user', e.id, admin);
+      h.core.users.bumpEpoch(f.id);
+      expect(state).toEqual({ e: false, f: false });
+      vi.advanceTimersByTime(25_001);
+      await Promise.all([streamE.ended, streamF.ended]);
+      expect(state).toEqual({ e: true, f: true });
+    } finally {
+      vi.useRealTimers();
       server.closeAllConnections();
       await new Promise((r) => server.close(r));
     }

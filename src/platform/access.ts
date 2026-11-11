@@ -12,6 +12,9 @@ export interface Grant { instanceId: string; principalType: 'user' | 'group'; pr
 const RANK: Record<Level, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
 const GRANT_LEVELS: readonly GrantLevel[] = ['view', 'interact', 'admin'];
 const DEFAULT_LIMIT = 20;
+/** Entries per list in `catalog`. */
+export const CATALOG_LIMIT = 100;
+
 const maxLevel = (a: Level, b: Level): Level => (RANK[a] >= RANK[b] ? a : b);
 
 /** The one place that decides who may do what with apps and instances. */
@@ -135,14 +138,10 @@ export class Access {
       .sort((a, b) => a.slug.localeCompare(b.slug));
   }
 
-  /** What a signed-in user can discover: others' instances open to all users or the public, and self-service apps. */
-  catalog(user: User): { instances: Instance[]; apps: App[] } {
+  /** What a signed-in user can discover: others' instances open to all users or the public, and self-service apps; newest 100 of each. */
+  catalog(user: User): { instances: Array<Instance & { appTitle: string; ownerName: string }>; apps: App[] } {
     if (user.disabled) return { instances: [], apps: [] };
-    return {
-      instances: this.apps.listAllInstances()
-        .filter((i) => !i.disabled && i.ownerId !== user.id && (i.visibility === 'users' || i.visibility === 'public')),
-      apps: this.apps.listAllApps().filter((a) => a.selfInstances === 'users'),
-    };
+    return { instances: this.apps.listDiscoverable(user.id, CATALOG_LIMIT), apps: this.apps.listSelfServiceApps(CATALOG_LIMIT) };
   }
 
   /** Active users who can open the instance: owner, direct grantees and members of granted groups. */

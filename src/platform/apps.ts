@@ -328,6 +328,23 @@ export class Apps {
     return rows.map(toInstance);
   }
 
+  /** Newest first: instances of others open to all signed-in users or the public, with app title and owner name from one join. */
+  listDiscoverable(excludeOwnerId: string, limit: number): Array<Instance & { appTitle: string; ownerName: string }> {
+    const rows = this.db.prepare(
+      `SELECT i.*, a.title AS app_title, COALESCE(u.name, '–') AS owner_name FROM instances i
+       JOIN apps a ON a.id = i.app_id LEFT JOIN users u ON u.id = i.owner_id
+       WHERE i.disabled_at IS NULL AND i.owner_id != ? AND i.visibility IN ('users', 'public')
+       ORDER BY i.created_at DESC, i.rowid DESC LIMIT ?`,
+    ).all(excludeOwnerId, limit) as unknown as Array<InstanceRow & { app_title: string; owner_name: string }>;
+    return rows.map((r) => ({ ...toInstance(r), appTitle: r.app_title, ownerName: r.owner_name }));
+  }
+
+  /** Newest first: apps whose owner lets every signed-in user create instances. */
+  listSelfServiceApps(limit: number): App[] {
+    const rows = this.db.prepare("SELECT * FROM apps WHERE self_instances = 'users' ORDER BY created_at DESC, rowid DESC LIMIT ?").all(limit) as unknown as AppRow[];
+    return rows.map(toApp);
+  }
+
   listInstancesOwnedBy(userId: string): Instance[] {
     const rows = this.db.prepare('SELECT * FROM instances WHERE owner_id = ? ORDER BY created_at, slug').all(userId) as unknown as InstanceRow[];
     return rows.map(toInstance);

@@ -186,6 +186,62 @@ describe('instance page', () => {
     expect(h.core.apps.getApp('notes')).not.toBeNull();
   });
 
+  it('forged posts are refused and change nothing: no rights, collaborator on owner-only routes, foreign csrf, wrong token kind', async () => {
+    const { p, u, pc, uc } = await setup();
+    const app = h.core.apps.getApp('notes')!;
+    const c = h.core.users.create({ email: 'c@x.y', name: 'c', password: 'password-123', role: 'publisher' });
+    h.core.apps.addCollaborator(app.id, c.id, p.id);
+    const cc = await h.login('c@x.y', 'password-123');
+    h.core.access.setGrant(inst(), 'user', u.id, 'view', p);
+    h.core.data.set(inst().id, 'tasks/a', { n: 1 }, p.id);
+    h.core.data.snapshot(inst().id, 'manual');
+    const snap = h.core.data.listSnapshots(inst().id)[0]?.id ?? 'x';
+
+    const instanceRoutes: Array<[string, Record<string, string>]> = [
+      ['/ui/instances/notes/activate', { version: '1' }],
+      ['/ui/instances/notes/visibility', { visibility: 'public', users_level: 'view' }],
+      ['/ui/instances/notes/restore', { snapshot: snap }],
+      ['/ui/instances/notes/grants', { email: 'c@x.y', level: 'admin' }],
+      ['/ui/instances/notes/grants/remove', { type: 'user', id: u.id }],
+      ['/ui/instances/notes/delete', { confirm: 'notes' }],
+    ];
+    const ownerOnlyAppRoutes: Array<[string, Record<string, string>]> = [
+      ['/ui/apps/notes/collaborators', { email: 'admin@x.y' }],
+      ['/ui/apps/notes/collaborators/remove', { id: c.id }],
+      ['/ui/apps/notes/self-instances', { mode: 'users' }],
+      ['/ui/apps/notes/delete', { confirm: 'notes' }],
+    ];
+    const appRoutes: Array<[string, Record<string, string>]> = [['/ui/apps/notes/instances', { slug: 'forged' }], ...ownerOnlyAppRoutes];
+    const all = [...instanceRoutes, ...appRoutes];
+
+    const state = (): string => JSON.stringify([
+      h.core.apps.listAllInstances(), h.core.apps.listAllApps(), h.core.apps.listCollaborators(app.id).map((x) => x.id),
+      h.core.access.listGrants(inst().id), h.core.data.listSnapshots(inst().id).map((x) => x.id),
+    ]);
+    const before = state();
+    const forge = async (label: string, cookie: string, routes: typeof all, csrfField: string | undefined) => {
+      for (const [path, body] of routes) {
+        const req = request(h.app).post(path).set('Host', h.host).set('Cookie', cookie).type('form');
+        const res = await req.send(csrfField === undefined ? body : { csrf: csrfField, ...body });
+        expect(res.status, `${label} ${path}`).toBe(403);
+      }
+      expect(state(), label).toBe(before);
+    };
+
+    // (a) signed in, valid csrf of their own, but no rights on the instance/app (u only has view on the instance).
+    await forge('no rights', uc, all, csrf(u));
+    // (b) a collaborator on the routes only the app owner may use.
+    await forge('collaborator', cc, ownerOnlyAppRoutes, csrf(c));
+    // (c) the owner's session with a csrf token minted for another user.
+    await forge('foreign csrf', pc, all, csrf(u));
+    // (d) the owner's session with signed tokens of the wrong kind in the csrf field.
+    for (const kind of ['flash', 'code', 'inst']) {
+      const token = signToken({ uid: p.id, k: kind, iid: inst().id }, h.core.config.secret, 3600);
+      await forge(`wrong kind ${kind}`, pc, all, token);
+    }
+    await forge('garbage csrf', pc, all, 'not-a-token');
+  });
+
   it('escapes values on the page', async () => {
     const { p, pc } = await setup();
     h.core.groups.create('<b>grp</b>');

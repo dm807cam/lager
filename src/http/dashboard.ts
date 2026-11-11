@@ -46,9 +46,8 @@ function sharedSection(core: Core, user: User): string {
 function catalogSection(core: Core, user: User, csrf: string): string {
   const { instances, apps } = core.access.catalog(user);
   if (!instances.length && !apps.length) return '';
-  const owner = (i: Instance): string => esc(core.users.get(i.ownerId)?.name ?? '–');
-  const instRows = instances.map((i) => `<tr><td>${esc(core.apps.getApp(i.appId)?.title ?? i.slug)}</td>
-<td><a href="${esc(instanceUrl(core.config, i.slug))}">${esc(i.slug)}</a></td><td>${owner(i)}</td></tr>`).join('');
+  const instRows = instances.map((i) => `<tr><td>${esc(i.appTitle)}</td>
+<td><a href="${esc(instanceUrl(core.config, i.slug))}">${esc(i.slug)}</a></td><td>${esc(i.ownerName)}</td></tr>`).join('');
   const appCards = apps.map((a) => `<div class="card"><h3>${esc(a.title)} <span class="muted mono">${esc(a.slug)}</span></h3>
 ${form(`/ui/apps/${encodeURIComponent(a.slug)}/instances`, csrf,
     `<input type="hidden" name="from" value="home"><label for="new-${esc(a.slug)}">Name der Instanz (Kleinbuchstaben, Ziffern, Bindestriche)</label><input id="new-${esc(a.slug)}" name="slug" required maxlength="63" autocomplete="off">`,
