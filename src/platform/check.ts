@@ -14,11 +14,11 @@ const USE_RE = /\bclaude\s*\.\s*use\s*\(\s*(["'])([^"'\\\r\n]*)\1/g;
 const COMPLETE_RE = /\bclaude\s*\.\s*complete\s*\(/;
 const ALIASES = ['artifact', 'self'];
 
-/** One German warning per browser-storage API the artifact uses. */
+/** One English warning per browser-storage API the artifact uses. */
 export function storageWarnings(html: string): string[] {
   return STORAGE_CHECKS.filter((c) => c.re.test(html)).map(
     (c) =>
-      `Das Artefakt verwendet ${c.api}. Der Browser-Speicher geht beim Wechsel des Geräts oder der Instanz verloren – nutze stattdessen claude.use("db").`,
+      `The artifact uses ${c.api}. Browser storage is lost when the device or the instance changes - use claude.use("db") instead.`,
   );
 }
 
@@ -33,9 +33,9 @@ export function checkArtifact(html: string, capabilities: Capabilities = {}): Ar
   const undeclared = used.filter((n) => SUPPORTED_CAPABILITIES.includes(n) && n !== 'permissions' && !declared(n));
   const warnings = [
     ...storageWarnings(html),
-    ...unsupported.map((n) => `„${n}“ wird von Lager nicht nachgebildet; claude.use("${n}") liefert null.`),
-    ...undeclared.map((n) => `„${n}“ wird benutzt, ist aber nicht in capabilities deklariert.`),
-    ...(COMPLETE_RE.test(html) ? ['claude.complete wird von Lager nicht bereitgestellt; der Aufruf lehnt mit einer Fehlermeldung ab.'] : []),
+    ...unsupported.map((n) => `"${n}" is not provided by Lager; claude.use("${n}") returns null.`),
+    ...undeclared.map((n) => `"${n}" is used but not declared in capabilities.`),
+    ...(COMPLETE_RE.test(html) ? ['claude.complete is not provided by Lager; the call rejects with an error.'] : []),
   ];
   return { used, unsupported, undeclared, warnings };
 }

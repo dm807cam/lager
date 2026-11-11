@@ -42,7 +42,7 @@ describe('retired slugs', () => {
 
     const other = h.core.apps.deploy({ slug: 'other', html, userId: q.id }).app;
     expect(code(() => h.core.apps.createInstance({ appId: other.id, slug: 'notes-2', ownerId: q.id }))).toBe('conflict');
-    expect(() => h.core.apps.createInstance({ appId: other.id, slug: 'notes-2', ownerId: q.id })).toThrow('gesperrt');
+    expect(() => h.core.apps.createInstance({ appId: other.id, slug: 'notes-2', ownerId: q.id })).toThrow(expect.objectContaining({ reason: 'slug_retired' }));
     expect(code(() => h.core.apps.createInstance({ appId: other.id, slug: 'notes', ownerId: q.id }))).toBe('conflict');
     expect(h.core.apps.getInstanceBySlug('notes-2')).toBeNull();
 
@@ -110,7 +110,7 @@ describe('instance creation limit', () => {
       h.core.apps.deleteInstance(inst.id, p.id); // deleting does not give the budget back
     }
     expect(h.core.apps.listInstancesOwnedBy(p.id)).toHaveLength(1);
-    expect(() => h.core.apps.createInstance({ appId: app.id, slug: 'i-11', ownerId: p.id })).toThrow('zu viele Instanzen');
+    expect(() => h.core.apps.createInstance({ appId: app.id, slug: 'i-11', ownerId: p.id })).toThrow(expect.objectContaining({ reason: 'creation_rate' }));
     expect(code(() => h.core.apps.createInstance({ appId: app.id, slug: 'i-11', ownerId: p.id }))).toBe('conflict');
     expect(code(() => h.core.apps.deploy({ slug: 'second', html, userId: p.id }))).toBe('conflict');
     expect(h.core.apps.getApp('second')).toBeNull();

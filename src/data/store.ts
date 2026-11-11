@@ -121,7 +121,7 @@ export class InstanceData {
 
   private assertQuota(instanceId: string): void {
     if (this.quotaBytes > 0 && this.usage(instanceId) + this.extraUsage(instanceId) >= this.quotaBytes) {
-      throw new LagerError('quota_exceeded', 'Der Speicher dieser Instanz ist voll.');
+      throw new LagerError('quota_exceeded', 'This instance\'s storage is full.');
     }
   }
 
@@ -310,7 +310,7 @@ export class InstanceData {
       // The private-area check comes first so a malformed path under data/users/ is refused as such.
       const owner = privateAreaOwner(d.path.split('/'));
       if (owner !== undefined && (owner === null || owner !== opts.allowPrivateOf)) {
-        throw new LagerError('forbidden', `Der private Bereich "${d.path}" gehört einem anderen Nutzer und kann nicht geschrieben werden.`);
+        throw new LagerError('forbidden', `The private area "${d.path}" belongs to another user and cannot be written.`);
       }
       const { parent, id } = parseDocPath(d.path);
       assertDocData(d.data);
@@ -327,7 +327,7 @@ export class InstanceData {
       );
       for (const [p, d] of checked) upsert.run(p, d.parent, d.id, d.json, now, now, by);
       if (this.quotaBytes > 0 && this.usage(instanceId) + this.extraUsage(instanceId) > this.quotaBytes) {
-        throw new LagerError('quota_exceeded', 'Der Speicher dieser Instanz ist voll.');
+        throw new LagerError('quota_exceeded', 'This instance\'s storage is full.');
       }
     });
     this.hub.publish(instanceId, { type: 'reset' });

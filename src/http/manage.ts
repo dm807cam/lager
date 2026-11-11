@@ -3,6 +3,8 @@ import type { Request, RequestHandler, Response } from 'express';
 import { hostUrl, instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
+import type { Locale } from '../i18n/index.js';
+import { localeOf } from './locale.js';
 import type { App, Instance, SelfInstances, UsersLevel, Version, Visibility } from '../platform/apps.js';
 import type { GrantLevel } from '../platform/access.js';
 import type { User } from '../platform/users.js';
@@ -22,33 +24,34 @@ const USERS_LEVELS = LEVEL_LABELS.filter(([l]) => l === 'view' || l === 'interac
 const SELF_LABELS: Array<[string, string]> = [['off', 'Aus'], ['users', 'Alle Angemeldeten']];
 const MAX_FIELD = 300;
 
-/** Fixed German wording for the domain errors a form can run into; raw error text is never shown. */
-const NOTICES: Array<[RegExp, string]> = [
-  [/^Instanz-Limit erreicht$/, 'Instanz-Limit erreicht'],
-  [/^Andere Nutzer haben Instanzen/, 'Andere Nutzer haben Instanzen dieser App. Sie müssen zuerst gelöscht werden.'],
-  [/already taken/, 'Dieser Name ist schon vergeben.'],
-  [/^Dieser Name wurde bereits verwendet und ist gesperrt\.$/, 'Dieser Name wurde bereits verwendet und ist gesperrt.'],
-  [/^Du hast heute zu viele Instanzen angelegt\./, 'Du hast heute zu viele Instanzen angelegt. Versuche es morgen wieder.'],
-  [/Invalid slug|is reserved/, 'Ungültiger Name: Kleinbuchstaben, Ziffern und Bindestriche, höchstens 63 Zeichen.'],
-  [/Collaborators must be/, 'Mitarbeiter müssen aktive Administratoren oder Publisher sein.'],
-  [/owner is already in charge/, 'Der Besitzer ist bereits für die App zuständig.'],
-  [/owner already has full access/, 'Der Besitzer hat bereits vollen Zugriff.'],
-  [/^Das ist kein gültiger Hostname\.$/, 'Das ist kein gültiger Hostname.'],
-  [/^Diese Domain ist bereits vergeben\.$/, 'Diese Domain ist bereits vergeben.'],
-  [/^Diese Domain kann nicht verwendet werden\.$/, 'Diese Domain kann nicht verwendet werden.'],
-];
+/** Fixed German wording for the domain errors a form can run into, keyed by the error's stable `reason`; raw error text is never shown. */
+const NOTICES: Record<string, string> = {
+  instance_limit: 'Instanz-Limit erreicht',
+  other_users_instances: 'Andere Nutzer haben Instanzen dieser App. Sie müssen zuerst gelöscht werden.',
+  slug_taken: 'Dieser Name ist schon vergeben.',
+  slug_retired: 'Dieser Name wurde bereits verwendet und ist gesperrt.',
+  creation_rate: 'Du hast heute zu viele Instanzen angelegt. Versuche es morgen wieder.',
+  slug_invalid: 'Ungültiger Name: Kleinbuchstaben, Ziffern und Bindestriche, höchstens 63 Zeichen.',
+  slug_reserved: 'Ungültiger Name: Kleinbuchstaben, Ziffern und Bindestriche, höchstens 63 Zeichen.',
+  collaborators_invalid: 'Mitarbeiter müssen aktive Administratoren oder Publisher sein.',
+  owner_in_charge: 'Der Besitzer ist bereits für die App zuständig.',
+  owner_full_access: 'Der Besitzer hat bereits vollen Zugriff.',
+  host_invalid: 'Das ist kein gültiger Hostname.',
+  host_taken: 'Diese Domain ist bereits vergeben.',
+  host_unavailable: 'Diese Domain kann nicht verwendet werden.',
+};
 
 /** A message for the user that is not a domain error (unknown address, wrong confirmation). */
 class Notice extends Error {}
 
-const notFoundPage = (what: string): string => page('Nicht gefunden', `<h1>Nicht gefunden</h1><p>${esc(what)}</p><p><a href="/">Zurück zur Übersicht</a></p>`);
-const forbiddenAppPage = (): string =>
-  page('Kein Zugriff', '<h1>Kein Zugriff</h1><p>Diese App gehört dir nicht und du arbeitest nicht daran mit.</p><p><a href="/">Zurück zur Übersicht</a></p>');
-const csrfErrorPage = (): string =>
-  page('Fehler', '<h1>Das hat nicht geklappt</h1><p class="err">Die Sitzung ist abgelaufen. Bitte lade die Seite neu und versuche es erneut.</p><p><a href="/">Zurück zur Übersicht</a></p>');
+const notFoundPage = (locale: Locale, what: string): string => page(locale, 'Nicht gefunden', `<h1>Nicht gefunden</h1><p>${esc(what)}</p><p><a href="/">Zurück zur Übersicht</a></p>`);
+const forbiddenAppPage = (locale: Locale): string =>
+  page(locale, 'Kein Zugriff', '<h1>Kein Zugriff</h1><p>Diese App gehört dir nicht und du arbeitest nicht daran mit.</p><p><a href="/">Zurück zur Übersicht</a></p>');
+const csrfErrorPage = (locale: Locale): string =>
+  page(locale, 'Fehler', '<h1>Das hat nicht geklappt</h1><p class="err">Die Sitzung ist abgelaufen. Bitte lade die Seite neu und versuche es erneut.</p><p><a href="/">Zurück zur Übersicht</a></p>');
 
-function shell(user: User, csrf: string, title: string, body: string, flash: Flash): string {
-  return page(title, `${noticeHtml(flash)}${body}`, { wide: true, headerExtra: signedInHeader(user.email, csrf, user.role === 'admin') });
+function shell(locale: Locale, user: User, csrf: string, title: string, body: string, flash: Flash): string {
+  return page(locale, title, `${noticeHtml(flash)}${body}`, { wide: true, headerExtra: signedInHeader(locale, user.email, csrf, user.role === 'admin') });
 }
 
 /** Deployed versions, plus the ones `instanceId` saved itself; other instances' saved versions are never listed. */
@@ -94,7 +97,7 @@ function domainsSection(core: Core, inst: Instance, base: string, csrf: string):
 <p class="muted">DNS, Proxy-Eintrag und Zertifikat für die Domain richtest du selbst ein. Lager prüft nicht, wem die Domain gehört.</p>`, 'Hinzufügen')}</div>`;
 }
 
-function instancePage(core: Core, user: User, inst: Instance, flash: Flash): string {
+function instancePage(core: Core, locale: Locale, user: User, inst: Instance, flash: Flash): string {
   const csrf = csrfToken(core, user);
   const base = `/ui/instances/${encodeURIComponent(inst.slug)}`;
   const app = core.apps.getApp(inst.appId)!;
@@ -108,11 +111,11 @@ function instancePage(core: Core, user: User, inst: Instance, flash: Flash): str
   const del = owner ? `<h2>Instanz löschen</h2><div class="card"><p>Die Instanz und ihre Daten werden entfernt. Die Daten landen im Papierkorb des Servers.</p>
 ${form(`${base}/delete`, csrf, `<label for="confirm">Zur Bestätigung den Namen „${esc(inst.slug)}“ eingeben</label><input id="confirm" name="confirm" required autocomplete="off">`, 'Instanz löschen')}</div>` : '';
   if (inst.disabled) {
-    return shell(user, csrf, `Instanz ${inst.slug}`, `<p><a href="/">Zurück zur Übersicht</a></p>
+    return shell(locale, user, csrf, `Instanz ${inst.slug}`, `<p><a href="/">Zurück zur Übersicht</a></p>
 <h1>${esc(app.title)} <span class="muted mono">${esc(inst.slug)}</span></h1>
 <p class="err">Diese Instanz wurde von einem Administrator deaktiviert. Du kannst sie nur noch löschen.</p>${del}`, flash);
   }
-  return shell(user, csrf, `Instanz ${inst.slug}`, `<p><a href="/">Zurück zur Übersicht</a></p>
+  return shell(locale, user, csrf, `Instanz ${inst.slug}`, `<p><a href="/">Zurück zur Übersicht</a></p>
 <h1>${esc(app.title)} <span class="muted mono">${esc(inst.slug)}</span></h1>
 <p><a href="${esc(url)}">${esc(url)}</a></p>
 <h2>Version</h2><p>Aktive Version: v${inst.activeVersion}</p>${versionsTable(core, user, app, base, csrf, inst.activeVersion, inst.id)}
@@ -131,7 +134,7 @@ ${core.domains.canManage(user, core.access.canManageInstance(inst, user)) ? doma
 ${del}`, flash);
 }
 
-function appPage(core: Core, user: User, app: App, flash: Flash): string {
+function appPage(core: Core, locale: Locale, user: User, app: App, flash: Flash): string {
   const csrf = csrfToken(core, user);
   const base = `/ui/apps/${encodeURIComponent(app.slug)}`;
   const saved = new Map<string, number>();
@@ -151,7 +154,7 @@ function appPage(core: Core, user: User, app: App, flash: Flash): string {
 <h2>App löschen</h2><div class="card"><p>Die App mit allen Versionen und Instanzen wird entfernt. Die Dateien landen im Papierkorb des Servers.</p>
 ${form(`${base}/delete`, csrf, `<label for="confirm">Zur Bestätigung den Namen „${esc(app.slug)}“ eingeben</label><input id="confirm" name="confirm" required autocomplete="off">`, 'App löschen')}</div>`;
   }
-  return shell(user, csrf, `App ${app.title}`, `<p><a href="/">Zurück zur Übersicht</a></p>
+  return shell(locale, user, csrf, `App ${app.title}`, `<p><a href="/">Zurück zur Übersicht</a></p>
 <h1>${esc(app.title)} <span class="muted mono">${esc(app.slug)}</span></h1>
 <h2>Versionen</h2>${versionsTable(core, user, app, null, csrf)}
 <h2>Instanzen</h2>${rows ? `<div class="scroll"><table><thead><tr><th>Instanz</th><th>Besitzer</th><th>Gespeichert</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Keine Instanzen.</p>'}
@@ -210,16 +213,16 @@ export const manageExtension: PlatformExtension = (router, core) => {
     noStore, auth, formBody,
     (req, res) => {
       const user = userOf(res);
-      if (!csrfValid(core, user, field(req, 'csrf', 2000))) { send(res, 403, csrfErrorPage()); return; }
+      if (!csrfValid(core, user, field(req, 'csrf', 2000))) { send(res, 403, csrfErrorPage(localeOf(res))); return; }
       try {
         const target = run(req, user);
         res.redirect(target ?? back(req, user));
       } catch (e) {
         if (e instanceof Notice) { toPage(res, user, back(req, user), { error: e.message }); return; }
         if (!(e instanceof LagerError)) throw e;
-        if (e.code === 'forbidden') send(res, 403, forbiddenInstancePage());
-        else if (e.code === 'not_found') send(res, 404, notFoundPage('Das gibt es nicht.'));
-        else toPage(res, user, back(req, user), { error: NOTICES.find(([re]) => re.test(e.message))?.[1] ?? 'Die Eingabe ist ungültig.' });
+        if (e.code === 'forbidden') send(res, 403, forbiddenInstancePage(localeOf(res)));
+        else if (e.code === 'not_found') send(res, 404, notFoundPage(localeOf(res), 'Das gibt es nicht.'));
+        else toPage(res, user, back(req, user), { error: NOTICES[e.reason ?? ''] ?? 'Die Eingabe ist ungültig.' });
       }
     },
   ];
@@ -229,16 +232,16 @@ export const manageExtension: PlatformExtension = (router, core) => {
   router.get('/instances/:slug', noStore, auth, (req, res) => {
     const user = userOf(res);
     const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
-    if (!inst) { send(res, 404, notFoundPage('Diese Instanz gibt es nicht.')); return; }
-    if (!core.access.canManageInstance(inst, user) && !core.access.canDeleteInstance(inst, user)) { send(res, 403, forbiddenInstancePage()); return; }
-    send(res, 200, instancePage(core, user, inst, readFlash(core, user, req.query.flash)));
+    if (!inst) { send(res, 404, notFoundPage(localeOf(res), 'Diese Instanz gibt es nicht.')); return; }
+    if (!core.access.canManageInstance(inst, user) && !core.access.canDeleteInstance(inst, user)) { send(res, 403, forbiddenInstancePage(localeOf(res))); return; }
+    send(res, 200, instancePage(core, localeOf(res), user, inst, readFlash(core, user, req.query.flash)));
   });
 
   router.get('/instances/:slug/export', noStore, auth, (req, res, next) => {
     const user = userOf(res);
     const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
-    if (!inst) { send(res, 404, notFoundPage('Diese Instanz gibt es nicht.')); return; }
-    if (!core.access.canManageInstance(inst, user)) { send(res, 403, forbiddenInstancePage()); return; }
+    if (!inst) { send(res, 404, notFoundPage(localeOf(res), 'Diese Instanz gibt es nicht.')); return; }
+    if (!core.access.canManageInstance(inst, user)) { send(res, 403, forbiddenInstancePage(localeOf(res))); return; }
     streamExport(core, user, inst, res).catch(next);
   });
 
@@ -249,8 +252,8 @@ export const manageExtension: PlatformExtension = (router, core) => {
       sendVersionDownload(res, slug, number, downloadableVersion(core, userOf(res), slug, number).html);
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
-      if (e.code === 'forbidden') send(res, 403, forbiddenAppPage());
-      else send(res, 404, notFoundPage('Diese Version gibt es nicht.'));
+      if (e.code === 'forbidden') send(res, 403, forbiddenAppPage(localeOf(res)));
+      else send(res, 404, notFoundPage(localeOf(res), 'Diese Version gibt es nicht.'));
     }
   });
 
@@ -322,9 +325,9 @@ export const manageExtension: PlatformExtension = (router, core) => {
   router.get('/apps/:slug', noStore, auth, (req, res) => {
     const user = userOf(res);
     const app = core.apps.getApp(param(req, 'slug'));
-    if (!app) { send(res, 404, notFoundPage('Diese App gibt es nicht.')); return; }
-    if (!core.access.canReadApp(app, user)) { send(res, 403, forbiddenAppPage()); return; }
-    send(res, 200, appPage(core, user, app, readFlash(core, user, req.query.flash)));
+    if (!app) { send(res, 404, notFoundPage(localeOf(res), 'Diese App gibt es nicht.')); return; }
+    if (!core.access.canReadApp(app, user)) { send(res, 403, forbiddenAppPage(localeOf(res))); return; }
+    send(res, 200, appPage(core, localeOf(res), user, app, readFlash(core, user, req.query.flash)));
   });
 
   const appBack = (req: Request): string => `/apps/${encodeURIComponent(param(req, 'slug'))}`;

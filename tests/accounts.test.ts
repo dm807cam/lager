@@ -5,13 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../src/config.js';
 import { openPlatformDb } from '../src/platform/db.js';
 import { Accounts } from '../src/platform/accounts.js';
+import { t } from '../src/i18n/index.js';
 import { createMailer, MemoryMailer } from '../src/platform/mail.js';
 import { Settings, type RegistrationMode } from '../src/platform/settings.js';
 import { Users } from '../src/platform/users.js';
 
 const HOUR = 3600_000;
 const config: Config = {
-  dataDir: '', port: 0, publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test',
+  dataDir: '', port: 0, defaultLocale: 'en', publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test',
   secret: 's', snapshotKeep: 20, trustProxy: false, instanceQuotaBytes: 50 * 1024 * 1024,
   mailFrom: 'Lager <no-reply@lager.test>',
 };
@@ -48,7 +49,7 @@ describe('Accounts', () => {
     expect(r.user.role).toBe('user');
     expect(mailer.sent).toHaveLength(1);
     expect(mailer.sent[0].to).toBe('ann@x.y');
-    expect(mailer.sent[0].subject).toBe('Lager: E-Mail-Adresse bestätigen');
+    expect(mailer.sent[0].subject).toBe(t('en', 'mail.verify.subject'));
     expect(users.checkLogin('ann@x.y', PW)).toEqual({ ok: false, reason: 'unverified' });
     const token = tokenIn(mailer.sent[0].text, 'token');
     expect(mailer.sent[0].text).toContain('/verify?token=');
@@ -122,7 +123,7 @@ describe('Accounts', () => {
     setup('invite');
     const admin = users.create({ email: 'root@x.y', name: 'R', password: 'x', role: 'admin' });
     const { url } = await accounts.createInvite({ email: 'Bound@X.y', role: 'user', createdBy: admin.id });
-    expect(mailer.sent[0]).toMatchObject({ to: 'Bound@X.y', subject: 'Lager: Einladung' });
+    expect(mailer.sent[0]).toMatchObject({ to: 'Bound@X.y', subject: t('en', 'mail.invite.subject') });
     const token = tokenIn(url, 'invite');
     await expect(accounts.register({ name: 'A', email: 'other@x.y', password: PW, inviteToken: token })).rejects.toMatchObject({ code: 'forbidden' });
     const r = await accounts.register({ name: 'A', email: 'bOUND@x.Y', password: PW, inviteToken: token });
@@ -157,7 +158,7 @@ describe('Accounts', () => {
     const u = users.create({ email: 'ann@x.y', name: 'Ann', password: 'old-password', role: 'user', verified: false });
     await accounts.requestPasswordReset('ann@x.y');
     expect(mailer.sent).toHaveLength(1);
-    expect(mailer.sent[0]).toMatchObject({ to: 'ann@x.y', subject: 'Lager: Passwort zurücksetzen' });
+    expect(mailer.sent[0]).toMatchObject({ to: 'ann@x.y', subject: t('en', 'mail.reset.subject') });
     expect(mailer.sent[0].text).toContain('/reset?token=');
     const token = tokenIn(mailer.sent[0].text, 'token');
     expect(() => accounts.resetPassword(token, 'short')).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
@@ -178,7 +179,7 @@ describe('Accounts', () => {
     users.create({ email: 'un@x.y', name: 'U', password: 'x', role: 'user', verified: false });
     await accounts.resendVerification('un@x.y');
     expect(mailer.sent).toHaveLength(1);
-    expect(mailer.sent[0].subject).toBe('Lager: E-Mail-Adresse bestätigen');
+    expect(mailer.sent[0].subject).toBe(t('en', 'mail.verify.subject'));
   });
 
   it('admin reset link works', () => {
@@ -241,7 +242,7 @@ describe('Accounts', () => {
     await accounts.requestPasswordReset('un@x.y');
     await accounts.resendVerification('nobody@x.y');
     await accounts.requestPasswordReset('nobody@x.y');
-    expect(started).toEqual(['Lager: E-Mail-Adresse bestätigen', 'Lager: Passwort zurücksetzen']);
+    expect(started).toEqual([t('en', 'mail.verify.subject'), t('en', 'mail.reset.subject')]);
   });
 
   it('a failing detached send is not an unhandled rejection', async () => {

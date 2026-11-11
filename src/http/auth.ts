@@ -2,79 +2,101 @@ import express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
-import { MIN_PASSWORD_LENGTH, type User } from '../platform/users.js';
+import { isLocale, LOCALE_NAMES, LOCALES, t, type Locale, type MessageKey } from '../i18n/index.js';
+import { MAX_NAME_LENGTH, MIN_PASSWORD_LENGTH, type User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
+import { requestLocale } from './locale.js';
 import { sameOriginGuard } from './origin.js';
-import { esc, page, resendForm, signedInHeader } from './pages.js';
+import { esc, messagePage, page, resendForm, sessionExpiredPage, signedInHeader } from './pages.js';
 import { RateLimiter } from './ratelimit.js';
 import { csrfToken, csrfValid, issueSession } from './session.js';
 
 const HOUR_MS = 3600_000;
-const SHORT_PASSWORD = `Das Passwort braucht mindestens ${MIN_PASSWORD_LENGTH} Zeichen.`;
-const INVALID_LINK = 'Der Link ist ungültig oder abgelaufen.';
 const MAX_FIELD = 300;
 const MAX_TOKEN = 200;
 
-const notice = (title: string, text: string, extra = ''): string => page(title, `<h1>${esc(title)}</h1><p>${esc(text)}</p>${extra}`);
-const errorLine = (message?: string): string => (message ? `<p class="err" role="alert">${esc(message)}</p>` : '');
+/** The catalog text for each stable error reason of the account flows; anything else is a generic input error. */
+const REASON_KEYS: Record<string, MessageKey> = {
+  email_taken: 'auth.register.exists',
+  registration_closed: 'auth.register.closed',
+  invite_required: 'auth.register.inviteOnly',
+  invite_invalid: 'auth.register.inviteInvalid',
+  invite_email_mismatch: 'auth.register.inviteOtherEmail',
+  name_invalid: 'validation.name',
+  email_invalid: 'validation.email',
+  password_short: 'auth.password.short',
+  link_invalid: 'auth.link.invalid',
+};
+const reasonText = (locale: Locale, e: LagerError): string =>
+  t(locale, REASON_KEYS[e.reason ?? ''] ?? 'validation.generic', { min: MIN_PASSWORD_LENGTH, max: MAX_NAME_LENGTH });
 
-function registerForm(values: { name: string; email: string }, invite: string, bound: string | null, error?: string): string {
-  return page('Konto erstellen', `<h1>Konto erstellen</h1>
+const notice = (locale: Locale, title: string, text: string, extra = ''): string => messagePage(locale, title, text, extra);
+const errorLine = (message?: string): string => (message ? `<p class="err" role="alert">${esc(message)}</p>` : '');
+const passwordHint = (locale: Locale): string => `<p class="muted">${esc(t(locale, 'auth.password.hint', { min: MIN_PASSWORD_LENGTH }))}</p>`;
+
+function registerForm(locale: Locale, values: { name: string; email: string }, invite: string, bound: string | null, error?: string): string {
+  const title = t(locale, 'auth.register.title');
+  return page(locale, title, `<h1>${esc(title)}</h1>
 ${errorLine(error)}
 <form method="post" action="/register">
 <input type="hidden" name="invite" value="${esc(invite)}">
-<label for="name">Name</label><input id="name" name="name" autocomplete="name" required maxlength="80" value="${esc(values.name)}" autofocus>
-<label for="email">E-Mail</label><input id="email" name="email" type="email" autocomplete="email" required value="${esc(bound ?? values.email)}"${bound ? ' readonly' : ''}>
-<label for="password">Passwort</label><input id="password" name="password" type="password" autocomplete="new-password" required minlength="${MIN_PASSWORD_LENGTH}">
-<p class="muted">Mindestens ${MIN_PASSWORD_LENGTH} Zeichen.</p>
-<button type="submit">Konto erstellen</button>
+<label for="name">${esc(t(locale, 'common.name'))}</label><input id="name" name="name" autocomplete="name" required maxlength="${MAX_NAME_LENGTH}" value="${esc(values.name)}" autofocus>
+<label for="email">${esc(t(locale, 'common.email'))}</label><input id="email" name="email" type="email" autocomplete="email" required value="${esc(bound ?? values.email)}"${bound ? ' readonly' : ''}>
+<label for="password">${esc(t(locale, 'common.password'))}</label><input id="password" name="password" type="password" autocomplete="new-password" required minlength="${MIN_PASSWORD_LENGTH}">
+${passwordHint(locale)}
+<button type="submit">${esc(t(locale, 'auth.register.submit'))}</button>
 </form>
-<p><a href="/login">Zur Anmeldung</a></p>`);
+<p><a href="/login">${esc(t(locale, 'common.toLogin'))}</a></p>`, { returnPath: invite ? `/register?invite=${encodeURIComponent(invite)}` : '/register' });
 }
 
-const forgotForm = (): string => page('Passwort vergessen', `<h1>Passwort vergessen</h1>
+const forgotForm = (locale: Locale): string => page(locale, t(locale, 'auth.forgot.title'), `<h1>${esc(t(locale, 'auth.forgot.title'))}</h1>
 <form method="post" action="/forgot">
-<label for="email">E-Mail</label><input id="email" name="email" type="email" autocomplete="email" required autofocus>
-<button type="submit">Link zum Zurücksetzen senden</button>
+<label for="email">${esc(t(locale, 'common.email'))}</label><input id="email" name="email" type="email" autocomplete="email" required autofocus>
+<button type="submit">${esc(t(locale, 'auth.forgot.submit'))}</button>
 </form>
-<p><a href="/login">Zur Anmeldung</a></p>`);
+<p><a href="/login">${esc(t(locale, 'common.toLogin'))}</a></p>`, { returnPath: '/forgot' });
 
-const resetForm = (token: string, error?: string): string => page('Neues Passwort', `<h1>Neues Passwort</h1>
+const resetForm = (locale: Locale, token: string, error?: string): string => page(locale, t(locale, 'auth.reset.title'), `<h1>${esc(t(locale, 'auth.reset.title'))}</h1>
 ${errorLine(error)}
 <form method="post" action="/reset">
 <input type="hidden" name="token" value="${esc(token)}">
-<label for="password">Neues Passwort</label><input id="password" name="password" type="password" autocomplete="new-password" required minlength="${MIN_PASSWORD_LENGTH}" autofocus>
-<p class="muted">Mindestens ${MIN_PASSWORD_LENGTH} Zeichen.</p>
-<button type="submit">Passwort speichern</button>
-</form>`);
+<label for="password">${esc(t(locale, 'auth.reset.label'))}</label><input id="password" name="password" type="password" autocomplete="new-password" required minlength="${MIN_PASSWORD_LENGTH}" autofocus>
+${passwordHint(locale)}
+<button type="submit">${esc(t(locale, 'auth.reset.submit'))}</button>
+</form>`, { returnPath: `/reset?token=${encodeURIComponent(token)}` });
 
-const verifyForm = (token: string): string => page('E-Mail-Adresse bestätigen', `<h1>E-Mail-Adresse bestätigen</h1>
+const verifyForm = (locale: Locale, token: string): string => page(locale, t(locale, 'auth.verify.title'), `<h1>${esc(t(locale, 'auth.verify.title'))}</h1>
 <form method="post" action="/verify">
 <input type="hidden" name="token" value="${esc(token)}">
-<button type="submit">E-Mail-Adresse bestätigen</button>
-</form>`);
+<button type="submit">${esc(t(locale, 'auth.verify.submit'))}</button>
+</form>`, { returnPath: `/verify?token=${encodeURIComponent(token)}` });
 
-const invalidLinkPage = (): string => notice('Link ungültig', INVALID_LINK, resendForm());
+const invalidLinkPage = (locale: Locale): string => notice(locale, t(locale, 'auth.link.invalid.title'), t(locale, 'auth.link.invalid'), resendForm(locale));
 
-function accountPage(core: Core, user: User, msg: { ok?: string; error?: string } = {}): string {
+function accountPage(core: Core, locale: Locale, user: User, msg: { ok?: string; error?: string } = {}): string {
   const csrf = esc(csrfToken(core, user));
-  return page('Konto', `<h1>Konto</h1>
+  const choices = [['', t(locale, 'account.locale.browser')], ...LOCALES.map((l) => [l, LOCALE_NAMES[l]])];
+  const options = choices.map(([value, label]) => `<option value="${esc(value)}"${value === (user.locale ?? '') ? ' selected' : ''}>${esc(label)}</option>`).join('');
+  return page(locale, t(locale, 'account.title'), `<h1>${esc(t(locale, 'account.title'))}</h1>
 ${msg.ok ? `<p class="ok" role="status">${esc(msg.ok)}</p>` : ''}${errorLine(msg.error)}
-<h2>Name</h2>
+<h2>${esc(t(locale, 'common.name'))}</h2>
 <form method="post" action="/account/name"><input type="hidden" name="csrf" value="${csrf}">
-<label for="name">Name</label><input id="name" name="name" required maxlength="80" value="${esc(user.name)}" autocomplete="name">
-<button type="submit">Speichern</button></form>
-<h2>Passwort ändern</h2>
+<label for="name">${esc(t(locale, 'common.name'))}</label><input id="name" name="name" required maxlength="${MAX_NAME_LENGTH}" value="${esc(user.name)}" autocomplete="name">
+<button type="submit">${esc(t(locale, 'common.save'))}</button></form>
+<h2>${esc(t(locale, 'account.locale.title'))}</h2>
+<form method="post" action="/account/locale"><input type="hidden" name="csrf" value="${csrf}">
+<label for="locale">${esc(t(locale, 'account.locale.label'))}</label><select id="locale" name="locale">${options}</select>
+<button type="submit">${esc(t(locale, 'common.save'))}</button></form>
+<h2>${esc(t(locale, 'account.password.title'))}</h2>
 <form method="post" action="/account/password"><input type="hidden" name="csrf" value="${csrf}">
-<label for="current">Aktuelles Passwort</label><input id="current" name="current" type="password" required autocomplete="current-password">
-<label for="new-password">Neues Passwort</label><input id="new-password" name="password" type="password" required minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password">
-<p class="muted">Mindestens ${MIN_PASSWORD_LENGTH} Zeichen. Danach werden alle anderen Geräte abgemeldet und alle Verbindungen zu Claude getrennt; API-Tokens bleiben gültig.</p>
-<button type="submit">Passwort ändern</button></form>`, { headerExtra: signedInHeader(user.email, csrf, user.role === 'admin') });
+<label for="current">${esc(t(locale, 'account.password.current'))}</label><input id="current" name="current" type="password" required autocomplete="current-password">
+<label for="new-password">${esc(t(locale, 'auth.reset.label'))}</label><input id="new-password" name="password" type="password" required minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password">
+<p class="muted">${esc(t(locale, 'account.password.hint', { min: MIN_PASSWORD_LENGTH }))}</p>
+<button type="submit">${esc(t(locale, 'account.password.submit'))}</button></form>`, { headerExtra: signedInHeader(locale, user.email, csrf, user.role === 'admin'), returnPath: '/account' });
 }
 
 /** Public account pages: registration, e-mail verification, password reset and the account page. */
 export const authExtension: PlatformExtension = (router, core) => {
-  const origin = core.config.publicUrl.origin;
   const formBody = express.urlencoded({ extended: false, limit: '10kb' });
   const registerIp = new RateLimiter(5, HOUR_MS);
   const forgotIp = new RateLimiter(5, HOUR_MS);
@@ -91,6 +113,7 @@ export const authExtension: PlatformExtension = (router, core) => {
   const emailKey = (req: Request): string => field(req, 'email', 254).trim().toLowerCase();
   const ipOf = (req: Request): string => req.ip ?? 'unknown';
   const html = (res: Response, status: number, body: string): void => { res.status(status).type('html').send(body); };
+  const localeOf = (req: Request): Locale => requestLocale(core, req);
 
   /**
    * Pages here carry one-time links: never cache them. `same-origin` keeps the URL (and its token) from leaving the origin
@@ -100,52 +123,56 @@ export const authExtension: PlatformExtension = (router, core) => {
     res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'same-origin' });
     next();
   };
-  const sameOrigin = sameOriginGuard(origin);
+  const sameOrigin = sameOriginGuard(core);
   const publicForm = [hardened, formBody, sameOrigin];
 
-  const tooMany = (res: Response): void => html(res, 429, notice('Zu viele Anfragen', 'Bitte warte eine Weile und versuche es später erneut.'));
+  const tooMany = (req: Request, res: Response): void => {
+    const locale = localeOf(req);
+    html(res, 429, notice(locale, t(locale, 'error.tooMany.title'), t(locale, 'error.tooMany.text')));
+  };
 
   // --- registration ---
 
-  const closedPage = (): string => notice('Registrierung', 'Die Registrierung ist geschlossen.');
-  const inviteOnlyPage = (): string => notice('Registrierung', 'Registrierung nur mit Einladung.');
+  const closedPage = (locale: Locale): string => notice(locale, t(locale, 'auth.register.pageTitle'), t(locale, 'auth.register.closed'));
+  const inviteOnlyPage = (locale: Locale): string => notice(locale, t(locale, 'auth.register.pageTitle'), t(locale, 'auth.register.inviteOnly'));
 
   router.get('/register', hardened, (req, res) => {
+    const locale = localeOf(req);
     const mode = core.settings.registration;
-    if (mode === 'closed') { html(res, 200, closedPage()); return; }
+    if (mode === 'closed') { html(res, 200, closedPage(locale)); return; }
     const token = typeof req.query.invite === 'string' ? req.query.invite.slice(0, MAX_TOKEN) : '';
     const invite = token ? core.accounts.getInvite(token) : null;
-    if (!invite && mode === 'invite') { html(res, 200, inviteOnlyPage()); return; }
-    html(res, 200, registerForm({ name: '', email: '' }, invite ? token : '', invite?.email ?? null,
-      token && !invite ? 'Die Einladung ist ungültig oder abgelaufen.' : undefined));
+    if (!invite && mode === 'invite') { html(res, 200, inviteOnlyPage(locale)); return; }
+    html(res, 200, registerForm(locale, { name: '', email: '' }, invite ? token : '', invite?.email ?? null,
+      token && !invite ? t(locale, 'auth.register.inviteInvalid') : undefined));
   });
 
   // `POST /register` is also OAuth dynamic client registration (JSON, mounted by the MCP extension): leave anything but a browser form to it.
   const formOnly: RequestHandler = (req, _res, next) => { if (req.is('application/x-www-form-urlencoded')) next(); else next('route'); };
   router.post('/register', formOnly, ...publicForm, async (req, res) => {
-    if (!registerIp.hit(ipOf(req))) { tooMany(res); return; }
+    const locale = localeOf(req);
+    if (!registerIp.hit(ipOf(req))) { tooMany(req, res); return; }
     const mode = core.settings.registration;
-    if (mode === 'closed') { html(res, 403, closedPage()); return; }
+    if (mode === 'closed') { html(res, 403, closedPage(locale)); return; }
     const token = field(req, 'invite', MAX_TOKEN);
     const values = { name: field(req, 'name'), email: field(req, 'email', 254) };
-    if (!token && mode === 'invite') { html(res, 403, inviteOnlyPage()); return; }
+    if (!token && mode === 'invite') { html(res, 403, inviteOnlyPage(locale)); return; }
     const bound = token ? core.accounts.getInvite(token)?.email ?? null : null;
-    const again = (status: number, error: string): void => html(res, status, registerForm(values, token, bound, error));
-    if (field(req, 'password').length < MIN_PASSWORD_LENGTH) { again(400, SHORT_PASSWORD); return; }
+    const again = (status: number, error: string): void => html(res, status, registerForm(locale, values, token, bound, error));
+    if (field(req, 'password').length < MIN_PASSWORD_LENGTH) { again(400, t(locale, 'auth.password.short', { min: MIN_PASSWORD_LENGTH })); return; }
     try {
       const { user, needsVerification } = await core.accounts.register({
-        name: values.name, email: values.email, password: field(req, 'password'), inviteToken: token || undefined,
+        name: values.name, email: values.email, password: field(req, 'password'), inviteToken: token || undefined, locale,
       });
       if (needsVerification) {
-        html(res, 200, notice('Fast geschafft', 'Wir haben dir eine E-Mail geschickt. Bestätige deine Adresse über den Link darin.'));
+        html(res, 200, notice(locale, t(locale, 'auth.register.sent.title'), t(locale, 'auth.register.sent.text')));
         return;
       }
       issueSession(core, res, user);
       res.redirect('/');
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
-      if (e.code === 'conflict') again(409, 'Diese E-Mail-Adresse ist bereits registriert.');
-      else again(e.code === 'forbidden' ? 403 : 400, e.message);
+      again(e.reason === 'email_taken' ? 409 : e.code === 'forbidden' ? 403 : 400, reasonText(locale, e));
     }
   });
 
@@ -153,9 +180,10 @@ export const authExtension: PlatformExtension = (router, core) => {
 
   // Showing the form consumes nothing: a link opened by a mail scanner or by the wrong person verifies and signs in nobody.
   router.get('/verify', hardened, (req, res) => {
+    const locale = localeOf(req);
     const token = typeof req.query.token === 'string' ? req.query.token.slice(0, MAX_TOKEN) : '';
-    if (!core.accounts.checkVerificationToken(token)) { html(res, 400, invalidLinkPage()); return; }
-    html(res, 200, verifyForm(token));
+    if (!core.accounts.checkVerificationToken(token)) { html(res, 400, invalidLinkPage(locale)); return; }
+    html(res, 200, verifyForm(locale, token));
   });
 
   router.post('/verify', ...publicForm, (req, res) => {
@@ -163,7 +191,7 @@ export const authExtension: PlatformExtension = (router, core) => {
       core.accounts.verifyEmail(field(req, 'token', MAX_TOKEN));
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
-      html(res, 400, invalidLinkPage());
+      html(res, 400, invalidLinkPage(localeOf(req)));
       return;
     }
     // No session is issued: whoever clicked the link proved the mailbox, not the password.
@@ -171,37 +199,40 @@ export const authExtension: PlatformExtension = (router, core) => {
   });
 
   router.post('/verify/resend', ...publicForm, async (req, res) => {
-    if (!resendIp.hit(ipOf(req))) { tooMany(res); return; }
-    if (resendEmail.hit(emailKey(req))) await core.accounts.resendVerification(field(req, 'email', 254));
-    html(res, 200, notice('E-Mail gesendet', 'Falls die Adresse bei uns registriert und noch nicht bestätigt ist, haben wir eine neue E-Mail geschickt.'));
+    const locale = localeOf(req);
+    if (!resendIp.hit(ipOf(req))) { tooMany(req, res); return; }
+    if (resendEmail.hit(emailKey(req))) await core.accounts.resendVerification(field(req, 'email', 254), locale);
+    html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.resend.sent.text')));
   });
 
   // --- password reset ---
 
-  router.get('/forgot', hardened, (_req, res) => { html(res, 200, forgotForm()); });
+  router.get('/forgot', hardened, (req, res) => { html(res, 200, forgotForm(localeOf(req))); });
 
   router.post('/forgot', ...publicForm, async (req, res) => {
-    if (!forgotIp.hit(ipOf(req))) { tooMany(res); return; }
+    const locale = localeOf(req);
+    if (!forgotIp.hit(ipOf(req))) { tooMany(req, res); return; }
     // Over the per-address budget the request is skipped without any visible difference.
-    if (forgotEmail.hit(emailKey(req))) await core.accounts.requestPasswordReset(field(req, 'email', 254));
-    html(res, 200, notice('E-Mail gesendet', 'Falls die Adresse bei uns registriert ist, haben wir eine E-Mail zum Zurücksetzen geschickt.'));
+    if (forgotEmail.hit(emailKey(req))) await core.accounts.requestPasswordReset(field(req, 'email', 254), locale);
+    html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.forgot.sent')));
   });
 
   // Showing the form consumes nothing, so link scanners that open the URL do not burn the token.
   router.get('/reset', hardened, (req, res) => {
-    html(res, 200, resetForm(typeof req.query.token === 'string' ? req.query.token.slice(0, MAX_TOKEN) : ''));
+    html(res, 200, resetForm(localeOf(req), typeof req.query.token === 'string' ? req.query.token.slice(0, MAX_TOKEN) : ''));
   });
 
   router.post('/reset', ...publicForm, (req, res) => {
+    const locale = localeOf(req);
     const token = field(req, 'token', MAX_TOKEN);
     const password = field(req, 'password');
     try {
       core.accounts.resetPassword(token, password);
-      html(res, 200, notice('Passwort zurückgesetzt', 'Passwort geändert. Alle Verbindungen zu Claude und alle API-Tokens dieses Kontos wurden widerrufen.', '<p><a href="/login">Zur Anmeldung</a></p>'));
+      html(res, 200, notice(locale, t(locale, 'auth.reset.done.title'), t(locale, 'auth.reset.done'), `<p><a href="/login">${esc(t(locale, 'common.toLogin'))}</a></p>`));
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
       // The token is judged before the password, so any other complaint is about the password and keeps the form.
-      html(res, 400, e.message === INVALID_LINK ? invalidLinkPage() : resetForm(token, SHORT_PASSWORD));
+      html(res, 400, e.reason === 'link_invalid' ? invalidLinkPage(locale) : resetForm(locale, token, t(locale, 'auth.password.short', { min: MIN_PASSWORD_LENGTH })));
     }
   });
 
@@ -209,41 +240,57 @@ export const authExtension: PlatformExtension = (router, core) => {
 
   const auth = requireUser(core);
   const userOf = (res: Response): User => res.locals.user as User;
-  const accountAction = (run: (req: Request, res: Response, user: User) => void): RequestHandler[] => [
+  const accountAction = (run: (req: Request, res: Response, user: User, locale: Locale) => void): RequestHandler[] => [
     hardened, auth, formBody,
     (req, res) => {
       const user = userOf(res);
+      const locale = requestLocale(core, req, user);
       if (!csrfValid(core, user, field(req, 'csrf', 2000))) {
-        html(res, 403, page('Fehler', '<h1>Das hat nicht geklappt</h1><p class="err">Die Sitzung ist abgelaufen. Bitte lade die Seite neu und versuche es erneut.</p><p><a href="/account">Zurück zum Konto</a></p>'));
+        html(res, 403, sessionExpiredPage(locale, '/account', t(locale, 'account.back')));
         return;
       }
-      run(req, res, user);
+      run(req, res, user, locale);
     },
   ];
 
-  router.get('/account', hardened, auth, (_req, res) => { html(res, 200, accountPage(core, userOf(res))); });
+  router.get('/account', hardened, auth, (req, res) => {
+    const user = userOf(res);
+    html(res, 200, accountPage(core, requestLocale(core, req, user), user));
+  });
 
-  router.post('/account/name', ...accountAction((req, res, user) => {
+  router.post('/account/name', ...accountAction((req, res, user, locale) => {
     try {
       const updated = core.users.setName(user.id, field(req, 'name'));
-      html(res, 200, accountPage(core, updated, { ok: 'Name gespeichert.' }));
+      html(res, 200, accountPage(core, locale, updated, { ok: t(locale, 'account.name.saved') }));
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
-      html(res, 400, accountPage(core, user, { error: 'Der Name muss 1 bis 80 Zeichen lang sein.' }));
+      html(res, 400, accountPage(core, locale, user, { error: t(locale, 'validation.name', { max: MAX_NAME_LENGTH }) }));
     }
   }));
 
-  router.post('/account/password', ...accountAction((req, res, user) => {
+  router.post('/account/locale', ...accountAction((req, res, user, locale) => {
+    const chosen = field(req, 'locale', 10);
+    if (chosen !== '' && !isLocale(chosen)) {
+      html(res, 400, accountPage(core, locale, user, { error: t(locale, 'validation.generic') }));
+      return;
+    }
+    const updated = core.users.setLocale(user.id, chosen === '' ? null : (chosen as Locale));
+    // The page answers in the language just chosen; "browser default" falls back to what the request itself asks for.
+    const now = requestLocale(core, req, updated);
+    html(res, 200, accountPage(core, now, updated, { ok: t(now, 'account.locale.saved') }));
+  }));
+
+  router.post('/account/password', ...accountAction((req, res, user, locale) => {
     if (!passwordTries.hit(user.id)) {
-      html(res, 429, accountPage(core, user, { error: 'Zu viele Versuche. Bitte warte einige Minuten.' }));
+      html(res, 429, accountPage(core, locale, user, { error: t(locale, 'account.tooMany') }));
       return;
     }
     if (!core.users.checkLogin(user.email, field(req, 'current')).ok) {
-      html(res, 400, accountPage(core, user, { error: 'Das aktuelle Passwort ist falsch.' }));
+      html(res, 400, accountPage(core, locale, user, { error: t(locale, 'account.password.wrong') }));
       return;
     }
     if (field(req, 'password').length < MIN_PASSWORD_LENGTH) {
-      html(res, 400, accountPage(core, user, { error: SHORT_PASSWORD }));
+      html(res, 400, accountPage(core, locale, user, { error: t(locale, 'auth.password.short', { min: MIN_PASSWORD_LENGTH }) }));
       return;
     }
     passwordTries.reset(user.id);
@@ -251,6 +298,6 @@ export const authExtension: PlatformExtension = (router, core) => {
     // setPassword moved the epoch on, ending every other session; this browser gets a fresh one.
     const fresh = core.users.get(user.id)!;
     issueSession(core, res, fresh);
-    html(res, 200, accountPage(core, fresh, { ok: 'Passwort geändert.' }));
+    html(res, 200, accountPage(core, locale, fresh, { ok: t(locale, 'account.password.changed') }));
   }));
 };

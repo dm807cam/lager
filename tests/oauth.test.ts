@@ -6,6 +6,7 @@ import request from 'supertest';
 import { apiExtension } from '../src/http/api.js';
 import { mcpExtension } from '../src/mcp/http.js';
 import { makeHarness, type Harness } from './support/http.js';
+import { t } from '../src/i18n/index.js';
 
 const BASE = 'http://localhost:8080';
 const REDIRECT = 'https://claude.ai/api/mcp/auth_callback';
@@ -132,7 +133,7 @@ describe('oauth', () => {
     expect(page.text).toContain('&lt;b&gt;Claude&lt;/b&gt;');
     expect(page.text).not.toContain('<b>Claude</b>');
     expect(page.text).toContain('claude.ai');
-    expect(page.text).toContain('Zugriff');
+    expect(page.text).toContain(t('en', 'consent.title'));
     expect(page.headers['x-frame-options']).toBe('DENY');
     const deny = await request(h.app).post('/authorize').set('Host', h.host).set('Cookie', cookie).type('form')
       .send({ ...hiddenFields(page.text), decision: 'deny' });

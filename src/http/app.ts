@@ -4,6 +4,7 @@ import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import type { User } from '../platform/users.js';
 import { sendError } from './errors.js';
+import { requestLocale } from './locale.js';
 import { createInstanceRouter } from './instance.js';
 import { notFoundPage } from './pages.js';
 import { createPlatformRouter } from './platform.js';
@@ -18,6 +19,7 @@ export function requireUser(core: Core): RequestHandler {
     const user: User | null = sessionUser(core, req);
     if (user) {
       res.locals.user = user;
+      res.locals.locale = requestLocale(core, req, user);
       next();
     } else if (req.originalUrl.startsWith('/api')) {
       sendError(res, new LagerError('unauthenticated', 'Sign in required.'));
@@ -51,7 +53,7 @@ export function createHttpApp(core: Core, extensions: PlatformExtension[] = []):
       const id = core.domains.instanceIdFor(host);
       const instance = id ? core.apps.getInstance(id) : null;
       if (!instance) {
-        res.status(404).type('html').send(notFoundPage());
+        res.status(404).type('html').send(notFoundPage(requestLocale(core, req, null), { switcher: false }));
         return;
       }
       res.locals.slug = instance.slug;

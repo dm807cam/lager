@@ -3,6 +3,7 @@ import request from 'supertest';
 import { LoginLimiter } from '../src/http/platform.js';
 import { csrfToken } from '../src/http/session.js';
 import { makeHarness, PLATFORM_HOST, type Harness } from './support/http.js';
+import { t } from '../src/i18n/index.js';
 
 let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
@@ -32,7 +33,7 @@ describe('platform host', () => {
     h = makeHarness();
     const res = await request(h.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email: 'admin@x.y', password: 'nope' });
     expect(res.status).toBe(401);
-    expect(res.text).toContain('E-Mail oder Passwort ist falsch.');
+    expect(res.text).toContain(t('en', 'login.invalid'));
     expect(res.headers['set-cookie']).toBeUndefined();
   });
 
@@ -122,7 +123,7 @@ describe('platform host', () => {
     h.core.users.setDisabled(user.id, true);
     const res = await request(h.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email: 'dis@x.y', password: 'long enough pw' });
     expect(res.status).toBe(401);
-    expect(res.text).toContain('deaktiviert');
+    expect(res.text).toContain(t('en', 'login.disabled'));
     expect(res.headers['set-cookie']).toBeUndefined();
     const after = await request(h.app).get('/auth/instance').query({ slug: 'nope' }).set('Host', PLATFORM_HOST).set('Cookie', cookie);
     expect(after.status).toBe(302);
@@ -142,13 +143,13 @@ describe('platform host', () => {
     const page = await request(h.app).get('/nothing').set('Host', PLATFORM_HOST);
     expect(page.status).toBe(404);
     expect(page.type).toBe('text/html');
-    expect(page.text).toContain('Seite nicht gefunden.');
+    expect(page.text).toContain(t('en', 'error.notFound.text'));
     const api = await request(h.app).get('/api/nothing').set('Host', PLATFORM_HOST);
     expect(api.status).toBe(404);
     expect(api.body.error.code).toBe('not_found');
     const host = await request(h.app).get('/').set('Host', 'evil.example');
     expect(host.status).toBe(404);
-    expect(host.text).toContain('Seite nicht gefunden.');
+    expect(host.text).toContain(t('en', 'error.notFound.text'));
   });
 
   it('platform responses cannot be framed', async () => {

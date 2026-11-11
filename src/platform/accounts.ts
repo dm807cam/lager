@@ -2,10 +2,11 @@ import crypto from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Config } from '../config.js';
 import { LagerError } from '../errors.js';
+import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import type { Mailer } from './mail.js';
 import type { Settings } from './settings.js';
 import { hashSecret, sameHash } from './tokens.js';
-import { MIN_PASSWORD_LENGTH, type Role, type User, type Users } from './users.js';
+import { MAX_NAME_LENGTH, MIN_PASSWORD_LENGTH, type Role, type User, type Users } from './users.js';
 
 export interface InviteInfo { id: string; email: string | null; role: Role; createdAt: string; expiresAt: string; used: boolean }
 
@@ -17,12 +18,15 @@ interface TokenRow {
 
 const HOUR_MS = 3600_000;
 const TTL_MS: Record<Kind, number> = { verify: 24 * HOUR_MS, reset: HOUR_MS, invite: 7 * 24 * HOUR_MS };
-const VALIDITY: Record<Kind, string> = { verify: '24 Stunden', reset: 'einer Stunde', invite: '7 Tage' };
+const MAIL_KEYS: Record<Kind, { subject: MessageKey; intro: MessageKey; validity: MessageKey }> = {
+  verify: { subject: 'mail.verify.subject', intro: 'mail.verify.intro', validity: 'mail.validity.verify' },
+  reset: { subject: 'mail.reset.subject', intro: 'mail.reset.intro', validity: 'mail.validity.reset' },
+  invite: { subject: 'mail.invite.subject', intro: 'mail.invite.intro', validity: 'mail.validity.invite' },
+};
 const ROLES: readonly Role[] = ['admin', 'publisher', 'user'];
-const MAX_NAME = 80;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+$/;
 
-const invalidToken = (): LagerError => new LagerError('invalid_argument', 'Der Link ist ungültig oder abgelaufen.');
+const invalidToken = (): LagerError => new LagerError('invalid_argument', 'The link is invalid or has expired.', 'link_invalid');
 
 const toInvite = (r: TokenRow): InviteInfo => ({
   id: r.id, email: r.email, role: r.role ?? 'user', createdAt: r.created_at, expiresAt: r.expires_at, used: r.used_at !== null,
@@ -70,58 +74,61 @@ export class Accounts {
       .run(new Date().toISOString(), row.hash).changes) > 0;
   }
 
-  /** Mail problems are logged, never surfaced: they must not reveal whether an address exists or undo the action. */
-  private async deliver(to: string, subject: string, intro: string, url: string, kind: Kind): Promise<void> {
-    const text = `${intro}\n\n${url}\n\nDieser Link ist ${VALIDITY[kind]} gültig und kann nur einmal verwendet werden.\n`;
+  /**
+   * Mail is written in the recipient's language: the account's stored one, else the one of the request that caused the mail,
+   * else the configured default. Mail problems are logged, never surfaced: they must not reveal whether an address exists or undo the action.
+   */
+  private async deliver(to: string, locale: Locale | null | undefined, url: string, kind: Kind): Promise<void> {
+    const lang = locale ?? this.config.defaultLocale;
+    const keys = MAIL_KEYS[kind];
+    const text = `${t(lang, keys.intro)}\n\n${url}\n\n${t(lang, keys.validity)}\n`;
     try {
-      await this.mailer.send({ to, subject, text });
+      await this.mailer.send({ to, subject: t(lang, keys.subject), text });
     } catch (e) {
       console.error(`Could not send mail to ${to}:`, e);
     }
   }
 
-  private async sendVerification(user: User): Promise<void> {
+  private async sendVerification(user: User, requestLocale?: Locale): Promise<void> {
     const { token } = this.issue('verify', { userId: user.id });
-    await this.deliver(user.email, 'Lager: E-Mail-Adresse bestätigen',
-      'Willkommen bei Lager. Bitte bestätige deine E-Mail-Adresse über den folgenden Link. Wenn du dich nicht bei Lager registriert hast, ignoriere diese E-Mail.',
-      this.link('/verify', 'token', token), 'verify');
+    await this.deliver(user.email, user.locale ?? requestLocale, this.link('/verify', 'token', token), 'verify');
   }
 
-  async register(input: { name: string; email: string; password: string; inviteToken?: string }): Promise<{ user: User; needsVerification: boolean }> {
+  async register(input: { name: string; email: string; password: string; inviteToken?: string; locale?: Locale }): Promise<{ user: User; needsVerification: boolean }> {
     const mode = this.settings.registration;
-    if (mode === 'closed') throw new LagerError('forbidden', 'Die Registrierung ist geschlossen.');
+    if (mode === 'closed') throw new LagerError('forbidden', 'Registration is closed.', 'registration_closed');
     const email = typeof input.email === 'string' ? input.email.trim() : '';
     const name = typeof input.name === 'string' ? input.name.trim() : '';
 
     let invite: TokenRow | null = null;
     if (input.inviteToken) {
       invite = this.find('invite', input.inviteToken);
-      if (!invite) throw new LagerError('forbidden', 'Die Einladung ist ungültig oder abgelaufen.');
+      if (!invite) throw new LagerError('forbidden', 'The invitation is invalid or has expired.', 'invite_invalid');
       if (invite.email && invite.email.toLowerCase() !== email.toLowerCase()) {
-        throw new LagerError('forbidden', 'Die Einladung gilt für eine andere E-Mail-Adresse.');
+        throw new LagerError('forbidden', 'The invitation is for a different email address.', 'invite_email_mismatch');
       }
     } else if (mode === 'invite') {
-      throw new LagerError('forbidden', 'Die Registrierung ist nur mit Einladung möglich.');
+      throw new LagerError('forbidden', 'Registration is by invitation only.', 'invite_required');
     }
 
-    if (!name || name.length > MAX_NAME) throw new LagerError('invalid_argument', `Der Name muss 1 bis ${MAX_NAME} Zeichen lang sein.`);
-    if (!EMAIL_RE.test(email)) throw new LagerError('invalid_argument', 'Bitte gib eine gültige E-Mail-Adresse an.');
+    if (!name || name.length > MAX_NAME_LENGTH) throw new LagerError('invalid_argument', `The name must be 1 to ${MAX_NAME_LENGTH} characters long.`, 'name_invalid');
+    if (!EMAIL_RE.test(email)) throw new LagerError('invalid_argument', 'Please enter a valid email address.', 'email_invalid');
     if (typeof input.password !== 'string' || input.password.length < MIN_PASSWORD_LENGTH) {
-      throw new LagerError('invalid_argument', `Das Passwort muss mindestens ${MIN_PASSWORD_LENGTH} Zeichen lang sein.`);
+      throw new LagerError('invalid_argument', `The password must be at least ${MIN_PASSWORD_LENGTH} characters long.`, 'password_short');
     }
 
     const verified = invite !== null || !this.mailer.enabled;
     let user: User;
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      if (invite && !this.consume(invite)) throw new LagerError('forbidden', 'Die Einladung ist ungültig oder abgelaufen.');
-      user = this.users.create({ email, name, password: input.password, role: invite?.role ?? 'user', verified });
+      if (invite && !this.consume(invite)) throw new LagerError('forbidden', 'The invitation is invalid or has expired.', 'invite_invalid');
+      user = this.users.create({ email, name, password: input.password, role: invite?.role ?? 'user', verified, locale: input.locale });
       this.db.exec('COMMIT');
     } catch (e) {
       this.db.exec('ROLLBACK');
       throw e;
     }
-    if (!verified) await this.sendVerification(user);
+    if (!verified) await this.sendVerification(user, input.locale);
     return { user, needsVerification: !verified };
   }
 
@@ -138,20 +145,18 @@ export class Accounts {
     return this.users.get(row.user_id)!;
   }
 
-  async resendVerification(email: string): Promise<void> {
+  async resendVerification(email: string, locale?: Locale): Promise<void> {
     const user = typeof email === 'string' ? this.users.getByEmail(email) : null;
     // Delivery is started but not awaited, so response time does not reveal whether the address exists.
-    if (user && !user.verified) void this.sendVerification(user);
+    if (user && !user.verified) void this.sendVerification(user, locale);
   }
 
-  async requestPasswordReset(email: string): Promise<void> {
+  async requestPasswordReset(email: string, locale?: Locale): Promise<void> {
     const user = typeof email === 'string' ? this.users.getByEmail(email) : null;
     if (!user) return;
     const { token } = this.issue('reset', { userId: user.id });
     // Started but not awaited (see resendVerification); `deliver` catches send errors, so nothing is left unhandled.
-    void this.deliver(user.email, 'Lager: Passwort zurücksetzen',
-      'Für dein Konto wurde ein neues Passwort angefordert. Über den folgenden Link kannst du es festlegen. Wenn du das nicht warst, ignoriere diese Nachricht.',
-      this.link('/reset', 'token', token), 'reset');
+    void this.deliver(user.email, user.locale ?? locale, this.link('/reset', 'token', token), 'reset');
   }
 
   createResetLink(userId: string): string {
@@ -163,7 +168,7 @@ export class Accounts {
     const row = this.find('reset', token);
     if (!row?.user_id || !this.users.get(row.user_id)) throw invalidToken();
     if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
-      throw new LagerError('invalid_argument', `Das Passwort muss mindestens ${MIN_PASSWORD_LENGTH} Zeichen lang sein.`);
+      throw new LagerError('invalid_argument', `The password must be at least ${MIN_PASSWORD_LENGTH} characters long.`, 'password_short');
     }
     if (!this.consume(row)) throw invalidToken();
     this.users.setPassword(row.user_id, password);
@@ -183,15 +188,15 @@ export class Accounts {
     this.db.prepare("DELETE FROM account_tokens WHERE kind = 'invite' AND created_by = ? AND used_at IS NULL").run(userId);
   }
 
-  async createInvite(input: { email?: string; role: Role; createdBy: string }): Promise<{ id: string; url: string }> {
+  /** `locale` is the language of the invitation mail: the administrator's request language, since the invitee has no account yet. */
+  async createInvite(input: { email?: string; role: Role; createdBy: string; locale?: Locale }): Promise<{ id: string; url: string }> {
     if (!ROLES.includes(input.role)) throw new LagerError('invalid_argument', `Unknown role "${String(input.role)}".`);
     const email = input.email?.trim() || undefined;
-    if (email && !EMAIL_RE.test(email)) throw new LagerError('invalid_argument', 'Bitte gib eine gültige E-Mail-Adresse an.');
+    if (email && !EMAIL_RE.test(email)) throw new LagerError('invalid_argument', 'Please enter a valid email address.', 'email_invalid');
     const { token, id } = this.issue('invite', { email, role: input.role, createdBy: input.createdBy });
     const url = this.link('/register', 'invite', token);
     if (email) {
-      await this.deliver(email, 'Lager: Einladung',
-        'Du wurdest zu Lager eingeladen. Über den folgenden Link kannst du dein Konto anlegen.', url, 'invite');
+      await this.deliver(email, input.locale, url, 'invite');
     }
     return { id, url };
   }

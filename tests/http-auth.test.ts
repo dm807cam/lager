@@ -5,6 +5,7 @@ import { RateLimiter } from '../src/http/ratelimit.js';
 import { csrfToken } from '../src/http/session.js';
 import { MemoryMailer } from '../src/platform/mail.js';
 import { makeHarness, type Harness } from './support/http.js';
+import { t } from '../src/i18n/index.js';
 
 let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
@@ -46,15 +47,15 @@ describe('registration and verification', () => {
     const s = setup();
     const res = await s.register();
     expect(res.status).toBe(200);
-    expect(res.text).toContain('Wir haben dir eine E-Mail geschickt. Bestätige deine Adresse über den Link darin.');
+    expect(res.text).toContain(t('en', 'auth.register.sent.text'));
     expect(s.mailer.sent).toHaveLength(1);
-    expect(s.mailer.sent[0].text).toContain('Wenn du dich nicht bei Lager registriert hast, ignoriere diese E-Mail.');
+    expect(s.mailer.sent[0].text).toContain('If you did not register with Lager, ignore this email.');
     const link = s.linkOf();
     const token = new URL(link, 'http://x').searchParams.get('token')!;
     // Opening the link only shows a form: nothing is consumed and nobody is signed in.
     const shown = await s.get(link);
     expect(shown.status).toBe(200);
-    expect(shown.text).toContain('E-Mail-Adresse bestätigen');
+    expect(shown.text).toContain(t('en', 'auth.verify.submit'));
     expect(shown.text).toContain('action="/verify"');
     expect(cookieOf(shown)).toBeUndefined();
     expect(h!.core.users.getByEmail('ann@example.org')!.verified).toBe(false);
@@ -64,11 +65,11 @@ describe('registration and verification', () => {
     expect(verify.headers.location).toBe('/login?verified=1');
     expect(([] as string[]).concat(verify.headers['set-cookie'] ?? [])).toEqual([]);
     expect(h!.core.users.getByEmail('ann@example.org')!.verified).toBe(true);
-    expect((await s.get('/login?verified=1')).text).toContain('E-Mail-Adresse bestätigt. Du kannst dich jetzt anmelden.');
+    expect((await s.get('/login?verified=1')).text).toContain(t('en', 'login.verified'));
     const cookie = await h!.login('ann@example.org', PASSWORD);
     expect((await s.get('/', cookie)).status).toBe(200);
     // The link is spent now.
-    expect((await s.get(link)).text).toContain('Der Link ist ungültig oder abgelaufen.');
+    expect((await s.get(link)).text).toContain(t('en', 'auth.link.invalid'));
     expect((await s.post('/verify', { token })).status).toBe(400);
   });
 
@@ -78,7 +79,7 @@ describe('registration and verification', () => {
     const reset = new URL(h!.core.accounts.createResetLink(h!.core.users.getByEmail('ann@example.org')!.id)).searchParams.get('token')!;
     const res = await s.post('/verify', { token: reset });
     expect(res.status).toBe(400);
-    expect(res.text).toContain('Der Link ist ungültig oder abgelaufen.');
+    expect(res.text).toContain(t('en', 'auth.link.invalid'));
     expect((await s.get(`/verify?token=${reset}`)).status).toBe(400);
     expect((await s.post('/verify', { token: reset }, { origin: 'https://evil.example' })).status).toBe(403);
   });
@@ -98,12 +99,12 @@ describe('registration and verification', () => {
   it('a bad verify link offers a resend form that always answers the same', async () => {
     const s = setup();
     const bad = await s.get('/verify?token=nope');
-    expect(bad.text).toContain('Der Link ist ungültig oder abgelaufen.');
+    expect(bad.text).toContain(t('en', 'auth.link.invalid'));
     expect(bad.text).toContain('action="/verify/resend"');
     await s.register();
     const known = await s.post('/verify/resend', { email: 'ann@example.org' });
     const unknown = await s.post('/verify/resend', { email: 'nobody@example.org' });
-    const notice = 'Falls die Adresse bei uns registriert und noch nicht bestätigt ist, haben wir eine neue E-Mail geschickt.';
+    const notice = t('en', 'auth.resend.sent.text');
     expect(known.text).toContain(notice);
     expect(unknown.status).toBe(known.status);
     expect(unknown.text).toBe(known.text);
@@ -115,20 +116,20 @@ describe('registration and verification', () => {
     await s.register();
     const res = await s.post('/login', { email: 'ann@example.org', password: PASSWORD });
     expect(res.status).toBe(401);
-    expect(res.text).toContain('Bitte bestätige zuerst deine E-Mail-Adresse.');
+    expect(res.text).toContain(t('en', 'login.unverified'));
     expect(res.text).toContain('action="/verify/resend"');
     expect(cookieOf(res)).toBeUndefined();
   });
 
   it('registration modes', async () => {
     let s = setup({ mode: 'closed' });
-    expect((await s.get('/register')).text).toContain('Die Registrierung ist geschlossen.');
+    expect((await s.get('/register')).text).toContain(t('en', 'auth.register.closed'));
     expect((await s.register()).status).toBe(403);
     h!.core.close();
 
     s = setup({ mode: 'invite' });
-    expect((await s.get('/register')).text).toContain('Registrierung nur mit Einladung.');
-    expect((await s.get('/register?invite=bogus')).text).toContain('Registrierung nur mit Einladung.');
+    expect((await s.get('/register')).text).toContain(t('en', 'auth.register.inviteOnly'));
+    expect((await s.get('/register?invite=bogus')).text).toContain(t('en', 'auth.register.inviteOnly'));
     expect((await s.register()).status).toBe(403);
     const { url } = await h!.core.accounts.createInvite({ role: 'publisher', createdBy: h!.adminId });
     const invite = new URL(url).searchParams.get('invite')!;
@@ -161,12 +162,12 @@ describe('registration and verification', () => {
     await s.registerVerified('ann@example.org');
     const dup = await s.post('/register', { name: 'Zed', email: 'ann@example.org', password: PASSWORD });
     expect(dup.status).toBe(409);
-    expect(dup.text).toContain('Diese E-Mail-Adresse ist bereits registriert.');
+    expect(dup.text).toContain(t('en', 'auth.register.exists'));
     expect(dup.text).toContain('value="Zed"');
     expect(dup.text).toContain('value="ann@example.org"');
     const short = await s.post('/register', { name: 'Bo', email: 'bo@example.org', password: 'kurz' });
     expect(short.status).toBe(400);
-    expect(short.text).toContain('Das Passwort braucht mindestens 10 Zeichen.');
+    expect(short.text).toContain(t('en', 'auth.password.short', { min: 10 }));
     expect(short.text).toContain('value="Bo"');
     expect(short.text).toContain('value="bo@example.org"');
     expect(short.text).not.toContain('kurz');
@@ -251,7 +252,7 @@ describe('registration and verification', () => {
 });
 
 describe('password reset', () => {
-  const FORGOT = 'Falls die Adresse bei uns registriert ist, haben wir eine E-Mail zum Zurücksetzen geschickt.';
+  const FORGOT = t('en', 'auth.forgot.sent');
 
   it('forgot answers identically for known and unknown addresses', async () => {
     const s = setup();
@@ -299,13 +300,13 @@ describe('password reset', () => {
     const token = new URL(link, 'http://x').searchParams.get('token')!;
     const done = await s.post('/reset', { token, password: 'a brand new password' });
     expect(done.status).toBe(200);
-    expect(done.text).toContain('Passwort geändert.');
+    expect(done.text).toContain(t('en', 'account.password.changed'));
     expect(done.text).toContain('href="/login"');
     expect((await s.post('/login', { email: 'ann@example.org', password: PASSWORD })).status).toBe(401);
     expect((await s.post('/login', { email: 'ann@example.org', password: 'a brand new password' })).status).toBe(302);
     const again = await s.post('/reset', { token, password: 'yet another password' });
     expect(again.status).toBe(400);
-    expect(again.text).toContain('Der Link ist ungültig oder abgelaufen.');
+    expect(again.text).toContain(t('en', 'auth.link.invalid'));
   });
 
   it('reset with a verify token fails', async () => {
@@ -314,7 +315,7 @@ describe('password reset', () => {
     const token = new URL(s.linkOf(), 'http://x').searchParams.get('token')!;
     const res = await s.post('/reset', { token, password: 'a brand new password' });
     expect(res.status).toBe(400);
-    expect(res.text).toContain('Der Link ist ungültig oder abgelaufen.');
+    expect(res.text).toContain(t('en', 'auth.link.invalid'));
   });
 
   it('reset with a short password keeps the form', async () => {
@@ -324,7 +325,7 @@ describe('password reset', () => {
     const token = new URL(link).searchParams.get('token')!;
     const res = await s.post('/reset', { token, password: 'kurz' });
     expect(res.status).toBe(400);
-    expect(res.text).toContain('Das Passwort braucht mindestens 10 Zeichen.');
+    expect(res.text).toContain(t('en', 'auth.password.short', { min: 10 }));
     expect(res.text).toContain(`value="${token}"`);
   });
 });
@@ -339,7 +340,7 @@ describe('account page and sessions', () => {
     expect(page.text).toContain('action="/account/name"');
     expect(page.text).toContain('action="/account/password"');
     expect(page.text).toContain('href="/account"');
-    expect(page.text).toContain('Übersicht');
+    expect(page.text).toContain(t('en', 'nav.overview'));
 
     const csrf = csrfToken(h!.core, user);
     expect((await s.post('/account/name', { name: 'Anna' }, { cookie })).status).toBe(403);
@@ -348,14 +349,14 @@ describe('account page and sessions', () => {
     expect(h!.core.users.get(user.id)!.name).toBe('Anna');
 
     const wrong = await s.post('/account/password', { current: 'not it at all', password: 'a brand new password', csrf }, { cookie });
-    expect(wrong.text).toContain('Das aktuelle Passwort ist falsch.');
+    expect(wrong.text).toContain(t('en', 'account.password.wrong'));
     expect(wrong.status).toBe(400);
     const short = await s.post('/account/password', { current: PASSWORD, password: 'kurz', csrf }, { cookie });
-    expect(short.text).toContain('Das Passwort braucht mindestens 10 Zeichen.');
+    expect(short.text).toContain(t('en', 'auth.password.short', { min: 10 }));
 
     const ok = await s.post('/account/password', { current: PASSWORD, password: 'a brand new password', csrf }, { cookie });
     expect(ok.status).toBe(200);
-    expect(ok.text).toContain('Passwort geändert.');
+    expect(ok.text).toContain(t('en', 'account.password.changed'));
     const fresh = cookieOf(ok)!;
     expect(fresh).toBeTruthy();
     expect(fresh).not.toBe(cookie);
@@ -402,13 +403,13 @@ describe('account page and sessions', () => {
   it('login page links', async () => {
     let s = setup({ mode: 'open' });
     const open = (await s.get('/login')).text;
-    expect(open).toContain('Passwort vergessen?');
-    expect(open).toContain('Konto erstellen');
+    expect(open).toContain(t('en', 'login.forgot'));
+    expect(open).toContain(t('en', 'auth.register.submit'));
     h!.core.close();
     s = setup({ mode: 'closed' });
     const closed = (await s.get('/login')).text;
-    expect(closed).toContain('Passwort vergessen?');
-    expect(closed).not.toContain('Konto erstellen');
+    expect(closed).toContain(t('en', 'login.forgot'));
+    expect(closed).not.toContain(t('en', 'auth.register.submit'));
   });
 });
 

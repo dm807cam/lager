@@ -46,6 +46,7 @@ Configuration (environment variables only, template in `.env.example`):
 | `LAGER_SECRET` | Key for sessions; otherwise generated and stored in `secret.key` | generated |
 | `LAGER_SNAPSHOT_KEEP` | Data snapshots kept per instance | `20` |
 | `LAGER_TRASH_DAYS` | Days that deleted instances and apps stay in the trash (`0` = never clean up) | `30` |
+| `LAGER_DEFAULT_LOCALE` | Language of pages and mails when neither the account, the `lager_lang` cookie nor the browser's `Accept-Language` names a supported one: `en`, `de`, `fr`, `es` | `en` |
 | `LAGER_SMTP_URL` | SMTP access for outgoing mail, for example `smtps://user:password@smtp.example.com:465`; without a value no mail is sent | none |
 | `LAGER_MAIL_FROM` | Sender of the mails | `Lager <no-reply@<host of LAGER_PUBLIC_URL>>` |
 | `LAGER_INSTANCE_QUOTA_MB` | Size of an instance's data in MiB, integer from 1 | `50` |

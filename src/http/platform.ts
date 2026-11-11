@@ -4,7 +4,9 @@ import express from 'express';
 import type { Core } from '../core.js';
 import { clearCookie, sessionCookieName } from './cookies.js';
 import { csrfValid, issueSession, sessionUser } from './session.js';
-import { badCodePage, disabledPage, forbiddenPage, loginPage, notFoundPage, page } from './pages.js';
+import { isLocale, t } from '../i18n/index.js';
+import { badCodePage, disabledPage, forbiddenPage, loginPage, notFoundPage, sessionExpiredPage } from './pages.js';
+import { LANG_COOKIE, ONE_YEAR_SECONDS, requestLocale } from './locale.js';
 import { LagerError } from '../errors.js';
 import { safeReturnPath, sendError } from './errors.js';
 import { sameOriginGuard } from './origin.js';
@@ -85,21 +87,38 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
     next();
   };
 
+  // The language switcher of every platform page. The choice lives in a cookie and, for a signed-in account, on the account.
+  router.get('/lang/:locale', (req, res) => {
+    const locale = req.params.locale;
+    if (!isLocale(locale)) {
+      res.status(404).type('html').send(notFoundPage(requestLocale(core, req)));
+      return;
+    }
+    res.cookie(LANG_COOKIE, locale, {
+      httpOnly: true, sameSite: 'lax', path: '/', secure: config.publicUrl.protocol === 'https:', maxAge: ONE_YEAR_SECONDS * 1000,
+    });
+    const user = sessionUser(core, req);
+    if (user) core.users.setLocale(user.id, locale);
+    res.set('Cache-Control', 'no-store').redirect(safeReturnPath(req.query.return));
+  });
+
   router.get('/login', loginHeaders, (req, res) => {
-    res.type('html').send(loginPage(safeReturnPath(req.query.return), undefined, {
+    const locale = requestLocale(core, req);
+    res.type('html').send(loginPage(locale, safeReturnPath(req.query.return), undefined, {
       registration: core.settings.registration,
-      notice: req.query.verified === '1' ? 'E-Mail-Adresse bestätigt. Du kannst dich jetzt anmelden.' : undefined,
+      notice: req.query.verified === '1' ? t(locale, 'login.verified') : undefined,
     }));
   });
 
   // Artifact code on an instance origin is same-site and could post this form to sign a visitor into another account.
-  router.post('/login', loginHeaders, sameOriginGuard(config.publicUrl.origin), express.urlencoded({ extended: false, limit: '10kb' }), (req, res) => {
+  router.post('/login', loginHeaders, sameOriginGuard(core), express.urlencoded({ extended: false, limit: '10kb' }), (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const ret = safeReturnPath(body.return);
+    const locale = requestLocale(core, req);
     const ip = req.ip ?? 'unknown';
     const account = typeof body.email === 'string' ? body.email.trim().toLowerCase().slice(0, 254) : '';
     if (limiter.blocked(ip, account)) {
-      res.status(429).type('html').send(loginPage(ret, 'Zu viele fehlgeschlagene Versuche. Bitte warte einige Minuten.', { registration: core.settings.registration }));
+      res.status(429).type('html').send(loginPage(locale, ret, t(locale, 'login.tooMany'), { registration: core.settings.registration }));
       return;
     }
     const result = typeof body.email === 'string' && typeof body.password === 'string'
@@ -107,9 +126,9 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
     if (!result.ok) {
       // Unverified and disabled are only reported after a correct password, so they do not count as failures.
       if (result.reason === 'invalid') limiter.fail(ip, account);
-      const message = result.reason === 'unverified' ? 'Bitte bestätige zuerst deine E-Mail-Adresse.'
-        : result.reason === 'disabled' ? 'Dieses Konto ist deaktiviert.' : 'E-Mail oder Passwort ist falsch.';
-      res.status(401).type('html').send(loginPage(ret, message, {
+      const message = result.reason === 'unverified' ? t(locale, 'login.unverified')
+        : result.reason === 'disabled' ? t(locale, 'login.disabled') : t(locale, 'login.invalid');
+      res.status(401).type('html').send(loginPage(locale, ret, message, {
         registration: core.settings.registration, resendEmail: result.reason === 'unverified' ? account : undefined,
       }));
       return;
@@ -122,7 +141,7 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
     const user = sessionUser(core, req);
     const csrf = (req.body as Record<string, unknown> | undefined)?.csrf;
     if (!user || !csrfValid(core, user, csrf)) {
-      res.status(403).type('html').send(page('Fehler', '<h1>Das hat nicht geklappt</h1><p class="err">Die Sitzung ist abgelaufen. Bitte lade die Seite neu und versuche es erneut.</p><p><a href="/">Zurück zur Übersicht</a></p>'));
+      res.status(403).type('html').send(sessionExpiredPage(requestLocale(core, req, user)));
       return;
     }
     // Ending the epoch signs the account out everywhere: every platform session, instance cookie and pending code.
@@ -137,10 +156,11 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
       res.redirect('/login?return=' + encodeURIComponent(req.originalUrl));
       return;
     }
+    const locale = requestLocale(core, req, user);
     const slug = typeof req.query.slug === 'string' ? req.query.slug : '';
     const instance = core.apps.getInstanceBySlug(slug);
     if (!instance) {
-      res.status(404).type('html').send(notFoundPage());
+      res.status(404).type('html').send(notFoundPage(locale));
       return;
     }
     // `host` is attacker-controlled: it counts only if it is attached to this very instance, and the redirect uses the stored form.
@@ -150,20 +170,20 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
         if (typeof req.query.host !== 'string') throw new LagerError('invalid_argument', 'host must be given once.');
         customHost = normalizeHost(req.query.host);
       } catch {
-        res.status(400).type('html').send(badCodePage());
+        res.status(400).type('html').send(badCodePage(locale));
         return;
       }
       if (core.domains.instanceIdFor(customHost) !== instance.id) {
-        res.status(400).type('html').send(badCodePage());
+        res.status(400).type('html').send(badCodePage(locale));
         return;
       }
     }
     if (instance.disabled) {
-      res.status(403).type('html').send(disabledPage());
+      res.status(403).type('html').send(disabledPage(locale));
       return;
     }
     if (core.access.levelFor(instance, user) === 'none') {
-      res.status(403).type('html').send(forbiddenPage());
+      res.status(403).type('html').send(forbiddenPage(locale));
       return;
     }
     const code = signToken({ uid: user.id, iid: instance.id, k: 'code', jti: crypto.randomUUID(), ep: user.sessionEpoch }, config.secret, 60);
@@ -175,7 +195,7 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
 
   router.use((req, res) => {
     if (req.path.startsWith('/api/')) sendError(res, new LagerError('not_found', 'Not found.'));
-    else res.status(404).type('html').send(notFoundPage());
+    else res.status(404).type('html').send(notFoundPage(requestLocale(core, req)));
   });
   return router;
 }

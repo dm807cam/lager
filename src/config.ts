@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { LagerError } from './errors.js';
+import { isLocale, LOCALES, type Locale } from './i18n/index.js';
 
 export interface Config {
   dataDir: string;
@@ -20,6 +21,8 @@ export interface Config {
   mailFrom?: string;
   /** Maximum size of one instance's data (LAGER_INSTANCE_QUOTA_MB, default 50 MiB). */
   instanceQuotaBytes: number;
+  /** Language used when neither the account, a cookie nor the browser names a supported one (LAGER_DEFAULT_LOCALE, default `en`). */
+  defaultLocale: Locale;
   /** Days deleted instance data and app versions stay in `<dataDir>/trash` (LAGER_TRASH_DAYS, default 30; 0 = keep forever). */
   trashDays?: number;
 }
@@ -29,10 +32,10 @@ const RESERVED_SLUGS = new Set(['www', 'api', 'lager', 'admin', 'mcp', 'auth', '
 
 export function assertSlug(slug: string): void {
   if (typeof slug !== 'string' || !SLUG_RE.test(slug)) {
-    throw new LagerError('invalid_argument', `Invalid slug "${slug}": use lowercase letters, digits and hyphens (max 63 characters).`);
+    throw new LagerError('invalid_argument', `Invalid slug "${slug}": use lowercase letters, digits and hyphens (max 63 characters).`, 'slug_invalid');
   }
   if (RESERVED_SLUGS.has(slug)) {
-    throw new LagerError('invalid_argument', `Slug "${slug}" is reserved.`);
+    throw new LagerError('invalid_argument', `Slug "${slug}" is reserved.`, 'slug_reserved');
   }
 }
 
@@ -73,6 +76,13 @@ function parseTrustProxy(raw: string | undefined): number | false {
   return n;
 }
 
+function parseLocale(raw: string | undefined): Locale {
+  const v = raw?.trim().toLowerCase();
+  if (!v) return 'en';
+  if (!isLocale(v)) throw new Error(`LAGER_DEFAULT_LOCALE must be one of ${LOCALES.join(', ')}`);
+  return v;
+}
+
 export const ADMIN_PASSWORD_PLACEHOLDER = 'bitte-aendern';
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -95,6 +105,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     smtpUrl: env.LAGER_SMTP_URL?.trim() || undefined,
     mailFrom: env.LAGER_MAIL_FROM?.trim() || `Lager <no-reply@${publicUrl.hostname}>`,
     instanceQuotaBytes: quotaMb * 1024 * 1024,
+    defaultLocale: parseLocale(env.LAGER_DEFAULT_LOCALE),
     trashDays: parseIntEnv(env, 'LAGER_TRASH_DAYS', 30),
   };
 }

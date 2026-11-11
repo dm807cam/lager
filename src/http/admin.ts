@@ -3,6 +3,8 @@ import type { Request, RequestHandler, Response } from 'express';
 import { instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
+import type { Locale } from '../i18n/index.js';
+import { localeOf, requestLocale } from './locale.js';
 import type { CustomDomainsMode, RegistrationMode } from '../platform/settings.js';
 import type { Role, User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
@@ -35,18 +37,18 @@ function roleOptions(selected: Role): string {
   return ROLE_LABELS.map(([r, label]) => `<option value="${r}"${r === selected ? ' selected' : ''}>${label}</option>`).join('');
 }
 
-function shell(core: Core, admin: User, active: Section, title: string, body: string, msg: Msg = {}): string {
+function shell(core: Core, locale: Locale, admin: User, active: Section, title: string, body: string, msg: Msg = {}): string {
   const csrf = csrfToken(core, admin);
   const nav = `<nav class="tabs" aria-label="Verwaltung">${SECTIONS.map(([id, label]) =>
     `<a href="/admin/${id}"${id === active ? ' aria-current="page" class="current"' : ''}>${label}</a>`).join('')}</nav>`;
   const once = msg.once
     ? `<div class="card" role="status"><strong>${esc(msg.once.title)}</strong><span class="token mono">${esc(msg.once.link)}</span><span class="err">Kopiere den Link jetzt: Er wird nur dieses eine Mal angezeigt.</span></div>` : '';
-  return page(`Verwaltung: ${title}`, `<h1>Verwaltung</h1>${nav}
+  return page(locale, `Verwaltung: ${title}`, `<h1>Verwaltung</h1>${nav}
 ${msg.ok ? `<p class="ok" role="status">${esc(msg.ok)}</p>` : ''}${msg.error ? `<p class="err" role="alert">${esc(msg.error)}</p>` : ''}${once}
-<h2>${esc(title)}</h2>${body}`, { wide: true, headerExtra: signedInHeader(admin.email, csrf, true) });
+<h2>${esc(title)}</h2>${body}`, { wide: true, headerExtra: signedInHeader(locale, admin.email, csrf, true) });
 }
 
-function usersSection(core: Core, admin: User, msg?: Msg): string {
+function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const rows = core.users.list().map((u) => {
     const base = `/admin/users/${encodeURIComponent(u.id)}`;
@@ -57,10 +59,10 @@ function usersSection(core: Core, admin: User, msg?: Msg): string {
 <td><div class="row">${form(`${base}/disabled`, csrf, hiddenField('disabled', u.disabled ? '0' : '1'), u.disabled ? 'Aktivieren' : 'Deaktivieren', true)}
 ${form(`${base}/reset-link`, csrf, '', 'Rücksetz-Link', true)}</div></td></tr>`;
   }).join('');
-  return shell(core, admin, 'users', 'Nutzer', `<div class="scroll"><table><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th>Erstellt</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`, msg);
+  return shell(core, locale, admin, 'users', 'Nutzer', `<div class="scroll"><table><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th>Erstellt</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`, msg);
 }
 
-function invitesSection(core: Core, admin: User, msg?: Msg): string {
+function invitesSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const now = new Date().toISOString();
   const open = core.accounts.listInvites().filter((i) => !i.used && i.expiresAt > now);
@@ -72,19 +74,19 @@ function invitesSection(core: Core, admin: User, msg?: Msg): string {
 <label for="invite-role">Rolle</label><select id="invite-role" name="role">${roleOptions('user')}</select>`, 'Einladung erstellen')}</div>
 ${open.length ? `<div class="scroll"><table><thead><tr><th>E-Mail</th><th>Rolle</th><th>Erstellt</th><th>Gültig bis</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
     : '<p class="muted">Keine offenen Einladungen.</p>'}`;
-  return shell(core, admin, 'invites', 'Einladungen', body, msg);
+  return shell(core, locale, admin, 'invites', 'Einladungen', body, msg);
 }
 
-function groupsSection(core: Core, admin: User, msg?: Msg): string {
+function groupsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const groups = core.groups.list();
   const rows = groups.map((g) => `<tr><td><a href="/admin/groups/${encodeURIComponent(g.id)}">${esc(g.name)}</a></td><td>${g.memberCount}</td></tr>`).join('');
   const body = `${groups.length ? `<div class="scroll"><table><thead><tr><th>Name</th><th>Mitglieder</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Noch keine Gruppen.</p>'}
 <div class="card">${form('/admin/groups', csrf, '<label for="group-name">Name der neuen Gruppe</label><input id="group-name" name="name" required maxlength="60">', 'Gruppe erstellen')}</div>`;
-  return shell(core, admin, 'groups', 'Gruppen', body, msg);
+  return shell(core, locale, admin, 'groups', 'Gruppen', body, msg);
 }
 
-function groupPage(core: Core, admin: User, groupId: string, msg?: Msg): string | null {
+function groupPage(core: Core, locale: Locale, admin: User, groupId: string, msg?: Msg): string | null {
   const group = core.groups.get(groupId);
   if (!group) return null;
   const csrf = csrfToken(core, admin);
@@ -98,10 +100,10 @@ function groupPage(core: Core, admin: User, groupId: string, msg?: Msg): string 
 ${members.length ? `<div class="scroll"><table><thead><tr><th>Name</th><th>E-Mail</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Keine Mitglieder.</p>'}
 <div class="card">${form(`${base}/members`, csrf, '<label for="member-email">E-Mail des Kontos</label><input id="member-email" name="email" type="email" required maxlength="254">', 'Hinzufügen')}</div>
 ${form(`${base}/delete`, csrf, '', 'Gruppe löschen', true)}`;
-  return shell(core, admin, 'groups', `Gruppe ${group.name}`, body, msg);
+  return shell(core, locale, admin, 'groups', `Gruppe ${group.name}`, body, msg);
 }
 
-function settingsSection(core: Core, admin: User, msg?: Msg): string {
+function settingsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const options = MODE_LABELS.map(([m, label]) => `<option value="${m}"${m === core.settings.registration ? ' selected' : ''}>${label}</option>`).join('');
   const body = `<div class="card">${form('/admin/settings', csrf,
@@ -109,10 +111,10 @@ function settingsSection(core: Core, admin: User, msg?: Msg): string {
 ${core.mailer.enabled ? '' : '<p class="muted">Ohne Mailversand werden E-Mail-Adressen nicht bestätigt.</p>'}
 <label for="max-instances">Maximale Instanzen pro Nutzer</label><input id="max-instances" name="maxInstances" type="number" min="1" max="1000" step="1" required value="${core.settings.maxInstancesPerUser}">
 <label for="custom-domains">Eigene Domains</label><select id="custom-domains" name="customDomains">${optionList(DOMAIN_LABELS, core.settings.customDomains)}</select>`, 'Speichern')}</div>`;
-  return shell(core, admin, 'settings', 'Einstellungen', body, msg);
+  return shell(core, locale, admin, 'settings', 'Einstellungen', body, msg);
 }
 
-function appsSection(core: Core, admin: User, msg?: Msg): string {
+function appsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const emailOf = new Map(core.users.list().map((u) => [u.id, u.email]));
   const html = core.apps.listAllApps().map((app) => {
@@ -126,7 +128,7 @@ function appsSection(core: Core, admin: User, msg?: Msg): string {
     return `<section><h3>${esc(app.title)} <span class="muted mono">${esc(app.slug)}</span> <span class="muted">· ${esc(emailOf.get(app.ownerId) ?? '–')}</span></h3>
 ${rows ? `<div class="scroll"><table><thead><tr><th>Instanz</th><th>Besitzer</th><th>Version</th><th>Sichtbarkeit</th><th>Daten</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Keine Instanzen.</p>'}</section>`;
   }).join('');
-  return shell(core, admin, 'apps', 'Apps', html || '<p class="muted">Noch keine Apps.</p>', msg);
+  return shell(core, locale, admin, 'apps', 'Apps', html || '<p class="muted">Noch keine Apps.</p>', msg);
 }
 
 /** Platform administrators only: no session goes to /login, any other role gets a 403 page. */
@@ -135,7 +137,7 @@ export function requireAdmin(core: Core): RequestHandler {
   return (req, res, next) => {
     auth(req, res, () => {
       if ((res.locals.user as User).role !== 'admin') {
-        res.status(403).type('html').send(forbiddenAdminPage());
+        res.status(403).type('html').send(forbiddenAdminPage(requestLocale(core, req, res.locals.user as User)));
         return;
       }
       next();
@@ -166,7 +168,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     async (req, res, next) => {
       const user = adminOf(res);
       if (!csrfValid(core, user, field(req, 'csrf', 2000))) {
-        send(res, 403, page('Fehler', '<h1>Das hat nicht geklappt</h1><p class="err">Die Sitzung ist abgelaufen. Bitte lade die Seite neu und versuche es erneut.</p><p><a href="/admin">Zurück zur Verwaltung</a></p>'));
+        send(res, 403, page(localeOf(res), 'Fehler', '<h1>Das hat nicht geklappt</h1><p class="err">Die Sitzung ist abgelaufen. Bitte lade die Seite neu und versuche es erneut.</p><p><a href="/admin">Zurück zur Verwaltung</a></p>'));
         return;
       }
       try {
@@ -181,21 +183,21 @@ export const adminExtension: PlatformExtension = (router, core) => {
     if (!(e instanceof LagerError)) throw e;
     const status = e.code === 'not_found' ? 404 : e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400;
     const error = messages[e.code] ?? 'Die Eingabe ist ungültig.';
-    send(res, status, view({ error }) ?? page('Nicht gefunden', '<h1>Nicht gefunden</h1><p>Seite nicht gefunden.</p><p><a href="/admin">Zurück zur Verwaltung</a></p>'));
+    send(res, status, view({ error }) ?? page(localeOf(res), 'Nicht gefunden', '<h1>Nicht gefunden</h1><p>Seite nicht gefunden.</p><p><a href="/admin">Zurück zur Verwaltung</a></p>'));
   };
 
-  const showUsers = (res: Response): void => send(res, 200, usersSection(core, adminOf(res)));
+  const showUsers = (res: Response): void => send(res, 200, usersSection(core, localeOf(res), adminOf(res)));
   router.get('/admin', noStore, admin, (_req, res) => { showUsers(res); });
   router.get('/admin/users', noStore, admin, (_req, res) => { showUsers(res); });
-  router.get('/admin/invites', noStore, admin, (_req, res) => { send(res, 200, invitesSection(core, adminOf(res))); });
-  router.get('/admin/groups', noStore, admin, (_req, res) => { send(res, 200, groupsSection(core, adminOf(res))); });
+  router.get('/admin/invites', noStore, admin, (_req, res) => { send(res, 200, invitesSection(core, localeOf(res), adminOf(res))); });
+  router.get('/admin/groups', noStore, admin, (_req, res) => { send(res, 200, groupsSection(core, localeOf(res), adminOf(res))); });
   router.get('/admin/groups/:id', noStore, admin, (req, res) => {
-    const html = groupPage(core, adminOf(res), param(req, 'id'));
-    if (html === null) send(res, 404, page('Nicht gefunden', '<h1>Nicht gefunden</h1><p>Diese Gruppe gibt es nicht.</p><p><a href="/admin/groups">Alle Gruppen</a></p>'));
+    const html = groupPage(core, localeOf(res), adminOf(res), param(req, 'id'));
+    if (html === null) send(res, 404, page(localeOf(res), 'Nicht gefunden', '<h1>Nicht gefunden</h1><p>Diese Gruppe gibt es nicht.</p><p><a href="/admin/groups">Alle Gruppen</a></p>'));
     else send(res, 200, html);
   });
-  router.get('/admin/settings', noStore, admin, (_req, res) => { send(res, 200, settingsSection(core, adminOf(res))); });
-  router.get('/admin/apps', noStore, admin, (_req, res) => { send(res, 200, appsSection(core, adminOf(res))); });
+  router.get('/admin/settings', noStore, admin, (_req, res) => { send(res, 200, settingsSection(core, localeOf(res), adminOf(res))); });
+  router.get('/admin/apps', noStore, admin, (_req, res) => { send(res, 200, appsSection(core, localeOf(res), adminOf(res))); });
 
   // --- users ---
 
@@ -205,7 +207,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     try {
       core.users.setRole(param(req, 'id'), field(req, 'role') as Role);
       res.redirect('/admin/users');
-    } catch (e) { failWith(res, e, (m) => usersSection(core, user, m), userMessages); }
+    } catch (e) { failWith(res, e, (m) => usersSection(core, localeOf(res), user, m), userMessages); }
   }));
 
   router.post('/admin/users/:id/disabled', ...action((req, res, user) => {
@@ -214,14 +216,14 @@ export const adminExtension: PlatformExtension = (router, core) => {
       if (value !== '0' && value !== '1') throw new LagerError('invalid_argument', 'disabled must be 0 or 1.');
       core.users.setDisabled(param(req, 'id'), value === '1');
       res.redirect('/admin/users');
-    } catch (e) { failWith(res, e, (m) => usersSection(core, user, m), userMessages); }
+    } catch (e) { failWith(res, e, (m) => usersSection(core, localeOf(res), user, m), userMessages); }
   }));
 
   router.post('/admin/users/:id/reset-link', ...action((req, res, user) => {
     try {
       const link = core.accounts.createResetLink(param(req, 'id'));
-      send(res, 200, usersSection(core, user, { once: { title: 'Rücksetz-Link (gültig für 1 Stunde)', link } }));
-    } catch (e) { failWith(res, e, (m) => usersSection(core, user, m), userMessages); }
+      send(res, 200, usersSection(core, localeOf(res), user, { once: { title: 'Rücksetz-Link (gültig für 1 Stunde)', link } }));
+    } catch (e) { failWith(res, e, (m) => usersSection(core, localeOf(res), user, m), userMessages); }
   }));
 
   // --- invitations ---
@@ -229,18 +231,18 @@ export const adminExtension: PlatformExtension = (router, core) => {
   router.post('/admin/invites', ...action(async (req, res, user) => {
     const email = field(req, 'email', 254).trim();
     try {
-      const { url } = await core.accounts.createInvite({ email: email || undefined, role: field(req, 'role') as Role, createdBy: user.id });
+      const { url } = await core.accounts.createInvite({ email: email || undefined, role: field(req, 'role') as Role, createdBy: user.id, locale: localeOf(res) });
       const mailed = email !== '' && core.mailer.enabled;
-      send(res, 200, invitesSection(core, user, {
+      send(res, 200, invitesSection(core, localeOf(res), user, {
         once: { title: 'Einladungslink (gültig für 7 Tage)', link: url },
         ok: mailed ? 'Die Einladung wurde per E-Mail gesendet.' : 'Es wurde keine E-Mail gesendet.',
       }));
-    } catch (e) { failWith(res, e, (m) => invitesSection(core, user, m), { invalid_argument: 'Bitte gib eine gültige E-Mail-Adresse und eine gültige Rolle an.' }); }
+    } catch (e) { failWith(res, e, (m) => invitesSection(core, localeOf(res), user, m), { invalid_argument: 'Bitte gib eine gültige E-Mail-Adresse und eine gültige Rolle an.' }); }
   }));
 
   router.post('/admin/invites/:id/revoke', ...action((req, res, user) => {
     if (!core.accounts.revokeInvite(param(req, 'id'))) {
-      send(res, 404, invitesSection(core, user, { error: 'Einladung nicht gefunden.' }));
+      send(res, 404, invitesSection(core, localeOf(res), user, { error: 'Einladung nicht gefunden.' }));
       return;
     }
     res.redirect('/admin/invites');
@@ -254,7 +256,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     try {
       core.groups.create(field(req, 'name'));
       res.redirect('/admin/groups');
-    } catch (e) { failWith(res, e, (m) => groupsSection(core, user, m), groupMessages); }
+    } catch (e) { failWith(res, e, (m) => groupsSection(core, localeOf(res), user, m), groupMessages); }
   }));
 
   router.post('/admin/groups/:id/rename', ...action((req, res, user) => {
@@ -262,7 +264,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     try {
       core.groups.rename(id, field(req, 'name'));
       res.redirect(`/admin/groups/${encodeURIComponent(id)}`);
-    } catch (e) { failWith(res, e, (m) => groupPage(core, user, id, m), groupMessages); }
+    } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), groupMessages); }
   }));
 
   router.post('/admin/groups/:id/members', ...action((req, res, user) => {
@@ -272,7 +274,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
       if (!member) throw new LagerError('not_found', NO_ACCOUNT);
       core.groups.addMember(id, member.id);
       res.redirect(`/admin/groups/${encodeURIComponent(id)}`);
-    } catch (e) { failWith(res, e, (m) => groupPage(core, user, id, m), { ...groupMessages, not_found: core.groups.get(id) ? NO_ACCOUNT : 'Gruppe nicht gefunden.' }); }
+    } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), { ...groupMessages, not_found: core.groups.get(id) ? NO_ACCOUNT : 'Gruppe nicht gefunden.' }); }
   }));
 
   router.post('/admin/groups/:id/members/:userId/remove', ...action((req, res, user) => {
@@ -280,14 +282,14 @@ export const adminExtension: PlatformExtension = (router, core) => {
     try {
       core.groups.removeMember(id, param(req, 'userId'));
       res.redirect(`/admin/groups/${encodeURIComponent(id)}`);
-    } catch (e) { failWith(res, e, (m) => groupPage(core, user, id, m), groupMessages); }
+    } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), groupMessages); }
   }));
 
   router.post('/admin/groups/:id/delete', ...action((req, res, user) => {
     try {
       core.groups.delete(param(req, 'id'));
       res.redirect('/admin/groups');
-    } catch (e) { failWith(res, e, (m) => groupsSection(core, user, m), groupMessages); }
+    } catch (e) { failWith(res, e, (m) => groupsSection(core, localeOf(res), user, m), groupMessages); }
   }));
 
   // --- settings ---
@@ -306,7 +308,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
       core.settings.setRegistration(mode);
       core.settings.setCustomDomains(domains);
       res.redirect('/admin/settings');
-    } catch (e) { failWith(res, e, (m) => settingsSection(core, user, m), { invalid_argument: 'Bitte wähle einen Registrierungsmodus, gib für die Instanzen eine ganze Zahl von 1 bis 1000 an und wähle, wer eigene Domains setzen darf.' }); }
+    } catch (e) { failWith(res, e, (m) => settingsSection(core, localeOf(res), user, m), { invalid_argument: 'Bitte wähle einen Registrierungsmodus, gib für die Instanzen eine ganze Zahl von 1 bis 1000 an und wähle, wer eigene Domains setzen darf.' }); }
   }));
 
   // --- instances ---
@@ -319,6 +321,6 @@ export const adminExtension: PlatformExtension = (router, core) => {
       if (value !== '0' && value !== '1') throw new LagerError('invalid_argument', 'disabled must be 0 or 1.');
       core.apps.setInstanceDisabled(instance.id, value === '1');
       res.redirect('/admin/apps');
-    } catch (e) { failWith(res, e, (m) => appsSection(core, user, m), { not_found: 'Instanz nicht gefunden.' }); }
+    } catch (e) { failWith(res, e, (m) => appsSection(core, localeOf(res), user, m), { not_found: 'Instanz nicht gefunden.' }); }
   }));
 };

@@ -1189,7 +1189,21 @@
     return size === 0 ? null : (data instanceof Blob ? data : new Blob([data]));
   }
 
-  function buildDownloads() {
+  /** The one sentence the runtime shows to people: the download confirmation, in the viewer's language (English when unknown). */
+  var SAVE_FILE = {
+    en: function (n) { return 'Save file \u201C' + n + '\u201D?'; },
+    de: function (n) { return 'Datei \u201E' + n + '\u201C speichern?'; },
+    fr: function (n) { return 'Enregistrer le fichier \u00AB\u00A0' + n + '\u00A0\u00BB\u00A0?'; },
+    es: function (n) { return '\u00BFGuardar el archivo \u00AB' + n + '\u00BB?'; }
+  };
+  function saveFileQuestion(session, name) {
+    var v = viewerOf(session);
+    var locale = v && typeof v.locale === 'string' ? v.locale : 'en';
+    var make = Object.prototype.hasOwnProperty.call(SAVE_FILE, locale) ? SAVE_FILE[locale] : SAVE_FILE.en;
+    return make(name);
+  }
+
+  function buildDownloads(session) {
     function save(request) {
       return Promise.resolve().then(function () {
         if (!request || typeof request !== 'object' || typeof request.filename !== 'string' || request.filename.length > 512) {
@@ -1203,7 +1217,7 @@
         }
         var blob = downloadBlob(request.data);
         if (blob === null) throw downloadError('bad_request', 'data must not be empty.');
-        if (!hostCall('confirm', 'Datei „' + name + '" speichern?')) throw downloadError('declined', 'The viewer declined the download.');
+        if (!hostCall('confirm', saveFileQuestion(session, name))) throw downloadError('declined', 'The viewer declined the download.');
         var url = URL.createObjectURL(blob);
         var link = document.createElement('a');
         link.href = url;
@@ -1255,7 +1269,7 @@
       if (name === 'assets') return assetsAllowed(session) ? buildAssets() : null;
       if (name === 'room') return roomAvailable(session) ? buildRoom(session) : null;
       if (name === 'artifact' || name === 'self') return artifactAvailable(session) ? buildArtifact(session) : null;
-      if (name === 'downloads') return declaredObject(session, 'downloads') ? buildDownloads() : null;
+      if (name === 'downloads') return declaredObject(session, 'downloads') ? buildDownloads(session) : null;
       if (name === 'permissions') return buildPermissions(session);
       return null;
     });

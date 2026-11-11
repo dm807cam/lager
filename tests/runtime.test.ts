@@ -1400,12 +1400,28 @@ describe('downloads', () => {
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); delete g.URL.createObjectURL; delete g.URL.revokeObjectURL; });
   const code = (p: Promise<unknown>): Promise<string> => p.then(() => 'resolved', (e: { code: string }) => e.code);
 
+  it('the confirmation is worded in the viewer\'s locale and falls back to English', async () => {
+    const asking = async (locale: unknown): Promise<string> => {
+      session = { status: 200, body: { ...(sessionOf({ ...OWNER, locale }).body as object), capabilities: { downloads: {} } } };
+      confirm.mockClear();
+      await (await boot().use('downloads')).save({ filename: 'plan.txt', data: 'x' });
+      return confirm.mock.calls[0][0] as string;
+    };
+    expect(await asking('en')).toBe('Save file \u201Cplan.txt\u201D?');
+    expect(await asking('de')).toBe('Datei \u201Eplan.txt\u201C speichern?');
+    expect(await asking('fr')).toBe('Enregistrer le fichier \u00AB\u00A0plan.txt\u00A0\u00BB\u00A0?');
+    expect(await asking('es')).toBe('\u00BFGuardar el archivo \u00ABplan.txt\u00BB?');
+    expect(await asking('ja')).toBe('Save file \u201Cplan.txt\u201D?');
+    expect(await asking(undefined)).toBe('Save file \u201Cplan.txt\u201D?');
+    expect(await asking('constructor')).toBe('Save file \u201Cplan.txt\u201D?');
+  });
+
   it('downloads.save confirms, sanitises the filename and saves through a temporary link', async () => {
     declare();
     const downloads = await boot().use('downloads');
     expect(Object.isFrozen(downloads)).toBe(true);
     expect(await downloads.save({ filename: 'data/..\\export\u0007.csv', data: 'a,b\n' })).toEqual({ status: 'saved' });
-    expect(confirm).toHaveBeenCalledWith('Datei „export.csv" speichern?');
+    expect(confirm).toHaveBeenCalledWith('Save file \u201Cexport.csv\u201D?');
     expect(clicked).toEqual([{ download: 'export.csv', href: 'blob:test/1' }]);
     expect(await created[0].text()).toBe('a,b\n');
     expect(document.querySelector('a[download]')).toBeNull();
@@ -1459,7 +1475,7 @@ describe('downloads', () => {
     }
     confirm.mockClear();
     await downloads.save({ filename: 'in\u202Evoice\u200B  gnp\u2066.\uFEFFtxt', data: 'x' });
-    expect(confirm).toHaveBeenCalledWith('Datei „invoice gnp.txt" speichern?');
+    expect(confirm).toHaveBeenCalledWith('Save file \u201Cinvoice gnp.txt\u201D?');
     // the bidi override that would make "fdp.exe" read as "exe.pdf" is gone, so the real extension is checked
     expect(await code(downloads.save({ filename: 'a\u202Efdp.exe', data: 'x' }))).toBe('rejected_extension');
   });

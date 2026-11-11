@@ -87,19 +87,19 @@ export function isTextType(type: string): boolean {
 export function normalizeAssetType(declared: string | undefined, bytes: Buffer): string {
   const essence = (declared ?? '').split(';')[0].trim().toLowerCase();
   const type = essence === 'application/javascript' ? 'text/javascript' : essence;
-  if (!ALLOWED.has(type)) throw new AssetError('unsupported_type', 'Dieser Dateityp wird nicht unterstützt.');
-  if (bytes.length > maxBytesFor(type)) throw new AssetError('too_large', 'Die Datei ist zu groß.');
+  if (!ALLOWED.has(type)) throw new AssetError('unsupported_type', 'This file type is not supported.');
+  if (bytes.length > maxBytesFor(type)) throw new AssetError('too_large', 'The file is too large.');
   const signature = SIGNATURES[type];
   if (signature) {
-    if (!signature(bytes)) throw new AssetError('unsupported_type', 'Der Inhalt passt nicht zum angegebenen Dateityp.');
+    if (!signature(bytes)) throw new AssetError('unsupported_type', 'The content does not match the stated file type.');
   } else if (type === 'image/svg+xml') {
     if (!isUtf8(bytes) || firstChar(bytes) !== '<' || !/<svg[\s>/]/i.test(bytes.toString('utf8'))) {
       throw new AssetError('unsupported_type', 'Der Inhalt ist kein SVG-Dokument.');
     }
   } else {
-    if (!isUtf8(bytes)) throw new AssetError('invalid_request', 'Textdateien müssen UTF-8 sein.');
+    if (!isUtf8(bytes)) throw new AssetError('invalid_request', 'Text files must be UTF-8.');
     if ((type === 'text/css' || type === 'text/javascript') && firstChar(bytes) === '<') {
-      throw new AssetError('unsupported_type', 'Stylesheets und Skripte dürfen nicht mit Markup beginnen.');
+      throw new AssetError('unsupported_type', 'Stylesheets and scripts must not start with markup.');
     }
   }
   return type;
@@ -165,12 +165,12 @@ export class InstanceAssets {
   }
 
   put(instanceId: string, bytes: Buffer, declaredType: string | undefined, by: string | null): AssetInfo {
-    if (bytes.length === 0) throw new AssetError('invalid_request', 'Die Datei ist leer.');
+    if (bytes.length === 0) throw new AssetError('invalid_request', 'The file is empty.');
     const contentType = normalizeAssetType(declaredType, bytes);
     const used = this.usage(instanceId);
-    if (used.files >= ASSET_LIMITS.maxFiles) throw new LagerError('conflict', 'Diese Instanz hat die maximale Dateianzahl erreicht.');
+    if (used.files >= ASSET_LIMITS.maxFiles) throw new LagerError('conflict', 'This instance has reached the maximum number of files.');
     if (this.quotaBytes > 0 && this.dbUsage(instanceId) + used.bytes + bytes.length > this.quotaBytes) {
-      throw new LagerError('quota_exceeded', 'Der Speicher dieser Instanz ist voll.');
+      throw new LagerError('quota_exceeded', 'This instance\'s storage is full.');
     }
     const db = this.open(instanceId, true)!;
     const id = crypto.randomBytes(16).toString('hex');

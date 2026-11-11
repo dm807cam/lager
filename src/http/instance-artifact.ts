@@ -47,14 +47,14 @@ export function mountArtifactRoutes(router: express.Router, core: Core, ctxOf: (
       if (req.get('X-Lager-Request') !== '1') throw new LagerError('forbidden', 'Missing X-Lager-Request header.');
       const ctx = ctxOf(res);
       requireAccess(ctx);
-      if (!declared(ctx)) { reply(res, { status: 403, code: 'not_declared', message: 'Diese App darf sich nicht selbst speichern.' }); return; }
-      if (publishDisabled(ctx)) { reply(res, { status: 403, code: 'not_granted', message: 'Diese App darf sich nicht selbst speichern.' }); return; }
+      if (!declared(ctx)) { reply(res, { status: 403, code: 'not_declared', message: 'This app may not save itself.' }); return; }
+      if (publishDisabled(ctx)) { reply(res, { status: 403, code: 'not_granted', message: 'This app may not save itself.' }); return; }
       if (ctx.viewer.level !== 'admin' && ctx.viewer.level !== 'owner') {
-        reply(res, { status: 403, code: 'forbidden', message: 'Nur Verwalter dürfen die Seite speichern.' });
+        reply(res, { status: 403, code: 'forbidden', message: 'Only administrators and owners may save the page.' });
         return;
       }
       if (publishesInWindow(ctx.instance.id, Date.now()).length >= PUBLISHES_PER_HOUR) {
-        reply(res, { status: 429, code: 'rate_limited', message: 'Zu viele Speicherungen in der letzten Stunde.' });
+        reply(res, { status: 429, code: 'rate_limited', message: 'Too many saves in the last hour.' });
         return;
       }
     } catch (e) { sendError(res, e); return; }
@@ -63,8 +63,8 @@ export function mountArtifactRoutes(router: express.Router, core: Core, ctxOf: (
     express.json({ limit: BODY_LIMIT_BYTES })(req, res, (err?: unknown) => {
       if (!err) { next(); return; }
       const e = err as { type?: string };
-      if (e.type === 'entity.too.large') reply(res, { status: 413, code: 'too_large', message: 'Die Seite ist größer als 16 MiB.' });
-      else reply(res, { status: 400, code: 'invalid_content', message: 'Die Anfrage ist kein gültiges JSON.' });
+      if (e.type === 'entity.too.large') reply(res, { status: 413, code: 'too_large', message: 'The page is larger than 16 MiB.' });
+      else reply(res, { status: 400, code: 'invalid_content', message: 'The request is not valid JSON.' });
     });
   }, (req, res) => {
     try {
@@ -72,15 +72,15 @@ export function mountArtifactRoutes(router: express.Router, core: Core, ctxOf: (
       const body: unknown = req.body;
       const { html, baseVersion } = isObject(body) ? body as Record<string, unknown> : {} as Record<string, unknown>;
       if (typeof html !== 'string' || html.trim() === '' || typeof baseVersion !== 'number' || !Number.isInteger(baseVersion)) {
-        reply(res, { status: 400, code: 'invalid_content', message: 'html und baseVersion werden erwartet.' });
+        reply(res, { status: 400, code: 'invalid_content', message: 'html and baseVersion are required.' });
         return;
       }
       if (!DOCTYPE.test(html)) {
-        reply(res, { status: 400, code: 'invalid_content', message: 'Die Seite muss ein vollständiges HTML-Dokument sein (<!doctype html>).' });
+        reply(res, { status: 400, code: 'invalid_content', message: 'The page must be a complete HTML document (<!doctype html>).' });
         return;
       }
       if (Buffer.byteLength(html) > MAX_HTML_BYTES) {
-        reply(res, { status: 413, code: 'too_large', message: 'Die Seite ist größer als 16 MiB.' });
+        reply(res, { status: 413, code: 'too_large', message: 'The page is larger than 16 MiB.' });
         return;
       }
       const { version } = core.apps.selfPublish({ instanceId: ctx.instance.id, html, baseVersion, userId: ctx.viewer.userId ?? '' });

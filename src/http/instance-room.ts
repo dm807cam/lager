@@ -43,7 +43,7 @@ const sha256 = (s: string): Buffer => crypto.createHash('sha256').update(s).dige
 
 function requireDeclared(ctx: Ctx): void {
   const room = ctx.caps.room;
-  if (room === undefined || room === null || typeof room !== 'object') throw new LagerError('not_found', 'Diese App nutzt keine Echtzeit-Räume.');
+  if (room === undefined || room === null || typeof room !== 'object') throw new LagerError('not_found', 'This app does not use realtime rooms.');
 }
 
 /** Emitting needs an editor level, or `interact` on a topic the app opened with `topics[topic] === "interact"`. */
@@ -183,14 +183,14 @@ export function mountRoomRoutes(
     bucket.tokens = Math.min(POSTS_PER_SECOND, bucket.tokens + ((now - bucket.refilledAt) / 1000) * POSTS_PER_SECOND);
     bucket.refilledAt = now;
     if (bucket.tokens < 1) {
-      res.status(429).set('Retry-After', '1').json({ error: { code: 'rate_limited', message: 'Zu viele Anfragen.' } });
+      res.status(429).set('Retry-After', '1').json({ error: { code: 'rate_limited', message: 'Too many requests.' } });
       return;
     }
     bucket.tokens -= 1;
     res.set('Cache-Control', 'no-store');
     if (op === 'emit') {
       if (typeof topic !== 'string') throw new LagerError('invalid_argument', 'topic must be a string.');
-      if (!mayEmit(ctx, topic)) throw new LagerError('forbidden', 'Keine Berechtigung, hier Ereignisse zu senden.');
+      if (!mayEmit(ctx, topic)) throw new LagerError('forbidden', 'You may not send events on this topic.');
       core.rooms.emit(ctx.instance.id, room, peer, topic, data);
     } else {
       if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) throw new LagerError('invalid_argument', 'patch must be an object.');

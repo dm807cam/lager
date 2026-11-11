@@ -14,6 +14,7 @@ import { injectRuntime } from './inject.js';
 import { mountArtifactRoutes } from './instance-artifact.js';
 import { mountAssetRoutes } from './instance-assets.js';
 import { mountRoomRoutes } from './instance-room.js';
+import { requestLocale } from './locale.js';
 import { badCodePage, disabledPage, forbiddenPage, notFoundPage } from './pages.js';
 import { epochValid } from './session.js';
 import { signToken, verifyToken } from './tokens.js';
@@ -23,6 +24,8 @@ const MAX_PROFILE_IDS = 100;
 const MAX_SEARCH_RESULTS = 20;
 const MAX_SEARCH_QUERY = 100;
 const PING_MS = 25_000;
+/** Instance hosts do not receive the platform's language cookie, so their pages offer no switcher. */
+const NO_SWITCHER = { switcher: false } as const;
 const RANK: Record<Level, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
 
 function instanceUser(core: Core, req: Request, instance: Instance): User | null {
@@ -82,12 +85,12 @@ export function createInstanceRouter(core: Core): express.Router {
   router.use((req, res, next) => {
     const instance = core.apps.getInstanceBySlug(res.locals.slug as string);
     if (!instance) {
-      res.status(404).type('html').send(notFoundPage());
+      res.status(404).type('html').send(notFoundPage(requestLocale(core, req, null), NO_SWITCHER));
       return;
     }
     if (instance.disabled) {
-      if (req.path.startsWith('/__lager/')) sendError(res, new LagerError('forbidden', 'Diese Instanz wurde deaktiviert.'));
-      else res.status(403).type('html').send(disabledPage());
+      if (req.path.startsWith('/__lager/')) sendError(res, new LagerError('forbidden', 'This instance has been disabled.'));
+      else res.status(403).type('html').send(disabledPage(requestLocale(core, req, instanceUser(core, req, instance)), NO_SWITCHER));
       return;
     }
     res.locals.ctx = context(core, req, instance);
@@ -96,17 +99,18 @@ export function createInstanceRouter(core: Core): express.Router {
 
   router.get('/__lager/callback', (req, res) => {
     const { instance } = ctxOf(res);
+    const locale = requestLocale(core, req, null);
     const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown; jti?: unknown; ep?: unknown; exp: number }>(
       typeof req.query.code === 'string' ? req.query.code : undefined, config.secret);
     const user = t && typeof t.uid === 'string' ? core.users.get(t.uid) : null;
     if (!t || t.k !== 'code' || t.iid !== instance.id || typeof t.jti !== 'string' || !epochValid(user, t.ep)) {
-      res.status(400).type('html').send(badCodePage());
+      res.status(400).type('html').send(badCodePage(locale, NO_SWITCHER));
       return;
     }
     const now = Math.floor(Date.now() / 1000);
     for (const [id, exp] of usedCodes) if (exp <= now) usedCodes.delete(id);
     if (usedCodes.has(t.jti)) {
-      res.status(400).type('html').send(badCodePage());
+      res.status(400).type('html').send(badCodePage(locale, NO_SWITCHER));
       return;
     }
     usedCodes.set(t.jti, t.exp);
@@ -114,11 +118,11 @@ export function createInstanceRouter(core: Core): express.Router {
     res.redirect(safeReturnPath(req.query.return));
   });
 
-  router.get(['/', '/index.html'], (_req, res) => {
+  router.get(['/', '/index.html'], (req, res) => {
     const ctx = ctxOf(res);
     if (ctx.viewer.level === 'none') {
       if (ctx.user) {
-        res.status(403).type('html').send(forbiddenPage());
+        res.status(403).type('html').send(forbiddenPage(requestLocale(core, req, ctx.user), NO_SWITCHER));
       } else {
         res.redirect(loginUrl(core, ctx.instance, res.locals.customHost as string | undefined));
       }
@@ -142,7 +146,7 @@ export function createInstanceRouter(core: Core): express.Router {
     res.send(runtime);
   });
 
-  router.get('/__lager/session', (_req, res) => {
+  router.get('/__lager/session', (req, res) => {
     const ctx = ctxOf(res);
     const url = loginUrl(core, ctx.instance, res.locals.customHost as string | undefined);
     if (ctx.viewer.level === 'none') {
@@ -158,6 +162,8 @@ export function createInstanceRouter(core: Core): express.Router {
         level,
         isOwner: level === 'owner',
         canEdit: level === 'admin' || level === 'owner',
+        // The viewer's stored language, else what their browser asks for; the runtime words its dialogs with it.
+        locale: requestLocale(core, req, ctx.user),
       },
       instance: {
         id: ctx.instance.id, slug: ctx.instance.slug,
@@ -301,6 +307,6 @@ export function createInstanceRouter(core: Core): express.Router {
   mountRoomRoutes(router, core, ctxOf, requireAccess, activeCapabilities);
   mountArtifactRoutes(router, core, ctxOf, requireAccess);
 
-  router.use((_req, res) => { res.status(404).type('text/plain').send('Nicht gefunden'); });
+  router.use((_req, res) => { res.status(404).type('text/plain').send('Not found'); });
   return router;
 }

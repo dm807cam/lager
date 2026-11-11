@@ -1,21 +1,25 @@
 import crypto from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { LagerError } from '../errors.js';
+import { isLocale, type Locale } from '../i18n/index.js';
 
 export type Role = 'admin' | 'publisher' | 'user';
 export const MIN_PASSWORD_LENGTH = 10;
 const ROLES: readonly Role[] = ['admin', 'publisher', 'user'];
 const MAX_NAME = 80;
+export const MAX_NAME_LENGTH = MAX_NAME;
 
 export interface User {
   id: string; email: string; name: string; role: Role; createdAt: string;
   verified: boolean; disabled: boolean; sessionEpoch: number;
+  /** The language chosen for this account, or null to follow the browser. */
+  locale: Locale | null;
 }
 export type LoginResult = { ok: true; user: User } | { ok: false; reason: 'invalid' | 'unverified' | 'disabled' };
 
 interface UserRow {
   id: string; email: string; name: string; role: Role; password_hash: string; created_at: string;
-  verified_at: string | null; disabled_at: string | null; session_epoch: number;
+  verified_at: string | null; disabled_at: string | null; session_epoch: number; locale: string | null;
 }
 
 const SCRYPT = { N: 16384, r: 8, p: 1 };
@@ -42,6 +46,7 @@ function toUser(r: UserRow): User {
   return {
     id: r.id, email: r.email, name: r.name, role: r.role, createdAt: r.created_at,
     verified: r.verified_at !== null, disabled: r.disabled_at !== null, sessionEpoch: r.session_epoch,
+    locale: isLocale(r.locale) ? r.locale : null,
   };
 }
 
@@ -59,19 +64,20 @@ export class Users {
   /** Runs after an administrator lost the role. */
   onDemoted(hook: (userId: string) => void): void { this.demotedHooks.push(hook); }
 
-  create(input: { email: string; name: string; password: string; role: Role; verified?: boolean }): User {
+  create(input: { email: string; name: string; password: string; role: Role; verified?: boolean; locale?: Locale | null }): User {
     const email = input.email.trim();
     if (!email) throw new LagerError('invalid_argument', 'Email is required.');
     if (!input.password) throw new LagerError('invalid_argument', 'Password is required.');
     if (!ROLES.includes(input.role)) throw new LagerError('invalid_argument', `Unknown role "${String(input.role)}".`);
-    if (this.getByEmail(email)) throw new LagerError('conflict', `A user with email ${email} already exists.`);
+    if (this.getByEmail(email)) throw new LagerError('conflict', `A user with email ${email} already exists.`, 'email_taken');
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     const verified = input.verified ?? true;
+    const locale = isLocale(input.locale) ? input.locale : null;
     this.db
-      .prepare('INSERT INTO users (id, email, name, role, password_hash, created_at, verified_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(id, email, input.name, input.role, hashPassword(input.password), createdAt, verified ? createdAt : null);
-    return { id, email, name: input.name, role: input.role, createdAt, verified, disabled: false, sessionEpoch: 0 };
+      .prepare('INSERT INTO users (id, email, name, role, password_hash, created_at, verified_at, locale) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, email, input.name, input.role, hashPassword(input.password), createdAt, verified ? createdAt : null, locale);
+    return { id, email, name: input.name, role: input.role, createdAt, verified, disabled: false, sessionEpoch: 0, locale };
   }
 
   /** The password is always checked first, so the reason never leaks whether an account exists or is blocked. */
@@ -134,16 +140,24 @@ export class Users {
 
   setName(id: string, name: string): User {
     const trimmed = typeof name === 'string' ? name.trim() : '';
-    if (!trimmed || trimmed.length > MAX_NAME) throw new LagerError('invalid_argument', `Name must be 1 to ${MAX_NAME} characters.`);
+    if (!trimmed || trimmed.length > MAX_NAME) throw new LagerError('invalid_argument', `Name must be 1 to ${MAX_NAME} characters.`, 'name_invalid');
     this.require(id);
     this.db.prepare('UPDATE users SET name = ? WHERE id = ?').run(trimmed, id);
+    return toUser(this.require(id));
+  }
+
+  /** Stores the account's language; `null` goes back to following the browser. */
+  setLocale(id: string, locale: Locale | null): User {
+    if (locale !== null && !isLocale(locale)) throw new LagerError('invalid_argument', `Unknown locale "${String(locale)}".`, 'locale_invalid');
+    this.require(id);
+    this.db.prepare('UPDATE users SET locale = ? WHERE id = ?').run(locale, id);
     return toUser(this.require(id));
   }
 
   /** Replaces the password and invalidates existing sessions. */
   setPassword(id: string, password: string): void {
     if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
-      throw new LagerError('invalid_argument', `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+      throw new LagerError('invalid_argument', `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`, 'password_short');
     }
     this.require(id);
     this.db.prepare('UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?').run(hashPassword(password), id);

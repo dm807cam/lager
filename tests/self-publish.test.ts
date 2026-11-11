@@ -18,7 +18,7 @@ let usr: User;
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-selfpub-'));
   const config: Config = {
-    dataDir: dir, port: 0, publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test', adminEmail: 'adm@x.y', adminPassword: 'pw',
+    dataDir: dir, port: 0, defaultLocale: 'en', publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test', adminEmail: 'adm@x.y', adminPassword: 'pw',
     secret: 's', snapshotKeep: 20, trustProxy: false, instanceQuotaBytes: 50 * 1024 * 1024,
   };
   core = createCore(config);
@@ -176,7 +176,7 @@ describe('saved version limits', () => {
   it('saved bytes count toward the instance quota and an over-quota save is refused', () => {
     core.close();
     const small: Config = {
-      dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'lager-selfpub-q-')), port: 0, publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test',
+      dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'lager-selfpub-q-')), port: 0, defaultLocale: 'en', publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test',
       adminEmail: 'adm@x.y', adminPassword: 'pw', secret: 's', snapshotKeep: 20, trustProxy: false, instanceQuotaBytes: 1500,
     };
     core = createCore(small);
@@ -195,26 +195,27 @@ describe('saved version limits', () => {
     expect(core.apps.readVersionHtml(r.app.id, 2)).toBe(first);
     // documents and uploads share the same budget: 1400 bytes saved, so 100 bytes of data fit only barely
     core.data.set(inst.id, 'a/b', { t: 'x' }, admin.id);
-    expect(() => core.assets.put(inst.id, Buffer.from('x'.repeat(200)), 'text/plain', admin.id)).toThrow(/voll/);
+    expect(() => core.assets.put(inst.id, Buffer.from('x'.repeat(200)), 'text/plain', admin.id)).toThrow(/storage is full/);
     // a smaller replacement set frees room again: the quota counts what is stored
     core.apps.deleteInstance(inst.id, admin.id);
     expect(core.apps.savedBytes(inst.id)).toBe(0);
   });
 });
 
-describe('migration 5 (a database one version behind the latest still upgrades cleanly)', () => {
+describe('migration 5 (a database behind the latest still upgrades cleanly)', () => {
   it('keeps existing versions deployed', () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-mig-'));
     const old = openPlatformDb(d);
     old.exec('ALTER TABLE versions DROP COLUMN instance_id');
     old.exec('DROP TABLE instance_domains');
+    old.exec('ALTER TABLE users DROP COLUMN locale');
     old.exec('PRAGMA user_version = 4');
     old.exec('PRAGMA foreign_keys = OFF');
     old.exec(`INSERT INTO apps (id, slug, title, owner_id, created_at) VALUES ('a1', 'old', 'Old', 'o', 'x')`);
     old.exec(`INSERT INTO versions (app_id, number, sha256, size_bytes, capabilities, created_by, created_at) VALUES ('a1', 1, 's', 1, '{}', 'o', 'x')`);
     old.close();
     const db = openPlatformDb(d);
-    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(6);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(7);
     expect(db.prepare('SELECT instance_id FROM versions').get()).toEqual({ instance_id: null });
     db.close();
   });

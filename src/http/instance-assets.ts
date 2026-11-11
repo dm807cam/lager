@@ -24,13 +24,13 @@ const isEditor = (ctx: Ctx): boolean => ctx.viewer.level === 'admin' || ctx.view
 
 function requireDeclared(ctx: Ctx): void {
   if (ctx.caps.assets === undefined || ctx.caps.assets === null || typeof ctx.caps.assets !== 'object') {
-    throw new LagerError('not_found', 'Diese App nutzt keine Datei-Uploads.');
+    throw new LagerError('not_found', 'This app does not use file uploads.');
   }
 }
 
 function requireUse(ctx: Ctx): void {
   requireDeclared(ctx);
-  if (!mayUse(ctx)) throw new LagerError('forbidden', 'Keine Berechtigung für Datei-Uploads.');
+  if (!mayUse(ctx)) throw new LagerError('forbidden', 'You may not use file uploads.');
 }
 
 function guard(req: express.Request): void {
@@ -88,7 +88,7 @@ export function mountAssetRoutes(
     const found = core.assets.get(id, req.params.id);
     if (!found) { res.set('Cache-Control', 'no-store').json({ deleted: false }); return; }
     if (!isEditor(ctx) && found.info.uploadedBy !== ctx.viewer.userId) {
-      throw new LagerError('forbidden', 'Du kannst nur eigene Dateien löschen.');
+      throw new LagerError('forbidden', 'You can only delete your own files.');
     }
     res.set('Cache-Control', 'no-store').json({ deleted: core.assets.delete(id, found.info.id) });
   });
@@ -97,7 +97,7 @@ export function mountAssetRoutes(
     const ctx = ctxOf(res);
     requireAccess(ctx);
     const found = core.assets.get(ctx.instance.id, req.params.id);
-    if (!found) { res.status(404).type('text/plain').send('Nicht gefunden'); return; }
+    if (!found) { res.status(404).type('text/plain').send('Not found'); return; }
     const type = found.info.contentType;
     const text = isTextType(type);
     res.set({

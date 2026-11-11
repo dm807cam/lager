@@ -157,6 +157,9 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX instance_domains_instance ON instance_domains(instance_id);
   `,
+  `
+  ALTER TABLE users ADD COLUMN locale TEXT;
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

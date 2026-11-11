@@ -6,6 +6,8 @@ import { LagerError } from '../errors.js';
 import type { Instance } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
+import { localeOf } from './locale.js';
+import type { Locale } from '../i18n/index.js';
 import { esc, form, formatDate, levelLabel, noticeHtml, page, signedInHeader, visibilityLabel } from './pages.js';
 import { csrfToken, csrfValid, readFlash, type Flash } from './session.js';
 
@@ -81,20 +83,20 @@ ${form('/ui/tokens', csrf, '<label for="token-name">Name des neuen Tokens</label
 </div>`;
 }
 
-function homePage(core: Core, user: User, flash: Flash = {}, newToken?: { name: string; token: string }): string {
+function homePage(core: Core, locale: Locale, user: User, flash: Flash = {}, newToken?: { name: string; token: string }): string {
   const csrf = csrfToken(core, user);
   const publisher = deploys(user) ? `${appsSection(core, user)}
 <h2>Claude verbinden</h2>
 <div class="card"><p>Trage diese Adresse in Claude als benutzerdefinierten Connector ein:</p><code>${esc(new URL('/mcp', core.config.publicUrl).href)}</code></div>
 ${tokenSection(core, user, csrf, newToken)}` : '';
-  return page('Lager', `<h1>Übersicht</h1>${noticeHtml(flash)}
+  return page(locale, 'Lager', `<h1>Übersicht</h1>${noticeHtml(flash)}
 <h2>Meine Instanzen</h2>${ownSection(core, user)}
 ${sharedSection(core, user)}${catalogSection(core, user, csrf)}${publisher}`,
-  { wide: true, headerExtra: signedInHeader(user.email, csrf, user.role === 'admin') });
+  { wide: true, headerExtra: signedInHeader(locale, user.email, csrf, user.role === 'admin') });
 }
 
-const formErrorPage = (message: string): string =>
-  page('Fehler', `<h1>Das hat nicht geklappt</h1><p class="err">${esc(message)}</p><p><a href="/">Zurück zur Übersicht</a></p>`);
+const formErrorPage = (locale: Locale, message: string): string =>
+  page(locale, 'Fehler', `<h1>Das hat nicht geklappt</h1><p class="err">${esc(message)}</p><p><a href="/">Zurück zur Übersicht</a></p>`);
 
 /** Home page (overview, shared instances, catalog) and the API-token forms. */
 export const dashboardExtension: PlatformExtension = (router, core) => {
@@ -113,32 +115,32 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
     (req, res) => {
       const user = userOf(res);
       if (!csrfValid(core, user, field(req, 'csrf'))) {
-        res.status(403).type('html').send(formErrorPage('Die Sitzung ist abgelaufen. Bitte lade die Seite neu und versuche es erneut.'));
+        res.status(403).type('html').send(formErrorPage(localeOf(res), 'Die Sitzung ist abgelaufen. Bitte lade die Seite neu und versuche es erneut.'));
         return;
       }
       if (!deploys(user)) {
-        res.status(403).type('html').send(formErrorPage('API-Tokens sind für deine Rolle nicht verfügbar.'));
+        res.status(403).type('html').send(formErrorPage(localeOf(res), 'API-Tokens sind für deine Rolle nicht verfügbar.'));
         return;
       }
       try {
         run(req, res, user);
       } catch (e) {
         if (!(e instanceof LagerError)) throw e;
-        res.status(e.code === 'not_found' ? 404 : e.code === 'forbidden' ? 403 : 400).type('html').send(formErrorPage(e.message));
+        res.status(e.code === 'not_found' ? 404 : e.code === 'forbidden' ? 403 : 400).type('html').send(formErrorPage(localeOf(res), e.message));
       }
     },
   ];
 
   router.get('/', noStore, auth, (req, res) => {
     const user = userOf(res);
-    res.type('html').send(homePage(core, user, readFlash(core, user, req.query.flash)));
+    res.type('html').send(homePage(core, localeOf(res), user, readFlash(core, user, req.query.flash)));
   });
 
   // The new token is shown on the response to the creating request itself and is never stored in plain text.
   router.post('/ui/tokens', ...action((req, res, user) => {
     const name = field(req, 'name').trim();
     const { token } = core.tokens.create(user.id, name);
-    res.type('html').send(homePage(core, user, {}, { name, token }));
+    res.type('html').send(homePage(core, localeOf(res), user, {}, { name, token }));
   }));
 
   router.post('/ui/tokens/:id/revoke', ...action((req, res, user) => {

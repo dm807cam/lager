@@ -11,7 +11,7 @@ afterEach(() => { core?.close(); core = undefined; });
 function make(): Core {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-core-'));
   const config: Config = {
-    dataDir, port: 0, publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test',
+    dataDir, port: 0, defaultLocale: 'en', publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test',
     adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 's', snapshotKeep: 20, trustProxy: false,
   };
   core = createCore(config);
@@ -21,7 +21,7 @@ function make(): Core {
 function makeWith(overrides: Partial<Config>): Core {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-core-'));
   return createCore({
-    dataDir, port: 0, publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test',
+    dataDir, port: 0, defaultLocale: 'en', publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test',
     adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 's', snapshotKeep: 20, trustProxy: false, ...overrides,
   });
 }

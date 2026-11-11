@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { csrfToken } from '../src/http/session.js';
 import { makeHarness, type Harness } from './support/http.js';
+import { t } from '../src/i18n/index.js';
 
 let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
@@ -42,14 +43,14 @@ describe('credentials do not survive password changes', () => {
     expect(f.alive.api()).toBe(true);
     const dead = await request(h!.app).post('/reset').set('Host', h!.host).type('form').send({ token: f.resetToken, password: 'yet another password' });
     expect(dead.status).toBe(400);
-    expect(dead.text).toContain('Der Link ist ungültig oder abgelaufen.');
+    expect(dead.text).toContain(t('en', 'auth.link.invalid'));
   });
 
   it('password reset revokes OAuth tokens, codes and API tokens and says so', async () => {
     const f = fixture();
     const res = await request(h!.app).post('/reset').set('Host', h!.host).type('form').send({ token: f.resetToken, password: NEW_PASSWORD });
     expect(res.status).toBe(200);
-    expect(res.text).toContain('Passwort geändert. Alle Verbindungen zu Claude und alle API-Tokens dieses Kontos wurden widerrufen.');
+    expect(res.text).toContain(t('en', 'auth.reset.done'));
     expect(f.alive.access()).toBe(false);
     expect(f.alive.refresh()).toBe(false);
     expect(f.alive.code()).toBe(false);

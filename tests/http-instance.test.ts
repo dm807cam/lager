@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { signToken } from '../src/http/tokens.js';
 import { makeHarness, PLATFORM_HOST, type Harness } from './support/http.js';
+import { t } from '../src/i18n/index.js';
 
 const TAG = '<script src="/__lager/runtime.js"></script>';
 let h: Harness | undefined;
@@ -399,7 +400,7 @@ describe('instance host', () => {
     h = makeHarness();
     const res = await request(h.app).get('/').set('Host', 'ghost.apps.localhost');
     expect(res.status).toBe(404);
-    expect(res.text).toContain('Nicht gefunden');
+    expect(res.text).toContain(t('en', 'error.notFound.title'));
   });
 
   it('unknown instance path → 404', async () => {
@@ -427,7 +428,7 @@ describe('instance host', () => {
     h.core.apps.setInstanceDisabled(inst.id, true);
     const page = await request(h.app).get('/').set('Host', W);
     expect(page.status).toBe(403);
-    expect(page.text).toContain('deaktiviert');
+    expect(page.text).toContain(t('en', 'error.disabled.text'));
     const s = await request(h.app).get('/__lager/session').set('Host', W);
     expect(s.status).toBe(403);
     expect(s.body.error.code).toBe('forbidden');

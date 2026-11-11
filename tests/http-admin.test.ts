@@ -6,6 +6,7 @@ import { csrfToken } from '../src/http/session.js';
 import { MemoryMailer } from '../src/platform/mail.js';
 import type { User } from '../src/platform/users.js';
 import { makeHarness, type Harness } from './support/http.js';
+import { t } from '../src/i18n/index.js';
 
 let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
@@ -206,7 +207,7 @@ describe('administration area', () => {
     expect((await s.post(`/admin/instances/${slug}/disabled`, admin, { disabled: '1' })).headers.location).toBe('/admin/apps');
     const host = `${slug}.apps.localhost:8080`;
     const served = await request(s.hh.app).get('/').set('Host', host);
-    expect(served.text).toContain('Diese Instanz wurde deaktiviert.');
+    expect(served.text).toContain(t('en', 'error.disabled.text'));
     expect((await s.get('/admin/apps', admin)).text).toContain('Aktivieren');
     await s.post(`/admin/instances/${slug}/disabled`, admin, { disabled: '0' });
     expect(s.hh.core.apps.getInstanceBySlug(slug)!.disabled).toBe(false);

@@ -34,7 +34,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 async function boot() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-e2e-stage3-'));
   const config: Config = {
-    dataDir, port: 0, publicUrl: new URL(`http://${PLATFORM}`), appsDomain: 'apps.localhost',
+    dataDir, port: 0, defaultLocale: 'en', publicUrl: new URL(`http://${PLATFORM}`), appsDomain: 'apps.localhost',
     adminEmail: 'admin@x.y', adminPassword: 'admin-password-1', secret: 'e2e-stage3-secret', snapshotKeep: 20, trustProxy: false,
     instanceQuotaBytes: 50 * 1024 * 1024,
   };

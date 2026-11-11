@@ -16,7 +16,7 @@ let notes: Instance, other: Instance;
 beforeEach(() => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-domains-'));
   const config: Config = {
-    dataDir, port: 0, publicUrl: new URL('http://lager.localhost:8080'), appsDomain: 'apps.localhost', adminEmail: 'a@x.y', adminPassword: 'pw',
+    dataDir, port: 0, defaultLocale: 'en', publicUrl: new URL('http://lager.localhost:8080'), appsDomain: 'apps.localhost', adminEmail: 'a@x.y', adminPassword: 'pw',
     secret: 's', snapshotKeep: 20, trustProxy: false, instanceQuotaBytes: 50 * 1024 * 1024,
   };
   core = createCore(config);

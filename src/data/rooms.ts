@@ -50,9 +50,9 @@ export class Rooms {
     let rooms = this.byInstance.get(instanceId);
     let members = rooms?.get(room);
     if (!members && (rooms?.size ?? 0) >= ROOM_LIMITS.maxRoomsPerInstance) {
-      throw new LagerError('conflict', 'Zu viele Räume in dieser Instanz.');
+      throw new LagerError('conflict', 'Too many rooms in this instance.');
     }
-    if (members && members.size >= ROOM_LIMITS.maxPeersPerRoom) throw new LagerError('conflict', 'Dieser Raum ist voll.');
+    if (members && members.size >= ROOM_LIMITS.maxPeersPerRoom) throw new LagerError('conflict', 'This room is full.');
     if (!rooms) this.byInstance.set(instanceId, (rooms = new Map()));
     if (!members) rooms.set(room, (members = new Map()));
     const peerId = crypto.randomBytes(12).toString('base64url');

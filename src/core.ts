@@ -43,8 +43,8 @@ export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
   const users = new Users(db);
   if (config.adminPassword === ADMIN_PASSWORD_PLACEHOLDER && config.publicUrl.protocol === 'https:' && users.count() === 0) {
     db.close();
-    throw new Error('LAGER_ADMIN_PASSWORD hat noch den Platzhalter-Wert "bitte-aendern". Setze vor dem ersten Start ein eigenes Passwort, '
-      + 'denn Lager ist über https öffentlich erreichbar. Das Admin-Konto wurde nicht angelegt.');
+    throw new Error('LAGER_ADMIN_PASSWORD still has the placeholder value "bitte-aendern". Set your own password before the first start, '
+      + 'because Lager is reachable publicly over https. The admin account was not created.');
   }
   users.ensureAdmin(config.adminEmail, config.adminPassword);
   const mailer = opts?.mailer ?? createMailer(config);

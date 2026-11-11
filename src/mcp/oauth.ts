@@ -14,6 +14,7 @@ import type {
 import type { Core } from '../core.js';
 import { consentInvalidPage, consentPage } from '../http/pages.js';
 import { sessionUser } from '../http/session.js';
+import { requestLocale } from '../http/locale.js';
 import { signToken, verifyToken } from '../http/tokens.js';
 import { hashSecret, sameHash } from '../platform/tokens.js';
 import type { User, Users } from '../platform/users.js';
@@ -246,7 +247,7 @@ export class LagerOAuthProvider implements OAuthServerProvider {
 
     if (req.method !== 'POST') {
       const csrf = signToken({ uid: user.id, k: 'consent', q }, config.secret, CONSENT_TTL_S);
-      res.type('html').send(consentPage(client.client_name || client.client_id, new URL(params.redirectUri).host, user.name || user.email,
+      res.type('html').send(consentPage(requestLocale(this.core, req, user), client.client_name || client.client_id, new URL(params.redirectUri).host, user.name || user.email,
         { ...fields, csrf }));
       return;
     }
@@ -254,7 +255,7 @@ export class LagerOAuthProvider implements OAuthServerProvider {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const t = verifyToken<{ uid?: unknown; k?: unknown; q?: unknown }>(typeof body.csrf === 'string' ? body.csrf : undefined, config.secret);
     if (!t || t.k !== 'consent' || t.uid !== user.id || t.q !== q) {
-      res.status(403).type('html').send(consentInvalidPage());
+      res.status(403).type('html').send(consentInvalidPage(requestLocale(this.core, req, user)));
       return;
     }
     const target = new URL(params.redirectUri);

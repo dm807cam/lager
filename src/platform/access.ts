@@ -53,7 +53,7 @@ export class Access {
   }
 
   private assertManage(instance: Instance, by: User): void {
-    if (!this.canManageInstance(instance, by)) throw new LagerError('forbidden', 'Du darfst diese Instanz nicht verwalten.');
+    if (!this.canManageInstance(instance, by)) throw new LagerError('forbidden', 'You may not manage this instance.');
   }
 
   private assertPrincipalType(type: string): void {
@@ -66,7 +66,7 @@ export class Access {
     if (!GRANT_LEVELS.includes(level)) throw new LagerError('invalid_argument', 'Grant level must be view, interact or admin.');
     if (principalType === 'user') {
       if (!this.users.get(principalId)) throw new LagerError('not_found', 'User not found.');
-      if (principalId === instance.ownerId) throw new LagerError('invalid_argument', 'The owner already has full access.');
+      if (principalId === instance.ownerId) throw new LagerError('invalid_argument', 'The owner already has full access.', 'owner_full_access');
     } else if (!this.groups.get(principalId)) {
       throw new LagerError('not_found', 'Group not found.');
     }

@@ -156,7 +156,7 @@ export class Apps {
   private claimSlug(slug: string, ownerId: string): void {
     const retired = this.db.prepare('SELECT owner_id FROM retired_slugs WHERE slug = ?').get(slug) as { owner_id: string } | undefined;
     if (!retired) return;
-    if (retired.owner_id !== ownerId) throw new LagerError('conflict', 'Dieser Name wurde bereits verwendet und ist gesperrt.');
+    if (retired.owner_id !== ownerId) throw new LagerError('conflict', 'This name was used before and is reserved.', 'slug_retired');
     this.db.prepare('DELETE FROM retired_slugs WHERE slug = ?').run(slug);
   }
 
@@ -167,7 +167,7 @@ export class Apps {
     const since = new Date(now - CREATION_WINDOW_MS).toISOString();
     this.db.prepare('DELETE FROM instance_creations WHERE created_at <= ?').run(since);
     const recent = (this.db.prepare('SELECT COUNT(*) AS c FROM instance_creations WHERE user_id = ? AND created_at > ?').get(owner.id, since) as { c: number }).c;
-    if (recent >= CREATIONS_PER_WINDOW) throw new LagerError('conflict', 'Du hast heute zu viele Instanzen angelegt. Versuche es morgen wieder.');
+    if (recent >= CREATIONS_PER_WINDOW) throw new LagerError('conflict', 'You have created too many instances today. Try again tomorrow.', 'creation_rate');
     this.db.prepare('INSERT INTO instance_creations (user_id, created_at) VALUES (?, ?)').run(owner.id, new Date(now).toISOString());
   }
 
@@ -213,7 +213,7 @@ export class Apps {
         }
       } else {
         if (this.db.prepare('SELECT 1 FROM instances WHERE slug = ?').get(input.slug)) {
-          throw new LagerError('conflict', `Instance slug "${input.slug}" is already taken.`);
+          throw new LagerError('conflict', `Instance slug "${input.slug}" is already taken.`, 'slug_taken');
         }
         this.claimSlug(input.slug, user.id);
         this.countCreation(user);
@@ -329,10 +329,10 @@ export class Apps {
       if (!owner) throw new LagerError('not_found', 'Owner not found.');
       if (this.settings && owner.role !== 'admin') {
         const owned = (this.db.prepare('SELECT COUNT(*) AS c FROM instances WHERE owner_id = ?').get(owner.id) as { c: number }).c;
-        if (owned >= this.settings.maxInstancesPerUser) throw new LagerError('conflict', 'Instanz-Limit erreicht');
+        if (owned >= this.settings.maxInstancesPerUser) throw new LagerError('conflict', 'Instance limit reached.', 'instance_limit');
       }
       if (this.db.prepare('SELECT 1 FROM instances WHERE slug = ?').get(input.slug)) {
-        throw new LagerError('conflict', `Instance slug "${input.slug}" is already taken.`);
+        throw new LagerError('conflict', `Instance slug "${input.slug}" is already taken.`, 'slug_taken');
       }
       this.claimSlug(input.slug, owner.id);
       this.countCreation(owner);
@@ -427,7 +427,7 @@ export class Apps {
       const row = this.db.prepare('SELECT instance_id FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, version) as { instance_id: string | null } | undefined;
       if (!row) throw new LagerError('not_found', `Version ${version} not found.`);
       if (row.instance_id !== null && row.instance_id !== instance.id) {
-        throw new LagerError('forbidden', 'Diese Version wurde von einer anderen Instanz gespeichert.');
+        throw new LagerError('forbidden', 'This version was saved by another instance.');
       }
       if (instance.activeVersion !== version) {
         this.fireHooks(instance, instance.activeVersion, version);
@@ -454,7 +454,7 @@ export class Apps {
     const out = this.transaction(() => {
       const instance = this.managedInstance(input.instanceId, input.userId);
       if (instance.activeVersion !== input.baseVersion) {
-        throw new LagerError('conflict', 'Die Seite wurde inzwischen in einer neuen Version gespeichert.');
+        throw new LagerError('conflict', 'The page has meanwhile been saved in a newer version.');
       }
       const base = this.db.prepare('SELECT * FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, instance.activeVersion) as VersionRow | undefined;
       if (!base) throw new LagerError('not_found', `Version ${instance.activeVersion} not found.`);
@@ -466,7 +466,7 @@ export class Apps {
       if (this.quota && this.quota.bytes > 0) {
         const kept = this.savedBytes(instance.id) - dropped.reduce((sum, r) => sum + Number(r.size_bytes), 0);
         if (this.quota.otherUsage(instance.id) + kept + sizeBytes > this.quota.bytes) {
-          throw new LagerError('quota_exceeded', 'Der Speicher dieser Instanz ist voll.');
+          throw new LagerError('quota_exceeded', 'This instance\'s storage is full.');
         }
       }
       for (const r of dropped) this.db.prepare('DELETE FROM versions WHERE app_id = ? AND number = ?').run(instance.appId, r.number);
@@ -544,9 +544,9 @@ export class Apps {
     const target = this.users.get(userId);
     if (!target) throw new LagerError('not_found', 'User not found.');
     if (target.disabled || (target.role !== 'admin' && target.role !== 'publisher')) {
-      throw new LagerError('invalid_argument', 'Collaborators must be active admins or publishers.');
+      throw new LagerError('invalid_argument', 'Collaborators must be active admins or publishers.', 'collaborators_invalid');
     }
-    if (target.id === app.ownerId) throw new LagerError('invalid_argument', 'The owner is already in charge of the app.');
+    if (target.id === app.ownerId) throw new LagerError('invalid_argument', 'The owner is already in charge of the app.', 'owner_in_charge');
     this.db.prepare('INSERT OR IGNORE INTO app_collaborators (app_id, user_id) VALUES (?, ?)').run(app.id, target.id);
   }
 
@@ -591,7 +591,7 @@ export class Apps {
       const a = this.ownedApp(appId, userId);
       const all = this.listInstances(a.id);
       if (all.some((i) => i.ownerId !== userId)) {
-        throw new LagerError('conflict', 'Andere Nutzer haben Instanzen dieser App. Sie müssen zuerst gelöscht werden.');
+        throw new LagerError('conflict', 'Other users have instances of this app. They must be deleted first.', 'other_users_instances');
       }
       for (const i of all) this.removeInstanceRows(i);
       this.db.prepare('DELETE FROM app_collaborators WHERE app_id = ?').run(a.id);

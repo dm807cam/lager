@@ -33,9 +33,9 @@ describe('checkArtifact', () => {
     expect(r.used).toEqual(['db', 'permissions', 'sample', 'tts']);
     expect(r.unsupported).toEqual(['sample', 'tts']);
     expect(r.undeclared).toEqual(['db']);
-    expect(r.warnings).toContain('„sample“ wird von Lager nicht nachgebildet; claude.use("sample") liefert null.');
-    expect(r.warnings).toContain('„tts“ wird von Lager nicht nachgebildet; claude.use("tts") liefert null.');
-    expect(r.warnings).toContain('„db“ wird benutzt, ist aber nicht in capabilities deklariert.');
+    expect(r.warnings).toContain('"sample" is not provided by Lager; claude.use("sample") returns null.');
+    expect(r.warnings).toContain('"tts" is not provided by Lager; claude.use("tts") returns null.');
+    expect(r.warnings).toContain('"db" is used but not declared in capabilities.');
     expect(r.warnings).toHaveLength(3);
   });
 
@@ -70,7 +70,7 @@ describe('checkArtifact', () => {
   it('deploy returns the combined warnings', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-check-'));
     core = createCore({
-      dataDir: dir, port: 0, publicUrl: new URL('http://lager.localhost:8080'), appsDomain: 'apps.localhost',
+      dataDir: dir, port: 0, defaultLocale: 'en', publicUrl: new URL('http://lager.localhost:8080'), appsDomain: 'apps.localhost',
       adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 's', snapshotKeep: 20, trustProxy: false, instanceQuotaBytes: 1 << 20,
     });
     const adminId = core.users.list()[0].id;
@@ -81,6 +81,6 @@ describe('checkArtifact', () => {
     expect(r.warnings).toHaveLength(3);
     expect(r.warnings.some((w) => w.includes('sessionStorage'))).toBe(true);
     expect(r.warnings.some((w) => w.includes('sample'))).toBe(true);
-    expect(r.warnings.some((w) => w.includes('„db“'))).toBe(true);
+    expect(r.warnings.some((w) => w.includes('"db" is used'))).toBe(true);
   });
 });
