@@ -4,12 +4,13 @@ import express from 'express';
 import type { Core } from '../core.js';
 import { clearCookie, sessionCookieName } from './cookies.js';
 import { csrfValid, issueSession, sessionUser } from './session.js';
-import { disabledPage, forbiddenPage, loginPage, notFoundPage, page } from './pages.js';
+import { badCodePage, disabledPage, forbiddenPage, loginPage, notFoundPage, page } from './pages.js';
 import { LagerError } from '../errors.js';
 import { safeReturnPath, sendError } from './errors.js';
 import { sameOriginGuard } from './origin.js';
 import { signToken } from './tokens.js';
-import { instanceUrl } from '../config.js';
+import { hostUrl, instanceUrl } from '../config.js';
+import { normalizeHost } from '../platform/domains.js';
 import type { PlatformExtension } from './app.js';
 
 // dist/assets after a build, ../../assets next to src when running from source.
@@ -142,6 +143,21 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
       res.status(404).type('html').send(notFoundPage());
       return;
     }
+    // `host` is attacker-controlled: it counts only if it is attached to this very instance, and the redirect uses the stored form.
+    let customHost: string | null = null;
+    if (req.query.host !== undefined) {
+      try {
+        if (typeof req.query.host !== 'string') throw new LagerError('invalid_argument', 'host must be given once.');
+        customHost = normalizeHost(req.query.host);
+      } catch {
+        res.status(400).type('html').send(badCodePage());
+        return;
+      }
+      if (core.domains.instanceIdFor(customHost) !== instance.id) {
+        res.status(400).type('html').send(badCodePage());
+        return;
+      }
+    }
     if (instance.disabled) {
       res.status(403).type('html').send(disabledPage());
       return;
@@ -152,7 +168,7 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
     }
     const code = signToken({ uid: user.id, iid: instance.id, k: 'code', jti: crypto.randomUUID(), ep: user.sessionEpoch }, config.secret, 60);
     const back = safeReturnPath(req.query.return);
-    res.redirect(`${instanceUrl(config, instance.slug)}/__lager/callback?code=${encodeURIComponent(code)}&return=${encodeURIComponent(back)}`);
+    res.redirect(`${customHost ? hostUrl(config, customHost) : instanceUrl(config, instance.slug)}/__lager/callback?code=${encodeURIComponent(code)}&return=${encodeURIComponent(back)}`);
   });
 
   for (const ext of extensions) ext(router, core);

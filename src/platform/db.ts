@@ -148,6 +148,15 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE versions ADD COLUMN instance_id TEXT;
   `,
+  `
+  CREATE TABLE instance_domains (
+    host TEXT PRIMARY KEY,
+    instance_id TEXT NOT NULL,
+    created_by TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX instance_domains_instance ON instance_domains(instance_id);
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

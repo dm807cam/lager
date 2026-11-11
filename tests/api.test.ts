@@ -108,7 +108,7 @@ describe('rest api', () => {
     expect(res.body).toEqual({
       apps: [{
         slug: 'mine', title: 'Mine', latestVersion: 2,
-        instances: [{ slug: 'mine', url: 'http://mine.apps.localhost:8080', activeVersion: 2, visibility: 'private' }],
+        instances: [{ slug: 'mine', url: 'http://mine.apps.localhost:8080', activeVersion: 2, visibility: 'private', domains: [] }],
       }],
     });
 
@@ -131,7 +131,7 @@ describe('rest api', () => {
     const res = await request(h.app).post('/api/instances/todo/activate').set('Host', h.host)
       .set('Authorization', `Bearer ${token}`).send({ version: 1 });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ slug: 'todo', url: 'http://todo.apps.localhost:8080', activeVersion: 1, visibility: 'private' });
+    expect(res.body).toEqual({ slug: 'todo', url: 'http://todo.apps.localhost:8080', activeVersion: 1, visibility: 'private', domains: [] });
     expect(h.core.apps.getInstanceBySlug('todo')!.activeVersion).toBe(1);
     const bad = await request(h.app).post('/api/instances/todo/activate').set('Host', h.host)
       .set('Authorization', `Bearer ${token}`).send({ version: 9 });
@@ -232,7 +232,7 @@ describe('rest api', () => {
 
     const mine = await create({ slug: 'todo-mine', visibility: 'users' });
     expect(mine.status).toBe(200);
-    expect(mine.body).toEqual({ slug: 'todo-mine', url: 'http://todo-mine.apps.localhost:8080', activeVersion: 1, visibility: 'users' });
+    expect(mine.body).toEqual({ slug: 'todo-mine', url: 'http://todo-mine.apps.localhost:8080', activeVersion: 1, visibility: 'users', domains: [] });
     expect(h.core.apps.getInstanceBySlug('todo-mine')!.ownerId).toBe(h.adminId);
 
     const forPub = await create({ slug: 'todo-pub', ownerEmail: 'pub@x.y' });
@@ -303,5 +303,37 @@ describe('rest api', () => {
       .type('text/html').send(big);
     expect([413, 400]).toContain(res.status);
     expect(h.core.apps.getApp('big')).toBeNull();
+  });
+  it('domains over REST', async () => {
+    const { h, token } = setup();
+    const pub = h.core.users.create({ email: 'p@x.y', name: 'P', password: 'password-123', role: 'publisher' });
+    const ptoken = h.core.tokens.create(pub.id, 'p').token;
+    const call = (method: 'get' | 'put' | 'delete', slug: string, tok: string, body?: object) => {
+      const r = request(h.app)[method](`/api/instances/${slug}/domains`).set('Host', h.host).set('Authorization', `Bearer ${tok}`);
+      return body ? r.send(body) : r;
+    };
+    await request(h.app).put('/api/apps/mine').set('Host', h.host).set('Authorization', `Bearer ${ptoken}`).type('text/html').send('<p>x</p>');
+    // The administrator manages the instance as a grantee; being an admin alone gives no access to someone else's instance.
+    h.core.access.setGrant(h.core.apps.getInstanceBySlug('mine')!, 'user', h.adminId, 'admin', pub);
+    expect((await call('get', 'mine', ptoken)).body).toEqual({ domains: [] });
+    // A publisher who owns the instance is refused while the setting says admins.
+    const denied = await call('put', 'mine', ptoken, { host: 'a.example.test' });
+    expect(denied.status).toBe(403);
+    expect(denied.body.error.code).toBe('forbidden');
+    const added = await call('put', 'mine', token, { host: 'A.Example.test' });
+    expect(added.status).toBe(200);
+    expect(added.body).toEqual({ domains: [{ host: 'a.example.test', url: 'http://a.example.test:8080' }] });
+    expect((await call('get', 'mine', ptoken)).body.domains).toHaveLength(1);
+    const inst = await request(h.app).get('/api/apps/mine').set('Host', h.host).set('Authorization', `Bearer ${ptoken}`);
+    expect(inst.body.instances[0].domains).toEqual([{ host: 'a.example.test', url: 'http://a.example.test:8080' }]);
+    const deploy = await request(h.app).put('/api/apps/mine').set('Host', h.host).set('Authorization', `Bearer ${ptoken}`).type('text/html').send('<p>y</p>');
+    expect(deploy.body.urls).toEqual(['http://mine.apps.localhost:8080', 'http://a.example.test:8080']);
+    expect((await call('put', 'mine', token, { host: 'a.example.test' })).status).toBe(409);
+    expect((await call('put', 'mine', token, { host: 'nonsense' })).body.error.code).toBe('invalid_argument');
+    expect((await call('put', 'mine', token, {})).body.error.code).toBe('invalid_argument');
+    h.core.settings.setCustomDomains('publishers');
+    expect((await call('put', 'mine', ptoken, { host: 'b.example.test' })).body.domains).toHaveLength(2);
+    expect((await call('delete', 'mine', ptoken, { host: 'a.example.test' })).body).toEqual({ domains: [{ host: 'b.example.test', url: 'http://b.example.test:8080' }] });
+    expect((await call('get', 'nope', token)).status).toBe(404);
   });
 });

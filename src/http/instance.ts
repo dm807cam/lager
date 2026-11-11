@@ -36,8 +36,10 @@ function activeCapabilities(core: Core, instance: Instance): Capabilities {
   return core.apps.listVersions(instance.appId).find((v) => v.number === instance.activeVersion)?.capabilities ?? {};
 }
 
-function loginUrl(core: Core, instance: Instance): string {
-  return `${core.config.publicUrl.origin}/auth/instance?slug=${encodeURIComponent(instance.slug)}&return=%2F`;
+/** `customHost` is the custom domain the visitor came in on; the platform sends the code back to exactly that host. */
+function loginUrl(core: Core, instance: Instance, customHost?: string): string {
+  const host = customHost ? `&host=${encodeURIComponent(customHost)}` : '';
+  return `${core.config.publicUrl.origin}/auth/instance?slug=${encodeURIComponent(instance.slug)}${host}&return=%2F`;
 }
 
 function newDocId(): string {
@@ -118,7 +120,7 @@ export function createInstanceRouter(core: Core): express.Router {
       if (ctx.user) {
         res.status(403).type('html').send(forbiddenPage());
       } else {
-        res.redirect(loginUrl(core, ctx.instance));
+        res.redirect(loginUrl(core, ctx.instance, res.locals.customHost as string | undefined));
       }
       return;
     }
@@ -142,7 +144,7 @@ export function createInstanceRouter(core: Core): express.Router {
 
   router.get('/__lager/session', (_req, res) => {
     const ctx = ctxOf(res);
-    const url = loginUrl(core, ctx.instance);
+    const url = loginUrl(core, ctx.instance, res.locals.customHost as string | undefined);
     if (ctx.viewer.level === 'none') {
       sendError(res, new LagerError('unauthenticated', 'Sign in required.'), { loginUrl: url });
       return;

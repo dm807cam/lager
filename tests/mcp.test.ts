@@ -56,13 +56,13 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 const guide = fs.readFileSync(new URL('../src/guide.md', import.meta.url), 'utf8');
 
 describe('mcp endpoint', () => {
-  it('lists the fourteen tools and exposes instructions', async () => {
+  it('lists the sixteen tools and exposes instructions', async () => {
     const r = await start();
     const client = await connect(r);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'activate_version', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'get_app', 'get_guide',
-      'list_apps', 'list_shares', 'list_snapshots', 'restore_snapshot', 'set_visibility', 'share_instance', 'unshare_instance',
+      'activate_version', 'add_domain', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'get_app', 'get_guide',
+      'list_apps', 'list_shares', 'list_snapshots', 'remove_domain', 'restore_snapshot', 'set_visibility', 'share_instance', 'unshare_instance',
     ]);
     expect(client.getServerVersion()?.name).toBe('lager');
     const firstSection = guide.split(/\r?\n---\r?\n/)[0].trim();
@@ -261,6 +261,39 @@ describe('mcp endpoint', () => {
     expect((await call(client, 'share_instance', { instance: 'todo', email: 'ghost@x.y', level: 'view' })).json.error.code).toBe('not_found');
     expect((await call(client, 'share_instance', { instance: 'todo', group: 'nogroup', level: 'view' })).json.error.code).toBe('not_found');
     expect((await call(client, 'list_shares', { instance: 'nope' })).json.error.code).toBe('not_found');
+  });
+
+  it('add_domain and remove_domain', async () => {
+    const r = await start();
+    const client = await connect(r);
+    const port = new URL(r.base).port;
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>1</p>' });
+    const added = await call(client, 'add_domain', { instance: 'todo', host: 'Todo.Example.test' });
+    expect(added.isError).toBe(false);
+    expect(added.json).toMatchObject({ slug: 'todo', domains: [{ host: 'todo.example.test', url: `http://todo.example.test:${port}` }] });
+    expect((await call(client, 'get_app', { slug: 'todo' })).json.instances[0].domains).toHaveLength(1);
+    expect((await call(client, 'deploy_app', { slug: 'todo', html: '<p>2</p>' })).json.urls)
+      .toEqual([`http://todo.apps.localhost:${port}`, `http://todo.example.test:${port}`]);
+    expect((await call(client, 'add_domain', { instance: 'todo', host: 'todo.example.test' })).json.error.code).toBe('conflict');
+    expect((await call(client, 'add_domain', { instance: 'todo', host: 'nope' })).json.error.code).toBe('invalid_argument');
+    expect((await call(client, 'add_domain', { instance: 'todo', host: 'x.apps.localhost' })).json.error.code).toBe('invalid_argument');
+    expect((await call(client, 'add_domain', { instance: 'nope', host: 'a.example.test' })).json.error.code).toBe('not_found');
+    const removed = await call(client, 'remove_domain', { instance: 'todo', host: 'todo.example.test' });
+    expect(removed.json.domains).toEqual([]);
+  });
+
+  it('a publisher is refused while the setting is admins', async () => {
+    const r = await start();
+    const { client } = await asUser(r, 'pub@x.y', 'publisher');
+    await call(client, 'deploy_app', { slug: 'mine', html: '<p>1</p>' });
+    const refused = await call(client, 'add_domain', { instance: 'mine', host: 'a.example.test' });
+    expect(refused.isError).toBe(true);
+    expect(refused.json.error.code).toBe('forbidden');
+    r.h.core.settings.setCustomDomains('publishers');
+    expect((await call(client, 'add_domain', { instance: 'mine', host: 'a.example.test' })).isError).toBe(false);
+    r.h.core.settings.setCustomDomains('admins');
+    expect((await call(client, 'remove_domain', { instance: 'mine', host: 'a.example.test' })).json.error.code).toBe('forbidden');
+    expect(r.h.core.domains.list(r.h.core.apps.getInstanceBySlug('mine')!.id)).toEqual(['a.example.test']);
   });
 
   it('create_instance with owner_email', async () => {
@@ -468,6 +501,6 @@ describe('mcp endpoint', () => {
     const client = new Client({ name: 't', version: '1' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${r.base}/mcp`), { authProvider: provider }));
     clients.push(client);
-    expect((await client.listTools()).tools).toHaveLength(14);
+    expect((await client.listTools()).tools).toHaveLength(16);
   });
 });

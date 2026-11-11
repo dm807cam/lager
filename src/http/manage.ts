@@ -1,6 +1,6 @@
 import express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
-import { instanceUrl } from '../config.js';
+import { hostUrl, instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import type { App, Instance, SelfInstances, UsersLevel, Visibility } from '../platform/apps.js';
@@ -31,6 +31,9 @@ const NOTICES: Array<[RegExp, string]> = [
   [/Collaborators must be/, 'Mitarbeiter müssen aktive Administratoren oder Publisher sein.'],
   [/owner is already in charge/, 'Der Besitzer ist bereits für die App zuständig.'],
   [/owner already has full access/, 'Der Besitzer hat bereits vollen Zugriff.'],
+  [/^Das ist kein gültiger Hostname\.$/, 'Das ist kein gültiger Hostname.'],
+  [/^Diese Domain ist bereits vergeben\.$/, 'Diese Domain ist bereits vergeben.'],
+  [/^Diese Domain kann nicht verwendet werden\.$/, 'Diese Domain kann nicht verwendet werden.'],
 ];
 
 /** A message for the user that is not a domain error (unknown address, wrong confirmation). */
@@ -72,6 +75,16 @@ function grantsSection(core: Core, inst: Instance, base: string, csrf: string): 
 <span><label for="grant-level">Stufe</label><select id="grant-level" name="level">${optionList(GRANT_LEVELS, 'view')}</select></span></div>`, 'Freigeben')}</div>`;
 }
 
+/** Only shown to those who may attach domains. Lager cannot check who owns a DNS name, so the page says so. */
+function domainsSection(core: Core, inst: Instance, base: string, csrf: string): string {
+  const rows = core.domains.list(inst.id).map((host) => `<tr><td><a href="${esc(hostUrl(core.config, host))}">${esc(host)}</a></td>
+<td>${form(`${base}/domains/remove`, csrf, hiddenField('host', host), 'Entfernen', true)}</td></tr>`).join('');
+  return `<h2>Eigene Domains</h2>${rows ? `<div class="scroll"><table><thead><tr><th>Domain</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : '<p class="muted">Noch keine eigene Domain.</p>'}
+<div class="card">${form(`${base}/domains`, csrf, `<label for="domain-host">Hostname</label><input id="domain-host" name="host" required maxlength="253" autocomplete="off" placeholder="notizen.example.com">
+<p class="muted">DNS, Proxy-Eintrag und Zertifikat für die Domain richtest du selbst ein. Lager prüft nicht, wem die Domain gehört.</p>`, 'Hinzufügen')}</div>`;
+}
+
 function instancePage(core: Core, user: User, inst: Instance, flash: Flash): string {
   const csrf = csrfToken(core, user);
   const base = `/ui/instances/${encodeURIComponent(inst.slug)}`;
@@ -100,6 +113,7 @@ ${form(`${base}/delete`, csrf, `<label for="confirm">Zur Bestätigung den Namen 
 <h2>Sichtbarkeit</h2><div class="card">${form(`${base}/visibility`, csrf,
     `<label for="visibility">Wer darf die Instanz öffnen?</label><select id="visibility" name="visibility">${optionList(VISIBILITY_LABELS, inst.visibility)}</select>${level}`, 'Speichern')}</div>
 ${grantsSection(core, inst, base, csrf)}
+${core.domains.canManage(user, core.access.canManageInstance(inst, user)) ? domainsSection(core, inst, base, csrf) : ''}
 <h2>Schnappschüsse</h2>${snapshots.length
     ? `<div class="scroll"><table><thead><tr><th>Name</th><th>Datum</th><th>Größe</th><th></th></tr></thead><tbody>${snapRows}</tbody></table></div>`
     : '<p class="muted">Noch keine Schnappschüsse.</p>'}
@@ -253,6 +267,14 @@ export const manageExtension: PlatformExtension = (router, core) => {
 
   router.post('/ui/instances/:slug/grants/remove', ...action(instBack, (req, user) => {
     core.access.removeGrant(managed(user, param(req, 'slug')), field(req, 'type') as 'user' | 'group', field(req, 'id'), user);
+  }));
+
+  router.post('/ui/instances/:slug/domains', ...action(instBack, (req, user) => {
+    core.domains.add(managed(user, param(req, 'slug')), field(req, 'host', 300), user, true);
+  }));
+
+  router.post('/ui/instances/:slug/domains/remove', ...action(instBack, (req, user) => {
+    core.domains.remove(managed(user, param(req, 'slug')), field(req, 'host', 300), user, true);
   }));
 
   router.post('/ui/instances/:slug/delete', ...action(instBack, (req, user) => {

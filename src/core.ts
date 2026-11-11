@@ -8,6 +8,7 @@ import { Accounts } from './platform/accounts.js';
 import { Access } from './platform/access.js';
 import { Apps } from './platform/apps.js';
 import { openPlatformDb } from './platform/db.js';
+import { Domains } from './platform/domains.js';
 import { Groups } from './platform/groups.js';
 import { createMailer, type Mailer } from './platform/mail.js';
 import { Settings } from './platform/settings.js';
@@ -30,6 +31,8 @@ export interface Core {
   /** Registration, e-mail verification, password reset and invitations. */
   accounts: Accounts;
   groups: Groups;
+  /** Custom hostnames that answer for an instance. */
+  domains: Domains;
   /** Every authorization decision on apps and instances. */
   access: Access;
   close(): void;
@@ -63,17 +66,18 @@ export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
   apps.setQuota(config.instanceQuotaBytes, (id) => data.usage(id) + assets.usage(id).bytes);
   const groups = new Groups(db, users);
   const access = new Access(db, users, groups, apps);
+  const domains = new Domains(db, config, settings);
   apps.setChecks({
     canDeploy: (app, userId) => { const u = users.get(userId); return u !== null && access.canDeploy(app, u); },
     canManage: (instance, userId) => { const u = users.get(userId); return u !== null && access.canManageInstance(instance, u); },
   });
-  apps.onInstanceDeleted((instance) => { assets.drop(instance.id); data.trash(instance.id); });
+  apps.onInstanceDeleted((instance) => { assets.drop(instance.id); data.trash(instance.id); domains.removeAll(instance.id); });
   // Keep a restore point of the instance data whenever its active version changes.
   apps.onBeforeActivate((inst, from, to) => { data.snapshot(inst.id, `v${from}-to-v${to}`); });
   // Every open view of the instance reloads when its active version changes.
   apps.onActivated((inst) => { hub.publish(inst.id, { type: 'reload', version: inst.activeVersion }); });
   return {
-    config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, accounts, groups, access,
+    config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, accounts, groups, domains, access,
     close() {
       assets.close();
       data.close();

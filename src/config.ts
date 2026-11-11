@@ -104,3 +104,9 @@ export function instanceUrl(cfg: Config, slug: string): string {
   const port = cfg.publicUrl.port ? `:${cfg.publicUrl.port}` : '';
   return `${cfg.publicUrl.protocol}//${slug}.${cfg.appsDomain}${port}`;
 }
+
+/** URL of an arbitrary host (a custom domain): same protocol and port as publicUrl. */
+export function hostUrl(cfg: Config, host: string): string {
+  const port = cfg.publicUrl.port ? `:${cfg.publicUrl.port}` : '';
+  return `${cfg.publicUrl.protocol}//${host}${port}`;
+}

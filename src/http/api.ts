@@ -3,7 +3,7 @@ import type { Request, RequestHandler, Response } from 'express';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import {
-  appDetail, appSummary, checkCapabilities, createInstanceFor, describeDeploy, grantPrincipal, grantsJson, instanceJson, managedInstance, readableApp,
+  addDomainTo, appDetail, appSummary, checkCapabilities, createInstanceFor, domainsJson, removeDomainFrom, describeDeploy, grantPrincipal, grantsJson, instanceJson, managedInstance, readableApp,
 } from '../mcp/tools.js';
 import type { GrantLevel } from '../platform/access.js';
 import type { Visibility } from '../platform/apps.js';
@@ -156,6 +156,24 @@ export const apiExtension: PlatformExtension = (router, core) => {
     const who = grantPrincipal(core, { email: optionalString(body, 'email'), group: optionalString(body, 'group') });
     core.access.removeGrant(inst, who.type, who.id, user);
     res.json(grantsJson(core, inst));
+  });
+
+  router.get('/api/instances/:slug/domains', noStore, auth, (req, res) => {
+    res.json({ domains: domainsJson(core, managedInstance(core, userOf(res), req.params.slug as string)) });
+  });
+
+  const domainHost = (req: Request): string => {
+    const host = optionalString(bodyObject(req), 'host');
+    if (host === undefined) throw new LagerError('invalid_argument', 'host is required.');
+    return host;
+  };
+
+  router.put('/api/instances/:slug/domains', noStore, auth, express.json({ limit: '10kb' }), (req, res) => {
+    res.json({ domains: domainsJson(core, addDomainTo(core, userOf(res), req.params.slug as string, domainHost(req))) });
+  });
+
+  router.delete('/api/instances/:slug/domains', noStore, auth, express.json({ limit: '10kb' }), (req, res) => {
+    res.json({ domains: domainsJson(core, removeDomainFrom(core, userOf(res), req.params.slug as string, domainHost(req))) });
   });
 
   router.post('/api/apps/:slug/instances', noStore, auth, express.json({ limit: '10kb' }), (req, res) => {

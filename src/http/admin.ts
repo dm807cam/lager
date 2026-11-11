@@ -3,13 +3,14 @@ import type { Request, RequestHandler, Response } from 'express';
 import { instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
-import type { RegistrationMode } from '../platform/settings.js';
+import type { CustomDomainsMode, RegistrationMode } from '../platform/settings.js';
 import type { Role, User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
-import { esc, forbiddenAdminPage, page, signedInHeader } from './pages.js';
+import { esc, forbiddenAdminPage, optionList, page, signedInHeader } from './pages.js';
 import { csrfToken, csrfValid } from './session.js';
 
 const ROLE_LABELS: Array<[Role, string]> = [['admin', 'Administrator'], ['publisher', 'Publisher'], ['user', 'Nutzer']];
+const DOMAIN_LABELS: Array<[CustomDomainsMode, string]> = [['admins', 'Nur Administratoren'], ['publishers', 'Auch Publisher']];
 const MODE_LABELS: Array<[RegistrationMode, string]> = [['open', 'Offen'], ['invite', 'Nur mit Einladung'], ['closed', 'Geschlossen']];
 const SECTIONS: Array<[string, string]> = [['users', 'Nutzer'], ['invites', 'Einladungen'], ['groups', 'Gruppen'], ['settings', 'Einstellungen'], ['apps', 'Apps']];
 const LAST_ADMIN = 'Der letzte aktive Administrator kann nicht herabgestuft oder deaktiviert werden.';
@@ -106,7 +107,8 @@ function settingsSection(core: Core, admin: User, msg?: Msg): string {
   const body = `<div class="card">${form('/admin/settings', csrf,
     `<label for="registration">Registrierung</label><select id="registration" name="registration">${options}</select>
 ${core.mailer.enabled ? '' : '<p class="muted">Ohne Mailversand werden E-Mail-Adressen nicht bestätigt.</p>'}
-<label for="max-instances">Maximale Instanzen pro Nutzer</label><input id="max-instances" name="maxInstances" type="number" min="1" max="1000" step="1" required value="${core.settings.maxInstancesPerUser}">`, 'Speichern')}</div>`;
+<label for="max-instances">Maximale Instanzen pro Nutzer</label><input id="max-instances" name="maxInstances" type="number" min="1" max="1000" step="1" required value="${core.settings.maxInstancesPerUser}">
+<label for="custom-domains">Eigene Domains</label><select id="custom-domains" name="customDomains">${optionList(DOMAIN_LABELS, core.settings.customDomains)}</select>`, 'Speichern')}</div>`;
   return shell(core, admin, 'settings', 'Einstellungen', body, msg);
 }
 
@@ -297,10 +299,14 @@ export const adminExtension: PlatformExtension = (router, core) => {
       const mode = field(req, 'registration') as RegistrationMode;
       if (!MODE_LABELS.some(([m]) => m === mode)) throw new LagerError('invalid_argument', 'Registration must be open, invite or closed.');
       const max = /^\d+$/.test(raw) ? Number(raw) : NaN;
+      // A request without the field (older forms) leaves the setting as it is.
+      const domains = (req.body as Record<string, unknown> | undefined)?.customDomains === undefined ? core.settings.customDomains : field(req, 'customDomains') as CustomDomainsMode;
+      if (!DOMAIN_LABELS.some(([m]) => m === domains)) throw new LagerError('invalid_argument', 'Custom domains must be admins or publishers.');
       core.settings.setMaxInstancesPerUser(max);
       core.settings.setRegistration(mode);
+      core.settings.setCustomDomains(domains);
       res.redirect('/admin/settings');
-    } catch (e) { failWith(res, e, (m) => settingsSection(core, user, m), { invalid_argument: 'Bitte wähle einen Registrierungsmodus und gib für die Instanzen eine ganze Zahl von 1 bis 1000 an.' }); }
+    } catch (e) { failWith(res, e, (m) => settingsSection(core, user, m), { invalid_argument: 'Bitte wähle einen Registrierungsmodus, gib für die Instanzen eine ganze Zahl von 1 bis 1000 an und wähle, wer eigene Domains setzen darf.' }); }
   }));
 
   // --- instances ---

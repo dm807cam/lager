@@ -47,7 +47,16 @@ export function createHttpApp(core: Core, extensions: PlatformExtension[] = []):
       res.locals.slug = host.slice(0, -suffix.length);
       instances(req, res, next);
     } else {
-      res.status(404).type('html').send(notFoundPage());
+      // Not the platform and not under the apps domain: only a custom domain attached to an instance is served.
+      const id = core.domains.instanceIdFor(host);
+      const instance = id ? core.apps.getInstance(id) : null;
+      if (!instance) {
+        res.status(404).type('html').send(notFoundPage());
+        return;
+      }
+      res.locals.slug = instance.slug;
+      res.locals.customHost = host.replace(/\.$/, '');
+      instances(req, res, next);
     }
   });
 

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import * as z from 'zod';
-import { instanceUrl } from '../config.js';
+import { hostUrl, instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
 import { assertDocData, parseDocPath } from '../data/paths.js';
 import type { QuerySpec } from '../data/query.js';
@@ -26,8 +26,15 @@ const RULE_LEVELS = ['view', 'interact', 'admin', 'owner', 'self', 'none'];
 
 // ---- shared shapes (REST and MCP) -----------------------------------------
 
-export function instanceJson(core: Core, i: Instance): { slug: string; url: string; activeVersion: number; visibility: string } {
-  return { slug: i.slug, url: instanceUrl(core.config, i.slug), activeVersion: i.activeVersion, visibility: i.visibility };
+export interface DomainJson { host: string; url: string }
+
+export function domainsJson(core: Core, i: Instance): DomainJson[] {
+  return core.domains.list(i.id).map((host) => ({ host, url: hostUrl(core.config, host) }));
+}
+
+/** `url` is the primary address `<slug>.<apps domain>`; custom domains are listed separately. */
+export function instanceJson(core: Core, i: Instance): { slug: string; url: string; activeVersion: number; visibility: string; domains: DomainJson[] } {
+  return { slug: i.slug, url: instanceUrl(core.config, i.slug), activeVersion: i.activeVersion, visibility: i.visibility, domains: domainsJson(core, i) };
 }
 
 /** Instances of the app that `user` may see: their own and those shared with them (never other users' private ones). */
@@ -57,7 +64,9 @@ export function describeDeploy(core: Core, user: User, r: DeployResult): object 
     : r.warnings;
   return {
     app: r.app.slug, version: r.version.number, createdVersion: r.createdVersion,
-    urls: r.instances.filter((i) => core.access.canSeeInstance(i, user)).map((i) => instanceUrl(core.config, i.slug)), warnings, pinned,
+    // Per instance the primary URL comes first, then its custom domains.
+    urls: r.instances.filter((i) => core.access.canSeeInstance(i, user))
+      .flatMap((i) => [instanceUrl(core.config, i.slug), ...domainsJson(core, i).map((d) => d.url)]), warnings, pinned,
   };
 }
 
@@ -129,6 +138,21 @@ export function createInstanceFor(core: Core, user: User, input: { app: string; 
     owner = found;
   }
   return core.apps.createInstance({ appId: app.id, slug: input.slug, ownerId: owner.id, visibility: input.visibility });
+}
+
+// ---- custom domains (REST and MCP) -------------------------------------------
+
+/** Attaches `host` to the instance if `user` manages it and may set domains; returns the instance. */
+export function addDomainTo(core: Core, user: User, slug: string, host: string): Instance {
+  const inst = managedInstance(core, user, slug);
+  core.domains.add(inst, host, user, true);
+  return inst;
+}
+
+export function removeDomainFrom(core: Core, user: User, slug: string, host: string): Instance {
+  const inst = managedInstance(core, user, slug);
+  core.domains.remove(inst, host, user, true);
+  return inst;
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -259,6 +283,16 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     description: 'Who has access to an instance: the grants (accounts and groups with their level), the visibility and the level given to all signed-in users.',
     inputSchema: { instance: slugArg },
   }, ({ instance }) => run(() => sharesJson(core, managedInstance(core, user, instance))));
+
+  server.registerTool('add_domain', {
+    description: 'Let an instance also answer on your own domain (a hostname such as notes.example.com). Allowed for administrators, and for publishers who manage the instance when the administrator enabled it. DNS, proxy entry and certificate for the domain are set up outside Lager; Lager does not check who owns the domain. Returns the instance with its domains.',
+    inputSchema: { instance: slugArg, host: z.string().describe('Hostname without scheme, port or path') },
+  }, ({ instance, host }) => run(() => instanceJson(core, addDomainTo(core, user, instance, host))));
+
+  server.registerTool('remove_domain', {
+    description: 'Detach a custom domain from an instance. Returns the instance with its remaining domains.',
+    inputSchema: { instance: slugArg, host: z.string() },
+  }, ({ instance, host }) => run(() => instanceJson(core, removeDomainFrom(core, user, instance, host))));
 
   server.registerTool('db_read', {
     description: 'Read instance data. A document path (even number of segments, e.g. tasks/t1) returns {doc}; a collection path (odd, e.g. tasks) returns {docs}.',

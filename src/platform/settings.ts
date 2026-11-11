@@ -2,6 +2,9 @@ import type { DatabaseSync } from 'node:sqlite';
 import { LagerError } from '../errors.js';
 
 export type RegistrationMode = 'open' | 'invite' | 'closed';
+/** Who may attach custom domains to an instance: administrators only, or also publishers who manage it. */
+export type CustomDomainsMode = 'admins' | 'publishers';
+const DOMAIN_MODES: readonly CustomDomainsMode[] = ['admins', 'publishers'];
 const MODES: readonly RegistrationMode[] = ['open', 'invite', 'closed'];
 const DEFAULT_MAX_INSTANCES = 20;
 const MAX_INSTANCES_LIMIT = 1000;
@@ -38,5 +41,15 @@ export class Settings {
       throw new LagerError('invalid_argument', `Instance limit must be a whole number from 1 to ${MAX_INSTANCES_LIMIT}.`);
     }
     this.write('max_instances_per_user', String(n));
+  }
+
+  get customDomains(): CustomDomainsMode {
+    const v = this.read('custom_domains');
+    return DOMAIN_MODES.includes(v as CustomDomainsMode) ? (v as CustomDomainsMode) : 'admins';
+  }
+
+  setCustomDomains(mode: CustomDomainsMode): void {
+    if (!DOMAIN_MODES.includes(mode)) throw new LagerError('invalid_argument', 'Custom domains must be admins or publishers.');
+    this.write('custom_domains', mode);
   }
 }

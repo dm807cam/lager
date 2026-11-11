@@ -202,18 +202,19 @@ describe('saved version limits', () => {
   });
 });
 
-describe('migration 5', () => {
+describe('migration 5 (a database one version behind the latest still upgrades cleanly)', () => {
   it('keeps existing versions deployed', () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-mig-'));
     const old = openPlatformDb(d);
     old.exec('ALTER TABLE versions DROP COLUMN instance_id');
+    old.exec('DROP TABLE instance_domains');
     old.exec('PRAGMA user_version = 4');
     old.exec('PRAGMA foreign_keys = OFF');
     old.exec(`INSERT INTO apps (id, slug, title, owner_id, created_at) VALUES ('a1', 'old', 'Old', 'o', 'x')`);
     old.exec(`INSERT INTO versions (app_id, number, sha256, size_bytes, capabilities, created_by, created_at) VALUES ('a1', 1, 's', 1, '{}', 'o', 'x')`);
     old.close();
     const db = openPlatformDb(d);
-    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(5);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(6);
     expect(db.prepare('SELECT instance_id FROM versions').get()).toEqual({ instance_id: null });
     db.close();
   });
