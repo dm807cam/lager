@@ -22,7 +22,15 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Der Container lauscht auf Port 8080 und speichert alles in `./data`. Beim ersten Start entsteht das Admin-Konto aus `LAGER_ADMIN_EMAIL` und `LAGER_ADMIN_PASSWORD`. Danach öffnest du `LAGER_PUBLIC_URL` im Browser und meldest dich an.
+Der Container lauscht auf Port 8080 und ist nur auf dem Rechner selbst erreichbar (`127.0.0.1:8080`): Davor gehört ein Reverse Proxy mit TLS. Läuft der Proxy auf einem anderen Rechner oder in einem anderen Docker-Netzwerk, ändere in `docker-compose.yml` die Zeile `ports` (zum Beispiel auf `"8080:8080"`) und schütze den Port dann mit einer Firewall, damit niemand Lager am Proxy vorbei erreicht.
+
+Alles wird im benannten Docker-Volume `lager-data` gespeichert. Willst du stattdessen ein Verzeichnis neben der Compose-Datei verwenden, ersetze `"lager-data:/data"` durch `"./data:/data"`, entferne den Abschnitt `volumes:` am Ende und lege das Verzeichnis vorher mit passenden Rechten an, weil der Container als Benutzer `node` (UID 1000) läuft:
+
+```sh
+mkdir -p data && sudo chown 1000:1000 data
+```
+
+Beim ersten Start entsteht das Admin-Konto aus `LAGER_ADMIN_EMAIL` und `LAGER_ADMIN_PASSWORD`. Danach öffnest du `LAGER_PUBLIC_URL` im Browser und meldest dich an.
 
 Konfiguration (nur Umgebungsvariablen, Vorlage in `.env.example`):
 
@@ -125,15 +133,17 @@ Der Skill `skill/lager/SKILL.md` bringt Claude bei, Artefakte mit Lager zu bauen
 
 ## Datensicherung
 
-Alles liegt im Datenverzeichnis (`./data` bei Docker Compose): Datenbank der Plattform, alle Versionen, die Daten und Schnappschüsse der Instanzen und `secret.key`. Zum Sichern den Dienst stoppen und das Verzeichnis kopieren:
+Alles liegt im Datenverzeichnis (bei Docker Compose das Volume `lager-data`, bei einem Bind-Mount `./data`): Datenbank der Plattform, alle Versionen, die Daten und Schnappschüsse der Instanzen und `secret.key`. Zum Sichern den Dienst stoppen und das Volume beziehungsweise Verzeichnis kopieren. Mit dem Volume (Compose-Projektname `lager`, sonst `<Verzeichnisname>_lager-data`; `docker volume ls` zeigt ihn):
 
 ```sh
 docker compose stop
-cp -a data data-backup-$(date +%F)
+docker run --rm -v lager_lager-data:/data -v "$PWD":/backup alpine tar czf /backup/lager-backup-$(date +%F).tgz -C /data .
 docker compose start
 ```
 
-Zum Wiederherstellen das Verzeichnis zurückkopieren. Behalte `secret.key` (oder `LAGER_SECRET`), sonst werden alle Sitzungen ungültig.
+Bei einem Bind-Mount genügt `cp -a data data-backup-$(date +%F)`.
+
+Zum Wiederherstellen den Inhalt zurückkopieren (beziehungsweise das Archiv in ein leeres Volume entpacken). Behalte `secret.key` (oder `LAGER_SECRET`), sonst werden alle Sitzungen ungültig.
 
 ## Was Stufe 1 nicht kann
 

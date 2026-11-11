@@ -27,7 +27,7 @@ main:not(.wide) button{margin-top:1.25rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1rem;margin:0 0 1rem}
 .card h3:first-child{margin-top:0}
 .row{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
-.row form{margin:0;display:flex;gap:.5rem;align-items:center}
+.row form{margin:0;display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
 table{width:100%;border-collapse:collapse;font-size:.9rem}
 th,td{text-align:left;padding:.35rem .5rem .35rem 0;border-bottom:1px solid var(--border);vertical-align:middle}
 .scroll{overflow-x:auto}
