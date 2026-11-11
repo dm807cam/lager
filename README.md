@@ -171,6 +171,10 @@ Icons are stored under `<data>/apps/<app id>/icon/` and go to the trash with the
 
 Every instance can be added to a phone's home screen. Its pages carry a manifest, `apple-touch-icon` and theme-colour tags (unless the artifact brings its own `rel="manifest"` link) and a viewport tag when the artifact has none. The manifest (`/__lager/manifest.webmanifest`), the icons (`/__lager/icon-180.png`, `-192`, `-512`, `-512-maskable`), `/apple-touch-icon.png` and `/favicon.ico` are public even for private instances, because the browser fetches them without signing in; they show only the name, description, colours and icon, and a disabled instance serves none of them. The platform has its own manifest and icons as well. To install, open the app on the phone and choose "Add to Home Screen"; signing in happens in the browser the first time.
 
+## Light and dark
+
+The web interface follows the device's light or dark setting. The account menu has a theme switch that cycles between system, light and dark; the choice is kept in that browser only (local storage), and a tiny script in the page head applies it before the first paint so there is no flash. Without JavaScript the pages work the same and simply follow the system setting. The interface loads one stylesheet and one small script from the platform host (`/static/app.<hash>.css` and `.js`, cached for a year because the hash changes with the content) and nothing from anywhere else.
+
 ## Limits
 
 - **Storage per instance:** The data of an instance is limited to `LAGER_INSTANCE_QUOTA_MB` (default 50 MiB). This size includes the documents, the uploaded files (`assets`) and the pages an instance saved itself (`artifact`). When the limit is reached, Lager refuses further writes, uploads and saves with the error `quota_exceeded` (HTTP 507 for the database); reading and deleting keep working. Versions created by deploys, snapshots and the trash are not counted.

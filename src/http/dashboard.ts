@@ -3,97 +3,146 @@ import type { Request, RequestHandler, Response } from 'express';
 import { instanceUrl, MAX_SLUG_LENGTH } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
-import type { Instance } from '../platform/apps.js';
+import type { App, Instance } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
 import { localeOf } from './locale.js';
-import { t, type Locale } from '../i18n/index.js';
+import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { MAX_NAME } from '../platform/tokens.js';
-import { dateText, esc, form, formErrorPage, levelLabel, noticeHtml, page, signedInHeader, visibilityLabel } from './pages.js';
+import { dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, visibilityLabel } from './pages.js';
+import { appCard, badge, btn, callout, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, readFlash, type Flash } from './session.js';
 
 const deploys = (user: User): boolean => user.role === 'admin' || user.role === 'publisher';
+const plural = (count: number, one: MessageKey, other: MessageKey): MessageKey => (count === 1 ? one : other);
 
-function instanceRows(core: Core, locale: Locale, rows: Array<{ instance: Instance; cells: string; manage: boolean }>): string {
-  return rows.map(({ instance: i, cells, manage }) => {
-    const title = core.apps.getApp(i.appId)?.title ?? i.slug;
-    return `<tr><td>${esc(title)}</td><td><a href="${esc(instanceUrl(core.config, i.slug))}">${esc(i.slug)}</a></td>${cells}
-<td>${manage ? `<a href="/instances/${encodeURIComponent(i.slug)}">${esc(t(locale, 'common.manage'))}</a>` : ''}</td></tr>`;
-  }).join('');
+/** Open (for everyone who reaches the card) and Manage (only for those who may manage or delete the instance). */
+function instanceActions(core: Core, locale: Locale, i: Instance, manage: boolean): string {
+  const open = i.disabled ? '' : linkButton(instanceUrl(core.config, i.slug), `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary', true);
+  const admin = manage ? linkButton(`/instances/${encodeURIComponent(i.slug)}`, `${icon('settings')}${esc(t(locale, 'common.manage'))}`, 'quiet', true) : '';
+  return open + admin;
 }
 
-function ownSection(core: Core, locale: Locale, user: User): string {
-  const own = core.apps.listInstancesOwnedBy(user.id);
-  if (!own.length) return `<p class="muted">${esc(t(locale, 'dash.noInstances'))}</p>`;
-  const rows = instanceRows(core, locale, own.map((instance) => ({
-    instance,
-    cells: instance.disabled
-      ? `<td>v${instance.activeVersion}</td><td><span class="err">${esc(t(locale, 'common.disabled'))}</span></td>`
-      : `<td>v${instance.activeVersion}</td><td>${esc(visibilityLabel(locale, instance.visibility))}</td>`,
-    manage: core.access.canManageInstance(instance, user) || core.access.canDeleteInstance(instance, user),
-  })));
-  return `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.app'))}</th><th>${esc(t(locale, 'common.instance'))}</th><th>${esc(t(locale, 'common.version'))}</th><th>${esc(t(locale, 'common.visibility'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+function instanceCard(core: Core, locale: Locale, i: Instance, extra: { badges?: string[]; manage: boolean }): string {
+  const app = core.apps.getApp(i.appId);
+  const state = i.disabled ? badge(t(locale, 'common.disabled'), { tone: 'danger', icon: 'alert' }) : badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) });
+  return appCard({
+    app, title: app?.title ?? i.slug, slug: i.slug, description: app?.description,
+    badges: [state, badge(`v${i.activeVersion}`), ...(extra.badges ?? [])],
+    actions: instanceActions(core, locale, i, extra.manage),
+  });
 }
 
-function sharedSection(core: Core, locale: Locale, user: User): string {
-  const shared = core.access.sharedWith(user);
+function ownSection(core: Core, locale: Locale, user: User, own: Instance[]): string {
+  const body = own.length
+    ? `<div class="grid">${own.map((i) => instanceCard(core, locale, i, { manage: core.access.canManageInstance(i, user) || core.access.canDeleteInstance(i, user) })).join('')}</div>`
+    : emptyState(t(locale, 'dash.noInstances'));
+  return section('mine', t(locale, 'dash.ownInstances'), body, { count: own.length || undefined });
+}
+
+function sharedSection(core: Core, locale: Locale, user: User, shared: Instance[]): string {
   if (!shared.length) return '';
-  const rows = instanceRows(core, locale, shared.map((instance) => ({
-    instance,
-    cells: `<td>${esc(levelLabel(locale, core.access.levelFor(instance, user)))}</td>`,
-    manage: core.access.canManageInstance(instance, user),
-  })));
-  return `<h2>${esc(t(locale, 'dash.shared'))}</h2><div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.app'))}</th><th>${esc(t(locale, 'common.instance'))}</th><th>${esc(t(locale, 'dash.yourLevel'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const cards = shared.map((i) => instanceCard(core, locale, i, {
+    badges: [badge(t(locale, 'badge.shared', { level: levelLabel(locale, core.access.levelFor(i, user)) }), { icon: 'share', tone: 'accent' })],
+    manage: core.access.canManageInstance(i, user),
+  })).join('');
+  return section('shared', t(locale, 'dash.shared'), `<div class="grid">${cards}</div>`, { count: shared.length });
 }
 
-function catalogSection(core: Core, locale: Locale, user: User, csrf: string): string {
-  const { instances, apps } = core.access.catalog(user);
+function catalogSection(core: Core, locale: Locale, csrf: string, catalog: ReturnType<Core['access']['catalog']>): string {
+  const { instances, apps } = catalog;
   if (!instances.length && !apps.length) return '';
-  const instRows = instances.map((i) => `<tr><td>${esc(i.appTitle)}</td>
-<td><a href="${esc(instanceUrl(core.config, i.slug))}">${esc(i.slug)}</a></td><td>${esc(i.ownerName)}</td></tr>`).join('');
-  const appCards = apps.map((a) => `<div class="card"><h3>${esc(a.title)} <span class="muted mono">${esc(a.slug)}</span></h3>
-${form(`/ui/apps/${encodeURIComponent(a.slug)}/instances`, csrf,
-    `<input type="hidden" name="from" value="home"><label for="new-${esc(a.slug)}">${esc(t(locale, 'instance.slugLabel'))}</label><input id="new-${esc(a.slug)}" name="slug" required maxlength="${MAX_SLUG_LENGTH}" autocomplete="off">`,
-    esc(t(locale, 'dash.createOwn')))}</div>`).join('');
-  return `<h2>${esc(t(locale, 'dash.catalog'))}</h2>${instances.length ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.app'))}</th><th>${esc(t(locale, 'common.instance'))}</th><th>${esc(t(locale, 'common.owner'))}</th></tr></thead><tbody>${instRows}</tbody></table></div>` : ''}${appCards}`;
+  const instCards = instances.map((i) => {
+    const app = core.apps.getApp(i.appId);
+    return appCard({
+      app, title: i.appTitle, slug: i.slug, description: app?.description,
+      badges: [badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) }), badge(i.ownerName, { icon: 'user' })],
+      actions: linkButton(instanceUrl(core.config, i.slug), `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary', true),
+    });
+  });
+  const appCards = apps.map((a) => {
+    const id = `new-${esc(a.slug)}`;
+    const create = form(`/ui/apps/${encodeURIComponent(a.slug)}/instances`, csrf,
+      `<input type="hidden" name="from" value="home">${field(id, t(locale, 'instance.slugLabel'), `<input id="${id}" name="slug" required maxlength="${MAX_SLUG_LENGTH}" autocomplete="off" spellcheck="false">`)}`,
+      esc(t(locale, 'dash.createOwn')), 'primary', '', true);
+    return appCard({
+      app: a, title: a.title, slug: a.slug, description: a.description, badges: [],
+      actions: `<details class="getown"><summary class="${btn('secondary', true)} btn-block">${icon('plus')}${esc(t(locale, 'dash.getOwn'))}</summary>${create}</details>`,
+    });
+  });
+  return section('catalog', t(locale, 'dash.catalog'), `<div class="grid">${[...instCards, ...appCards].join('')}</div>`);
 }
 
-function appsSection(core: Core, locale: Locale, user: User): string {
-  const apps = core.access.appsOf(user);
-  const rows = apps.map((a) => {
-    return `<tr><td>${esc(a.title)}</td><td class="mono">${esc(a.slug)}</td><td>v${core.apps.latestDeployedVersion(a.id)?.number ?? 0}</td>
-<td><a href="/apps/${encodeURIComponent(a.slug)}">${esc(t(locale, 'common.open'))}</a></td></tr>`;
+function appsSection(core: Core, locale: Locale, apps: App[]): string {
+  const cards = apps.map((a) => {
+    const latest = core.apps.latestDeployedVersion(a.id)?.number ?? 0;
+    const count = core.apps.listInstances(a.id).length;
+    return appCard({
+      app: a, title: a.title, slug: a.slug, description: a.description,
+      badges: [`<span class="badge"><span class="sr-only">${esc(t(locale, 'dash.latestVersion'))} </span>v${latest}</span>`,
+        badge(t(locale, plural(count, 'dash.instanceCount.one', 'dash.instanceCount.other'), { count }), { icon: 'grid' })],
+      actions: linkButton(`/apps/${encodeURIComponent(a.slug)}`, `${icon('settings')}${esc(t(locale, 'common.manage'))}`, 'secondary', true),
+    });
   }).join('');
-  return `<h2>${esc(t(locale, 'dash.apps'))}</h2>${apps.length
-    ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'dash.appTitle'))}</th><th>${esc(t(locale, 'common.name'))}</th><th>${esc(t(locale, 'dash.latestVersion'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
-    : `<p class="muted">${esc(t(locale, 'dash.noApps'))}</p>`}`;
+  return section('apps', t(locale, 'dash.apps'), apps.length ? `<div class="grid">${cards}</div>` : emptyState(t(locale, 'dash.noApps')), { count: apps.length || undefined });
 }
 
-function tokenSection(core: Core, locale: Locale, user: User, csrf: string, newToken?: { name: string; token: string }): string {
+/** The three steps from connecting Claude to a running app; the first carries the connector address for those who deploy. */
+function steps(locale: Locale, connector: string | null, cls = ''): string {
+  return `<ol class="steps${cls ? ` ${cls}` : ''}">
+<li><strong>${esc(t(locale, 'dash.connect'))}</strong><span>${esc(t(locale, 'home.step.connect'))}</span>${connector && cls ? copyField(locale, connector) : ''}</li>
+<li><strong>${esc(t(locale, 'home.step.ask'))}</strong><span>${esc(t(locale, 'home.step.ask.text'))}</span></li>
+<li><strong>${esc(t(locale, 'home.step.appears'))}</strong><span>${esc(t(locale, 'home.step.appears.text'))}</span></li></ol>`;
+}
+
+function connectPanel(locale: Locale, connector: string): string {
+  return `<section class="section panel-navy" id="connect" aria-labelledby="connect-title"><h2 id="connect-title">${esc(t(locale, 'dash.connect'))}</h2>
+<div class="panel-grid"><div><p class="label">${esc(t(locale, 'dash.connect.text'))}</p>${copyField(locale, connector, 'primary')}</div>${steps(locale, null)}</div></section>`;
+}
+
+function tokenSection(core: Core, locale: Locale, user: User, csrf: string): string {
   const tokens = core.tokens.list(user.id);
-  const tokenRows = tokens.map((tk) => `<tr><td>${esc(tk.name)}</td><td>${dateText(locale, tk.createdAt)}</td>
-<td>${tk.lastUsedAt ? dateText(locale, tk.lastUsedAt) : `<span class="muted">${esc(t(locale, 'common.never'))}</span>`}</td>
-<td>${form(`/ui/tokens/${encodeURIComponent(tk.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), true)}</td></tr>`).join('');
-  const created = newToken ? `<div class="card" role="status"><strong>${esc(t(locale, 'dash.tokens.created', { name: newToken.name }))}</strong>
-<span class="token mono">${esc(newToken.token)}</span><span class="err">${esc(t(locale, 'dash.tokens.copyNow'))}</span></div>` : '';
-  return `<h2>${esc(t(locale, 'dash.tokens'))}</h2>${created}
-<div class="card">${tokens.length
-    ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.name'))}</th><th>${esc(t(locale, 'common.created'))}</th><th>${esc(t(locale, 'dash.tokens.lastUsed'))}</th><th></th></tr></thead><tbody>${tokenRows}</tbody></table></div>`
-    : `<p class="muted">${esc(t(locale, 'dash.tokens.none'))}</p>`}
-${form('/ui/tokens', csrf, `<label for="token-name">${esc(t(locale, 'dash.tokens.nameLabel'))}</label><input id="token-name" name="name" required maxlength="${MAX_NAME}">`, esc(t(locale, 'dash.tokens.create')))}
-</div>`;
+  const rows = tokens.map((tk) => [
+    `<strong>${esc(tk.name)}</strong>`, dateText(locale, tk.createdAt),
+    tk.lastUsedAt ? dateText(locale, tk.lastUsedAt) : `<span class="muted">${esc(t(locale, 'common.never'))}</span>`,
+    form(`/ui/tokens/${encodeURIComponent(tk.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), 'danger', '', true),
+  ]);
+  const list = tokens.length
+    ? dataTable([t(locale, 'common.name'), t(locale, 'common.created'), t(locale, 'dash.tokens.lastUsed'), ''], rows)
+    : emptyState(t(locale, 'dash.tokens.none'), 'lock');
+  const create = form('/ui/tokens', csrf,
+    field('token-name', t(locale, 'dash.tokens.nameLabel'), `<input id="token-name" name="name" required maxlength="${MAX_NAME}" autocomplete="off">`),
+    `${icon('plus')}${esc(t(locale, 'dash.tokens.create'))}`, 'secondary', 'form-row');
+  return section('tokens', t(locale, 'dash.tokens'), `<div class="card">${list}<div class="subsection">${create}</div></div>`, { count: tokens.length || undefined });
 }
 
 function homePage(core: Core, locale: Locale, user: User, flash: Flash = {}, newToken?: { name: string; token: string }): string {
   const csrf = csrfToken(core, user);
-  const publisher = deploys(user) ? `${appsSection(core, locale, user)}
-<h2>${esc(t(locale, 'dash.connect'))}</h2>
-<div class="card"><p>${esc(t(locale, 'dash.connect.text'))}</p><code>${esc(new URL('/mcp', core.config.publicUrl).href)}</code></div>
-${tokenSection(core, locale, user, csrf, newToken)}` : '';
-  return page(locale, 'Lager', `<h1>${esc(t(locale, 'nav.overview'))}</h1>${noticeHtml(locale, flash)}
-<h2>${esc(t(locale, 'dash.ownInstances'))}</h2>${ownSection(core, locale, user)}
-${sharedSection(core, locale, user)}${catalogSection(core, locale, user, csrf)}${publisher}`,
-  { wide: true, returnPath: '/', headerExtra: signedInHeader(locale, user.email, csrf, user.role === 'admin') });
+  const publisher = deploys(user);
+  const connector = new URL('/mcp', core.config.publicUrl).href;
+  const own = core.apps.listInstancesOwnedBy(user.id);
+  const shared = core.access.sharedWith(user);
+  const catalog = core.access.catalog(user);
+  const apps = publisher ? core.access.appsOf(user) : [];
+  const created = newToken ? callout(locale, t(locale, 'dash.tokens.created', { name: newToken.name }), newToken.token, t(locale, 'dash.tokens.copyNow')) : '';
+  const opts = signedIn(core, user, 'apps', '/');
+  const empty = !own.length && !shared.length && !catalog.instances.length && !catalog.apps.length && !apps.length;
+  if (empty) {
+    const next = publisher
+      ? steps(locale, connector, 'steps-cards')
+      : `<p class="hint-line">${esc(t(locale, 'dash.noInstances'))} ${esc(t(locale, 'home.empty.user'))}</p>`;
+    return page(locale, 'Lager', `${noticeHtml(locale, flash)}${created}<div class="empty-hero"><img src="/icon.webp" alt="" width="96" height="96">
+<h1 class="display">${esc(t(locale, 'brand.tagline'))}</h1><p class="lede">${esc(t(locale, 'brand.pitch'))}</p>${next}</div>
+${publisher ? `${tokenSection(core, locale, user, csrf)}` : ''}`, opts);
+  }
+  const parts = [
+    own.length ? t(locale, plural(own.length, 'home.summary.apps.one', 'home.summary.apps.other'), { count: own.length }) : '',
+    shared.length ? t(locale, plural(shared.length, 'home.summary.shared.one', 'home.summary.shared.other'), { count: shared.length }) : '',
+  ].filter(Boolean);
+  return page(locale, 'Lager', `<div class="page-head"><h1 class="display">${esc(t(locale, 'home.title'))}</h1>${parts.length ? `<p class="lede">${esc(parts.join(' · '))}</p>` : ''}</div>
+${noticeHtml(locale, flash)}${created}
+${ownSection(core, locale, user, own)}${sharedSection(core, locale, user, shared)}${catalogSection(core, locale, csrf, catalog)}
+${publisher ? `${appsSection(core, locale, apps)}${connectPanel(locale, connector)}${tokenSection(core, locale, user, csrf)}` : ''}`, opts);
 }
 
 /** Home page (overview, shared instances, catalog) and the API-token forms. */

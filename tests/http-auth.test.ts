@@ -340,7 +340,7 @@ describe('account page and sessions', () => {
     expect(page.text).toContain('action="/account/name"');
     expect(page.text).toContain('action="/account/password"');
     expect(page.text).toContain('href="/account"');
-    expect(page.text).toContain(t('en', 'nav.overview'));
+    expect(page.text).toContain('<a class="brand" href="/">');
 
     const csrf = csrfToken(h!.core, user);
     expect((await s.post('/account/name', { name: 'Anna' }, { cookie })).status).toBe(403);

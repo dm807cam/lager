@@ -63,9 +63,11 @@ describe('home page', () => {
     const { u } = scenario(h);
     const res = await get(h, await loginAs(h, u));
     expect(res.status).toBe(200);
-    expect(res.text).toContain(en('nav.overview'));
-    expect(res.text).toContain(en('dash.ownInstances'));
+    // Nothing of their own, nothing shared, no catalog: the empty home with the tagline, and no steps (they cannot connect Claude).
+    expect(res.text).toContain(en('brand.tagline'));
     expect(res.text).toContain(en('dash.noInstances'));
+    expect(res.text).toContain(en('home.empty.user'));
+    expect(res.text).not.toContain(en('home.step.ask'));
     for (const text of [en('dash.apps'), en('dash.tokens'), en('dash.connect'), '/mcp']) expect(res.text).not.toContain(text);
     expect(res.text).not.toContain(en('nav.admin'));
   });
@@ -90,6 +92,7 @@ describe('home page', () => {
 
   it('administrators see the same sections and the Administration link', async () => {
     const h = setup();
+    h.core.apps.deploy({ slug: 'notes', html: '<p>1</p>', title: 'Notes', userId: h.adminId });
     const res = await get(h, await h.login());
     expect(res.text).toContain(en('dash.apps'));
     expect(res.text).toContain(en('dash.connect'));

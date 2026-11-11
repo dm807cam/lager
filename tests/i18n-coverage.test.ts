@@ -220,24 +220,25 @@ describe('catalog-only text', () => {
 let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
 
-/** Strips the stylesheet, which legitimately contains braces. */
-const bodyOf = (html: string): string => html.replace(/<style>[\s\S]*?<\/style>/, '');
+/** Strips the pre-paint theme script, which legitimately contains braces. */
+const bodyOf = (html: string): string => html.replace(/<script id="theme-init">[\s\S]*?<\/script>/, '');
 
 describe('signed-in pages in every locale', () => {
   const SENTINELS: Record<string, MessageKey[]> = {
-    home: ['dash.ownInstances', 'dash.createOwn', 'dash.tokens.create', 'dash.latestVersion', 'dash.connect'],
-    instance: ['instance.delete.title', 'instance.grants.title', 'instance.snapshots.title', 'instance.visibility.who', 'instance.autoUpdate.label'],
+    home: ['dash.ownInstances', 'dash.createOwn', 'dash.tokens.create', 'dash.latestVersion', 'dash.connect', 'home.title', 'nav.main', 'nav.skip', 'theme.label', 'common.copy', 'common.copied', 'dash.getOwn'],
+    instance: ['instance.delete.title', 'instance.grants.title', 'instance.snapshots.title', 'instance.visibility.who', 'instance.autoUpdate.label', 'common.dangerZone', 'instance.storage', 'instance.autoUpdate.title'],
     app: ['app.collaborators', 'app.self.title', 'app.delete.title', 'app.newInstance', 'app.collaboratorEmail'],
     users: ['admin.section.settings', 'admin.users.resetLink', 'admin.users.role'],
     invites: ['admin.invites.create', 'admin.invites.validUntil'],
     groups: ['admin.groups.create', 'admin.groups.newName'],
     group: ['admin.groups.delete', 'admin.groups.memberEmail'],
-    settings: ['admin.settings.maxInstances', 'admin.settings.registration'],
+    settings: ['admin.settings.maxInstances', 'admin.settings.registration', 'admin.settings.registration.hint', 'admin.settings.customDomains.hint', 'admin.sections'],
     adminApps: ['admin.apps.data', 'common.owner'],
+    account: ['account.password.title', 'account.locale.label', 'nav.signOut'],
   };
   const PAGES: Array<[string, string]> = [
     ['home', '/'], ['instance', '/instances/notes'], ['app', '/apps/notes'], ['users', '/admin/users'], ['invites', '/admin/invites'],
-    ['groups', '/admin/groups'], ['group', '/admin/groups/GROUP'], ['settings', '/admin/settings'], ['adminApps', '/admin/apps'],
+    ['groups', '/admin/groups'], ['group', '/admin/groups/GROUP'], ['settings', '/admin/settings'], ['adminApps', '/admin/apps'], ['account', '/account'],
   ];
 
   async function seed(hh: Harness): Promise<string> {
@@ -282,6 +283,33 @@ describe('signed-in pages in every locale', () => {
     }
   });
 
+  it('the signed-out pages and an empty home render in every locale', async () => {
+    h = makeHarness({ extensions: [dashboardExtension] });
+    h.core.settings.setRegistration('open');
+    const plain = h.core.users.create({ email: 'p@x.y', name: 'P', password: 'password-123', role: 'publisher' });
+    const cookie = await h.login(plain.email, 'password-123');
+    const pages: Array<[string, string, MessageKey[], string]> = [
+      ['login', '/login', ['brand.tagline', 'brand.pitch', 'login.forgot', 'nav.skip'], ''],
+      ['register', '/register', ['auth.register.title', 'common.toLogin'], ''],
+      ['forgot', '/forgot', ['auth.forgot.submit'], ''],
+      ['empty home', '/', ['home.step.connect', 'home.step.ask', 'home.step.ask.text', 'home.step.appears', 'home.step.appears.text'], cookie],
+    ];
+    for (const locale of LOCALES) {
+      for (const [name, route, keys, c] of pages) {
+        const res = await request(h.app).get(route).set('Host', h.host).set('Cookie', `${c ? `${c}; ` : ''}lager_lang=${locale}`);
+        const where = `${locale} ${name}`;
+        expect(res.status, where).toBe(200);
+        const body = bodyOf(res.text);
+        expect(body, where).not.toContain('{');
+        expect(body, where).not.toContain('undefined');
+        for (const key of keys) {
+          expect(body, `${where} ${key}`).toContain(esc(t(locale, key)));
+          if (locale !== 'en') expect(t(locale, key), `${where} ${key} translated`).not.toBe(t('en', key));
+        }
+      }
+    }
+  });
+
   it('the language switcher on every signed-in page returns to that page', async () => {
     h = makeHarness({ extensions: [dashboardExtension, manageExtension, adminExtension] });
     const groupId = await seed(h);
@@ -295,9 +323,9 @@ describe('signed-in pages in every locale', () => {
 
 /** Values that are the same word in the language as in English (loanwords, shared Latin vocabulary, product and role names). */
 const SAME_AS_ENGLISH: Record<'de' | 'fr' | 'es', readonly string[]> = {
-  de: ['common.name', 'nav.admin', 'common.app', 'common.version', 'common.status', 'role.admin', 'role.publisher', 'instance.version', 'instance.downloadHtml',
+  de: ['common.name', 'nav.admin', 'nav.apps', 'theme.system', 'instance.details', 'common.version', 'common.status', 'role.admin', 'role.publisher', 'instance.version', 'instance.downloadHtml',
     'instance.domains.domain', 'instance.domains.host', 'app.pageTitle', 'admin.pageTitle', 'admin.section.apps', 'admin.apps.domains'],
-  fr: ['nav.admin', 'common.instance', 'common.version', 'common.date', 'role.publisher', 'instance.pageTitle', 'instance.version', 'instance.versionNote',
+  fr: ['nav.admin', 'common.instance', 'common.version', 'common.date', 'role.publisher', 'instance.pageTitle', 'instance.version', 'dash.instanceCount.one', 'dash.instanceCount.other',
     'instance.downloadHtml', 'instance.grants.type', 'app.versions', 'app.instances', 'admin.section.invites'],
   es: ['role.publisher', 'instance.downloadHtml'],
 };

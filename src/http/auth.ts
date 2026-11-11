@@ -7,7 +7,8 @@ import { MAX_NAME_LENGTH, MIN_PASSWORD_LENGTH, type User } from '../platform/use
 import { requireUser, type PlatformExtension } from './app.js';
 import { requestLocale } from './locale.js';
 import { sameOriginGuard } from './origin.js';
-import { esc, messagePage, page, resendForm, sessionExpiredPage, signedInHeader } from './pages.js';
+import { authCard, esc, field, messagePage, page, resendForm, sessionExpiredPage } from './pages.js';
+import { avatar, btn, icon, notice as noticeBox, signedIn } from './ui.js';
 import { RateLimiter } from './ratelimit.js';
 import { csrfToken, csrfValid, issueSession } from './session.js';
 
@@ -31,46 +32,43 @@ const reasonText = (locale: Locale, e: LagerError): string =>
   t(locale, REASON_KEYS[e.reason ?? ''] ?? 'validation.generic', { min: MIN_PASSWORD_LENGTH, max: MAX_NAME_LENGTH });
 
 const notice = (locale: Locale, title: string, text: string, extra = ''): string => messagePage(locale, title, text, extra);
-const errorLine = (message?: string): string => (message ? `<p class="err" role="alert">${esc(message)}</p>` : '');
-const passwordHint = (locale: Locale): string => `<p class="muted">${esc(t(locale, 'auth.password.hint', { min: MIN_PASSWORD_LENGTH }))}</p>`;
+const errorLine = (message?: string): string => (message ? noticeBox('danger', message) : '');
+const passwordHint = (locale: Locale): string => t(locale, 'auth.password.hint', { min: MIN_PASSWORD_LENGTH });
+const toLogin = (locale: Locale): string => `<p class="auth-links"><a href="/login">${esc(t(locale, 'common.toLogin'))}</a></p>`;
 
 function registerForm(locale: Locale, values: { name: string; email: string }, invite: string, bound: string | null, error?: string): string {
   const title = t(locale, 'auth.register.title');
-  return page(locale, title, `<h1>${esc(title)}</h1>
+  return page(locale, title, `${authCard(`<h1>${esc(title)}</h1>
 ${errorLine(error)}
-<form method="post" action="/register">
+<form method="post" action="/register" class="stack">
 <input type="hidden" name="invite" value="${esc(invite)}">
-<label for="name">${esc(t(locale, 'common.name'))}</label><input id="name" name="name" autocomplete="name" required maxlength="${MAX_NAME_LENGTH}" value="${esc(values.name)}" autofocus>
-<label for="email">${esc(t(locale, 'common.email'))}</label><input id="email" name="email" type="email" autocomplete="email" required value="${esc(bound ?? values.email)}"${bound ? ' readonly' : ''}>
-<label for="password">${esc(t(locale, 'common.password'))}</label><input id="password" name="password" type="password" autocomplete="new-password" required minlength="${MIN_PASSWORD_LENGTH}">
-${passwordHint(locale)}
-<button type="submit">${esc(t(locale, 'auth.register.submit'))}</button>
-</form>
-<p><a href="/login">${esc(t(locale, 'common.toLogin'))}</a></p>`, { ...(invite ? { switcher: false } : { returnPath: '/register' }) });
+${field('name', t(locale, 'common.name'), `<input id="name" name="name" autocomplete="name" required maxlength="${MAX_NAME_LENGTH}" value="${esc(values.name)}" autofocus>`)}
+${field('email', t(locale, 'common.email'), `<input id="email" name="email" type="email" autocomplete="email" required value="${esc(bound ?? values.email)}"${bound ? ' readonly' : ''}>`)}
+${field('password', t(locale, 'common.password'), `<input id="password" name="password" type="password" autocomplete="new-password" required minlength="${MIN_PASSWORD_LENGTH}">`, passwordHint(locale))}
+<button type="submit" class="${btn('primary')}">${esc(t(locale, 'auth.register.submit'))}</button>
+</form>`)}${toLogin(locale)}`, { ...(invite ? { switcher: false } : { returnPath: '/register' }) });
 }
 
-const forgotForm = (locale: Locale): string => page(locale, t(locale, 'auth.forgot.title'), `<h1>${esc(t(locale, 'auth.forgot.title'))}</h1>
-<form method="post" action="/forgot">
-<label for="email">${esc(t(locale, 'common.email'))}</label><input id="email" name="email" type="email" autocomplete="email" required autofocus>
-<button type="submit">${esc(t(locale, 'auth.forgot.submit'))}</button>
-</form>
-<p><a href="/login">${esc(t(locale, 'common.toLogin'))}</a></p>`, { returnPath: '/forgot' });
+const forgotForm = (locale: Locale): string => page(locale, t(locale, 'auth.forgot.title'), `${authCard(`<h1>${esc(t(locale, 'auth.forgot.title'))}</h1>
+<form method="post" action="/forgot" class="stack">
+${field('email', t(locale, 'common.email'), '<input id="email" name="email" type="email" autocomplete="email" required autofocus>')}
+<button type="submit" class="${btn('primary')}">${esc(t(locale, 'auth.forgot.submit'))}</button>
+</form>`)}${toLogin(locale)}`, { returnPath: '/forgot' });
 
 /** The reset, verify and invited-register pages carry a one-time token: they offer no language switcher, because the switcher's link would put the token into a `/lang` URL; the cookie or browser language applies. */
-const resetForm = (locale: Locale, token: string, error?: string): string => page(locale, t(locale, 'auth.reset.title'), `<h1>${esc(t(locale, 'auth.reset.title'))}</h1>
+const resetForm = (locale: Locale, token: string, error?: string): string => page(locale, t(locale, 'auth.reset.title'), authCard(`<h1>${esc(t(locale, 'auth.reset.title'))}</h1>
 ${errorLine(error)}
-<form method="post" action="/reset">
+<form method="post" action="/reset" class="stack">
 <input type="hidden" name="token" value="${esc(token)}">
-<label for="password">${esc(t(locale, 'auth.reset.label'))}</label><input id="password" name="password" type="password" autocomplete="new-password" required minlength="${MIN_PASSWORD_LENGTH}" autofocus>
-${passwordHint(locale)}
-<button type="submit">${esc(t(locale, 'auth.reset.submit'))}</button>
-</form>`, { switcher: false });
+${field('password', t(locale, 'auth.reset.label'), `<input id="password" name="password" type="password" autocomplete="new-password" required minlength="${MIN_PASSWORD_LENGTH}" autofocus>`, passwordHint(locale))}
+<button type="submit" class="${btn('primary')}">${esc(t(locale, 'auth.reset.submit'))}</button>
+</form>`), { switcher: false });
 
-const verifyForm = (locale: Locale, token: string): string => page(locale, t(locale, 'auth.verify.title'), `<h1>${esc(t(locale, 'auth.verify.title'))}</h1>
-<form method="post" action="/verify">
+const verifyForm = (locale: Locale, token: string): string => page(locale, t(locale, 'auth.verify.title'), authCard(`<div class="auth-icon is-success">${icon('check')}</div><h1>${esc(t(locale, 'auth.verify.title'))}</h1>
+<form method="post" action="/verify" class="stack">
 <input type="hidden" name="token" value="${esc(token)}">
-<button type="submit">${esc(t(locale, 'auth.verify.submit'))}</button>
-</form>`, { switcher: false });
+<button type="submit" class="${btn('primary')}">${esc(t(locale, 'auth.verify.submit'))}</button>
+</form>`), { switcher: false });
 
 const invalidLinkPage = (locale: Locale): string => notice(locale, t(locale, 'auth.link.invalid.title'), t(locale, 'auth.link.invalid'), resendForm(locale));
 
@@ -78,22 +76,22 @@ function accountPage(core: Core, locale: Locale, user: User, msg: { ok?: string;
   const csrf = esc(csrfToken(core, user));
   const choices = [['', t(locale, 'account.locale.browser')], ...LOCALES.map((l) => [l, LOCALE_NAMES[l]])];
   const options = choices.map(([value, label]) => `<option value="${esc(value)}"${value === (user.locale ?? '') ? ' selected' : ''}>${esc(label)}</option>`).join('');
-  return page(locale, t(locale, 'account.title'), `<h1>${esc(t(locale, 'account.title'))}</h1>
-${msg.ok ? `<p class="ok" role="status">${esc(msg.ok)}</p>` : ''}${errorLine(msg.error)}
-<h2>${esc(t(locale, 'common.name'))}</h2>
-<form method="post" action="/account/name"><input type="hidden" name="csrf" value="${csrf}">
-<label for="name">${esc(t(locale, 'common.name'))}</label><input id="name" name="name" required maxlength="${MAX_NAME_LENGTH}" value="${esc(user.name)}" autocomplete="name">
-<button type="submit">${esc(t(locale, 'common.save'))}</button></form>
-<h2>${esc(t(locale, 'account.locale.title'))}</h2>
-<form method="post" action="/account/locale"><input type="hidden" name="csrf" value="${csrf}">
-<label for="locale">${esc(t(locale, 'account.locale.label'))}</label><select id="locale" name="locale">${options}</select>
-<button type="submit">${esc(t(locale, 'common.save'))}</button></form>
-<h2>${esc(t(locale, 'account.password.title'))}</h2>
-<form method="post" action="/account/password"><input type="hidden" name="csrf" value="${csrf}">
-<label for="current">${esc(t(locale, 'account.password.current'))}</label><input id="current" name="current" type="password" required autocomplete="current-password">
-<label for="new-password">${esc(t(locale, 'auth.reset.label'))}</label><input id="new-password" name="password" type="password" required minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password">
-<p class="muted">${esc(t(locale, 'account.password.hint', { min: MIN_PASSWORD_LENGTH }))}</p>
-<button type="submit">${esc(t(locale, 'account.password.submit'))}</button></form>`, { headerExtra: signedInHeader(locale, user.email, csrf, user.role === 'admin'), returnPath: '/account' });
+  const save = `<button type="submit" class="${btn('secondary')}">${esc(t(locale, 'common.save'))}</button>`;
+  return page(locale, t(locale, 'account.title'), `<div class="narrow"><div class="page-head account-head">${avatar(user, 'lg')}<div><h1>${esc(t(locale, 'account.title'))}</h1><p class="lede">${esc(user.email)}</p></div></div>
+${msg.ok ? noticeBox('success', msg.ok) : ''}${errorLine(msg.error)}
+<section class="card"><h2>${esc(t(locale, 'common.name'))}</h2>
+<form method="post" action="/account/name" class="form-row"><input type="hidden" name="csrf" value="${csrf}">
+${field('name', t(locale, 'common.name'), `<input id="name" name="name" required maxlength="${MAX_NAME_LENGTH}" value="${esc(user.name)}" autocomplete="name">`)}
+${save}</form></section>
+<section class="card"><h2>${esc(t(locale, 'account.locale.title'))}</h2>
+<form method="post" action="/account/locale" class="form-row"><input type="hidden" name="csrf" value="${csrf}">
+${field('locale', t(locale, 'account.locale.label'), `<select id="locale" name="locale">${options}</select>`)}
+${save}</form></section>
+<section class="card"><h2>${esc(t(locale, 'account.password.title'))}</h2>
+<form method="post" action="/account/password" class="stack"><input type="hidden" name="csrf" value="${csrf}">
+${field('current', t(locale, 'account.password.current'), '<input id="current" name="current" type="password" required autocomplete="current-password">')}
+${field('new-password', t(locale, 'auth.reset.label'), `<input id="new-password" name="password" type="password" required minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password">`, t(locale, 'account.password.hint', { min: MIN_PASSWORD_LENGTH }))}
+<div><button type="submit" class="${btn('primary')}">${esc(t(locale, 'account.password.submit'))}</button></div></form></section></div>`, signedIn(core, user, null, '/account'));
 }
 
 /** Public account pages: registration, e-mail verification, password reset and the account page. */
@@ -229,7 +227,7 @@ export const authExtension: PlatformExtension = (router, core) => {
     const password = field(req, 'password');
     try {
       core.accounts.resetPassword(token, password);
-      html(res, 200, notice(locale, t(locale, 'auth.reset.done.title'), t(locale, 'auth.reset.done'), `<p><a href="/login">${esc(t(locale, 'common.toLogin'))}</a></p>`));
+      html(res, 200, notice(locale, t(locale, 'auth.reset.done.title'), t(locale, 'auth.reset.done'), toLogin(locale)));
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
       // The token is judged before the password, so any other complaint is about the password and keeps the form.

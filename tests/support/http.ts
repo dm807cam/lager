@@ -6,6 +6,7 @@ import type { Config } from '../../src/config.js';
 import { createCore, type Core } from '../../src/core.js';
 import { createHttpApp, type PlatformExtension } from '../../src/http/app.js';
 import { authExtension } from '../../src/http/auth.js';
+import { staticExtension } from '../../src/http/static.js';
 import type { Locale } from '../../src/i18n/index.js';
 import type { Mailer } from '../../src/platform/mail.js';
 
@@ -33,8 +34,8 @@ export function makeHarness(opts: HarnessOptions = {}): Harness {
     instanceQuotaBytes: opts.instanceQuotaBytes ?? 50 * 1024 * 1024,
   };
   const core = createCore(config, opts.mailer ? { mailer: opts.mailer } : undefined);
-  // The public account pages are part of every platform host, so every harness registers them.
-  const app = createHttpApp(core, [authExtension, ...(opts.extensions ?? [])]);
+  // The stylesheet, the script and the public account pages are part of every platform host, so every harness registers them.
+  const app = createHttpApp(core, [staticExtension, authExtension, ...(opts.extensions ?? [])]);
   const host = config.publicUrl.host;
   const adminId = core.users.list()[0].id;
   const sessionName = config.publicUrl.protocol === 'https:' ? '__Host-lager_session' : 'lager_session';

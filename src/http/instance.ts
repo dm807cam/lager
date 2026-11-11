@@ -18,7 +18,7 @@ import { mountRoomRoutes, STREAM_LIMITS } from './instance-room.js';
 import { assertOwnOrigin } from './origin.js';
 import { StreamLimiter } from './stream-limit.js';
 import { requestLocale } from './locale.js';
-import { badCodePage, disabledPage, forbiddenPage, notFoundPage } from './pages.js';
+import { badCodePage, disabledPage, forbiddenPage, instanceHostPage, notFoundPage } from './pages.js';
 import { epochValid } from './session.js';
 import { signToken, verifyToken } from './tokens.js';
 
@@ -27,8 +27,6 @@ const MAX_PROFILE_IDS = 100;
 const MAX_SEARCH_RESULTS = 20;
 const MAX_SEARCH_QUERY = 100;
 const PING_MS = 25_000;
-/** Instance hosts do not receive the platform's language cookie, so their pages offer no switcher. */
-const NO_SWITCHER = { switcher: false } as const;
 const RANK: Record<Level, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
 
 function instanceUser(core: Core, req: Request, instance: Instance): User | null {
@@ -76,6 +74,8 @@ export function requireAccess(ctx: Ctx): void {
 export function createInstanceRouter(core: Core): express.Router {
   const router = express.Router();
   const { config } = core;
+  // Instance hosts do not receive the platform's language cookie, so their pages offer no switcher; their styles come from the platform host.
+  const NO_SWITCHER = instanceHostPage(config);
   // Consumed handshake code ids with their expiry (epoch seconds); codes are single-use.
   const usedCodes = new Map<string, number>();
   const runtime = fs.readFileSync(RUNTIME_FILE);

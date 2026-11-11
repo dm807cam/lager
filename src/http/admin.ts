@@ -1,6 +1,6 @@
 import express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
-import { hostUrl, instanceUrl } from '../config.js';
+import { instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
@@ -10,7 +10,9 @@ import type { CustomDomainsMode, RegistrationMode } from '../platform/settings.j
 import type { Instance } from '../platform/apps.js';
 import type { Role, User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
-import { noticeText, backLink, dateText, esc, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, signedInHeader, sizeText, visibilityLabel, type Option } from './pages.js';
+import { noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, sizeText, visibilityLabel, type Option } from './pages.js';
+import { domainsBody } from './manage.js';
+import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, notice, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid } from './session.js';
 
 const ROLES: readonly Role[] = ['admin', 'publisher', 'user'];
@@ -28,52 +30,65 @@ const roleLabel = (locale: Locale, role: Role): string => t(locale, ROLE_KEYS[ro
 const options = <K extends string>(locale: Locale, keys: Record<K, MessageKey>): Option[] => (Object.keys(keys) as K[]).map((k) => [k, t(locale, keys[k])]);
 const roleOptions = (locale: Locale, selected: Role): string => optionList(ROLES.map((r) => [r, roleLabel(locale, r)] as const), selected);
 
-function shell(core: Core, locale: Locale, admin: User, active: Section, title: string, body: string, msg: Msg = {}, returnPath = `/admin/${active}`): string {
-  const csrf = csrfToken(core, admin);
-  const nav = `<nav class="tabs" aria-label="${esc(t(locale, 'nav.admin'))}">${SECTIONS.map(([id, key]) =>
-    `<a href="/admin/${id}"${id === active ? ' aria-current="page" class="current"' : ''}>${esc(t(locale, key))}</a>`).join('')}</nav>`;
-  const once = msg.once
-    ? `<div class="card" role="status"><strong>${esc(msg.once.title)}</strong><span class="token mono">${esc(msg.once.link)}</span><span class="err">${esc(t(locale, 'admin.oneTime'))}</span></div>` : '';
-  return page(locale, t(locale, 'admin.pageTitle', { section: title }), `<h1>${esc(t(locale, 'nav.admin'))}</h1>${nav}
-${msg.ok ? `<p class="ok" role="status">${esc(msg.ok)}</p>` : ''}${msg.error ? `<p class="err" role="alert">${esc(msg.error)}</p>` : ''}${once}
-<h2>${esc(title)}</h2>${body}`, { wide: true, returnPath, headerExtra: signedInHeader(locale, admin.email, csrf, true) });
+function shell(core: Core, locale: Locale, admin: User, active: Section, title: string, body: string, msg: Msg = {}, returnPath = `/admin/${active}`, back = ''): string {
+  const nav = `<nav class="pills" aria-label="${esc(t(locale, 'admin.sections'))}">${SECTIONS.map(([id, key]) =>
+    `<a href="/admin/${id}"${id === active ? ' aria-current="page"' : ''}>${esc(t(locale, key))}</a>`).join('')}</nav>`;
+  const once = msg.once ? callout(locale, msg.once.title, msg.once.link, t(locale, 'admin.oneTime')) : '';
+  return page(locale, t(locale, 'admin.pageTitle', { section: title }), `<div class="page-head"><h1>${esc(t(locale, 'nav.admin'))}</h1>${nav}</div>
+${msg.ok ? notice('success', msg.ok) : ''}${msg.error ? notice('danger', msg.error) : ''}${once}${back}
+<section class="card" aria-labelledby="admin-section"><h2 id="admin-section">${esc(title)}</h2>${body}</section>`, signedIn(core, admin, 'admin', returnPath));
 }
+
+const STATUS_TONES = { disabled: 'danger', active: 'success', unverified: 'warning' } as const;
 
 function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const rows = core.users.list().map((u) => {
     const base = `/admin/users/${encodeURIComponent(u.id)}`;
+    const state = u.disabled ? 'disabled' : u.verified ? 'active' : 'unverified';
     const status = t(locale, u.disabled ? 'common.disabled' : u.verified ? 'common.active' : 'common.unverified');
-    return `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td>
-<td><form method="post" action="${base}/role" class="inline">${hiddenField('csrf', csrf)}<select name="role" aria-label="${esc(t(locale, 'admin.users.roleOf', { email: u.email }))}">${roleOptions(locale, u.role)}</select><button type="submit" class="quiet">${esc(t(locale, 'common.save'))}</button></form></td>
-<td>${esc(status)}</td><td>${dateText(locale, u.createdAt)}</td>
-<td><div class="row">${form(`${base}/disabled`, csrf, hiddenField('disabled', u.disabled ? '0' : '1'), esc(t(locale, u.disabled ? 'common.activate' : 'common.deactivate')), true)}
-${form(`${base}/reset-link`, csrf, '', esc(t(locale, 'admin.users.resetLink')), true)}</div></td></tr>`;
-  }).join('');
-  return shell(core, locale, admin, 'users', t(locale, 'admin.section.users'), `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.name'))}</th><th>${esc(t(locale, 'common.email'))}</th><th>${esc(t(locale, 'admin.users.role'))}</th><th>${esc(t(locale, 'common.status'))}</th><th>${esc(t(locale, 'common.created'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`, msg);
+    return [
+      `<div class="cell-user">${avatar(u, 'sm')}<div><strong>${esc(u.name)}</strong><span>${esc(u.email)}</span></div></div>`,
+      `<form method="post" action="${base}/role" class="inline-form">${hiddenField('csrf', csrf)}<select name="role" aria-label="${esc(t(locale, 'admin.users.roleOf', { email: u.email }))}">${roleOptions(locale, u.role)}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
+      badge(status, { tone: STATUS_TONES[state], dot: true }),
+      `<span class="num">${dateText(locale, u.createdAt)}</span>`,
+      `<div class="btn-row">${form(`${base}/disabled`, csrf, hiddenField('disabled', u.disabled ? '0' : '1'), esc(t(locale, u.disabled ? 'common.activate' : 'common.deactivate')), 'quiet', '', true)}
+${form(`${base}/reset-link`, csrf, '', esc(t(locale, 'admin.users.resetLink')), 'quiet', '', true)}</div>`,
+    ];
+  });
+  return shell(core, locale, admin, 'users', t(locale, 'admin.section.users'),
+    dataTable([t(locale, 'common.name'), t(locale, 'admin.users.role'), t(locale, 'common.status'), t(locale, 'common.created'), ''], rows), msg);
 }
 
 function invitesSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const now = new Date().toISOString();
   const open = core.accounts.listInvites().filter((i) => !i.used && i.expiresAt > now);
-  const rows = open.map((i) => `<tr><td>${i.email ? esc(i.email) : `<span class="muted">${esc(t(locale, 'common.any'))}</span>`}</td><td>${esc(roleLabel(locale, i.role))}</td>
-<td>${dateText(locale, i.createdAt)}</td><td>${dateText(locale, i.expiresAt)}</td>
-<td>${form(`/admin/invites/${encodeURIComponent(i.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), true)}</td></tr>`).join('');
-  const body = `<div class="card">${form('/admin/invites', csrf,
-    `<label for="invite-email">${esc(t(locale, 'admin.invites.email'))}</label><input id="invite-email" name="email" type="email" maxlength="254" autocomplete="off">
-<label for="invite-role">${esc(t(locale, 'admin.invites.role'))}</label><select id="invite-role" name="role">${roleOptions(locale, 'user')}</select>`, esc(t(locale, 'admin.invites.create')))}</div>
-${open.length ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.email'))}</th><th>${esc(t(locale, 'admin.invites.role'))}</th><th>${esc(t(locale, 'common.created'))}</th><th>${esc(t(locale, 'admin.invites.validUntil'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
-    : `<p class="muted">${esc(t(locale, 'admin.invites.none'))}</p>`}`;
-  return shell(core, locale, admin, 'invites', t(locale, 'admin.section.invites'), body, msg);
+  const rows = open.map((i) => [
+    i.email ? esc(i.email) : `<span class="muted">${esc(t(locale, 'common.any'))}</span>`, badge(roleLabel(locale, i.role)),
+    `<span class="num">${dateText(locale, i.createdAt)}</span>`, `<span class="num">${dateText(locale, i.expiresAt)}</span>`,
+    form(`/admin/invites/${encodeURIComponent(i.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), 'danger', '', true),
+  ]);
+  const create = form('/admin/invites', csrf,
+    `${field('invite-email', t(locale, 'admin.invites.email'), '<input id="invite-email" name="email" type="email" maxlength="254" autocomplete="off">')}
+${field('invite-role', t(locale, 'admin.invites.role'), `<select id="invite-role" name="role">${roleOptions(locale, 'user')}</select>`)}`,
+    `${icon('plus')}${esc(t(locale, 'admin.invites.create'))}`, 'primary', 'form-row');
+  const list = open.length
+    ? dataTable([t(locale, 'common.email'), t(locale, 'admin.invites.role'), t(locale, 'common.created'), t(locale, 'admin.invites.validUntil'), ''], rows)
+    : emptyState(t(locale, 'admin.invites.none'), 'users');
+  return shell(core, locale, admin, 'invites', t(locale, 'admin.section.invites'), `${create}<div class="subsection">${list}</div>`, msg);
 }
 
 function groupsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const groups = core.groups.list();
-  const rows = groups.map((g) => `<tr><td><a href="/admin/groups/${encodeURIComponent(g.id)}">${esc(g.name)}</a></td><td>${g.memberCount}</td></tr>`).join('');
-  const body = `${groups.length ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.name'))}</th><th>${esc(t(locale, 'admin.groups.members'))}</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${esc(t(locale, 'admin.groups.none'))}</p>`}
-<div class="card">${form('/admin/groups', csrf, `<label for="group-name">${esc(t(locale, 'admin.groups.newName'))}</label><input id="group-name" name="name" required maxlength="${MAX_NAME}">`, esc(t(locale, 'admin.groups.create')))}</div>`;
+  const rows = groups.map((g) => [
+    `<div class="cell-user"><span class="tile tile-xs" aria-hidden="true">${icon('users', 'i-sm')}</span><div><a href="/admin/groups/${encodeURIComponent(g.id)}"><strong>${esc(g.name)}</strong></a></div></div>`,
+    `<span class="num">${g.memberCount}</span>`,
+  ]);
+  const body = `${groups.length ? dataTable([t(locale, 'common.name'), t(locale, 'admin.groups.members')], rows) : emptyState(t(locale, 'admin.groups.none'), 'users')}
+<div class="subsection">${form('/admin/groups', csrf, field('group-name', t(locale, 'admin.groups.newName'), `<input id="group-name" name="name" required maxlength="${MAX_NAME}" autocomplete="off">`),
+    `${icon('plus')}${esc(t(locale, 'admin.groups.create'))}`, 'secondary', 'form-row')}</div>`;
   return shell(core, locale, admin, 'groups', t(locale, 'admin.section.groups'), body, msg);
 }
 
@@ -83,24 +98,35 @@ function groupPage(core: Core, locale: Locale, admin: User, groupId: string, msg
   const csrf = csrfToken(core, admin);
   const base = `/admin/groups/${encodeURIComponent(group.id)}`;
   const members = core.groups.members(group.id);
-  const rows = members.map((m) => `<tr><td>${esc(m.name)}</td><td>${esc(m.email)}</td>
-<td>${form(`${base}/members/${encodeURIComponent(m.id)}/remove`, csrf, '', esc(t(locale, 'common.remove')), true)}</td></tr>`).join('');
-  const body = `<p><a href="/admin/groups">${esc(t(locale, 'admin.groups.all'))}</a></p>
-<div class="card">${form(`${base}/rename`, csrf, `<label for="group-name">${esc(t(locale, 'common.name'))}</label><input id="group-name" name="name" required maxlength="${MAX_NAME}" value="${esc(group.name)}">`, esc(t(locale, 'common.rename')))}</div>
-<h3>${esc(t(locale, 'admin.groups.members'))}</h3>
-${members.length ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.name'))}</th><th>${esc(t(locale, 'common.email'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${esc(t(locale, 'admin.groups.noMembers'))}</p>`}
-<div class="card">${form(`${base}/members`, csrf, `<label for="member-email">${esc(t(locale, 'admin.groups.memberEmail'))}</label><input id="member-email" name="email" type="email" required maxlength="254">`, esc(t(locale, 'common.add')))}</div>
-${form(`${base}/delete`, csrf, '', esc(t(locale, 'admin.groups.delete')), true)}`;
-  return shell(core, locale, admin, 'groups', t(locale, 'admin.groups.pageTitle', { name: group.name }), body, msg, base);
+  const rows = members.map((m) => [
+    `<div class="cell-user">${avatar(m, 'sm')}<div><strong>${esc(m.name)}</strong><span>${esc(m.email)}</span></div></div>`,
+    form(`${base}/members/${encodeURIComponent(m.id)}/remove`, csrf, '', `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true),
+  ]);
+  const body = `${form(`${base}/rename`, csrf, field('group-name', t(locale, 'common.name'), `<input id="group-name" name="name" required maxlength="${MAX_NAME}" value="${esc(group.name)}" autocomplete="off">`), esc(t(locale, 'common.rename')), 'secondary', 'form-row')}
+<div class="subsection"><h3>${esc(t(locale, 'admin.groups.members'))}</h3>
+${members.length ? dataTable([t(locale, 'common.name'), ''], rows) : emptyState(t(locale, 'admin.groups.noMembers'), 'users')}
+<div class="gap-top">${form(`${base}/members`, csrf, field('member-email', t(locale, 'admin.groups.memberEmail'), '<input id="member-email" name="email" type="email" required maxlength="254" autocomplete="off">'),
+    `${icon('plus')}${esc(t(locale, 'common.add'))}`, 'secondary', 'form-row')}</div></div>
+<div class="subsection">${form(`${base}/delete`, csrf, '', `${icon('trash')}${esc(t(locale, 'admin.groups.delete'))}`, 'danger')}</div>`;
+  return shell(core, locale, admin, 'groups', t(locale, 'admin.groups.pageTitle', { name: group.name }), body, msg, base,
+    `<a class="back" href="/admin/groups">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.groups.all'))}</a>`);
 }
+
+/** One setting: label and help text on the left, the control on the right; `control` is trusted markup. */
+const settingRow = (id: string, label: string, hint: string, control: string, extra = ''): string =>
+  `<div class="settings-row"><div><label for="${esc(id)}">${esc(label)}</label><p class="hint">${esc(hint)}</p>${extra}</div><div>${control}</div></div>`;
 
 function settingsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
-  const body = `<div class="card">${form('/admin/settings', csrf,
-    `<label for="registration">${esc(t(locale, 'admin.settings.registration'))}</label><select id="registration" name="registration">${optionList(options(locale, MODE_KEYS), core.settings.registration)}</select>
-${core.mailer.enabled ? '' : `<p class="muted">${esc(t(locale, 'admin.settings.noMail'))}</p>`}
-<label for="max-instances">${esc(t(locale, 'admin.settings.maxInstances'))}</label><input id="max-instances" name="maxInstances" type="number" min="1" max="1000" step="1" required value="${core.settings.maxInstancesPerUser}">
-<label for="custom-domains">${esc(t(locale, 'admin.settings.customDomains'))}</label><select id="custom-domains" name="customDomains">${optionList(options(locale, DOMAIN_KEYS), core.settings.customDomains)}</select>`, esc(t(locale, 'common.save')))}</div>`;
+  const body = form('/admin/settings', csrf, `<div>
+${settingRow('registration', t(locale, 'admin.settings.registration'), t(locale, 'admin.settings.registration.hint'),
+    `<select id="registration" name="registration">${optionList(options(locale, MODE_KEYS), core.settings.registration)}</select>`,
+    core.mailer.enabled ? '' : `<p class="hint">${esc(t(locale, 'admin.settings.noMail'))}</p>`)}
+${settingRow('max-instances', t(locale, 'admin.settings.maxInstances'), t(locale, 'admin.settings.maxInstances.hint'),
+    `<input id="max-instances" name="maxInstances" type="number" inputmode="numeric" min="1" max="1000" step="1" required value="${core.settings.maxInstancesPerUser}">`)}
+${settingRow('custom-domains', t(locale, 'admin.settings.customDomains'), t(locale, 'admin.settings.customDomains.hint'),
+    `<select id="custom-domains" name="customDomains">${optionList(options(locale, DOMAIN_KEYS), core.settings.customDomains)}</select>`)}
+</div>`, esc(t(locale, 'common.save')), 'primary', 'stack settings-form');
   return shell(core, locale, admin, 'settings', t(locale, 'admin.section.settings'), body, msg);
 }
 
@@ -108,17 +134,17 @@ function appsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string
   const csrf = csrfToken(core, admin);
   const emailOf = new Map(core.users.list().map((u) => [u.id, u.email]));
   const html = core.apps.listAllApps().map((app) => {
-    const rows = core.apps.listInstances(app.id).map((i) => {
-      const url = instanceUrl(core.config, i.slug);
-      return `<tr><td><a href="${esc(url)}">${esc(i.slug)}</a></td><td>${esc(emailOf.get(i.ownerId) ?? '–')}</td><td>v${i.activeVersion}</td><td>${esc(visibilityLabel(locale, i.visibility))}</td>
-<td>${sizeText(locale, core.data.usage(i.id))}</td><td>${i.disabled ? `<span class="err">${esc(t(locale, 'common.disabled'))}</span>` : esc(t(locale, 'common.active'))}</td>
-<td><div class="row">${form(`/admin/instances/${encodeURIComponent(i.slug)}/disabled`, csrf, hiddenField('disabled', i.disabled ? '0' : '1'), esc(t(locale, i.disabled ? 'common.activate' : 'common.deactivate')), true)}
-<a href="/admin/instances/${encodeURIComponent(i.slug)}/domains">${esc(t(locale, 'admin.apps.domains'))}</a></div></td></tr>`;
-    }).join('');
-    return `<section><h3>${esc(app.title)} <span class="muted mono">${esc(app.slug)}</span> <span class="muted">· ${esc(emailOf.get(app.ownerId) ?? '–')}</span></h3>
-${rows ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.instance'))}</th><th>${esc(t(locale, 'common.owner'))}</th><th>${esc(t(locale, 'common.version'))}</th><th>${esc(t(locale, 'common.visibility'))}</th><th>${esc(t(locale, 'admin.apps.data'))}</th><th>${esc(t(locale, 'common.status'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${esc(t(locale, 'app.noInstances'))}</p>`}</section>`;
+    const rows = core.apps.listInstances(app.id).map((i) => [
+      `<a class="mono" href="${esc(instanceUrl(core.config, i.slug))}">${esc(i.slug)}</a>`, esc(emailOf.get(i.ownerId) ?? '–'), `<span class="num">v${i.activeVersion}</span>`,
+      badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) }), `<span class="num">${sizeText(locale, core.data.usage(i.id))}</span>`,
+      i.disabled ? badge(t(locale, 'common.disabled'), { tone: 'danger', dot: true }) : badge(t(locale, 'common.active'), { tone: 'success', dot: true }),
+      `<div class="btn-row">${form(`/admin/instances/${encodeURIComponent(i.slug)}/disabled`, csrf, hiddenField('disabled', i.disabled ? '0' : '1'), esc(t(locale, i.disabled ? 'common.activate' : 'common.deactivate')), 'quiet', '', true)}
+${linkButton(`/admin/instances/${encodeURIComponent(i.slug)}/domains`, `${icon('globe')}${esc(t(locale, 'admin.apps.domains'))}`, 'quiet', true)}</div>`,
+    ]);
+    return `<section class="app-group subsection"><div class="app-group-head">${appTile(app, app.title, 'sm')}<div><h3>${esc(app.title)}</h3><span class="slug">${esc(app.slug)} · ${esc(emailOf.get(app.ownerId) ?? '–')}</span></div></div>
+${rows.length ? dataTable([t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'common.version'), t(locale, 'common.visibility'), t(locale, 'admin.apps.data'), t(locale, 'common.status'), ''], rows) : emptyState(t(locale, 'app.noInstances'))}</section>`;
   }).join('');
-  return shell(core, locale, admin, 'apps', t(locale, 'admin.section.apps'), html || `<p class="muted">${esc(t(locale, 'admin.apps.none'))}</p>`, msg);
+  return shell(core, locale, admin, 'apps', t(locale, 'admin.section.apps'), html || emptyState(t(locale, 'admin.apps.none')), msg);
 }
 
 const DOMAIN_NOTICES: Record<string, MessageKey> = {
@@ -129,14 +155,8 @@ const DOMAIN_NOTICES: Record<string, MessageKey> = {
 function domainsPage(core: Core, locale: Locale, admin: User, inst: Instance, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const base = `/admin/instances/${encodeURIComponent(inst.slug)}/domains`;
-  const rows = core.domains.list(inst.id).map((host) => `<tr><td><a href="${esc(hostUrl(core.config, host))}">${esc(host)}</a></td>
-<td>${form(`${base}/remove`, csrf, hiddenField('host', host), esc(t(locale, 'common.remove')), true)}</td></tr>`).join('');
-  const body = `${backLink(locale, '/admin/apps', t(locale, 'admin.section.apps'))}
-${rows ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'instance.domains.domain'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
-    : `<p class="muted">${esc(t(locale, 'instance.domains.none'))}</p>`}
-<div class="card">${form(base, csrf, `<label for="domain-host">${esc(t(locale, 'instance.domains.host'))}</label><input id="domain-host" name="host" required maxlength="253" autocomplete="off" placeholder="notes.example.com">
-<p class="muted">${esc(t(locale, 'instance.domains.hint'))}</p>`, esc(t(locale, 'common.add')))}</div>`;
-  return shell(core, locale, admin, 'apps', `${t(locale, 'instance.domains.title')}: ${inst.slug}`, body, msg, base);
+  return shell(core, locale, admin, 'apps', `${t(locale, 'instance.domains.title')}: ${inst.slug}`, domainsBody(core, locale, inst, base, csrf), msg, base,
+    `<a class="back" href="/admin/apps">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.section.apps'))}</a>`);
 }
 
 /** Platform administrators only: no session goes to /login, any other role gets a 403 page. */

@@ -406,15 +406,15 @@ describe('self-publishing and versions', () => {
     h.core.apps.selfPublish({ instanceId: other.id, html: '<p>theirs</p>', baseVersion: 2, userId: u.id });
     const own = await page(pc, '/instances/notes');
     expect(own.text).toContain(en('instance.savedBySelf'));
-    // Match table cells, not bare "v3": the pages carry base64 csrf tokens that can contain such substrings by chance.
-    expect(own.text).toContain('<td>v3</td>');
-    expect(own.text).not.toContain('<td>v4</td>');
+    // Match version entries, not bare "v3": the pages carry base64 csrf tokens that can contain such substrings by chance.
+    expect(own.text).toContain('data-version="3"');
+    expect(own.text).not.toContain('data-version="4"');
     const theirs = await page(uc, '/instances/notes-u');
-    expect(theirs.text).toContain('<td>v4</td>');
-    expect(theirs.text).not.toContain('<td>v3</td>');
+    expect(theirs.text).toContain('data-version="4"');
+    expect(theirs.text).not.toContain('data-version="3"');
     const list = await page(pc, '/apps/notes');
-    expect(list.text).not.toContain('<td>v3</td>');
-    expect(list.text).not.toContain('<td>v4</td>');
+    expect(list.text).not.toContain('data-version="3"');
+    expect(list.text).not.toContain('data-version="4"');
     expect(list.text).toMatch(new RegExp(`notes-u[\\s\\S]*?${esc(t('en', 'app.savedCount', { count: 1 }))}|${esc(t('en', 'app.savedCount', { count: 1 }))}[\\s\\S]*?notes-u`));
     // activating somebody else's version through the form is refused
     expect((await post(pc, p, '/ui/instances/notes/activate', { version: '4' })).status).toBe(403);
@@ -432,7 +432,8 @@ describe('data export and version html links', () => {
 
     const owner = await page(pc, '/instances/notes');
     expect(owner.text).toContain(`<h2>${en('instance.data.title')}</h2>`);
-    expect(owner.text).toContain(`<a href="/instances/notes/export">${en('instance.data.export')}</a>`);
+    // The export link is styled as a button with an icon; its target and its text are what count.
+    expect(owner.text).toMatch(new RegExp(`<a [^>]*href="/instances/notes/export"[^>]*>(?:<svg[^]*?</svg>)?${en('instance.data.export').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}</a>`));
     expect(owner.text).toContain('href="/apps/notes/versions/1/html"');
     expect(owner.text).toContain('href="/apps/notes/versions/2/html"');
     const app = await page(pc, '/apps/notes');

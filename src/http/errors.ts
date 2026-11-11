@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import type { Core } from '../core.js';
 import { LagerError, type ErrorCode } from '../errors.js';
 import { requestLocale } from './locale.js';
-import { notFoundPage } from './pages.js';
+import { instanceHostPage, notFoundPage } from './pages.js';
 
 const STATUS: Record<ErrorCode, number> = {
   not_found: 404, forbidden: 403, invalid_argument: 400, conflict: 409, unauthenticated: 401, quota_exceeded: 507,
@@ -28,7 +28,7 @@ export function sendError(res: Response, err: unknown, extra?: Record<string, un
 export function sendNotFound(core: Core, req: Request, res: Response): void {
   if (req.path.startsWith('/__lager/')) { sendError(res, new LagerError('not_found', 'Not found.')); return; }
   const navigation = req.get('Sec-Fetch-Mode') === 'navigate' || /text\/html/i.test(req.get('Accept') ?? '');
-  if (navigation) res.status(404).type('html').send(notFoundPage(requestLocale(core, req, null), { switcher: false }));
+  if (navigation) res.status(404).type('html').send(notFoundPage(requestLocale(core, req, null), instanceHostPage(core.config)));
   else res.status(404).type('text/plain').send('Not found');
 }
 

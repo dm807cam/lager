@@ -6,7 +6,7 @@ import type { User } from '../platform/users.js';
 import { sendError } from './errors.js';
 import { requestLocale } from './locale.js';
 import { createInstanceRouter } from './instance.js';
-import { notFoundPage } from './pages.js';
+import { instanceHostPage, notFoundPage } from './pages.js';
 import { createPlatformRouter } from './platform.js';
 import { sessionUser } from './session.js';
 
@@ -53,7 +53,7 @@ export function createHttpApp(core: Core, extensions: PlatformExtension[] = []):
       const id = core.domains.instanceIdFor(host);
       const instance = id ? core.apps.getInstance(id) : null;
       if (!instance) {
-        res.status(404).type('html').send(notFoundPage(requestLocale(core, req, null), { switcher: false }));
+        res.status(404).type('html').send(notFoundPage(requestLocale(core, req, null), instanceHostPage(core.config)));
         return;
       }
       res.locals.slug = instance.slug;
