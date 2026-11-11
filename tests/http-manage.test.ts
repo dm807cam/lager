@@ -1,0 +1,309 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import request from 'supertest';
+import { dashboardExtension } from '../src/http/dashboard.js';
+import { manageExtension } from '../src/http/manage.js';
+import { signToken } from '../src/http/tokens.js';
+import type { User } from '../src/platform/users.js';
+import { makeHarness, type Harness } from './support/http.js';
+
+let h: Harness;
+afterEach(() => { h?.core.close(); });
+
+interface Ctx { p: User; u: User; w: User; pc: string; uc: string; wc: string }
+
+/** Publisher `p` owns app `notes` with instance `notes`; plain users `u` and `w`; group `team` with `w`. */
+async function setup(): Promise<Ctx> {
+  h = makeHarness({ extensions: [dashboardExtension, manageExtension] });
+  const mk = (email: string, role: 'publisher' | 'user') => h.core.users.create({ email, name: email.split('@')[0], password: 'password-123', role });
+  const p = mk('p@x.y', 'publisher');
+  const u = mk('u@x.y', 'user');
+  const w = mk('w@x.y', 'user');
+  h.core.apps.deploy({ slug: 'notes', html: '<p>1</p>', title: 'Notizen', userId: p.id });
+  h.core.apps.deploy({ slug: 'notes', html: '<p>2</p>', userId: p.id });
+  const team = h.core.groups.create('team');
+  h.core.groups.addMember(team.id, w.id);
+  const login = (user: User) => h.login(user.email, 'password-123');
+  return { p, u, w, pc: await login(p), uc: await login(u), wc: await login(w) };
+}
+
+const csrf = (user: User): string => signToken({ uid: user.id, k: 'ui' }, h.core.config.secret, 3600);
+const page = (cookie: string | null, path: string) => {
+  const r = request(h.app).get(path).set('Host', h.host);
+  return cookie ? r.set('Cookie', cookie) : r;
+};
+const post = (cookie: string, user: User, path: string, body: Record<string, string> = {}) =>
+  request(h.app).post(path).set('Host', h.host).set('Cookie', cookie).type('form').send({ csrf: csrf(user), ...body });
+/** Follows the redirect of a POST and returns the page it ends on. */
+const follow = async (cookie: string, res: request.Response) => {
+  expect(res.status).toBe(302);
+  return page(cookie, res.headers.location as string);
+};
+const inst = (slug = 'notes') => h.core.apps.getInstanceBySlug(slug)!;
+const level = (slug: string, user: User) => h.core.access.levelFor(inst(slug), user);
+
+describe('instance page', () => {
+  it('requires manage rights', async () => {
+    const { p, u, uc, pc } = await setup();
+    expect((await page(uc, '/instances/notes')).status).toBe(403);
+    h.core.access.setGrant(inst(), 'user', u.id, 'view', p);
+    expect((await page(uc, '/instances/notes')).status).toBe(403);
+    h.core.access.setGrant(inst(), 'user', u.id, 'admin', p);
+    const ok = await page(uc, '/instances/notes');
+    expect(ok.status).toBe(200);
+    expect(ok.text).toContain('http://notes.apps.localhost:8080');
+    const anon = await page(null, '/instances/notes');
+    expect(anon.status).toBe(302);
+    expect(anon.headers.location).toBe('/login?return=%2Finstances%2Fnotes');
+    expect((await page(pc, '/instances/nope')).status).toBe(404);
+  });
+
+  it('shows versions, visibility, grants, snapshots and the delete form for the owner only', async () => {
+    const { p, u, pc, uc } = await setup();
+    h.core.data.set(inst().id, 'notes/n1', { text: 'x' }, p.id);
+    h.core.data.snapshot(inst().id, 'manual-one');
+    const res = await page(pc, '/instances/notes');
+    for (const text of ['Version', 'Aktivieren', 'Sichtbarkeit', 'Freigaben', 'Schnappschüsse', 'manual-one', 'Wiederherstellen', 'Instanz löschen', 'name="confirm"']) {
+      expect(res.text).toContain(text);
+    }
+    h.core.access.setGrant(inst(), 'user', u.id, 'admin', p);
+    const grantee = await page(uc, '/instances/notes');
+    expect(grantee.text).not.toContain('Instanz löschen');
+    expect(grantee.text).toContain('u@x.y');
+  });
+
+  it('activate, visibility and restore via form', async () => {
+    const { p, pc } = await setup();
+    const act = await post(pc, p, '/ui/instances/notes/activate', { version: '1' });
+    expect(act.status).toBe(302);
+    expect(act.headers.location).toBe('/instances/notes');
+    expect(inst().activeVersion).toBe(1);
+    await post(pc, p, '/ui/instances/notes/visibility', { visibility: 'public' });
+    expect(inst().visibility).toBe('public');
+    h.core.data.set(inst().id, 'notes/n1', { text: 'x' }, p.id);
+    const snap = h.core.data.snapshot(inst().id, 'keep-me')!;
+    const res = await post(pc, p, '/ui/instances/notes/restore', { snapshot: snap.id });
+    expect(res.status).toBe(302);
+    expect(h.core.data.listSnapshots(inst().id).some((s) => s.label === 'pre-restore')).toBe(true);
+  });
+
+  it('grant by e-mail, change level, remove', async () => {
+    const { p, u, pc } = await setup();
+    const add = await post(pc, p, '/ui/instances/notes/grants', { email: 'u@x.y', level: 'view' });
+    expect(add.status).toBe(302);
+    expect(add.headers.location).toBe('/instances/notes');
+    expect(level('notes', u)).toBe('view');
+    const shown = await follow(pc, add);
+    expect(shown.text).toContain('u@x.y');
+    expect(shown.text).toContain('Nutzer');
+    await post(pc, p, '/ui/instances/notes/grants', { email: 'u@x.y', level: 'interact' });
+    expect(level('notes', u)).toBe('interact');
+    const rm = await post(pc, p, '/ui/instances/notes/grants/remove', { type: 'user', id: u.id });
+    expect(rm.status).toBe(302);
+    expect(level('notes', u)).toBe('none');
+  });
+
+  it('grant to a group', async () => {
+    const { p, w, pc } = await setup();
+    const team = h.core.groups.getByName('team')!;
+    const res = await post(pc, p, '/ui/instances/notes/grants', { group: team.id, level: 'interact' });
+    expect(res.status).toBe(302);
+    expect(level('notes', w)).toBe('interact');
+    const shown = await follow(pc, res);
+    expect(shown.text).toContain('team');
+    expect(shown.text).toContain('Gruppe');
+    await post(pc, p, '/ui/instances/notes/grants/remove', { type: 'group', id: team.id });
+    expect(level('notes', w)).toBe('none');
+  });
+
+  it('unknown e-mail shows the message', async () => {
+    const { p, pc } = await setup();
+    const res = await post(pc, p, '/ui/instances/notes/grants', { email: 'nobody@x.y', level: 'view' });
+    const shown = await follow(pc, res);
+    expect(shown.status).toBe(200);
+    expect(shown.text).toContain('Kein Konto mit dieser E-Mail-Adresse.');
+    expect(h.core.access.listGrants(inst().id)).toHaveLength(0);
+  });
+
+  it('a grant for the owner is refused with a message, a grantee cannot manage as viewer', async () => {
+    const { p, u, pc, uc } = await setup();
+    const self = await post(pc, p, '/ui/instances/notes/grants', { email: 'p@x.y', level: 'view' });
+    expect((await follow(pc, self)).text).toContain('Der Besitzer hat bereits vollen Zugriff.');
+    h.core.access.setGrant(inst(), 'user', u.id, 'view', p);
+    const denied = await post(uc, u, '/ui/instances/notes/grants', { email: 'w@x.y', level: 'view' });
+    expect(denied.status).toBe(403);
+  });
+
+  it('visibility with users level', async () => {
+    const { p, w, pc, wc } = await setup();
+    const res = await post(pc, p, '/ui/instances/notes/visibility', { visibility: 'users', users_level: 'view' });
+    expect(res.status).toBe(302);
+    expect(inst().visibility).toBe('users');
+    expect(level('notes', w)).toBe('view');
+    await post(pc, p, '/ui/instances/notes/visibility', { visibility: 'users', users_level: 'interact' });
+    expect(level('notes', w)).toBe('interact');
+    const shown = await page(pc, '/instances/notes');
+    expect(shown.text).toContain('Stufe für Angemeldete');
+    const bad = await post(pc, p, '/ui/instances/notes/visibility', { visibility: 'private', users_level: 'admin' });
+    expect((await follow(pc, bad)).status).toBe(200);
+    expect(inst().visibility).toBe('users');
+    expect((await page(wc, '/')).status).toBe(200);
+  });
+
+  it('admin grantee cannot delete; owner can with confirmation', async () => {
+    const { p, u, pc, uc } = await setup();
+    h.core.access.setGrant(inst(), 'user', u.id, 'admin', p);
+    const refused = await post(uc, u, '/ui/instances/notes/delete', { confirm: 'notes' });
+    expect(refused.status).toBe(403);
+    expect(h.core.apps.getInstanceBySlug('notes')).not.toBeNull();
+    const wrong = await post(pc, p, '/ui/instances/notes/delete', { confirm: 'nope' });
+    const shown = await follow(pc, wrong);
+    expect(shown.text).toContain('Zur Bestätigung den Namen eingeben.');
+    expect(h.core.apps.getInstanceBySlug('notes')).not.toBeNull();
+    const ok = await post(pc, p, '/ui/instances/notes/delete', { confirm: 'notes' });
+    expect(ok.status).toBe(302);
+    expect(ok.headers.location).toBe('/');
+    expect(h.core.apps.getInstanceBySlug('notes')).toBeNull();
+  });
+
+  it('posts without csrf → 403', async () => {
+    const { pc } = await setup();
+    const paths: Array<[string, Record<string, string>]> = [
+      ['/ui/instances/notes/activate', { version: '1' }],
+      ['/ui/instances/notes/visibility', { visibility: 'public' }],
+      ['/ui/instances/notes/grants', { email: 'u@x.y', level: 'view' }],
+      ['/ui/instances/notes/delete', { confirm: 'notes' }],
+      ['/ui/apps/notes/instances', { slug: 'x1' }],
+      ['/ui/apps/notes/collaborators', { email: 'admin@x.y' }],
+      ['/ui/apps/notes/self-instances', { mode: 'users' }],
+      ['/ui/apps/notes/delete', { confirm: 'notes' }],
+    ];
+    for (const [path, body] of paths) {
+      const res = await request(h.app).post(path).set('Host', h.host).set('Cookie', pc).type('form').send(body);
+      expect(res.status, path).toBe(403);
+    }
+    expect(inst().activeVersion).toBe(2);
+    expect(inst().visibility).toBe('private');
+    expect(h.core.apps.getApp('notes')).not.toBeNull();
+  });
+
+  it('escapes values on the page', async () => {
+    const { p, pc } = await setup();
+    h.core.groups.create('<b>grp</b>');
+    const res = await page(pc, '/instances/notes');
+    expect(res.text).not.toContain('<b>grp</b>');
+    expect(res.text).toContain('&lt;b&gt;grp&lt;/b&gt;');
+    h.core.access.setGrant(inst(), 'group', h.core.groups.getByName('<b>grp</b>')!.id, 'view', p);
+    expect((await page(pc, '/instances/notes')).text).not.toContain('<b>grp</b>');
+  });
+});
+
+describe('app page', () => {
+  it('collaborator sees it, cannot manage collaborators', async () => {
+    const { p, u, pc, uc } = await setup();
+    const c = h.core.users.create({ email: 'c@x.y', name: 'c', password: 'password-123', role: 'publisher' });
+    h.core.apps.addCollaborator(h.core.apps.getApp('notes')!.id, c.id, p.id);
+    const cc = await h.login('c@x.y', 'password-123');
+    const owner = await page(pc, '/apps/notes');
+    expect(owner.status).toBe(200);
+    for (const text of ['Mitarbeiter', 'Selbstbedienung', 'App löschen', 'Instanz anlegen', 'p@x.y']) expect(owner.text).toContain(text);
+    const collab = await page(cc, '/apps/notes');
+    expect(collab.status).toBe(200);
+    expect(collab.text).toContain('Instanz anlegen');
+    expect(collab.text).not.toContain('Mitarbeiter');
+    expect(collab.text).not.toContain('App löschen');
+    const refused = await post(cc, c, '/ui/apps/notes/collaborators', { email: 'admin@x.y' });
+    expect(refused.status).toBe(403);
+    expect((await page(uc, '/apps/notes')).status).toBe(403);
+    expect(u.id).toBeTruthy();
+  });
+
+  it('owner adds and removes a collaborator; role user is refused', async () => {
+    const { p, u, pc } = await setup();
+    const c = h.core.users.create({ email: 'c@x.y', name: 'c', password: 'password-123', role: 'publisher' });
+    const app = h.core.apps.getApp('notes')!;
+    const add = await post(pc, p, '/ui/apps/notes/collaborators', { email: 'c@x.y' });
+    expect(add.headers.location).toBe('/apps/notes');
+    expect(h.core.apps.isCollaborator(app.id, c.id)).toBe(true);
+    expect((await follow(pc, add)).text).toContain('c@x.y');
+    const rm = await post(pc, p, '/ui/apps/notes/collaborators/remove', { id: c.id });
+    expect(rm.status).toBe(302);
+    expect(h.core.apps.isCollaborator(app.id, c.id)).toBe(false);
+    const plain = await post(pc, p, '/ui/apps/notes/collaborators', { email: 'u@x.y' });
+    const shown = await follow(pc, plain);
+    expect(shown.text).toContain('Mitarbeiter müssen aktive Administratoren oder Publisher sein.');
+    expect(h.core.apps.isCollaborator(app.id, u.id)).toBe(false);
+    const unknown = await post(pc, p, '/ui/apps/notes/collaborators', { email: 'nobody@x.y' });
+    expect((await follow(pc, unknown)).text).toContain('Kein Konto mit dieser E-Mail-Adresse.');
+  });
+
+  it('self-service switch', async () => {
+    const { p, pc } = await setup();
+    const res = await post(pc, p, '/ui/apps/notes/self-instances', { mode: 'users' });
+    expect(res.status).toBe(302);
+    expect(h.core.apps.getApp('notes')!.selfInstances).toBe('users');
+    await post(pc, p, '/ui/apps/notes/self-instances', { mode: 'off' });
+    expect(h.core.apps.getApp('notes')!.selfInstances).toBe('off');
+  });
+
+  it('create instance for another user', async () => {
+    const { p, u, w, pc, wc } = await setup();
+    const res = await post(pc, p, '/ui/apps/notes/instances', { slug: 'for-u', owner_email: 'u@x.y' });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/apps/notes');
+    expect(inst('for-u').ownerId).toBe(u.id);
+    const own = await post(pc, p, '/ui/apps/notes/instances', { slug: 'mine' });
+    expect(inst('mine').ownerId).toBe(p.id);
+    expect(own.status).toBe(302);
+    const unknown = await post(pc, p, '/ui/apps/notes/instances', { slug: 'ghost', owner_email: 'nobody@x.y' });
+    expect((await follow(pc, unknown)).text).toContain('Kein Konto mit dieser E-Mail-Adresse.');
+    expect(h.core.apps.getInstanceBySlug('ghost')).toBeNull();
+    // A self-service creator cannot pick the owner.
+    h.core.apps.setSelfInstances(h.core.apps.getApp('notes')!.id, 'users', p.id);
+    const sneaky = await post(wc, w, '/ui/apps/notes/instances', { slug: 'sneaky', owner_email: 'u@x.y' });
+    expect(sneaky.status).toBe(302);
+    expect(inst('sneaky').ownerId).toBe(w.id);
+    const list = await page(pc, '/apps/notes');
+    expect(list.text).toContain('for-u');
+    expect(list.text).toContain('u@x.y');
+  });
+
+  it('shows taken and invalid names as notices', async () => {
+    const { p, pc } = await setup();
+    const taken = await post(pc, p, '/ui/apps/notes/instances', { slug: 'notes' });
+    expect((await follow(pc, taken)).text).toContain('Dieser Name ist schon vergeben.');
+    const bad = await post(pc, p, '/ui/apps/notes/instances', { slug: 'Bad Name' });
+    expect((await follow(pc, bad)).text).toContain('Ungültiger Name');
+  });
+
+  it('instance limit message', async () => {
+    const { p, w, pc, wc } = await setup();
+    h.core.settings.setMaxInstancesPerUser(1);
+    h.core.apps.setSelfInstances(h.core.apps.getApp('notes')!.id, 'users', p.id);
+    const first = await post(wc, w, '/ui/apps/notes/instances', { slug: 'w-one', from: 'home' });
+    expect(first.headers.location).toBe('/');
+    const second = await post(wc, w, '/ui/apps/notes/instances', { slug: 'w-two', from: 'home' });
+    const shown = await follow(wc, second);
+    expect(shown.text).toContain('Instanz-Limit erreicht');
+    expect(h.core.apps.getInstanceBySlug('w-two')).toBeNull();
+    expect(pc).toBeTruthy();
+  });
+
+  it('delete app refuses while others own instances', async () => {
+    const { p, u, pc, uc } = await setup();
+    const app = h.core.apps.getApp('notes')!;
+    h.core.apps.createInstance({ appId: app.id, slug: 'u-inst', ownerId: u.id });
+    const notOwner = await post(uc, u, '/ui/apps/notes/delete', { confirm: 'notes' });
+    expect(notOwner.status).toBe(403);
+    const wrong = await post(pc, p, '/ui/apps/notes/delete', { confirm: 'x' });
+    expect((await follow(pc, wrong)).text).toContain('Zur Bestätigung den Namen eingeben.');
+    const blocked = await post(pc, p, '/ui/apps/notes/delete', { confirm: 'notes' });
+    const shown = await follow(pc, blocked);
+    expect(shown.text).toContain('Andere Nutzer haben Instanzen dieser App.');
+    expect(h.core.apps.getApp('notes')).not.toBeNull();
+    h.core.apps.deleteInstance(inst('u-inst').id, u.id);
+    const ok = await post(pc, p, '/ui/apps/notes/delete', { confirm: 'notes' });
+    expect(ok.status).toBe(302);
+    expect(ok.headers.location).toBe('/');
+    expect(h.core.apps.getApp('notes')).toBeNull();
+  });
+});

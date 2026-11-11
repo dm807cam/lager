@@ -62,7 +62,7 @@ ${msg.ok ? `<p class="ok" role="status">${esc(msg.ok)}</p>` : ''}${errorLine(msg
 <label for="current">Aktuelles Passwort</label><input id="current" name="current" type="password" required autocomplete="current-password">
 <label for="new-password">Neues Passwort</label><input id="new-password" name="password" type="password" required minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password">
 <p class="muted">Mindestens ${MIN_PASSWORD_LENGTH} Zeichen. Danach werden alle anderen Geräte abgemeldet.</p>
-<button type="submit">Passwort ändern</button></form>`, { headerExtra: signedInHeader(user.email, csrf) });
+<button type="submit">Passwort ändern</button></form>`, { headerExtra: signedInHeader(user.email, csrf, user.role === 'admin') });
 }
 
 /** Public account pages: registration, e-mail verification, password reset and the account page. */

@@ -4,6 +4,7 @@ import { adminExtension } from './http/admin.js';
 import { apiExtension } from './http/api.js';
 import { authExtension } from './http/auth.js';
 import { dashboardExtension } from './http/dashboard.js';
+import { manageExtension } from './http/manage.js';
 import { createHttpApp } from './http/app.js';
 import { mcpExtension } from './mcp/http.js';
 
@@ -15,7 +16,7 @@ try {
   console.error(e instanceof Error ? e.message : e);
   process.exit(1);
 }
-const app = createHttpApp(core, [authExtension, adminExtension, apiExtension, mcpExtension, dashboardExtension]);
+const app = createHttpApp(core, [authExtension, adminExtension, apiExtension, mcpExtension, dashboardExtension, manageExtension]);
 const server = app.listen(config.port, () => {
   console.log(`Lager listening on port ${config.port}, platform at ${config.publicUrl.origin}`);
 });

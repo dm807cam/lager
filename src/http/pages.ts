@@ -100,3 +100,31 @@ ${hidden(fields)}
 
 export const consentInvalidPage = (): string =>
   page('Anfrage ungültig', '<h1>Anfrage ungültig</h1><p>Die Zugriffsanfrage ist abgelaufen oder ungültig. Bitte starte die Verbindung erneut.</p>');
+
+// --- shared pieces of the signed-in pages ---
+
+export const formatDate = (iso: string): string => esc(iso.slice(0, 16).replace('T', ' ') + ' UTC');
+export const formatSize = (bytes: number): string => (bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1024 / 1024).toFixed(1)} MiB`);
+
+export const VISIBILITY_LABELS: ReadonlyArray<readonly [string, string]> = [['private', 'Privat'], ['users', 'Alle Angemeldeten'], ['public', 'Öffentlich']];
+export const LEVEL_LABELS: ReadonlyArray<readonly [string, string]> = [['view', 'Betrachter'], ['interact', 'Mitwirkender'], ['admin', 'Verwalter'], ['owner', 'Besitzer']];
+export const visibilityLabel = (v: string): string => VISIBILITY_LABELS.find(([k]) => k === v)?.[1] ?? v;
+export const levelLabel = (l: string): string => LEVEL_LABELS.find(([k]) => k === l)?.[1] ?? l;
+
+export const hiddenField = (name: string, value: string): string => `<input type="hidden" name="${esc(name)}" value="${esc(value)}">`;
+
+/** A POST form with the CSRF field; `fields` and `button` are trusted markup. */
+export function form(action: string, csrf: string, fields: string, button: string, quiet = false): string {
+  return `<form method="post" action="${esc(action)}">${hiddenField('csrf', csrf)}${fields}<button type="submit"${quiet ? ' class="quiet"' : ''}>${button}</button></form>`;
+}
+
+/** `<option>` list for a select; `options` are [value, label] pairs. */
+export const optionList = (options: ReadonlyArray<readonly [string, string]>, selected: string): string =>
+  options.map(([v, label]) => `<option value="${esc(v)}"${v === selected ? ' selected' : ''}>${esc(label)}</option>`).join('');
+
+/** Notice line above a page body. */
+export const noticeHtml = (flash: { ok?: string; error?: string }): string =>
+  (flash.ok ? `<p class="ok" role="status">${esc(flash.ok)}</p>` : '') + (flash.error ? `<p class="err" role="alert">${esc(flash.error)}</p>` : '');
+
+export const forbiddenInstancePage = (): string =>
+  page('Kein Zugriff', '<h1>Kein Zugriff</h1><p>Du darfst diese Seite nicht verwalten.</p><p><a href="/">Zurück zur Übersicht</a></p>');

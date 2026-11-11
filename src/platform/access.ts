@@ -96,6 +96,11 @@ export class Access {
     return app.selfInstances === 'users' && !user.disabled;
   }
 
+  /** The account that owns the app (and so manages collaborators, self-service and deletion). */
+  isAppOwner(app: App, user: User): boolean {
+    return !user.disabled && app.ownerId === user.id;
+  }
+
   /** Reading app-level details (versions, instances): the owner and active collaborators who may still deploy. */
   canReadApp(app: App, user: User): boolean {
     return !user.disabled && (app.ownerId === user.id || this.canDeploy(app, user));

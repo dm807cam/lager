@@ -35,3 +35,18 @@ export function csrfValid(core: Core, user: User, value: unknown): boolean {
   const t = verifyToken<{ uid?: unknown; k?: unknown }>(typeof value === 'string' ? value : undefined, core.config.secret);
   return t !== null && t.k === 'ui' && t.uid === user.id;
 }
+
+const FLASH_TTL_SECONDS = 120;
+/** A one-line notice for the next page view. */
+export interface Flash { ok?: string; error?: string }
+
+/** Signed, short-lived `flash` query value carrying a fixed German message to the page a POST redirects to. */
+export const flashToken = (core: Core, user: User, flash: Flash): string =>
+  signToken({ uid: user.id, k: 'flash', e: flash.error !== undefined ? 1 : 0, m: flash.error ?? flash.ok ?? '' }, core.config.secret, FLASH_TTL_SECONDS);
+
+/** The notice of a valid flash value issued to this user; anything else yields nothing. */
+export function readFlash(core: Core, user: User, value: unknown): Flash {
+  const t = verifyToken<{ uid?: unknown; k?: unknown; e?: unknown; m?: unknown }>(typeof value === 'string' ? value : undefined, core.config.secret);
+  if (t === null || t.k !== 'flash' || t.uid !== user.id || typeof t.m !== 'string' || t.m === '') return {};
+  return t.e === 1 ? { error: t.m } : { ok: t.m };
+}
