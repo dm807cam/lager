@@ -9,7 +9,7 @@ header.top{background:var(--navy);color:#fff}
 header.top .in{max-width:60rem;margin:0 auto;padding:.6rem 1rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
 header.top img{width:40px;height:40px;border-radius:10px;display:block}
 header.top .name{font-size:1.25rem;font-weight:700;letter-spacing:.02em}
-header.top .who{margin-left:auto;display:flex;align-items:center;gap:.75rem;font-size:.9rem}
+header.top .who{margin-left:auto;display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:.4rem .75rem;font-size:.9rem;min-width:0}
 header.top form{margin:0}
 header.top a.nav{color:#fff}
 main{max-width:24rem;margin:2rem auto;padding:0 1rem}
