@@ -333,7 +333,7 @@ describe('app page', () => {
     const taken = await post(pc, p, '/ui/apps/notes/instances', { slug: 'notes' });
     expect((await follow(pc, taken)).text).toContain(en('notice.slugTaken'));
     const bad = await post(pc, p, '/ui/apps/notes/instances', { slug: 'Bad Name' });
-    expect((await follow(pc, bad)).text).toContain(en('notice.slugInvalid'));
+    expect((await follow(pc, bad)).text).toContain(esc(t('en', 'notice.slugInvalid', { max: 63 })));
   });
 
   it('instance limit message', async () => {

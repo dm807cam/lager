@@ -9,7 +9,7 @@ import { LagerError } from '../errors.js';
 import type { Capabilities, DbRule, Instance } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 import { instanceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
-import { safeReturnPath, sendError } from './errors.js';
+import { safeReturnPath, sendError, sendNotFound } from './errors.js';
 import { injectRuntime } from './inject.js';
 import { mountArtifactRoutes } from './instance-artifact.js';
 import { mountAssetRoutes } from './instance-assets.js';
@@ -323,6 +323,6 @@ export function createInstanceRouter(core: Core): express.Router {
   mountRoomRoutes(router, core, ctxOf, requireAccess, activeCapabilities);
   mountArtifactRoutes(router, core, ctxOf, requireAccess);
 
-  router.use((_req, res) => { res.status(404).type('text/plain').send('Not found'); });
+  router.use((req, res) => { sendNotFound(core, req, res); });
   return router;
 }

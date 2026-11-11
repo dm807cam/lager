@@ -5,7 +5,7 @@ import type { User, Users } from './users.js';
 
 export interface Group { id: string; name: string; createdAt: string; memberCount: number }
 
-const MAX_NAME = 60;
+export const MAX_NAME = 60;
 
 interface GroupRow { id: string; name: string; created_at: string; member_count: number }
 

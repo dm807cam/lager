@@ -1,3 +1,6 @@
+import { MAX_SLUG_LENGTH } from '../config.js';
+import { MAX_NAME as MAX_GROUP_NAME } from '../platform/groups.js';
+import { MAX_NAME as MAX_TOKEN_NAME } from '../platform/tokens.js';
 import { formatDate, formatSize, LOCALE_NAMES, LOCALES, t, type Locale, type MessageKey } from '../i18n/index.js';
 
 export const esc = (s: string): string =>
@@ -117,14 +120,29 @@ export const forbiddenAdminPage = (locale: Locale): string => messagePage(locale
 
 export const backLink = (locale: Locale, href = '/', label = t(locale, 'common.backToOverview')): string => `<p><a href="${esc(href)}">${esc(label)}</a></p>`;
 
+/** Catalog texts that quote a limit; the numbers come from the constants the code enforces. */
+const LIMITS: Partial<Record<MessageKey, { max: number }>> = {
+  'notice.slugInvalid': { max: MAX_SLUG_LENGTH },
+  'dash.tokens.nameInvalid': { max: MAX_TOKEN_NAME },
+  'admin.groups.nameInvalid': { max: MAX_GROUP_NAME },
+};
+/** Notice and error texts: `t` plus the limits they quote. */
+export const noticeText = (locale: Locale, key: MessageKey): string => t(locale, key, LIMITS[key]);
+
 const hidden = (fields: Record<string, string>): string =>
   Object.entries(fields).map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join('\n');
+
+const CLIENT_MARK = '\u0001client\u0001';
+const HOST_MARK = '\u0001host\u0001';
+/** Catalog text with sentinel parameters: the text is escaped first, then each sentinel becomes the escaped value in bold. */
+const emphasise = (text: string, marks: Record<string, string>): string =>
+  Object.entries(marks).reduce((html, [mark, value]) => html.replaceAll(mark, () => `<strong>${esc(value)}</strong>`), esc(text));
 
 /** OAuth consent: names the connecting client and where the browser is sent afterwards. */
 export function consentPage(locale: Locale, clientName: string, redirectHost: string, userName: string, fields: Record<string, string>): string {
   return page(locale, t(locale, 'consent.title'), `<h1>${esc(t(locale, 'consent.heading'))}</h1>
-<p>${esc(t(locale, 'consent.text', { client: clientName }))}</p>
-<p>${esc(t(locale, 'consent.signedIn', { user: userName, host: redirectHost }))}</p>
+<p>${emphasise(t(locale, 'consent.text', { client: CLIENT_MARK }), { [CLIENT_MARK]: clientName })}</p>
+<p>${emphasise(t(locale, 'consent.signedIn', { user: userName, host: HOST_MARK }), { [HOST_MARK]: redirectHost })}</p>
 <form method="post" action="/authorize">
 ${hidden(fields)}
 <button type="submit" name="decision" value="approve">${esc(t(locale, 'consent.approve'))}</button>
@@ -145,7 +163,7 @@ const VISIBILITY_KEYS: Record<string, MessageKey> = { private: 'visibility.priva
 const LEVEL_KEYS: Record<string, MessageKey> = { view: 'level.view', interact: 'level.interact', admin: 'level.admin', owner: 'level.owner' };
 export type Option = readonly [string, string];
 
-const labelOf = (locale: Locale, keys: Record<string, MessageKey>, value: string): string => (keys[value] ? t(locale, keys[value]) : value);
+const labelOf = (locale: Locale, keys: Record<string, MessageKey>, value: string): string => (Object.hasOwn(keys, value) ? t(locale, keys[value]) : value);
 export const visibilityLabel = (locale: Locale, v: string): string => labelOf(locale, VISIBILITY_KEYS, v);
 export const levelLabel = (locale: Locale, l: string): string => labelOf(locale, LEVEL_KEYS, l);
 export const visibilityOptions = (locale: Locale): Option[] => Object.keys(VISIBILITY_KEYS).map((v) => [v, visibilityLabel(locale, v)]);
@@ -165,7 +183,7 @@ export const optionList = (options: ReadonlyArray<Option>, selected: string): st
 
 /** Notice line above a page body; the flash carries catalog keys and is shown in `locale`. */
 export const noticeHtml = (locale: Locale, flash: { ok?: MessageKey; error?: MessageKey }): string =>
-  (flash.ok ? `<p class="ok" role="status">${esc(t(locale, flash.ok))}</p>` : '') + (flash.error ? `<p class="err" role="alert">${esc(t(locale, flash.error))}</p>` : '');
+  (flash.ok ? `<p class="ok" role="status">${esc(noticeText(locale, flash.ok))}</p>` : '') + (flash.error ? `<p class="err" role="alert">${esc(noticeText(locale, flash.error))}</p>` : '');
 
 export const forbiddenInstancePage = (locale: Locale): string =>
   messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.instance'), backLink(locale));
@@ -173,7 +191,7 @@ export const forbiddenAppPage = (locale: Locale): string =>
   messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.app'), backLink(locale));
 /** A page-level "does not exist" with a way back; `what` is a catalog key. */
 export const missingPage = (locale: Locale, what: MessageKey, back = backLink(locale)): string =>
-  messagePage(locale, t(locale, 'error.notFound.title'), t(locale, what), back);
+  messagePage(locale, t(locale, 'error.notFound.title'), noticeText(locale, what), back);
 /** A form post that failed for a reason the viewer should read; `message` is a catalog key. */
 export const formErrorPage = (locale: Locale, message: MessageKey, back = backLink(locale)): string =>
-  page(locale, t(locale, 'error.failed.title'), `<h1>${esc(t(locale, 'error.failed.title'))}</h1><p class="err">${esc(t(locale, message))}</p>${back}`);
+  page(locale, t(locale, 'error.failed.title'), `<h1>${esc(t(locale, 'error.failed.title'))}</h1><p class="err">${esc(noticeText(locale, message))}</p>${back}`);

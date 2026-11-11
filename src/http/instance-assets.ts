@@ -5,7 +5,7 @@ import type { Response } from 'express';
 import type { Core } from '../core.js';
 import { AssetError, ASSET_LIMITS, isTextType, type AssetInfo } from '../data/assets.js';
 import { LagerError } from '../errors.js';
-import { discardBody, sendError } from './errors.js';
+import { discardBody, sendError, sendNotFound } from './errors.js';
 import type { Ctx } from './instance.js';
 import { assertOwnOrigin } from './origin.js';
 
@@ -145,7 +145,7 @@ export function mountAssetRoutes(
     requireAccess(ctx);
     const found = core.assets.get(ctx.instance.id, req.params.id);
     // A row whose file is gone is as good as no file.
-    if (!found || !fs.existsSync(found.path)) { res.status(404).type('text/plain').send('Not found'); return; }
+    if (!found || !fs.existsSync(found.path)) { sendNotFound(core, req, res); return; }
     const type = found.info.contentType;
     const text = isTextType(type);
     res.set({
@@ -158,7 +158,7 @@ export function mountAssetRoutes(
     if (text || type === 'image/svg+xml') res.set('Content-Security-Policy', SANDBOX_CSP);
     res.sendFile(path.resolve(found.path), { cacheControl: false, dotfiles: 'allow' }, (err) => {
       if (!err) return;
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT' && !res.headersSent) res.status(404).type('text/plain').send('Not found');
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT' && !res.headersSent) sendNotFound(core, req, res);
       else next(err);
     });
   });

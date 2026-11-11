@@ -1,6 +1,6 @@
 import express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
-import { hostUrl, instanceUrl } from '../config.js';
+import { hostUrl, instanceUrl, MAX_SLUG_LENGTH } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
@@ -159,7 +159,7 @@ ${form(`${base}/delete`, csrf, `<label for="confirm">${esc(t(locale, 'instance.d
 <h2>${esc(t(locale, 'app.versions'))}</h2>${versionsTable(core, locale, user, app, null, csrf)}
 <h2>${esc(t(locale, 'app.instances'))}</h2>${rows ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.instance'))}</th><th>${esc(t(locale, 'common.owner'))}</th><th>${esc(t(locale, 'app.saved'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${esc(t(locale, 'app.noInstances'))}</p>`}
 <h2>${esc(t(locale, 'app.newInstance'))}</h2><div class="card">${form(`${base}/instances`, csrf,
-    `<label for="new-slug">${esc(t(locale, 'instance.slugLabel'))}</label><input id="new-slug" name="slug" required maxlength="63" autocomplete="off">${ownerField}`, esc(t(locale, 'app.newInstance')))}</div>
+    `<label for="new-slug">${esc(t(locale, 'instance.slugLabel'))}</label><input id="new-slug" name="slug" required maxlength="${MAX_SLUG_LENGTH}" autocomplete="off">${ownerField}`, esc(t(locale, 'app.newInstance')))}</div>
 ${ownerOnly}`, flash, `/apps/${encodeURIComponent(app.slug)}`);
 }
 

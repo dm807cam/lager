@@ -1,6 +1,6 @@
 import express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
-import { instanceUrl } from '../config.js';
+import { instanceUrl, MAX_SLUG_LENGTH } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import type { Instance } from '../platform/apps.js';
@@ -53,7 +53,7 @@ function catalogSection(core: Core, locale: Locale, user: User, csrf: string): s
 <td><a href="${esc(instanceUrl(core.config, i.slug))}">${esc(i.slug)}</a></td><td>${esc(i.ownerName)}</td></tr>`).join('');
   const appCards = apps.map((a) => `<div class="card"><h3>${esc(a.title)} <span class="muted mono">${esc(a.slug)}</span></h3>
 ${form(`/ui/apps/${encodeURIComponent(a.slug)}/instances`, csrf,
-    `<input type="hidden" name="from" value="home"><label for="new-${esc(a.slug)}">${esc(t(locale, 'instance.slugLabel'))}</label><input id="new-${esc(a.slug)}" name="slug" required maxlength="63" autocomplete="off">`,
+    `<input type="hidden" name="from" value="home"><label for="new-${esc(a.slug)}">${esc(t(locale, 'instance.slugLabel'))}</label><input id="new-${esc(a.slug)}" name="slug" required maxlength="${MAX_SLUG_LENGTH}" autocomplete="off">`,
     esc(t(locale, 'dash.createOwn')))}</div>`).join('');
   return `<h2>${esc(t(locale, 'dash.catalog'))}</h2>${instances.length ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.app'))}</th><th>${esc(t(locale, 'common.instance'))}</th><th>${esc(t(locale, 'common.owner'))}</th></tr></thead><tbody>${instRows}</tbody></table></div>` : ''}${appCards}`;
 }

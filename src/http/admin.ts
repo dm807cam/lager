@@ -5,11 +5,12 @@ import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { localeOf, requestLocale } from './locale.js';
+import { MAX_NAME } from '../platform/groups.js';
 import type { CustomDomainsMode, RegistrationMode } from '../platform/settings.js';
 import type { Instance } from '../platform/apps.js';
 import type { Role, User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
-import { backLink, dateText, esc, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, signedInHeader, sizeText, visibilityLabel, type Option } from './pages.js';
+import { noticeText, backLink, dateText, esc, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, signedInHeader, sizeText, visibilityLabel, type Option } from './pages.js';
 import { csrfToken, csrfValid } from './session.js';
 
 const ROLES: readonly Role[] = ['admin', 'publisher', 'user'];
@@ -72,7 +73,7 @@ function groupsSection(core: Core, locale: Locale, admin: User, msg?: Msg): stri
   const groups = core.groups.list();
   const rows = groups.map((g) => `<tr><td><a href="/admin/groups/${encodeURIComponent(g.id)}">${esc(g.name)}</a></td><td>${g.memberCount}</td></tr>`).join('');
   const body = `${groups.length ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.name'))}</th><th>${esc(t(locale, 'admin.groups.members'))}</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${esc(t(locale, 'admin.groups.none'))}</p>`}
-<div class="card">${form('/admin/groups', csrf, `<label for="group-name">${esc(t(locale, 'admin.groups.newName'))}</label><input id="group-name" name="name" required maxlength="60">`, esc(t(locale, 'admin.groups.create')))}</div>`;
+<div class="card">${form('/admin/groups', csrf, `<label for="group-name">${esc(t(locale, 'admin.groups.newName'))}</label><input id="group-name" name="name" required maxlength="${MAX_NAME}">`, esc(t(locale, 'admin.groups.create')))}</div>`;
   return shell(core, locale, admin, 'groups', t(locale, 'admin.section.groups'), body, msg);
 }
 
@@ -85,7 +86,7 @@ function groupPage(core: Core, locale: Locale, admin: User, groupId: string, msg
   const rows = members.map((m) => `<tr><td>${esc(m.name)}</td><td>${esc(m.email)}</td>
 <td>${form(`${base}/members/${encodeURIComponent(m.id)}/remove`, csrf, '', esc(t(locale, 'common.remove')), true)}</td></tr>`).join('');
   const body = `<p><a href="/admin/groups">${esc(t(locale, 'admin.groups.all'))}</a></p>
-<div class="card">${form(`${base}/rename`, csrf, `<label for="group-name">${esc(t(locale, 'common.name'))}</label><input id="group-name" name="name" required maxlength="60" value="${esc(group.name)}">`, esc(t(locale, 'common.rename')))}</div>
+<div class="card">${form(`${base}/rename`, csrf, `<label for="group-name">${esc(t(locale, 'common.name'))}</label><input id="group-name" name="name" required maxlength="${MAX_NAME}" value="${esc(group.name)}">`, esc(t(locale, 'common.rename')))}</div>
 <h3>${esc(t(locale, 'admin.groups.members'))}</h3>
 ${members.length ? `<div class="scroll"><table><thead><tr><th>${esc(t(locale, 'common.name'))}</th><th>${esc(t(locale, 'common.email'))}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">${esc(t(locale, 'admin.groups.noMembers'))}</p>`}
 <div class="card">${form(`${base}/members`, csrf, `<label for="member-email">${esc(t(locale, 'admin.groups.memberEmail'))}</label><input id="member-email" name="email" type="email" required maxlength="254">`, esc(t(locale, 'common.add')))}</div>
@@ -190,7 +191,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     if (!(e instanceof LagerError)) throw e;
     const status = e.code === 'not_found' ? 404 : e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400;
     const locale = localeOf(res);
-    const error = t(locale, messages[e.code] ?? 'validation.generic');
+    const error = noticeText(locale, messages[e.code] ?? 'validation.generic');
     send(res, status, view({ error }) ?? missingPage(locale, 'error.notFound.text', backLink(locale, '/admin', t(locale, 'admin.back'))));
   };
 
@@ -229,7 +230,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
         const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
         const key = (e.reason !== undefined ? DOMAIN_NOTICES[e.reason] : undefined) ?? (e.code === 'not_found' ? 'admin.instances.notFound' : 'validation.generic');
         if (!inst) send(res, 404, missingPage(localeOf(res), 'admin.instances.notFound', backLink(localeOf(res), '/admin/apps', t(localeOf(res), 'admin.section.apps'))));
-        else showDomains(res, inst, e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400, { error: t(localeOf(res), key) });
+        else showDomains(res, inst, e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400, { error: noticeText(localeOf(res), key) });
       }
     }));
   }

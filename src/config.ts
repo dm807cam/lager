@@ -27,12 +27,14 @@ export interface Config {
   trashDays?: number;
 }
 
+/** Longest instance name (a DNS label). */
+export const MAX_SLUG_LENGTH = 63;
 export const SLUG_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 const RESERVED_SLUGS = new Set(['www', 'api', 'lager', 'admin', 'mcp', 'auth', 'static']);
 
 export function assertSlug(slug: string): void {
   if (typeof slug !== 'string' || !SLUG_RE.test(slug)) {
-    throw new LagerError('invalid_argument', `Invalid slug "${slug}": use lowercase letters, digits and hyphens (max 63 characters).`, 'slug_invalid');
+    throw new LagerError('invalid_argument', `Invalid slug "${slug}": use lowercase letters, digits and hyphens (max ${MAX_SLUG_LENGTH} characters).`, 'slug_invalid');
   }
   if (RESERVED_SLUGS.has(slug)) {
     throw new LagerError('invalid_argument', `Slug "${slug}" is reserved.`, 'slug_reserved');

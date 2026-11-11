@@ -46,7 +46,7 @@ ${errorLine(error)}
 ${passwordHint(locale)}
 <button type="submit">${esc(t(locale, 'auth.register.submit'))}</button>
 </form>
-<p><a href="/login">${esc(t(locale, 'common.toLogin'))}</a></p>`, { returnPath: invite ? `/register?invite=${encodeURIComponent(invite)}` : '/register' });
+<p><a href="/login">${esc(t(locale, 'common.toLogin'))}</a></p>`, { ...(invite ? { switcher: false } : { returnPath: '/register' }) });
 }
 
 const forgotForm = (locale: Locale): string => page(locale, t(locale, 'auth.forgot.title'), `<h1>${esc(t(locale, 'auth.forgot.title'))}</h1>
@@ -56,6 +56,7 @@ const forgotForm = (locale: Locale): string => page(locale, t(locale, 'auth.forg
 </form>
 <p><a href="/login">${esc(t(locale, 'common.toLogin'))}</a></p>`, { returnPath: '/forgot' });
 
+/** The reset, verify and invited-register pages carry a one-time token: they offer no language switcher, because the switcher's link would put the token into a `/lang` URL; the cookie or browser language applies. */
 const resetForm = (locale: Locale, token: string, error?: string): string => page(locale, t(locale, 'auth.reset.title'), `<h1>${esc(t(locale, 'auth.reset.title'))}</h1>
 ${errorLine(error)}
 <form method="post" action="/reset">
@@ -63,13 +64,13 @@ ${errorLine(error)}
 <label for="password">${esc(t(locale, 'auth.reset.label'))}</label><input id="password" name="password" type="password" autocomplete="new-password" required minlength="${MIN_PASSWORD_LENGTH}" autofocus>
 ${passwordHint(locale)}
 <button type="submit">${esc(t(locale, 'auth.reset.submit'))}</button>
-</form>`, { returnPath: `/reset?token=${encodeURIComponent(token)}` });
+</form>`, { switcher: false });
 
 const verifyForm = (locale: Locale, token: string): string => page(locale, t(locale, 'auth.verify.title'), `<h1>${esc(t(locale, 'auth.verify.title'))}</h1>
 <form method="post" action="/verify">
 <input type="hidden" name="token" value="${esc(token)}">
 <button type="submit">${esc(t(locale, 'auth.verify.submit'))}</button>
-</form>`, { returnPath: `/verify?token=${encodeURIComponent(token)}` });
+</form>`, { switcher: false });
 
 const invalidLinkPage = (locale: Locale): string => notice(locale, t(locale, 'auth.link.invalid.title'), t(locale, 'auth.link.invalid'), resendForm(locale));
 

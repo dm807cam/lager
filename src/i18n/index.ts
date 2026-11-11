@@ -69,13 +69,21 @@ export function formatDate(locale: Locale, iso: string): string {
 
 const sizeFormatters = new Map<Locale, Intl.NumberFormat>();
 
-/** A byte count as bytes, KiB or MiB, with the decimal separator of `locale`. */
+/** Size labels per language: French writes the binary prefixes as Kio, Mio and Gio and bytes as "o". */
+const SIZE_UNITS: Partial<Record<Locale, readonly [string, string, string, string]>> = { fr: ['o', 'Kio', 'Mio', 'Gio'] };
+const DEFAULT_SIZE_UNITS = ['B', 'KiB', 'MiB', 'GiB'] as const;
+
+/** A byte count as bytes, KiB, MiB or GiB (Kio, Mio, Gio in French), with the decimal separator of `locale`. */
 export function formatSize(locale: Locale, bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
+  const units = SIZE_UNITS[locale] ?? DEFAULT_SIZE_UNITS;
+  if (bytes < 1024) return `${bytes} ${units[0]}`;
   let f = sizeFormatters.get(locale);
   if (!f) {
     f = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
     sizeFormatters.set(locale, f);
   }
-  return bytes < 1024 * 1024 ? `${f.format(bytes / 1024)} KiB` : `${f.format(bytes / 1024 / 1024)} MiB`;
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return `${f.format(value)} ${units[unit]}`;
 }
