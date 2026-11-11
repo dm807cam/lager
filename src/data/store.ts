@@ -71,6 +71,7 @@ function stampToIso(stamp: string): string {
 export class InstanceData {
   private dbs = new Map<string, DatabaseSync>();
   private lastStamp = 0;
+  private extraUsage: (instanceId: string) => number = () => 0;
 
   /** `quotaBytes` caps the size of one instance's data (0 = unlimited). */
   constructor(private dataDir: string, private hub: Hub, private snapshotKeep: number, private quotaBytes = 0) {}
@@ -102,8 +103,13 @@ export class InstanceData {
     return (n('page_count') - n('freelist_count')) * n('page_size');
   }
 
+  /** Registers bytes stored next to the documents (uploaded assets) that count against the same quota. */
+  setExtraUsage(fn: (instanceId: string) => number): void {
+    this.extraUsage = fn;
+  }
+
   private assertQuota(instanceId: string): void {
-    if (this.quotaBytes > 0 && this.usage(instanceId) >= this.quotaBytes) {
+    if (this.quotaBytes > 0 && this.usage(instanceId) + this.extraUsage(instanceId) >= this.quotaBytes) {
       throw new LagerError('quota_exceeded', 'Der Speicher dieser Instanz ist voll.');
     }
   }

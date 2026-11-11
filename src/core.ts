@@ -1,4 +1,5 @@
 import { ADMIN_PASSWORD_PLACEHOLDER, type Config } from './config.js';
+import { InstanceAssets } from './data/assets.js';
 import { Hub } from './data/hub.js';
 import { InstanceData } from './data/store.js';
 import { OAuthStore } from './mcp/oauth.js';
@@ -14,6 +15,8 @@ import { Users } from './platform/users.js';
 
 export interface Core {
   config: Config; users: Users; apps: Apps; data: InstanceData; hub: Hub;
+  /** Uploaded files per instance (the `assets` capability). */
+  assets: InstanceAssets;
   /** Static API tokens (`lgr_…`). */
   tokens: ApiTokens;
   /** OAuth clients, codes and tokens for the MCP connector. */
@@ -51,18 +54,21 @@ export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
   users.onDemoted((id) => { accounts.deleteInvitesBy(id); });
   const hub = new Hub();
   const data = new InstanceData(config.dataDir, hub, config.snapshotKeep, config.instanceQuotaBytes);
+  const assets = new InstanceAssets(config.dataDir, config.instanceQuotaBytes, (id) => data.usage(id));
+  data.setExtraUsage((id) => assets.usage(id).bytes);
   const groups = new Groups(db, users);
   const access = new Access(db, users, groups, apps);
   apps.setChecks({
     canDeploy: (app, userId) => { const u = users.get(userId); return u !== null && access.canDeploy(app, u); },
     canManage: (instance, userId) => { const u = users.get(userId); return u !== null && access.canManageInstance(instance, u); },
   });
-  apps.onInstanceDeleted((instance) => { data.trash(instance.id); });
+  apps.onInstanceDeleted((instance) => { assets.drop(instance.id); data.trash(instance.id); });
   // Keep a restore point of the instance data whenever its active version changes.
   apps.onBeforeActivate((inst, from, to) => { data.snapshot(inst.id, `v${from}-to-v${to}`); });
   return {
-    config, users, apps, data, hub, tokens, oauth, settings, mailer, accounts, groups, access,
+    config, users, apps, data, assets, hub, tokens, oauth, settings, mailer, accounts, groups, access,
     close() {
+      assets.close();
       data.close();
       db.close();
     },

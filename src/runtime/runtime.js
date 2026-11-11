@@ -1,4 +1,4 @@
-/* Lager browser runtime: provides window.claude.use("db" | "user" | "permissions") and window.storage
+/* Lager browser runtime: provides window.claude.use("db" | "user" | "assets" | "permissions") and window.storage
    on top of the /__lager/* endpoints. Plain ES2020, no dependencies. */
 (function () {
   'use strict';
@@ -6,6 +6,7 @@
   var SESSION_URL = '/__lager/session';
   var USERS_URL = '/__lager/users?ids=';
   var DB_URL = '/__lager/db';
+  var ASSETS_URL = '/__lager/assets';
   var EVENTS_URL = '/__lager/db/events';
   var RETRY_MIN_MS = 1000;
   var RETRY_MAX_MS = 30000;
@@ -485,11 +486,99 @@
     });
   }
 
+  // ------------------------------------------------------------------ assets
+
+  var ASSET_ID_RE = /^[0-9a-f]{32}$/;
+  var BLOB_PREFIX = '/_blob/';
+
+  function assetsAllowed(session) {
+    var caps = session && session.capabilities;
+    var decl = caps && caps.assets;
+    if (!decl || typeof decl !== 'object') return false;
+    var level = levelOf(session);
+    return level === 'admin' || level === 'owner' || (level === 'interact' && decl.upload === 'interact');
+  }
+
+  function assetError(code, message) { return { code: code, message: message }; }
+
+  /** Maps a failed asset response to the contract's upload error codes. */
+  function assetFailure(res, json) {
+    var error = json && json.error;
+    var message = error && typeof error.message === 'string' ? error.message : 'Request failed (' + res.status + ').';
+    var reason = error && typeof error.reason === 'string' ? error.reason : '';
+    var code;
+    if (res.status === 413 || reason === 'too_large') code = 'too_large';
+    else if (res.status === 403) code = 'not_uploader';
+    else if (res.status === 507 || res.status === 409) code = 'quota_or_state';
+    else if (res.status === 401) code = 'upstream_auth';
+    else if (res.status === 429) code = 'rate_limited';
+    else if (res.status === 400) code = reason === 'unsupported_type' || reason === 'invalid_request' ? reason : 'invalid_request';
+    else code = 'upstream_error';
+    return assetError(code, message);
+  }
+
+  function assetCall(url, init, body) {
+    init.credentials = 'same-origin';
+    init.body = body;
+    return fetch(url, init).then(
+      function (res) {
+        return res.json().catch(function () { return null; }).then(function (json) {
+          if (!res.ok) throw assetFailure(res, json);
+          if (!json || typeof json !== 'object') throw assetError('upstream_error', 'Unexpected response (' + res.status + ').');
+          return json;
+        });
+      },
+      function (e) { throw assetError('store_unavailable', e && e.message ? String(e.message) : 'Network error.'); }
+    );
+  }
+
+  function buildAssets() {
+    function upload(blob, options) {
+      return Promise.resolve().then(function () {
+        if (typeof Blob === 'undefined' || !(blob instanceof Blob)) throw assetError('invalid_request', 'upload expects a Blob or File.');
+        if (blob.size === 0) throw assetError('invalid_request', 'The file is empty.');
+        if (options !== undefined && options !== null && (typeof options !== 'object' || (options.type !== undefined && typeof options.type !== 'string'))) {
+          throw assetError('invalid_request', 'options.type must be a string.');
+        }
+        var type = options && options.type ? options.type : blob.type;
+        if (!type) throw assetError('invalid_request', 'The blob has no type; pass options.type.');
+        return assetCall(ASSETS_URL, { method: 'POST', headers: { 'Content-Type': type, 'X-Lager-Request': '1' } }, blob);
+      }).then(function (r) {
+        return Object.freeze({ id: r.id, url: r.url, sizeBytes: r.sizeBytes, contentType: r.contentType });
+      });
+    }
+
+    function list() {
+      return assetCall(ASSETS_URL, { method: 'GET' }, undefined).then(function (r) {
+        // The server answers newest first; the contract lists oldest first.
+        var items = (Array.isArray(r.assets) ? r.assets : []).slice().reverse().map(function (a) {
+          return Object.freeze({ id: a.id, url: a.url, contentType: a.contentType, sizeBytes: a.sizeBytes, createdAt: a.createdAt });
+        });
+        var u = r.usage || {};
+        return Object.freeze({
+          assets: Object.freeze(items),
+          usage: Object.freeze({ files: u.files, bytes: u.bytes, maxFiles: u.maxFiles, maxBytes: u.maxBytes }),
+        });
+      });
+    }
+
+    function remove(ref) {
+      return Promise.resolve().then(function () {
+        var id = typeof ref === 'string' && ref.indexOf(BLOB_PREFIX) === 0 ? ref.slice(BLOB_PREFIX.length) : ref;
+        if (typeof id !== 'string' || !ASSET_ID_RE.test(id)) throw assetError('invalid_request', 'delete expects an asset id or its url.');
+        return assetCall(ASSETS_URL + '/' + id, { method: 'DELETE', headers: { 'X-Lager-Request': '1' } }, undefined);
+      }).then(function (r) { return Object.freeze({ deleted: r.deleted === true }); });
+    }
+
+    return Object.freeze({ upload: upload, list: list, delete: remove });
+  }
+
   // ------------------------------------------------------------------ permissions
 
   function buildPermissions(session) {
     var states = { user: 'granted' };
     if (levelOf(session)) states.db = 'granted';
+    if (assetsAllowed(session)) states.assets = 'granted';
     var one = function (name) { return typeof name === 'string' && Object.prototype.hasOwnProperty.call(states, name) ? states[name] : 'unavailable'; };
     var all = function () { var o = {}; Object.keys(states).sort().forEach(function (k) { o[k] = states[k]; }); return o; };
     return Object.freeze({
@@ -512,6 +601,7 @@
     return getSession().then(function (session) {
       if (name === 'db') return levelOf(session) ? db : null;
       if (name === 'user') return buildUser(session);
+      if (name === 'assets') return assetsAllowed(session) ? buildAssets() : null;
       if (name === 'permissions') return buildPermissions(session);
       return null;
     });

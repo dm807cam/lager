@@ -11,6 +11,7 @@ import type { User } from '../platform/users.js';
 import { instanceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
 import { safeReturnPath, sendError } from './errors.js';
 import { injectRuntime } from './inject.js';
+import { mountAssetRoutes } from './instance-assets.js';
 import { badCodePage, disabledPage, forbiddenPage, notFoundPage } from './pages.js';
 import { epochValid } from './session.js';
 import { signToken, verifyToken } from './tokens.js';
@@ -44,7 +45,7 @@ function newDocId(): string {
   return id;
 }
 
-interface Ctx { instance: Instance; user: User | null; viewer: Viewer; caps: Capabilities; rules: DbRule[] | undefined }
+export interface Ctx { instance: Instance; user: User | null; viewer: Viewer; caps: Capabilities; rules: DbRule[] | undefined }
 
 function context(core: Core, req: Request, instance: Instance): Ctx {
   const user = instanceUser(core, req, instance);
@@ -56,7 +57,7 @@ function context(core: Core, req: Request, instance: Instance): Ctx {
 }
 
 /** Throws unless the viewer has at least `view` access. */
-function requireAccess(ctx: Ctx): void {
+export function requireAccess(ctx: Ctx): void {
   if (ctx.viewer.level !== 'none') return;
   if (ctx.user) throw new LagerError('forbidden', 'No access to this instance.');
   throw new LagerError('unauthenticated', 'Sign in required.');
@@ -290,6 +291,8 @@ export function createInstanceRouter(core: Core): express.Router {
     }, PING_MS);
     req.on('close', () => { clearInterval(ping); unsubscribe?.(); });
   });
+
+  mountAssetRoutes(router, core, ctxOf, requireAccess);
 
   router.use((_req, res) => { res.status(404).type('text/plain').send('Nicht gefunden'); });
   return router;

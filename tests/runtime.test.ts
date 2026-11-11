@@ -104,6 +104,22 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
       default: return json({ error: { code: 'invalid_argument', message: 'op' } }, 400);
     }
   }
+  if (url === '/__lager/assets' || url.startsWith('/__lager/assets/')) {
+    const type = init?.headers?.['Content-Type'] as string | undefined;
+    if (init?.method === 'POST') {
+      const status = /^x\/s(\d+)$/.exec(type ?? '')?.[1];
+      if (status) return json({ error: { code: 'x', message: 'boom', reason: type === 'x/s400' ? 'unsupported_type' : undefined } }, Number(status));
+      return json({ id: 'a'.repeat(32), url: `/_blob/${'a'.repeat(32)}`, sizeBytes: init.body.size, contentType: type }, 201);
+    }
+    if (init?.method === 'DELETE') {
+      return url.endsWith('/' + 'b'.repeat(32)) ? json({ error: { code: 'forbidden', message: 'no' } }, 403) : json({ deleted: true });
+    }
+    return json({
+      assets: [{ id: 'n'.padEnd(32, '1'), url: '/_blob/new', contentType: 'image/png', sizeBytes: 2, createdAt: '2026-02-01T00:00:00.000Z' },
+        { id: 'o'.padEnd(32, '1'), url: '/_blob/old', contentType: 'image/png', sizeBytes: 1, createdAt: '2026-01-01T00:00:00.000Z' }],
+      usage: { files: 2, bytes: 3, maxFiles: 2000, maxBytes: 1000 },
+    });
+  }
   return json({ error: { code: 'not_found', message: 'x' } }, 404);
 }
 
@@ -684,6 +700,69 @@ describe('user', () => {
     const user = await boot().use('user');
     g.fetch = async () => { throw new TypeError('offline'); };
     expect(await user.profiles(['u9'])).toEqual({});
+  });
+});
+
+describe('assets', () => {
+  const withAssets = (viewer: Record<string, unknown> = OWNER, caps: Record<string, unknown> = { assets: {} }): void => {
+    session = { status: 200, body: { ...(sessionOf(viewer).body as object), capabilities: caps } };
+  };
+
+  it('assets namespace uploads a Blob and maps error codes', async () => {
+    withAssets();
+    const assets = await boot().use('assets');
+    expect(Object.isFrozen(assets)).toBe(true);
+    const ok = await assets.upload(new Blob(['abc'], { type: 'image/png' }));
+    expect(ok).toEqual({ id: 'a'.repeat(32), url: `/_blob/${'a'.repeat(32)}`, sizeBytes: 3, contentType: 'image/png' });
+    const post = calls.find(([u, i]) => u === '/__lager/assets' && i.method === 'POST')!;
+    expect(post[1].headers).toEqual({ 'Content-Type': 'image/png', 'X-Lager-Request': '1' });
+    expect(post[1].credentials).toBe('same-origin');
+    await assets.upload(new Blob(['abc']), { type: 'text/csv' });
+    expect(calls.filter(([u]) => u === '/__lager/assets').pop()![1].headers['Content-Type']).toBe('text/csv');
+    const code = (p: Promise<unknown>): Promise<string> => p.then(() => 'resolved', (e: { code: string }) => e.code);
+    expect(await code(assets.upload(new Blob(['x'], { type: 'x/s413' })))).toBe('too_large');
+    expect(await code(assets.upload(new Blob(['x'], { type: 'x/s403' })))).toBe('not_uploader');
+    expect(await code(assets.upload(new Blob(['x'], { type: 'x/s507' })))).toBe('quota_or_state');
+    expect(await code(assets.upload(new Blob(['x'], { type: 'x/s409' })))).toBe('quota_or_state');
+    expect(await code(assets.upload(new Blob(['x'], { type: 'x/s400' })))).toBe('unsupported_type');
+    expect(await code(assets.upload(new Blob(['x'], { type: 'x/s500' })))).toBe('upstream_error');
+    expect(await code(assets.upload('nope' as never))).toBe('invalid_request');
+    expect(await code(assets.upload(new Blob([], { type: 'image/png' })))).toBe('invalid_request');
+    expect(await code(assets.upload(new Blob(['x'])))).toBe('invalid_request');
+  });
+
+  it('list is oldest first and delete accepts an id or its url', async () => {
+    withAssets();
+    const assets = await boot().use('assets');
+    const l = await assets.list();
+    expect(l.assets.map((a: { url: string }) => a.url)).toEqual(['/_blob/old', '/_blob/new']);
+    expect(l.usage).toEqual({ files: 2, bytes: 3, maxFiles: 2000, maxBytes: 1000 });
+    expect(Object.isFrozen(l)).toBe(true);
+    expect(await assets.delete('c'.repeat(32))).toEqual({ deleted: true });
+    expect(await assets.delete(`/_blob/${'c'.repeat(32)}`)).toEqual({ deleted: true });
+    expect(calls.filter(([, i]) => i?.method === 'DELETE').map(([u]) => u)).toEqual(Array(2).fill(`/__lager/assets/${'c'.repeat(32)}`));
+    await expect(assets.delete('b'.repeat(32))).rejects.toMatchObject({ code: 'not_uploader' });
+    await expect(assets.delete('../x')).rejects.toMatchObject({ code: 'invalid_request' });
+  });
+
+  it('assets is null when not declared or not permitted', async () => {
+    withAssets(OWNER, {});
+    expect(await boot().use('assets')).toBeNull();
+    withAssets({ ...OWNER, level: 'view', isOwner: false, canEdit: false });
+    expect(await boot().use('assets')).toBeNull();
+    withAssets({ ...OWNER, level: 'interact', isOwner: false, canEdit: false });
+    expect(await boot().use('assets')).toBeNull();
+    withAssets({ ...OWNER, level: 'interact', isOwner: false, canEdit: false }, { assets: { upload: 'interact' } });
+    expect(await boot().use('assets')).not.toBeNull();
+    session = { status: 401, body: { error: { code: 'unauthenticated', message: 'x' } } };
+    expect(await boot().use('assets')).toBeNull();
+  });
+
+  it('permissions report assets only when it is available', async () => {
+    withAssets();
+    const p = await boot().use('permissions');
+    expect(await p.state('assets')).toBe('granted');
+    expect(await p.state()).toEqual({ assets: 'granted', db: 'granted', user: 'granted' });
   });
 });
 
