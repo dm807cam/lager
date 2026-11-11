@@ -63,6 +63,7 @@ describe('assets routes', () => {
     expect(Buffer.from(got.body).equals(PNG)).toBe(true);
     expect(got.headers['content-type']).toBe('image/png');
     expect(got.headers['x-content-type-options']).toBe('nosniff');
+    expect(got.headers['cross-origin-resource-policy']).toBe('same-origin');
     expect(got.headers['cache-control']).toBe('private, max-age=31536000, immutable');
     expect(got.headers['content-disposition']).toBe('inline');
     expect(got.headers['content-security-policy']).toBeUndefined();

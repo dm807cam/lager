@@ -151,6 +151,8 @@ export function mountAssetRoutes(
     res.set({
       'Content-Type': text ? `${type}; charset=utf-8` : type,
       'X-Content-Type-Options': 'nosniff',
+      // Browsers enforce this even for cached responses, so a sibling instance's page cannot embed the file.
+      'Cross-Origin-Resource-Policy': 'same-origin',
       'Cache-Control': 'private, max-age=31536000, immutable',
       'Content-Disposition': ATTACHMENT_TYPES.has(type) || (DOCUMENT_ATTACHMENT_TYPES.has(type) && req.get('Sec-Fetch-Dest') === 'document') ? 'attachment' : 'inline',
       Vary: 'Sec-Fetch-Dest',
