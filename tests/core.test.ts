@@ -29,7 +29,9 @@ function makeWith(overrides: Partial<Config>): Core {
 describe('core', () => {
   it('refuses the placeholder admin password on https, but allows it on http', () => {
     expect(() => makeWith({ publicUrl: new URL('https://lager.example.org'), adminPassword: 'bitte-aendern' }))
-      .toThrow(/bitte-aendern/);
+      .toThrow(/LAGER_ADMIN_PASSWORD.*bitte-aendern/);
+    expect(() => makeWith({ publicUrl: new URL('https://lager.example.org'), adminPassword: 'change-me' }))
+      .toThrow(/LAGER_ADMIN_PASSWORD.*change-me/);
     core = makeWith({ publicUrl: new URL('http://lager.localhost:8080'), adminPassword: 'bitte-aendern' });
     expect(core.users.count()).toBe(1);
   });

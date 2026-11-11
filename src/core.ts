@@ -1,4 +1,4 @@
-import { ADMIN_PASSWORD_PLACEHOLDER, type Config } from './config.js';
+import { ADMIN_PASSWORD_PLACEHOLDERS, type Config } from './config.js';
 import { InstanceAssets } from './data/assets.js';
 import { Hub } from './data/hub.js';
 import { Rooms } from './data/rooms.js';
@@ -41,9 +41,9 @@ export interface Core {
 export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
   const db = openPlatformDb(config.dataDir);
   const users = new Users(db);
-  if (config.adminPassword === ADMIN_PASSWORD_PLACEHOLDER && config.publicUrl.protocol === 'https:' && users.count() === 0) {
+  if (config.adminPassword !== undefined && ADMIN_PASSWORD_PLACEHOLDERS.includes(config.adminPassword) && config.publicUrl.protocol === 'https:' && users.count() === 0) {
     db.close();
-    throw new Error('LAGER_ADMIN_PASSWORD still has the placeholder value "bitte-aendern". Set your own password before the first start, '
+    throw new Error(`LAGER_ADMIN_PASSWORD still has the example value "${config.adminPassword}". Set your own password before the first start, `
       + 'because Lager is reachable publicly over https. The admin account was not created.');
   }
   users.ensureAdmin(config.adminEmail, config.adminPassword);

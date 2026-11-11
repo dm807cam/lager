@@ -83,7 +83,8 @@ function parseLocale(raw: string | undefined): Locale {
   return v;
 }
 
-export const ADMIN_PASSWORD_PLACEHOLDER = 'bitte-aendern';
+/** Example values shipped in .env.example and earlier releases; never acceptable on a public https instance. */
+export const ADMIN_PASSWORD_PLACEHOLDERS: readonly string[] = ['change-me', 'bitte-aendern'];
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const publicUrl = new URL(required(env, 'LAGER_PUBLIC_URL'));
