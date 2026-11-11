@@ -514,7 +514,7 @@
       }
       var id = viewerId(session);
       if (!id) throw new Error('Not signed in');
-      return 'data/users/' + id + '/kv';
+      return 'data/users/' + id + '/storage/kv';
     });
   }
 

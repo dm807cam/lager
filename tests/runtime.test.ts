@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import fs from 'node:fs';
 import path from 'node:path';
+import { assertCollectionPath, parseDocPath } from '../src/data/paths.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -633,7 +634,7 @@ describe('window.storage', () => {
     expect(await g.storage.set('a key/1', 'v1')).toEqual({ key: 'a key/1', value: 'v1', shared: false });
     expect(await g.storage.set('k2', 'v2', true)).toEqual({ key: 'k2', value: 'v2', shared: true });
     expect(dbCalls()).toEqual([
-      { op: 'set', path: 'data/users/u1/kv/a%20key%2F1', data: { key: 'a key/1', value: 'v1' } },
+      { op: 'set', path: 'data/users/u1/storage/kv/a%20key%2F1', data: { key: 'a key/1', value: 'v1' } },
       { op: 'set', path: 'kv/k2', data: { key: 'k2', value: 'v2' } },
     ]);
     expect(await g.storage.get('a key/1')).toEqual({ key: 'a key/1', value: 'v1', shared: false });
@@ -643,7 +644,7 @@ describe('window.storage', () => {
     expect(docs.size).toBe(0);
     expect(dbCalls().slice(-2)).toEqual([
       { op: 'delete', path: 'kv/k2' },
-      { op: 'delete', path: 'data/users/u1/kv/a%20key%2F1' },
+      { op: 'delete', path: 'data/users/u1/storage/kv/a%20key%2F1' },
     ]);
   });
 
@@ -684,6 +685,31 @@ describe('window.storage', () => {
     expect(await g.storage.list('b')).toEqual({ keys: ['b1', 'b2'], prefix: 'b', shared: false });
     expect(await g.storage.list('b', true)).toEqual({ keys: ['b3'], prefix: 'b', shared: true });
     expect(await g.storage.list('zz')).toEqual({ keys: [], prefix: 'zz', shared: false });
-    expect(dbCalls().slice(-4).map((c) => c.path)).toEqual(['data/users/u1/kv', 'data/users/u1/kv', 'kv', 'data/users/u1/kv']);
+    expect(dbCalls().slice(-4).map((c) => c.path)).toEqual(['data/users/u1/storage/kv', 'data/users/u1/storage/kv', 'kv', 'data/users/u1/storage/kv']);
+  });
+});
+
+describe('path parity with the server validators', () => {
+  it('every path the runtime sends is accepted by the server', async () => {
+    const claude = boot();
+    await g.storage.set('a key/1', 'v');
+    await g.storage.set('k', 'v', true);
+    await g.storage.get('a key/1');
+    await g.storage.get('k', true);
+    await g.storage.list('a');
+    await g.storage.list('k', true);
+    await g.storage.delete('a key/1');
+    await g.storage.delete('k', true);
+    const db = await claude.use('db');
+    await db.doc('tasks/t1').set({ a: 1 });
+    await db.collection('tasks').get();
+
+    const sent = dbCalls();
+    expect(sent).toHaveLength(10);
+    for (const c of sent) {
+      if (c.op === 'query') expect(() => assertCollectionPath(c.path), c.path).not.toThrow();
+      else expect(() => parseDocPath(c.path), c.path).not.toThrow();
+    }
+    expect(sent.filter((c) => c.op === 'query').map((c) => c.path)).toEqual(['data/users/u1/storage/kv', 'kv', 'tasks']);
   });
 });
