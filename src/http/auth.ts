@@ -68,7 +68,7 @@ ${msg.ok ? `<p class="ok" role="status">${esc(msg.ok)}</p>` : ''}${errorLine(msg
 <form method="post" action="/account/password"><input type="hidden" name="csrf" value="${csrf}">
 <label for="current">Aktuelles Passwort</label><input id="current" name="current" type="password" required autocomplete="current-password">
 <label for="new-password">Neues Passwort</label><input id="new-password" name="password" type="password" required minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password">
-<p class="muted">Mindestens ${MIN_PASSWORD_LENGTH} Zeichen. Danach werden alle anderen Geräte abgemeldet.</p>
+<p class="muted">Mindestens ${MIN_PASSWORD_LENGTH} Zeichen. Danach werden alle anderen Geräte abgemeldet und alle Verbindungen zu Claude getrennt; API-Tokens bleiben gültig.</p>
 <button type="submit">Passwort ändern</button></form>`, { headerExtra: signedInHeader(user.email, csrf, user.role === 'admin') });
 }
 
@@ -197,7 +197,7 @@ export const authExtension: PlatformExtension = (router, core) => {
     const password = field(req, 'password');
     try {
       core.accounts.resetPassword(token, password);
-      html(res, 200, notice('Passwort geändert.', 'Du kannst dich jetzt mit dem neuen Passwort anmelden.', '<p><a href="/login">Zur Anmeldung</a></p>'));
+      html(res, 200, notice('Passwort zurückgesetzt', 'Passwort geändert. Alle Verbindungen zu Claude und alle API-Tokens dieses Kontos wurden widerrufen.', '<p><a href="/login">Zur Anmeldung</a></p>'));
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
       // The token is judged before the password, so any other complaint is about the password and keeps the form.

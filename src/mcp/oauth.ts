@@ -171,6 +171,12 @@ export class OAuthStore {
     else this.db.prepare('DELETE FROM oauth_tokens WHERE token_hash = ?').run(row.token_hash);
   }
 
+  /** Drops every authorization code and access/refresh token of the account (password change, reset, disabling). */
+  revokeUser(userId: string): void {
+    this.db.prepare('DELETE FROM oauth_tokens WHERE user_id = ?').run(userId);
+    this.db.prepare('DELETE FROM oauth_codes WHERE user_id = ?').run(userId);
+  }
+
   private revokeGrant(grantId: string): void {
     this.db.prepare('DELETE FROM oauth_tokens WHERE grant_id = ?').run(grantId);
   }

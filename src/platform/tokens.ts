@@ -62,6 +62,11 @@ export class ApiTokens {
     return rows.map(toInfo);
   }
 
+  /** Deletes every API token of the account; returns how many there were. */
+  revokeAll(userId: string): number {
+    return Number(this.db.prepare('DELETE FROM api_tokens WHERE user_id = ?').run(userId).changes);
+  }
+
   revoke(userId: string, id: string): boolean {
     return Number(this.db.prepare('DELETE FROM api_tokens WHERE id = ? AND user_id = ?').run(id, userId).changes) > 0;
   }

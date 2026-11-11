@@ -46,7 +46,18 @@ function toUser(r: UserRow): User {
 }
 
 export class Users {
+  private passwordHooks: Array<(userId: string) => void> = [];
+  private disabledHooks: Array<(userId: string) => void> = [];
+  private demotedHooks: Array<(userId: string) => void> = [];
+
   constructor(private db: DatabaseSync) {}
+
+  /** Runs after every password replacement (account page, recovery). Lets other modules drop credentials they hold for the account. */
+  onPasswordChanged(hook: (userId: string) => void): void { this.passwordHooks.push(hook); }
+  /** Runs after an account has been disabled. */
+  onDisabled(hook: (userId: string) => void): void { this.disabledHooks.push(hook); }
+  /** Runs after an administrator lost the role. */
+  onDemoted(hook: (userId: string) => void): void { this.demotedHooks.push(hook); }
 
   create(input: { email: string; name: string; password: string; role: Role; verified?: boolean }): User {
     const email = input.email.trim();
@@ -101,6 +112,7 @@ export class Users {
     const row = this.require(id);
     if (role !== 'admin') this.assertNotLastActiveAdmin(row);
     this.db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
+    if (row.role === 'admin' && role !== 'admin') for (const hook of this.demotedHooks) hook(id);
     return toUser(this.require(id));
   }
 
@@ -111,6 +123,9 @@ export class Users {
       this.db
         .prepare('UPDATE users SET disabled_at = COALESCE(disabled_at, ?), session_epoch = session_epoch + 1 WHERE id = ?')
         .run(new Date().toISOString(), id);
+      for (const hook of this.disabledHooks) hook(id);
+      // An administrator who is disabled no longer vouches for the invitations they issued.
+      if (row.role === 'admin') for (const hook of this.demotedHooks) hook(id);
     } else {
       this.db.prepare('UPDATE users SET disabled_at = NULL WHERE id = ?').run(id);
     }
@@ -132,6 +147,7 @@ export class Users {
     }
     this.require(id);
     this.db.prepare('UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?').run(hashPassword(password), id);
+    for (const hook of this.passwordHooks) hook(id);
   }
 
   markVerified(id: string): void {

@@ -44,6 +44,11 @@ export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
   const tokens = new ApiTokens(db, users);
   const oauth = new OAuthStore(db, users);
   const accounts = new Accounts(db, users, settings, mailer, config);
+  // Credentials do not outlive the password they were issued under; layering keeps Users free of OAuth/token code.
+  users.onPasswordChanged((id) => { oauth.revokeUser(id); accounts.deleteResetLinks(id); });
+  accounts.onPasswordReset((id) => { tokens.revokeAll(id); });
+  users.onDisabled((id) => { oauth.revokeUser(id); });
+  users.onDemoted((id) => { accounts.deleteInvitesBy(id); });
   const hub = new Hub();
   const data = new InstanceData(config.dataDir, hub, config.snapshotKeep, config.instanceQuotaBytes);
   const groups = new Groups(db, users);
