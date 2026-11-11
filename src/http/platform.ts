@@ -2,8 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import express from 'express';
 import type { Core } from '../core.js';
-import { clearCookie, sessionCookieName, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
-import { csrfValid, sessionUser } from './session.js';
+import { clearCookie, sessionCookieName } from './cookies.js';
+import { csrfValid, issueSession, sessionUser } from './session.js';
 import { disabledPage, forbiddenPage, loginPage, notFoundPage, page } from './pages.js';
 import { LagerError } from '../errors.js';
 import { safeReturnPath, sendError } from './errors.js';
@@ -78,7 +78,7 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
   });
 
   router.get('/login', (req, res) => {
-    res.set('Cache-Control', 'no-store').type('html').send(loginPage(safeReturnPath(req.query.return)));
+    res.set('Cache-Control', 'no-store').type('html').send(loginPage(safeReturnPath(req.query.return), undefined, { registration: core.settings.registration }));
   });
 
   router.post('/login', express.urlencoded({ extended: false, limit: '10kb' }), (req, res) => {
@@ -88,17 +88,22 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
     const account = typeof body.email === 'string' ? body.email.trim().toLowerCase().slice(0, 254) : '';
     res.set('Cache-Control', 'no-store');
     if (limiter.blocked(ip, account)) {
-      res.status(429).type('html').send(loginPage(ret, 'Zu viele fehlgeschlagene Versuche. Bitte warte einige Minuten.'));
+      res.status(429).type('html').send(loginPage(ret, 'Zu viele fehlgeschlagene Versuche. Bitte warte einige Minuten.', { registration: core.settings.registration }));
       return;
     }
-    const user = typeof body.email === 'string' && typeof body.password === 'string'
-      ? core.users.verifyPassword(body.email, body.password) : null;
-    if (!user) {
-      limiter.fail(ip, account);
-      res.status(401).type('html').send(loginPage(ret, 'E-Mail oder Passwort ist falsch.'));
+    const result = typeof body.email === 'string' && typeof body.password === 'string'
+      ? core.users.checkLogin(body.email, body.password) : { ok: false as const, reason: 'invalid' as const };
+    if (!result.ok) {
+      // Unverified and disabled are only reported after a correct password, so they do not count as failures.
+      if (result.reason === 'invalid') limiter.fail(ip, account);
+      const message = result.reason === 'unverified' ? 'Bitte bestätige zuerst deine E-Mail-Adresse.'
+        : result.reason === 'disabled' ? 'Dieses Konto ist deaktiviert.' : 'E-Mail oder Passwort ist falsch.';
+      res.status(401).type('html').send(loginPage(ret, message, {
+        registration: core.settings.registration, resendEmail: result.reason === 'unverified' ? account : undefined,
+      }));
       return;
     }
-    setCookie(res, config, sessionCookieName(config), signToken({ uid: user.id }, config.secret, THIRTY_DAYS_SECONDS));
+    issueSession(core, res, result.user);
     res.redirect(ret);
   });
 
@@ -109,6 +114,8 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
       res.status(403).type('html').send(page('Fehler', '<h1>Das hat nicht geklappt</h1><p class="err">Die Sitzung ist abgelaufen. Bitte lade die Seite neu und versuche es erneut.</p><p><a href="/">Zurück zur Übersicht</a></p>'));
       return;
     }
+    // Ending the epoch signs the account out everywhere: every platform session, instance cookie and pending code.
+    core.users.bumpEpoch(user.id);
     clearCookie(res, config, sessionCookieName(config));
     res.redirect('/login');
   });
@@ -133,7 +140,7 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
       res.status(403).type('html').send(forbiddenPage());
       return;
     }
-    const code = signToken({ uid: user.id, iid: instance.id, k: 'code', jti: crypto.randomUUID() }, config.secret, 60);
+    const code = signToken({ uid: user.id, iid: instance.id, k: 'code', jti: crypto.randomUUID(), ep: user.sessionEpoch }, config.secret, 60);
     const back = safeReturnPath(req.query.return);
     res.redirect(`${instanceUrl(config, instance.slug)}/__lager/callback?code=${encodeURIComponent(code)}&return=${encodeURIComponent(back)}`);
   });

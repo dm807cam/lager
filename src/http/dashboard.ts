@@ -6,7 +6,7 @@ import { LagerError } from '../errors.js';
 import type { Instance, Visibility } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
-import { esc, page } from './pages.js';
+import { esc, page, signedInHeader } from './pages.js';
 import { csrfToken, csrfValid } from './session.js';
 
 const VISIBILITY_LABELS: Array<[Visibility, string]> = [['private', 'Privat'], ['users', 'Alle Angemeldeten'], ['public', 'Öffentlich']];
@@ -69,7 +69,7 @@ function dashboardPage(core: Core, user: User, newToken?: { name: string; token:
   const created = newToken ? `<div class="card" role="status"><strong>Token „${esc(newToken.name)}“ erstellt.</strong>
 <span class="token mono">${esc(newToken.token)}</span><span class="err">Kopiere ihn jetzt: Er wird nur dieses eine Mal angezeigt.</span></div>` : '';
 
-  const headerExtra = `<div class="who"><span>${esc(user.email)}</span><form method="post" action="/logout"><input type="hidden" name="csrf" value="${esc(csrf)}"><button type="submit" class="quiet">Abmelden</button></form></div>`;
+  const headerExtra = signedInHeader(user.email, csrf);
   return page('Lager', `<h1>Übersicht</h1>
 <h2>Claude verbinden</h2>
 <div class="card"><p>Trage diese Adresse in Claude als benutzerdefinierten Connector ein:</p><code>${esc(new URL('/mcp', core.config.publicUrl).href)}</code></div>

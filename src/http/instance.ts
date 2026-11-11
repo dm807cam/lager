@@ -12,6 +12,7 @@ import { instanceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from '
 import { safeReturnPath, sendError } from './errors.js';
 import { injectRuntime } from './inject.js';
 import { badCodePage, disabledPage, forbiddenPage, notFoundPage } from './pages.js';
+import { epochValid } from './session.js';
 import { signToken, verifyToken } from './tokens.js';
 
 const RUNTIME_FILE = new URL('../runtime/runtime.js', import.meta.url);
@@ -20,10 +21,10 @@ const PING_MS = 25_000;
 const RANK: Record<Level, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
 
 function instanceUser(core: Core, req: Request, instance: Instance): User | null {
-  const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown }>(readCookie(req, instanceCookieName(core.config)), core.config.secret);
+  const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown; ep?: unknown }>(readCookie(req, instanceCookieName(core.config)), core.config.secret);
   if (!t || t.k !== 'inst' || t.iid !== instance.id || typeof t.uid !== 'string') return null;
   const user = core.users.get(t.uid);
-  return user && !user.disabled ? user : null;
+  return epochValid(user, t.ep) ? user : null;
 }
 
 function activeCapabilities(core: Core, instance: Instance): Capabilities {
@@ -87,10 +88,10 @@ export function createInstanceRouter(core: Core): express.Router {
 
   router.get('/__lager/callback', (req, res) => {
     const { instance } = ctxOf(res);
-    const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown; jti?: unknown; exp: number }>(
+    const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown; jti?: unknown; ep?: unknown; exp: number }>(
       typeof req.query.code === 'string' ? req.query.code : undefined, config.secret);
-    if (!t || t.k !== 'code' || t.iid !== instance.id || typeof t.uid !== 'string' || typeof t.jti !== 'string'
-      || !core.users.get(t.uid)) {
+    const user = t && typeof t.uid === 'string' ? core.users.get(t.uid) : null;
+    if (!t || t.k !== 'code' || t.iid !== instance.id || typeof t.jti !== 'string' || !epochValid(user, t.ep)) {
       res.status(400).type('html').send(badCodePage());
       return;
     }
@@ -101,7 +102,7 @@ export function createInstanceRouter(core: Core): express.Router {
       return;
     }
     usedCodes.set(t.jti, t.exp);
-    setCookie(res, config, instanceCookieName(config), signToken({ uid: t.uid, iid: instance.id, k: 'inst' }, config.secret, THIRTY_DAYS_SECONDS));
+    setCookie(res, config, instanceCookieName(config), signToken({ uid: user.id, iid: instance.id, k: 'inst', ep: user.sessionEpoch }, config.secret, THIRTY_DAYS_SECONDS));
     res.redirect(safeReturnPath(req.query.return));
   });
 
@@ -243,6 +244,7 @@ export function createInstanceRouter(core: Core): express.Router {
       res.write(`event: ${event}\n${payload === undefined ? '' : `data: ${JSON.stringify(payload)}\n`}\n`);
     };
     const userId = first.viewer.userId;
+    const epoch = first.user?.sessionEpoch;
     let ping: NodeJS.Timeout | undefined;
     let unsubscribe: (() => void) | undefined;
     const stop = (): void => {
@@ -254,6 +256,8 @@ export function createInstanceRouter(core: Core): express.Router {
       // Re-resolve access on every event so revoked visibility or changed rules take effect immediately.
       const inst = core.apps.getInstance(first.instance.id);
       const viewer = userId === null ? null : core.users.get(userId);
+      // The stream belongs to the session it was opened with: logout, password change or disabling ends it.
+      if (userId !== null && (!viewer || viewer.disabled || viewer.sessionEpoch !== epoch)) { stop(); return; }
       const level = inst ? core.access.levelFor(inst, viewer) : 'none';
       if (!inst || RANK[level] < RANK.view) { stop(); return; }
       if (e.type === 'reset') { send('reset'); return; }

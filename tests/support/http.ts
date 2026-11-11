@@ -5,6 +5,8 @@ import request from 'supertest';
 import type { Config } from '../../src/config.js';
 import { createCore, type Core } from '../../src/core.js';
 import { createHttpApp, type PlatformExtension } from '../../src/http/app.js';
+import { authExtension } from '../../src/http/auth.js';
+import type { Mailer } from '../../src/platform/mail.js';
 
 export const PLATFORM_HOST = 'lager.localhost';
 
@@ -20,7 +22,7 @@ export interface Harness {
   enter(slug: string, platformCookie: string): Promise<string>;
 }
 
-export interface HarnessOptions { publicUrl?: string; extensions?: PlatformExtension[]; trustProxy?: number | false; instanceQuotaBytes?: number }
+export interface HarnessOptions { publicUrl?: string; extensions?: PlatformExtension[]; trustProxy?: number | false; instanceQuotaBytes?: number; mailer?: Mailer }
 
 export function makeHarness(opts: HarnessOptions = {}): Harness {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-http-'));
@@ -29,8 +31,9 @@ export function makeHarness(opts: HarnessOptions = {}): Harness {
     adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 'test-secret', snapshotKeep: 20, trustProxy: opts.trustProxy ?? false,
     instanceQuotaBytes: opts.instanceQuotaBytes ?? 50 * 1024 * 1024,
   };
-  const core = createCore(config);
-  const app = createHttpApp(core, opts.extensions ?? []);
+  const core = createCore(config, opts.mailer ? { mailer: opts.mailer } : undefined);
+  // The public account pages are part of every platform host, so every harness registers them.
+  const app = createHttpApp(core, [authExtension, ...(opts.extensions ?? [])]);
   const host = config.publicUrl.host;
   const adminId = core.users.list()[0].id;
   const sessionName = config.publicUrl.protocol === 'https:' ? '__Host-lager_session' : 'lager_session';

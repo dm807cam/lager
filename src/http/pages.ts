@@ -11,6 +11,7 @@ header.top img{width:40px;height:40px;border-radius:10px;display:block}
 header.top .name{font-size:1.25rem;font-weight:700;letter-spacing:.02em}
 header.top .who{margin-left:auto;display:flex;align-items:center;gap:.75rem;font-size:.9rem}
 header.top form{margin:0}
+header.top a.nav{color:#fff}
 main{max-width:24rem;margin:2rem auto;padding:0 1rem}
 main.wide{max-width:60rem}
 h1{font-size:1.5rem;margin:0 0 1rem}h2{font-size:1.2rem;margin:2rem 0 .75rem}h3{font-size:1rem;margin:1rem 0 .4rem}
@@ -45,7 +46,13 @@ export function page(title: string, body: string, opts: { wide?: boolean; header
 <main${opts.wide ? ' class="wide"' : ''}>${body}</main></body></html>`;
 }
 
-export function loginPage(returnPath: string, error?: string): string {
+/** Resend form shown wherever an unverified address needs a new confirmation link. */
+export const resendForm = (email = ''): string => `<form method="post" action="/verify/resend">
+<label for="resend-email">E-Mail</label><input id="resend-email" name="email" type="email" autocomplete="email" required value="${esc(email)}">
+<button type="submit" class="quiet">Bestätigungs-E-Mail erneut senden</button>
+</form>`;
+
+export function loginPage(returnPath: string, error?: string, opts: { registration?: 'open' | 'invite' | 'closed'; resendEmail?: string } = {}): string {
   return page('Anmelden', `<h1>Anmelden</h1>
 ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ''}
 <form method="post" action="/login">
@@ -53,8 +60,14 @@ ${error ? `<p class="err" role="alert">${esc(error)}</p>` : ''}
 <label for="email">E-Mail</label><input id="email" name="email" type="email" autocomplete="username" required autofocus>
 <label for="password">Passwort</label><input id="password" name="password" type="password" autocomplete="current-password" required>
 <button type="submit">Anmelden</button>
-</form>`);
+</form>
+${opts.resendEmail !== undefined ? resendForm(opts.resendEmail) : ''}
+<p><a href="/forgot">Passwort vergessen?</a>${opts.registration === 'closed' ? '' : ' · <a href="/register">Konto erstellen</a>'}</p>`);
 }
+
+/** Header block of signed-in pages: navigation, the account's address and the CSRF-protected logout. */
+export const signedInHeader = (email: string, csrf: string): string =>
+  `<div class="who"><a href="/" class="nav">Übersicht</a><a href="/account" class="nav">Konto</a><span>${esc(email)}</span><form method="post" action="/logout"><input type="hidden" name="csrf" value="${esc(csrf)}"><button type="submit" class="quiet">Abmelden</button></form></div>`;
 
 export const notFoundPage = (): string => page('Nicht gefunden', '<h1>Nicht gefunden</h1><p>Seite nicht gefunden.</p>');
 export const forbiddenPage = (): string =>

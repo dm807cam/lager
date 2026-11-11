@@ -114,6 +114,21 @@ describe('platform host', () => {
     expect(res.headers.location).toContain('/login');
   });
 
+  it('disabled account cannot sign in and loses its session', async () => {
+    h = makeHarness();
+    const user = h.core.users.create({ email: 'dis@x.y', name: 'Dis', password: 'long enough pw', role: 'user' });
+    const cookie = await h.login('dis@x.y', 'long enough pw');
+    expect((await request(h.app).get('/auth/instance').query({ slug: 'nope' }).set('Host', PLATFORM_HOST).set('Cookie', cookie)).status).toBe(404);
+    h.core.users.setDisabled(user.id, true);
+    const res = await request(h.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email: 'dis@x.y', password: 'long enough pw' });
+    expect(res.status).toBe(401);
+    expect(res.text).toContain('deaktiviert');
+    expect(res.headers['set-cookie']).toBeUndefined();
+    const after = await request(h.app).get('/auth/instance').query({ slug: 'nope' }).set('Host', PLATFORM_HOST).set('Cookie', cookie);
+    expect(after.status).toBe(302);
+    expect(after.headers.location).toContain('/login');
+  });
+
   it('unknown host → 404', async () => {
     h = makeHarness();
     for (const host of ['evil.example', 'apps.localhost', 'a.b.apps.localhost']) {
@@ -141,7 +156,7 @@ describe('platform host', () => {
     const { apiExtension } = await import('../src/http/api.js');
     h = makeHarness({ extensions: [apiExtension, dashboardExtension] });
     const cookie = await h.login();
-    for (const path of ['/login', '/', '/api/apps', '/nothing']) {
+    for (const path of ['/login', '/', '/api/apps', '/nothing', '/register', '/forgot', '/reset', '/verify', '/account']) {
       const res = await request(h.app).get(path).set('Host', PLATFORM_HOST).set('Cookie', cookie);
       expect(res.headers['x-frame-options'], path).toBe('DENY');
       expect(res.headers['content-security-policy'], path).toBe("frame-ancestors 'none'");

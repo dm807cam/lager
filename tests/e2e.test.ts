@@ -8,6 +8,7 @@ import type { Config } from '../src/config.js';
 import { createCore, type Core } from '../src/core.js';
 import { apiExtension } from '../src/http/api.js';
 import { createHttpApp } from '../src/http/app.js';
+import { authExtension } from '../src/http/auth.js';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { mcpExtension } from '../src/mcp/http.js';
 
@@ -23,7 +24,7 @@ async function boot(): Promise<{ core: Core; call: (host: string, method: string
     adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 'e2e-secret', snapshotKeep: 20, trustProxy: false,
   };
   const core = createCore(config);
-  const server = http.createServer(createHttpApp(core, [apiExtension, mcpExtension, dashboardExtension]));
+  const server = http.createServer(createHttpApp(core, [authExtension, apiExtension, mcpExtension, dashboardExtension]));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   cleanup = () => { server.closeAllConnections(); server.close(); core.close(); };
   const port = (server.address() as AddressInfo).port;

@@ -90,7 +90,7 @@ describe('instance host', () => {
 
   it('callback return must be a local path', async () => {
     const { h, inst } = setup();
-    const code = signToken({ uid: h.adminId, iid: inst.id, k: 'code', jti: 'j1' }, 'test-secret', 60);
+    const code = signToken({ uid: h.adminId, iid: inst.id, k: 'code', jti: 'j1', ep: 0 }, 'test-secret', 60);
     const cb = await request(h.app).get('/__lager/callback').query({ code, return: '//evil.example' }).set('Host', W);
     expect(cb.status).toBe(302);
     expect(cb.headers.location).toBe('/');
@@ -109,7 +109,7 @@ describe('instance host', () => {
   it('level none with a user is 403', async () => {
     const { h, inst } = setup();
     const u = h.core.users.create({ email: 'u@x.y', name: 'U', password: 'pw', role: 'user' });
-    const cookie = 'lager_inst=' + signToken({ uid: u.id, iid: inst.id, k: 'inst' }, 'test-secret', 60);
+    const cookie = 'lager_inst=' + signToken({ uid: u.id, iid: inst.id, k: 'inst', ep: 0 }, 'test-secret', 60);
     expect((await request(h.app).get('/').set('Host', W).set('Cookie', cookie)).status).toBe(403);
     expect((await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', cookie)).status).toBe(401);
   });
@@ -117,7 +117,7 @@ describe('instance host', () => {
   it('users visibility gives signed-in users interact', async () => {
     const { h, inst } = setup({ visibility: 'users' });
     const u = h.core.users.create({ email: 'u@x.y', name: 'U', password: 'pw', role: 'user' });
-    const cookie = 'lager_inst=' + signToken({ uid: u.id, iid: inst.id, k: 'inst' }, 'test-secret', 60);
+    const cookie = 'lager_inst=' + signToken({ uid: u.id, iid: inst.id, k: 'inst', ep: 0 }, 'test-secret', 60);
     const res = await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', cookie);
     expect(res.body.viewer).toMatchObject({ id: u.id, level: 'interact', isOwner: false, canEdit: false });
   });
@@ -302,7 +302,7 @@ describe('instance host', () => {
   it('grantee gets the granted level in the session', async () => {
     const { h, inst } = setup();
     const e = h.core.users.create({ email: 'e@x.y', name: 'E', password: 'pw', role: 'user' });
-    const cookie = 'lager_inst=' + signToken({ uid: e.id, iid: inst.id, k: 'inst' }, 'test-secret', 60);
+    const cookie = 'lager_inst=' + signToken({ uid: e.id, iid: inst.id, k: 'inst', ep: 0 }, 'test-secret', 60);
     expect((await request(h.app).get('/').set('Host', W).set('Cookie', cookie)).status).toBe(403);
     h.core.access.setGrant(inst, 'user', e.id, 'view', h.core.users.get(h.adminId)!);
     const platform = await h.login('e@x.y', 'pw');
@@ -335,7 +335,7 @@ describe('instance host', () => {
   it('disabled user is treated as anonymous in the instance', async () => {
     const { h, inst } = setup({ visibility: 'users' });
     const e = h.core.users.create({ email: 'e@x.y', name: 'E', password: 'pw', role: 'user' });
-    const cookie = 'lager_inst=' + signToken({ uid: e.id, iid: inst.id, k: 'inst' }, 'test-secret', 60);
+    const cookie = 'lager_inst=' + signToken({ uid: e.id, iid: inst.id, k: 'inst', ep: 0 }, 'test-secret', 60);
     expect((await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', cookie)).status).toBe(200);
     h.core.users.setDisabled(e.id, true);
     expect((await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', cookie)).status).toBe(401);
@@ -357,3 +357,57 @@ describe('instance host', () => {
     expect((await db(h, W, inst, { op: 'delete', path: 'tasks/t0' })).status).toBe(200);
   });
 });
+
+describe('session epoch', () => {
+  async function member() {
+    const { h, inst } = setup({ visibility: 'users' });
+    const user = h.core.users.create({ email: 'm@x.y', name: 'M', password: 'long enough pw', role: 'user' });
+    const platform = await h.login('m@x.y', 'long enough pw');
+    const cookie = await h.enter('workout', platform);
+    expect((await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', cookie)).status).toBe(200);
+    return { h, inst, user, platform, cookie };
+  }
+  const anonymous = async (h: Harness, cookie: string) => {
+    const res = await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', cookie);
+    expect(res.status).toBe(401);
+  };
+
+  it('instance cookie dies with the epoch', async () => {
+    for (const kill of [
+      (c: Awaited<ReturnType<typeof member>>) => c.h.core.users.bumpEpoch(c.user.id),
+      (c: Awaited<ReturnType<typeof member>>) => c.h.core.users.setPassword(c.user.id, 'another long password'),
+      (c: Awaited<ReturnType<typeof member>>) => c.h.core.users.setDisabled(c.user.id, true),
+    ]) {
+      const c = await member();
+      kill(c);
+      await anonymous(c.h, c.cookie);
+      const page = await request(c.h.app).get('/').set('Host', W).set('Cookie', c.cookie);
+      expect(page.status).toBe(302);
+      c.h.core.close();
+      h = undefined;
+    }
+  });
+
+  it('handshake code from before an epoch bump is rejected', async () => {
+    const { h, inst, user, platform } = await member();
+    const auth = await request(h.app).get('/auth/instance').query({ slug: 'workout', return: '/' }).set('Host', PLATFORM_HOST).set('Cookie', platform);
+    const loc = new URL(auth.headers.location);
+    h.core.users.bumpEpoch(user.id);
+    const cb = await request(h.app).get(loc.pathname + loc.search).set('Host', loc.host);
+    expect(cb.status).toBe(400);
+    expect(cb.headers['set-cookie']).toBeUndefined();
+    expect(inst.id).toBeTruthy();
+  });
+
+  it('instance cookie and code without an epoch are rejected', async () => {
+    const { h, user } = await member();
+    const inst = h.core.apps.getInstanceBySlug('workout')!;
+    const legacyCookie = `lager_inst=${signToken({ uid: user.id, iid: inst.id, k: 'inst' }, 'test-secret', 60)}`;
+    await anonymous(h, legacyCookie);
+    const okCookie = `lager_inst=${signToken({ uid: user.id, iid: inst.id, k: 'inst', ep: user.sessionEpoch }, 'test-secret', 60)}`;
+    expect((await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', okCookie)).status).toBe(200);
+    const code = signToken({ uid: user.id, iid: inst.id, k: 'code', jti: 'j1' }, 'test-secret', 60);
+    expect((await request(h.app).get('/__lager/callback').query({ code }).set('Host', W)).status).toBe(400);
+  });
+});
+
