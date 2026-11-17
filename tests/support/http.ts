@@ -12,6 +12,11 @@ import type { Mailer } from '../../src/platform/mail.js';
 
 export const PLATFORM_HOST = 'lager.localhost';
 
+/** A sign-in nonce as an instance would put it into its cookie, and the cookie pair that carries it (http and https name). */
+export const NONCE = 'n'.repeat(22);
+export const NONCE_COOKIE = `lager_nonce=${NONCE}`;
+export const NONCE_COOKIE_HTTPS = `__Host-lager_nonce=${NONCE}`;
+
 export interface Harness {
   core: Core;
   app: ReturnType<typeof createHttpApp>;
@@ -24,14 +29,14 @@ export interface Harness {
   enter(slug: string, platformCookie: string): Promise<string>;
 }
 
-export interface HarnessOptions { publicUrl?: string; extensions?: PlatformExtension[]; trustProxy?: number | false; instanceQuotaBytes?: number; mailer?: Mailer; defaultLocale?: Locale }
+export interface HarnessOptions { publicUrl?: string; extensions?: PlatformExtension[]; trustProxy?: number | false; instanceQuotaBytes?: number; mailer?: Mailer; defaultLocale?: Locale; accessLog?: boolean }
 
 export function makeHarness(opts: HarnessOptions = {}): Harness {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-http-'));
   const config: Config = {
     dataDir, port: 0, defaultLocale: opts.defaultLocale ?? 'en', publicUrl: new URL(opts.publicUrl ?? 'http://lager.localhost:8080'), appsDomain: 'apps.localhost',
     adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 'test-secret', snapshotKeep: 20, trustProxy: opts.trustProxy ?? false,
-    instanceQuotaBytes: opts.instanceQuotaBytes ?? 50 * 1024 * 1024,
+    instanceQuotaBytes: opts.instanceQuotaBytes ?? 50 * 1024 * 1024, accessLog: opts.accessLog,
   };
   const core = createCore(config, opts.mailer ? { mailer: opts.mailer } : undefined);
   // The stylesheet, the script and the public account pages are part of every platform host, so every harness registers them.
@@ -52,10 +57,11 @@ export function makeHarness(opts: HarnessOptions = {}): Harness {
       return cookiePair(res, sessionName);
     },
     async enter(slug, platformCookie) {
-      const auth = await request(app).get('/auth/instance').query({ slug, return: '/' })
+      const auth = await request(app).get('/auth/instance').query({ slug, return: '/', n: NONCE })
         .set('Host', host).set('Cookie', platformCookie);
       const loc = new URL(auth.headers.location);
-      const cb = await request(app).get(loc.pathname + loc.search).set('Host', loc.host);
+      const cb = await request(app).get(loc.pathname + loc.search).set('Host', loc.host)
+        .set('Cookie', config.publicUrl.protocol === 'https:' ? NONCE_COOKIE_HTTPS : NONCE_COOKIE);
       return cookiePair(cb, instanceName);
     },
   };

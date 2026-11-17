@@ -20,6 +20,8 @@ const sessionOf = (viewer: Record<string, unknown>): { status: number; body: unk
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
   closed = false;
+  /** 0 connecting, 1 open, 2 closed: what the browser reports after it gave up on an HTTP error. */
+  readyState = 0;
   private handlers = new Map<string, ((e: { data?: string }) => void)[]>();
   constructor(public url: string) { FakeEventSource.instances.push(this); }
   addEventListener(type: string, fn: (e: { data?: string }) => void): void {
@@ -187,6 +189,26 @@ describe('claude.use', () => {
     expect(user).not.toBeNull();
     expect(await user.isOwner()).toBe(false);
     expect(await user.id()).toBeNull();
+  });
+
+  it('a failed session fetch is not kept: the next use asks again and gets the namespace', async () => {
+    session = 'network-error';
+    const claude = boot();
+    expect(await claude.use('db')).toBeNull();
+    await expect(g.storage.get('k', true)).rejects.toThrow();
+    session = { status: 503, body: {} };
+    expect(await claude.use('db')).toBeNull();
+    session = sessionOf(OWNER);
+    const db = await claude.use('db');
+    expect(db).not.toBeNull();
+    expect(await claude.use('db')).toBe(db);
+    expect((await g.storage.set('k', 'v', true)).key).toBe('k');
+    // A definite answer (not signed in) is kept as before.
+    session = { status: 401, body: { error: { code: 'unauthenticated' } } };
+    const other = boot();
+    expect(await other.use('db')).toBeNull();
+    session = sessionOf(OWNER);
+    expect(await other.use('db')).toBeNull();
   });
 
   it('db is null on a network failure and when the level is absent', async () => {
@@ -489,6 +511,50 @@ describe('onSnapshot', () => {
     await flush();
     expect([d.length, q.length]).toEqual([2, 2]);
     u1(); u2();
+  });
+
+  it('a stream the browser gave up on is opened anew with backoff, and not after the last unsubscribe', async () => {
+    const db = await boot().use('db');
+    put('tasks/t1', { v: 1 });
+    const seen: any[] = [];
+    const unsub = db.doc('tasks/t1').onSnapshot((s: any) => seen.push(s));
+    await flush();
+    expect(FakeEventSource.instances).toHaveLength(1);
+    vi.useFakeTimers();
+    try {
+      // A dropped connection: the browser reconnects by itself, the runtime leaves the stream alone.
+      es().emit('error');
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(FakeEventSource.instances).toHaveLength(1);
+      // An HTTP error on reconnect (502 while the server restarts): the browser closes the stream for good.
+      es().readyState = 2;
+      es().emit('error');
+      await vi.advanceTimersByTimeAsync(999);
+      expect(FakeEventSource.instances).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(FakeEventSource.instances).toHaveLength(2);
+      // Still down: the next attempt waits twice as long.
+      es().readyState = 2;
+      es().emit('error');
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(FakeEventSource.instances).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(FakeEventSource.instances).toHaveLength(3);
+      // Back up: listeners catch up on what they missed.
+      put('tasks/t1', { v: 2 });
+      es().readyState = 1;
+      es().emit('open');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen[seen.length - 1].data()).toEqual({ v: 2 });
+      // No listener left: a pending retry is dropped.
+      es().readyState = 2;
+      es().emit('error');
+      unsub();
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(FakeEventSource.instances).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('transient failures retry with backoff and recover; unsubscribe cancels the retry', async () => {
@@ -1132,8 +1198,10 @@ describe('room', () => {
     expect(await code(room.presence({ 'bad key': 1 }))).toBe('invalid_argument');
     expect(await code(room.presence({ constructor: 1 }))).toBe('invalid_argument');
     expect(await code(room.presence({ a: undefined as never }))).toBe('invalid_argument');
-    expect(await code(room.presence({ a: 'x'.repeat(3000) }))).toBe('resolved');
-    expect(await code(room.presence({ b: 'x'.repeat(3000) }))).toBe('invalid_argument');
+    // The whole presence is held to the server's 2 KiB, not to the 4 KiB of a message.
+    expect(await code(room.presence({ a: 'x'.repeat(1500) }))).toBe('resolved');
+    expect(await code(room.presence({ b: 'x'.repeat(1500) }))).toBe('invalid_argument');
+    expect(await code(room.presence({ c: 'x'.repeat(3000) }))).toBe('invalid_argument');
     expect(Object.keys(room.peers()[0].presence)).toEqual(['a']);
   });
 

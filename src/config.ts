@@ -7,6 +7,10 @@ import { isLocale, LOCALES, type Locale } from './i18n/index.js';
 export interface Config {
   dataDir: string;
   port: number;
+  /** Address the server binds to (LAGER_HOST); unset = every interface. */
+  host?: string;
+  /** One line per finished request on stdout (LAGER_ACCESS_LOG). */
+  accessLog?: boolean;
   publicUrl: URL;
   appsDomain: string;
   adminEmail?: string;
@@ -30,13 +34,15 @@ export interface Config {
 /** Longest instance name (a DNS label). */
 export const MAX_SLUG_LENGTH = 63;
 export const SLUG_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+/** App and instance ids are UUIDs; a slug of that shape would be ambiguous wherever a slug or an id is accepted. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const RESERVED_SLUGS = new Set(['www', 'api', 'lager', 'admin', 'mcp', 'auth', 'static']);
 
 export function assertSlug(slug: string): void {
   if (typeof slug !== 'string' || !SLUG_RE.test(slug)) {
     throw new LagerError('invalid_argument', `Invalid slug "${slug}": use lowercase letters, digits and hyphens (max ${MAX_SLUG_LENGTH} characters).`, 'slug_invalid');
   }
-  if (RESERVED_SLUGS.has(slug)) {
+  if (RESERVED_SLUGS.has(slug) || UUID_RE.test(slug)) {
     throw new LagerError('invalid_argument', `Slug "${slug}" is reserved.`, 'slug_reserved');
   }
 }
@@ -66,6 +72,13 @@ function parseIntEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): nu
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 0) throw new Error(`${name} must be a non-negative integer`);
   return n;
+}
+
+function parseBoolEnv(env: NodeJS.ProcessEnv, name: string): boolean {
+  const v = env[name]?.trim().toLowerCase();
+  if (!v || v === 'false' || v === '0') return false;
+  if (v === 'true' || v === '1') return true;
+  throw new Error(`${name} must be true or false`);
 }
 
 /** `false`/`0` → no proxy, `true`/empty → one hop, a positive integer → that many hops. */
@@ -98,6 +111,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   return {
     dataDir,
     port: parseIntEnv(env, 'LAGER_PORT', 8080),
+    host: env.LAGER_HOST?.trim() || undefined,
+    accessLog: parseBoolEnv(env, 'LAGER_ACCESS_LOG'),
     publicUrl,
     appsDomain,
     adminEmail: env.LAGER_ADMIN_EMAIL?.trim() || undefined,

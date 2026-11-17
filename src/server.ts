@@ -20,10 +20,17 @@ try {
   process.exit(1);
 }
 const app = createHttpApp(core, [staticExtension, authExtension, adminExtension, apiExtension, mcpExtension, dashboardExtension, manageExtension]);
-const server = app.listen(config.port, () => {
-  console.log(`Lager listening on port ${config.port}, platform at ${config.publicUrl.origin}`);
+// Express also calls this with the error when listening fails; the 'error' handler below reports that.
+const onListening = (err?: Error): void => {
+  if (err) return;
+  console.log(`Lager listening on ${config.host ?? '*'}:${config.port}, platform at ${config.publicUrl.origin}`);
   // Apps from before icons existed get their generated icon in the background; public routes serve a bundled one meanwhile.
   void backfillIcons(core);
+};
+const server = config.host ? app.listen(config.port, config.host, onListening) : app.listen(config.port, onListening);
+server.on('error', (e) => {
+  console.error(`Lager could not listen on ${config.host ?? '*'}:${config.port}: ${e.message}`);
+  process.exit(1);
 });
 
 const stopTrashPurge = startTrashPurge(config.dataDir, config.trashDays ?? 30);
@@ -36,5 +43,13 @@ function shutdown(): void {
   });
   server.closeAllConnections();
 }
+/** A bug that escaped every handler: say so with a timestamp, close the databases cleanly and let the supervisor restart the process. */
+function crash(kind: string, err: unknown): void {
+  console.error(`${new Date().toISOString()} Lager is stopping after an ${kind}:`, err);
+  try { core.close(); } catch { /* the process ends either way */ }
+  process.exit(1);
+}
+process.on('uncaughtException', (e) => crash('uncaught exception', e));
+process.on('unhandledRejection', (e) => crash('unhandled rejection', e));
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);

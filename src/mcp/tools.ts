@@ -283,7 +283,7 @@ export function createInstanceFor(core: Core, user: User, input: { app: string; 
     if (!found || found.disabled) throw new LagerError('not_found', `No account with the address "${email}".`);
     owner = found;
   }
-  return core.apps.createInstance({ appId: app.id, slug: input.slug, ownerId: owner.id, visibility: input.visibility });
+  return core.apps.createInstance({ appId: app.id, slug: input.slug, ownerId: owner.id, visibility: input.visibility, createdBy: user.id });
 }
 
 // ---- custom domains (REST and MCP) -------------------------------------------
@@ -518,7 +518,7 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     if (!canRead(rules, viewer, path)) throw new LagerError('forbidden', 'You may not read this path (another user\'s private area or a rule of the app).');
     if (path.split('/').length % 2 === 0) return { doc: core.data.get(inst.id, path) };
     const spec: QuerySpec = { where: where as QuerySpec['where'], orderBy, limit };
-    return { docs: core.data.query(inst.id, path, spec).filter((d) => canRead(rules, viewer, d.path)) };
+    return { docs: core.data.query(inst.id, path, spec, (p) => canRead(rules, viewer, p)) };
   }));
 
   server.registerTool('db_write', {

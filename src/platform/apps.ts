@@ -346,7 +346,8 @@ export class Apps {
   }
 
   getApp(slugOrId: string): App | null {
-    const row = this.db.prepare('SELECT * FROM apps WHERE slug = ? OR id = ?').get(slugOrId, slugOrId) as AppRow | undefined;
+    // An id always wins: an app whose slug happens to equal another app's id must never stand in for that app.
+    const row = this.db.prepare('SELECT * FROM apps WHERE slug = ? OR id = ? ORDER BY (id = ?) DESC LIMIT 1').get(slugOrId, slugOrId, slugOrId) as AppRow | undefined;
     return row ? toApp(row) : null;
   }
 
@@ -389,7 +390,8 @@ export class Apps {
     return fs.readFileSync(this.versionFile(appId, number), 'utf8');
   }
 
-  createInstance(input: { appId: string; slug: string; ownerId: string; visibility?: Visibility }): Instance {
+  /** `createdBy` is the account that asked for the instance when it is not the owner; the creation rate is charged to it. */
+  createInstance(input: { appId: string; slug: string; ownerId: string; visibility?: Visibility; createdBy?: string }): Instance {
     assertSlug(input.slug);
     const visibility = input.visibility ?? 'private';
     if (!VISIBILITIES.includes(visibility)) throw new LagerError('invalid_argument', `Invalid visibility "${visibility}".`);
@@ -407,7 +409,8 @@ export class Apps {
         throw new LagerError('conflict', `Instance slug "${input.slug}" is already taken.`, 'slug_taken');
       }
       this.claimSlug(input.slug, owner.id);
-      this.countCreation(owner);
+      // Whoever creates the instance spends their own budget, so nobody can use up another account's.
+      this.countCreation((input.createdBy !== undefined ? this.users.get(input.createdBy) : null) ?? owner);
       // New instances start on the latest deployed version, never on another instance's self-published one.
       const latest = this.latestDeployedVersion(input.appId);
       if (!latest) throw new LagerError('not_found', 'App has no versions.');
@@ -496,10 +499,18 @@ export class Apps {
     let changed = false;
     const result = this.transaction(() => {
       const instance = this.managedInstance(instanceId, userId);
-      const row = this.db.prepare('SELECT instance_id FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, version) as { instance_id: string | null } | undefined;
+      const row = this.db.prepare('SELECT instance_id, capabilities FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, version) as { instance_id: string | null; capabilities: string } | undefined;
       if (!row) throw new LagerError('not_found', `Version ${version} not found.`);
       if (row.instance_id !== null && row.instance_id !== instance.id) {
         throw new LagerError('forbidden', 'This version was saved by another instance.');
+      }
+      // The data rules come from the active version. A manager is held to them, so only the owner may switch to a version with other rules.
+      if (instance.ownerId !== userId && instance.activeVersion !== version) {
+        const rulesOf = (json: string | undefined): string => canonicalJson((JSON.parse(json ?? '{}') as Capabilities).db?.rules ?? []);
+        const current = this.db.prepare('SELECT capabilities FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, instance.activeVersion) as { capabilities: string } | undefined;
+        if (rulesOf(current?.capabilities) !== rulesOf(row.capabilities)) {
+          throw new LagerError('conflict', 'Only the instance owner can activate a version with different data rules.', 'rules_differ');
+        }
       }
       if (instance.activeVersion !== version) {
         this.fireHooks(instance, instance.activeVersion, version);

@@ -8,7 +8,7 @@ import { csrfToken } from '../src/http/session.js';
 import type { User } from '../src/platform/users.js';
 import { esc } from '../src/http/pages.js';
 import { t, type MessageKey } from '../src/i18n/index.js';
-import { makeHarness, type Harness } from './support/http.js';
+import { makeHarness, NONCE, NONCE_COOKIE, type Harness } from './support/http.js';
 
 const en = (key: MessageKey): string => esc(t('en', key));
 let h: Harness | undefined;
@@ -36,7 +36,8 @@ async function enterVia(hh: Harness, host: string, platformCookie: string) {
   const auth = await request(hh.app).get(new URL(first.headers.location).pathname + new URL(first.headers.location).search)
     .set('Host', hh.host).set('Cookie', platformCookie);
   const loc = new URL(auth.headers.location);
-  const cb = await request(hh.app).get(loc.pathname + loc.search).set('Host', loc.host);
+  const nonce = ([] as string[]).concat(first.headers['set-cookie'] ?? []).find((c) => c.startsWith('lager_nonce='))?.split(';')[0] ?? '';
+  const cb = await request(hh.app).get(loc.pathname + loc.search).set('Host', loc.host).set('Cookie', nonce);
   const raw = ([] as string[]).concat(cb.headers['set-cookie'] ?? [])[0];
   return { first, auth, loc, cb, cookie: raw?.split(';')[0] ?? '', raw };
 }
@@ -64,7 +65,7 @@ describe('custom domains over http', () => {
     hh.core.domains.add(inst, CUSTOM, admin, true);
     const { first, auth, loc, cb, raw, cookie } = await enterVia(hh, CUSTOM_HOST, await hh.login());
     expect(first.status).toBe(302);
-    expect(first.headers.location).toBe(`http://lager.localhost:8080/auth/instance?slug=notes&host=${CUSTOM}&return=%2F`);
+    expect(first.headers.location).toMatch(new RegExp(`^http://lager\\.localhost:8080/auth/instance\\?slug=notes&host=${CUSTOM.replaceAll('.', '\\.')}&return=%2F&n=[A-Za-z0-9_-]{24}$`));
     expect(auth.status).toBe(302);
     expect(loc.origin).toBe(`http://${CUSTOM_HOST}`);
     expect(loc.pathname).toBe('/__lager/callback');
@@ -107,12 +108,12 @@ describe('custom domains over http', () => {
     const { hh, inst, other, admin } = setup();
     hh.core.domains.add(inst, CUSTOM, admin, true);
     hh.core.domains.add(other, 'other.example.test', admin, true);
-    const auth = await request(hh.app).get('/auth/instance').query({ slug: 'notes', host: CUSTOM }).set('Host', hh.host).set('Cookie', await hh.login());
+    const auth = await request(hh.app).get('/auth/instance').query({ slug: 'notes', host: CUSTOM, n: NONCE }).set('Host', hh.host).set('Cookie', await hh.login());
     const loc = new URL(auth.headers.location);
-    const wrong = await request(hh.app).get(loc.pathname + loc.search).set('Host', 'other.example.test:8080');
+    const wrong = await request(hh.app).get(loc.pathname + loc.search).set('Host', 'other.example.test:8080').set('Cookie', NONCE_COOKIE);
     expect(wrong.status).toBe(400);
-    expect((await request(hh.app).get(loc.pathname + loc.search).set('Host', CUSTOM_HOST)).status).toBe(302);
-    expect((await request(hh.app).get(loc.pathname + loc.search).set('Host', CUSTOM_HOST)).status).toBe(400);
+    expect((await request(hh.app).get(loc.pathname + loc.search).set('Host', CUSTOM_HOST).set('Cookie', NONCE_COOKIE)).status).toBe(302);
+    expect((await request(hh.app).get(loc.pathname + loc.search).set('Host', CUSTOM_HOST).set('Cookie', NONCE_COOKIE)).status).toBe(400);
   });
 
   it('each host needs its own handshake', async () => {
@@ -124,7 +125,7 @@ describe('custom domains over http', () => {
     // so the default host without a cookie must still send the visitor through the handshake.
     const noCookie = await request(hh.app).get('/').set('Host', DEFAULT_HOST);
     expect(noCookie.status).toBe(302);
-    expect(noCookie.headers.location).toBe('http://lager.localhost:8080/auth/instance?slug=notes&return=%2F');
+    expect(noCookie.headers.location).toMatch(/^http:\/\/lager\.localhost:8080\/auth\/instance\?slug=notes&return=%2F&n=[A-Za-z0-9_-]{24}$/);
     const def = await hh.enter('notes', platformCookie);
     expect((await request(hh.app).get('/').set('Host', DEFAULT_HOST).set('Cookie', def)).status).toBe(200);
     expect((await request(hh.app).get('/').set('Host', CUSTOM_HOST).set('Cookie', custom.cookie)).status).toBe(200);
@@ -234,16 +235,16 @@ describe('handshake code is bound to its host', () => {
     hh.core.domains.add(inst, CUSTOM, admin, true);
     const cookie = await hh.login();
     const issue = async (query: Record<string, string>) => {
-      const auth = await request(hh.app).get('/auth/instance').query({ slug: 'notes', ...query }).set('Host', hh.host).set('Cookie', cookie);
+      const auth = await request(hh.app).get('/auth/instance').query({ slug: 'notes', n: NONCE, ...query }).set('Host', hh.host).set('Cookie', cookie);
       const loc = new URL(auth.headers.location);
       return loc.pathname + loc.search;
     };
     const forCustom = await issue({ host: CUSTOM });
-    expect((await request(hh.app).get(forCustom).set('Host', DEFAULT_HOST)).status).toBe(400);
-    expect((await request(hh.app).get(forCustom).set('Host', CUSTOM_HOST)).status).toBe(302);
+    expect((await request(hh.app).get(forCustom).set('Host', DEFAULT_HOST).set('Cookie', NONCE_COOKIE)).status).toBe(400);
+    expect((await request(hh.app).get(forCustom).set('Host', CUSTOM_HOST).set('Cookie', NONCE_COOKIE)).status).toBe(302);
     const forDefault = await issue({});
-    expect((await request(hh.app).get(forDefault).set('Host', CUSTOM_HOST)).status).toBe(400);
-    expect((await request(hh.app).get(forDefault).set('Host', DEFAULT_HOST)).status).toBe(302);
+    expect((await request(hh.app).get(forDefault).set('Host', CUSTOM_HOST).set('Cookie', NONCE_COOKIE)).status).toBe(400);
+    expect((await request(hh.app).get(forDefault).set('Host', DEFAULT_HOST).set('Cookie', NONCE_COOKIE)).status).toBe(302);
   });
 });
 

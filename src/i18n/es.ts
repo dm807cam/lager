@@ -156,6 +156,7 @@ export const es: Record<MessageKey, string> = {
   'notice.otherUsersInstances': 'Otros usuarios tienen instancias de esta aplicación. Primero hay que eliminarlas.',
   'notice.slugTaken': 'Este nombre ya está en uso.',
   'notice.slugRetired': 'Este nombre ya se usó antes y está reservado.',
+  'notice.rulesDiffer': 'Solo el propietario puede activar esta versión: sus reglas de datos difieren de la activa.',
   'notice.creationRate': 'Hoy has creado demasiadas instancias. Inténtalo de nuevo mañana.',
   'notice.slugInvalid': 'Nombre no válido: letras minúsculas, dígitos y guiones, como máximo {max} caracteres.',
   'notice.collaboratorsInvalid': 'Los colaboradores deben ser administradores o Publisher activos.',

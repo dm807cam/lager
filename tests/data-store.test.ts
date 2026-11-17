@@ -169,6 +169,29 @@ describe('InstanceData', () => {
 describe('InstanceData quota, usage and trash', () => {
   const big = { text: 'x'.repeat(2000) };
 
+  it('a lock on a new document counts against the quota, renewing an existing one does not', () => {
+    store.close();
+    store = new InstanceData(dir, hub, 20, 64 * 1024);
+    store.acquire('q0', 'locks/mine', { holder: 'h' }, null);
+    let n = 0;
+    let refused = '';
+    while (n < 2000 && refused === '') {
+      refused = code(() => store.acquire('q0', `locks/${'p'.repeat(190)}${n}`, { holder: 'h' }, null));
+      if (refused === 'none') { refused = ''; n++; }
+    }
+    expect(refused).toBe('quota_exceeded');
+    expect(n).toBeLessThan(1000);
+    expect(store.acquire('q0', 'locks/mine', { holder: 'h' }, null).acquired).toBe(true);
+    expect(code(() => store.acquire('q0', 'locks/mine', { holder: 'h', data: { a: 1 } }, null))).toBe('quota_exceeded');
+  });
+
+  it('query drops invisible documents before it sorts and limits', () => {
+    store.set('i1', 'c/a', { v: 1 }, null);
+    store.set('i1', 'c/b', { v: 2 }, null);
+    expect(store.query('i1', 'c', { limit: 1 }).map((d) => d.id)).toEqual(['a']);
+    expect(store.query('i1', 'c', { limit: 1 }, (p) => p !== 'c/a').map((d) => d.id)).toEqual(['b']);
+  });
+
   it('quota blocks writes but not reads or deletes', () => {
     store.close();
     store = new InstanceData(dir, hub, 20, 64 * 1024);

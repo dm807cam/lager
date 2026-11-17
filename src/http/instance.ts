@@ -8,7 +8,7 @@ import type { HubEvent } from '../data/hub.js';
 import { LagerError } from '../errors.js';
 import type { Capabilities, DbRule, Instance } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
-import { instanceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
+import { clearCookie, instanceCookieName, NONCE_RE, nonceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
 import { safeReturnPath, sendError, sendNotFound } from './errors.js';
 import { injectRuntime } from './inject.js';
 import { mountArtifactRoutes } from './instance-artifact.js';
@@ -27,6 +27,10 @@ const MAX_PROFILE_IDS = 100;
 const MAX_SEARCH_RESULTS = 20;
 const MAX_SEARCH_QUERY = 100;
 const PING_MS = 25_000;
+/** A reader that falls this far behind is dropped rather than buffered without bound. */
+const MAX_BUFFERED_BYTES = 1024 * 1024;
+/** How long a started sign-in may take before its nonce lapses. */
+const NONCE_SECONDS = 600;
 const RANK: Record<Level, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
 
 function instanceUser(core: Core, req: Request, instance: Instance): User | null {
@@ -41,9 +45,23 @@ function activeCapabilities(core: Core, instance: Instance): Capabilities {
 }
 
 /** `customHost` is the custom domain the visitor came in on; the platform sends the code back to exactly that host. */
-function loginUrl(core: Core, instance: Instance, customHost?: string): string {
+function loginUrl(core: Core, instance: Instance, customHost?: string, nonce?: string): string {
   const host = customHost ? `&host=${encodeURIComponent(customHost)}` : '';
-  return `${core.config.publicUrl.origin}/auth/instance?slug=${encodeURIComponent(instance.slug)}${host}&return=%2F`;
+  const n = nonce ? `&n=${nonce}` : '';
+  return `${core.config.publicUrl.origin}/auth/instance?slug=${encodeURIComponent(instance.slug)}${host}&return=%2F${n}`;
+}
+
+/**
+ * The sign-in nonce of this browser on this instance host, created on first use. The platform puts it into the code it issues
+ * and the callback compares it with the cookie, so a code minted in one browser cannot sign another browser in.
+ */
+function signInNonce(core: Core, req: Request, res: Response): string {
+  const name = nonceCookieName(core.config);
+  const existing = readCookie(req, name);
+  if (existing && NONCE_RE.test(existing)) return existing;
+  const nonce = crypto.randomBytes(18).toString('base64url');
+  setCookie(res, core.config, name, nonce, NONCE_SECONDS);
+  return nonce;
 }
 
 function newDocId(): string {
@@ -105,12 +123,15 @@ export function createInstanceRouter(core: Core): express.Router {
   router.get('/__lager/callback', (req, res) => {
     const { instance } = ctxOf(res);
     const locale = requestLocale(core, req, null);
-    const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown; jti?: unknown; ep?: unknown; h?: unknown; exp: number }>(
+    const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown; jti?: unknown; ep?: unknown; h?: unknown; n?: unknown; exp: number }>(
       typeof req.query.code === 'string' ? req.query.code : undefined, config.secret);
     const user = t && typeof t.uid === 'string' ? core.users.get(t.uid) : null;
     // The code names the host it was issued for and is only good there: a code for the custom domain is not valid on the default host.
     const host = req.hostname.toLowerCase().replace(/\.$/, '');
-    if (!t || t.k !== 'code' || t.iid !== instance.id || t.h !== host || typeof t.jti !== 'string' || !epochValid(user, t.ep)) {
+    const nonce = readCookie(req, nonceCookieName(config));
+    const sameBrowser = typeof nonce === 'string' && NONCE_RE.test(nonce) && typeof t?.n === 'string'
+      && nonce.length === t.n.length && crypto.timingSafeEqual(Buffer.from(nonce), Buffer.from(t.n));
+    if (!t || t.k !== 'code' || t.iid !== instance.id || t.h !== host || typeof t.jti !== 'string' || !sameBrowser || !epochValid(user, t.ep)) {
       res.status(400).type('html').send(badCodePage(locale, NO_SWITCHER));
       return;
     }
@@ -122,6 +143,7 @@ export function createInstanceRouter(core: Core): express.Router {
     }
     usedCodes.set(t.jti, t.exp);
     setCookie(res, config, instanceCookieName(config), signToken({ uid: user.id, iid: instance.id, k: 'inst', ep: user.sessionEpoch }, config.secret, THIRTY_DAYS_SECONDS));
+    clearCookie(res, config, nonceCookieName(config));
     res.redirect(safeReturnPath(req.query.return));
   });
 
@@ -131,7 +153,7 @@ export function createInstanceRouter(core: Core): express.Router {
       if (ctx.user) {
         res.status(403).type('html').send(forbiddenPage(requestLocale(core, req, ctx.user), NO_SWITCHER));
       } else {
-        res.redirect(loginUrl(core, ctx.instance, res.locals.customHost as string | undefined));
+        res.redirect(loginUrl(core, ctx.instance, res.locals.customHost as string | undefined, signInNonce(core, req, res)));
       }
       return;
     }
@@ -143,6 +165,9 @@ export function createInstanceRouter(core: Core): express.Router {
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'same-origin',
+      // Other instances are same-site and would get this instance's cookie inside a frame: only the instance may frame itself.
+      'Content-Security-Policy': "frame-ancestors 'self'",
+      'X-Frame-Options': 'SAMEORIGIN',
     }).send(html);
   });
 
@@ -157,7 +182,8 @@ export function createInstanceRouter(core: Core): express.Router {
 
   router.get('/__lager/session', (req, res) => {
     const ctx = ctxOf(res);
-    const url = loginUrl(core, ctx.instance, res.locals.customHost as string | undefined);
+    // Only a browser that is not signed in here can start a sign-in, so only it gets a nonce.
+    const url = loginUrl(core, ctx.instance, res.locals.customHost as string | undefined, ctx.user ? undefined : signInNonce(core, req, res));
     if (ctx.viewer.level === 'none') {
       sendError(res, new LagerError('unauthenticated', 'Sign in required.'), { loginUrl: url });
       return;
@@ -202,9 +228,12 @@ export function createInstanceRouter(core: Core): express.Router {
     const ids = [...new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))];
     if (ids.length > MAX_PROFILE_IDS) throw new LagerError('invalid_argument', `At most ${MAX_PROFILE_IDS} ids are allowed.`);
     const profiles: Record<string, { id: string; name: string; email: string | null; isMe: boolean }> = {};
-    for (const id of ids) {
+    // Profiles belong to the `user` capability: an app that did not declare it resolves nobody, and an anonymous visitor never gets an address.
+    const declared = typeof ctx.caps.user === 'object' && ctx.caps.user !== null;
+    const withEmail = emailAllowed(ctx) && ctx.user !== null;
+    for (const id of declared ? ids : []) {
       const u = core.users.get(id);
-      if (u) profiles[id] = { id: u.id, name: u.name, email: emailAllowed(ctx) ? u.email : null, isMe: u.id === ctx.user?.id };
+      if (u) profiles[id] = { id: u.id, name: u.name, email: withEmail ? u.email : null, isMe: u.id === ctx.user?.id };
     }
     res.set('Cache-Control', 'no-store').json({ profiles });
   });
@@ -236,7 +265,7 @@ export function createInstanceRouter(core: Core): express.Router {
         if (!canRead(ctx.rules, ctx.viewer, path)) { res.json({ docs: [] }); return; }
         const spec = query === undefined ? {} : obj(query, 'query');
         // A rule on a document path does not apply to its collection, so filter per document.
-        const docs = core.data.query(id, path, spec).filter((d) => canRead(ctx.rules, ctx.viewer, d.path));
+        const docs = core.data.query(id, path, spec, (p) => canRead(ctx.rules, ctx.viewer, p));
         res.json({ docs });
         return;
       }
@@ -284,13 +313,16 @@ export function createInstanceRouter(core: Core): express.Router {
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.flushHeaders();
     res.write('retry: 3000\n\n');
-    const send = (event: string, payload?: unknown): void => {
-      res.write(`event: ${event}\n${payload === undefined ? '' : `data: ${JSON.stringify(payload)}\n`}\n`);
-    };
     const epoch = first.user?.sessionEpoch;
     let ping: NodeJS.Timeout | undefined;
     let unsubscribe: (() => void) | undefined;
     let ended = false;
+    const send = (event: string, payload?: unknown): void => {
+      if (ended) return;
+      res.write(`event: ${event}\n${payload === undefined ? '' : `data: ${JSON.stringify(payload)}\n`}\n`);
+      // A client that stopped reading is cut off; its EventSource reconnects and catches up.
+      if (res.writableLength > MAX_BUFFERED_BYTES) stop();
+    };
     const stop = (): void => {
       if (ended) return;
       ended = true;
@@ -320,6 +352,7 @@ export function createInstanceRouter(core: Core): express.Router {
     ping = setInterval(() => {
       if (!current()) { stop(); return; }
       res.write(': ping\n\n');
+      if (res.writableLength > MAX_BUFFERED_BYTES) stop();
     }, PING_MS);
     req.on('close', stop);
   });

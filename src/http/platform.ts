@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import express from 'express';
 import type { Core } from '../core.js';
-import { clearCookie, sessionCookieName } from './cookies.js';
+import { clearCookie, NONCE_RE, sessionCookieName } from './cookies.js';
 import { csrfValid, issueSession, sessionUser } from './session.js';
 import { isLocale, t } from '../i18n/index.js';
 import { badCodePage, disabledPage, forbiddenPage, loginPage, notFoundPage, sessionExpiredPage } from './pages.js';
@@ -32,16 +32,22 @@ const PLATFORM_MANIFEST = JSON.stringify({
 const ICON_FILE = /^(64|192|512)\.png$/;
 
 const MAX_FAILURES = 10;
+/** Failures one address may still make against an account that is already under attack from elsewhere. */
+const MAX_FAILURES_HOT_ACCOUNT = 3;
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_TRACKED_KEYS = 10_000;
 
 /**
- * Failed login attempts within a sliding window, tracked per client IP and per account (e-mail).
+ * Failed login attempts within a sliding window, tracked per client IP, per account (e-mail) and per pair of both.
+ * An address is refused after `MAX_FAILURES` failures. An account that collected that many failures is not locked for
+ * everyone, or anybody could keep its owner out: only addresses that themselves failed on it are refused, and sooner.
  * Expired entries are swept on every failure and the number of tracked keys is capped.
  */
 export class LoginLimiter {
   private byIp = new Map<string, number[]>();
   private byAccount = new Map<string, number[]>();
+  private byPair = new Map<string, number[]>();
+  private static pair = (ip: string, account: string): string => `${account}\n${ip}`;
 
   private static recent(map: Map<string, number[]>, key: string): number[] {
     const cutoff = Date.now() - WINDOW_MS;
@@ -63,16 +69,20 @@ export class LoginLimiter {
   get size(): number { return this.byIp.size + this.byAccount.size; }
 
   blocked(ip: string, account: string): boolean {
-    return LoginLimiter.recent(this.byIp, ip).length >= MAX_FAILURES
-      || LoginLimiter.recent(this.byAccount, account).length >= MAX_FAILURES;
+    if (LoginLimiter.recent(this.byIp, ip).length >= MAX_FAILURES) return true;
+    return LoginLimiter.recent(this.byAccount, account).length >= MAX_FAILURES
+      && LoginLimiter.recent(this.byPair, LoginLimiter.pair(ip, account)).length >= MAX_FAILURES_HOT_ACCOUNT;
   }
 
   fail(ip: string, account: string): void {
     LoginLimiter.sweep(this.byIp);
     LoginLimiter.sweep(this.byAccount);
+    LoginLimiter.sweep(this.byPair);
     const now = Date.now();
+    const pair = LoginLimiter.pair(ip, account);
     this.byIp.set(ip, [...LoginLimiter.recent(this.byIp, ip), now]);
     this.byAccount.set(account, [...LoginLimiter.recent(this.byAccount, account), now]);
+    this.byPair.set(pair, [...LoginLimiter.recent(this.byPair, pair), now]);
   }
 }
 
@@ -230,7 +240,9 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
       res.status(403).type('html').send(forbiddenPage(locale));
       return;
     }
-    const code = signToken({ uid: user.id, iid: instance.id, k: 'code', jti: crypto.randomUUID(), ep: user.sessionEpoch, h: customHost ?? `${instance.slug}.${config.appsDomain}`.toLowerCase() }, config.secret, 60);
+    // The instance put a nonce into its own cookie before sending the browser here; the code carries it back, so it is only good in that browser.
+    const nonce = typeof req.query.n === 'string' && NONCE_RE.test(req.query.n) ? req.query.n : undefined;
+    const code = signToken({ uid: user.id, iid: instance.id, k: 'code', jti: crypto.randomUUID(), ep: user.sessionEpoch, n: nonce, h: customHost ?? `${instance.slug}.${config.appsDomain}`.toLowerCase() }, config.secret, 60);
     const back = safeReturnPath(req.query.return);
     res.redirect(`${customHost ? hostUrl(config, customHost) : instanceUrl(config, instance.slug)}/__lager/callback?code=${encodeURIComponent(code)}&return=${encodeURIComponent(back)}`);
   });

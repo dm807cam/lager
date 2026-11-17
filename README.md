@@ -47,6 +47,8 @@ Configuration (environment variables only, template in `.env.example`):
 | `LAGER_ADMIN_EMAIL`, `LAGER_ADMIN_PASSWORD` | First administrator; only created while no account exists | none |
 | `LAGER_DATA_DIR` | Data directory | `./data` (`/data` in the container) |
 | `LAGER_PORT` | Port of the server | `8080` |
+| `LAGER_HOST` | Address the server binds to. Without Docker, set `127.0.0.1` when the reverse proxy runs on the same machine, so nobody reaches Lager around the proxy. Leave it empty in the container | every interface |
+| `LAGER_ACCESS_LOG` | `true` writes one line per request to the log (time, client address, method, host and path without the query string, status, duration) | `false` |
 | `LAGER_SECRET` | Key for sessions; otherwise generated and stored in `secret.key` | generated |
 | `LAGER_SNAPSHOT_KEEP` | Data snapshots kept per instance | `20` |
 | `LAGER_TRASH_DAYS` | Days that deleted instances and apps stay in the trash (`0` = never clean up) | `30` |
@@ -319,6 +321,12 @@ curl -X POST -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: applicati
 - Uploaded files: they must be uploaded again through the app, and the references to them change.
 - Private areas of other users, grants, domains, snapshots and earlier versions from another platform.
 
+## Logs and crashes
+
+Lager writes to standard output and standard error: one line at start, one per trash cleanup, every server error with its stack, and mail that could not be sent. With Docker, `docker compose logs -f lager` shows them; under systemd, `journalctl --user -u lager -f`. Set `LAGER_ACCESS_LOG=true` for one line per request if your proxy does not keep an access log.
+
+If a bug escapes every handler, Lager logs it with a timestamp, closes its databases and exits with status 1, so the supervisor restarts it (`restart: unless-stopped` in the Compose file; `Restart=on-failure` in a systemd unit). A port that is already taken ends the start with a clear message instead of a stack trace.
+
 ## Backup
 
 Everything lives in the data directory (with Docker Compose the volume `lager-data`, with a bind mount `./data`): the platform database, all versions, the data, uploads and snapshots of the instances, and `secret.key`. To back up, stop the service and copy the volume or directory. With the volume (Compose project name `lager`, otherwise `<directory name>_lager-data`; `docker volume ls` shows it):
@@ -329,9 +337,17 @@ docker run --rm -v lager_lager-data:/data -v "$PWD":/backup alpine tar czf /back
 docker compose start
 ```
 
-With a bind mount, `cp -a data data-backup-$(date +%F)` is enough.
+With a bind mount, stop the service as well and then `cp -a data data-backup-$(date +%F)`. Do not copy the directory while Lager runs: the databases are SQLite files in WAL mode, and a copy taken during a write can be unreadable.
 
-To restore, copy the contents back (or unpack the archive into an empty volume). Keep `secret.key` (or `LAGER_SECRET`), otherwise all sessions become invalid.
+**Without stopping Lager:** `node dist/backup.js <target directory>` (or `npm run backup -- <target directory>`) writes a consistent copy of the data directory while the server keeps running. It reads `LAGER_DATA_DIR`, copies every database with SQLite's own snapshot mechanism and the other files as they are, and leaves the trash out. The target must be a new or empty directory outside the data directory. In the container, mount a directory for it:
+
+```sh
+docker compose run --rm -v "$PWD/backup":/backup lager node dist/backup.js /backup/$(date +%F)
+```
+
+An upload or a version that arrives while the backup runs may be missing from it; run it at a quiet time or accept that the last seconds are not included. The command exits with a non-zero status on failure, so it fits into a cron job or a systemd timer.
+
+To restore, stop Lager and copy the contents back (or unpack the archive into an empty volume). Keep `secret.key` (or `LAGER_SECRET`), otherwise all sessions become invalid.
 
 ## What Lager cannot do
 

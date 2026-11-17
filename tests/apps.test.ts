@@ -206,6 +206,47 @@ describe('Apps with the access model', () => {
     expect(code(() => core.apps.addCollaborator(app.id, adm.id, adm.id))).toBe('forbidden');
   });
 
+  it('a manager cannot activate a version whose data rules differ; the owner can', () => {
+    const strict = { db: { rules: [{ path: 'secret', read: 'owner' as const, write: 'owner' as const }] } };
+    const r = core.apps.deploy({ slug: 'demo', html: '<p>1</p>', userId: own.id });
+    core.apps.deploy({ slug: 'demo', html: '<p>2</p>', userId: own.id, capabilities: strict });
+    core.apps.deploy({ slug: 'demo', html: '<p>3</p>', userId: own.id, capabilities: strict });
+    const inst = r.instances[0];
+    core.access.setGrant(core.apps.getInstance(inst.id)!, 'user', grantee.id, 'admin', own);
+    expect(core.apps.getInstance(inst.id)!.activeVersion).toBe(3);
+    // same rules: fine. No rules at all would open the owner-only path to the manager.
+    expect(core.apps.activate(inst.id, 2, grantee.id).activeVersion).toBe(2);
+    let reason = '';
+    try { core.apps.activate(inst.id, 1, grantee.id); } catch (e) { reason = (e as LagerError).reason ?? ''; }
+    expect(reason).toBe('rules_differ');
+    expect(core.apps.getInstance(inst.id)!.activeVersion).toBe(2);
+    expect(core.apps.activate(inst.id, 1, own.id).activeVersion).toBe(1);
+  });
+
+  it('an app whose slug looks like an id never stands in for the app with that id', () => {
+    const victim = core.apps.deploy({ slug: 'victim', html: '<p>v</p>', userId: own.id }).app;
+    expect(code(() => core.apps.deploy({ slug: victim.id, html: '<p>x</p>', userId: adm.id }))).toBe('invalid_argument');
+    // A row from before slugs of that shape were refused: the id still wins.
+    (core.apps as unknown as { db: { prepare(sql: string): { run(...a: unknown[]): void } } }).db
+      .prepare('INSERT INTO apps (id, slug, title, owner_id, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run('00000000-0000-4000-8000-000000000000', victim.id, 'Evil', adm.id, new Date().toISOString());
+    expect(core.apps.getApp(victim.id)!.title).toBe(victim.title);
+    expect(core.apps.getApp('victim')!.id).toBe(victim.id);
+  });
+
+  it('creating an instance for someone else spends the creator\'s daily budget, not the owner\'s', () => {
+    const r = core.apps.deploy({ slug: 'demo', html: '<p>1</p>', userId: own.id });
+    let made = 0;
+    let refused = '';
+    while (made < 50 && refused === '') {
+      try { core.apps.createInstance({ appId: r.app.id, slug: `gift-${made}`, ownerId: usr.id, createdBy: own.id }); made++; }
+      catch (e) { refused = (e as LagerError).reason ?? 'other'; }
+    }
+    expect(refused).toBe('creation_rate');
+    // The publisher ran out; the recipient's own budget is untouched.
+    expect(core.apps.createInstance({ appId: r.app.id, slug: 'mine', ownerId: usr.id }).slug).toBe('mine');
+  });
+
   it('instance admin grantee can activate and change visibility', () => {
     const r = core.apps.deploy({ slug: 'demo', html: '<p>1</p>', userId: own.id });
     core.apps.deploy({ slug: 'demo', html: '<p>2</p>', userId: own.id });

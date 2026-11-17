@@ -24,6 +24,22 @@ describe('rules', () => {
     expect(canRead(rules, vw, 'votes')).toBe(true);
   });
 
+  it('a narrower rule that sets only one kind inherits the other from the broader rule', () => {
+    const rules = [
+      { path: 'admin', read: 'admin' as const, write: 'admin' as const },
+      { path: 'admin/log', write: 'owner' as const },
+      { path: 'admin/log/public', read: 'view' as const },
+    ];
+    expect(canRead(rules, vw, 'admin/log/e1')).toBe(false);
+    expect(canRead(rules, anon, 'admin/log/e1')).toBe(false);
+    expect(canRead(rules, { userId: 'm', level: 'admin' }, 'admin/log/e1')).toBe(true);
+    expect(canWrite(rules, { userId: 'm', level: 'admin' }, 'admin/log/e1')).toBe(false);
+    expect(canWrite(rules, owner, 'admin/log/e1')).toBe(true);
+    // the narrowest rule decides reading, the middle one still decides writing
+    expect(canRead(rules, vw, 'admin/log/public/p1')).toBe(true);
+    expect(canWrite(rules, { userId: 'm', level: 'admin' }, 'admin/log/public/p1')).toBe(false);
+  });
+
   it('{self} rule', () => {
     const rules = [
       { path: 'votes', read: 'view' as const, write: 'owner' as const },

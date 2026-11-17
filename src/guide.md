@@ -37,7 +37,7 @@ Levels: `view < interact < admin < owner`, plus `self` (nobody holds it by thems
 
 Without rules: read from `view`, write from `interact`. Anonymous visitors never write.
 
-Rules live in `capabilities.db.rules` as `{path, read?, write?}` and set minimum levels per path prefix. The most specific matching rule wins. The segment `{self}` matches only the viewer's own ID.
+Rules live in `capabilities.db.rules` as `{path, read?, write?}` and set minimum levels per path prefix. The most specific matching rule wins, separately for reading and for writing: a rule that sets only `write` leaves `read` to the next broader rule that sets it (and the other way round). The segment `{self}` matches only the viewer's own ID.
 
 Example poll – everyone may write only their own vote, the owner may write all:
 

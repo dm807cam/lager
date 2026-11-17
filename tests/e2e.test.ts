@@ -86,7 +86,12 @@ describe('end to end', () => {
     const cb = new URL(handshake.headers.location!);
     expect(cb.host).toBe(instHost);
     expect(cb.pathname).toBe('/__lager/callback');
-    const callback = await call(instHost, 'GET', cb.pathname + cb.search);
+    // Without the nonce cookie of the browser that started the sign-in the code is worthless.
+    expect((await call(instHost, 'GET', cb.pathname + cb.search)).status).toBe(400);
+    const anon2 = await call(instHost, 'GET', '/');
+    const loc2 = new URL(anon2.headers.location!);
+    const cb2 = new URL((await call(platform, 'GET', loc2.pathname + loc2.search, { headers: { Cookie: session } })).headers.location!);
+    const callback = await call(instHost, 'GET', cb2.pathname + cb2.search, { headers: { Cookie: cookiePair(anon2, 'lager_nonce') } });
     const inst = { Cookie: cookiePair(callback, 'lager_inst') };
 
     // 4. the instance serves the example with the runtime injected

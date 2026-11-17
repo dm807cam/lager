@@ -154,6 +154,7 @@ export const en = {
   'notice.otherUsersInstances': 'Other users have instances of this app. They must be deleted first.',
   'notice.slugTaken': 'This name is already taken.',
   'notice.slugRetired': 'This name was used before and is reserved.',
+  'notice.rulesDiffer': 'Only the owner can activate this version: its data rules differ from the active one.',
   'notice.creationRate': 'You have created too many instances today. Try again tomorrow.',
   'notice.slugInvalid': 'Invalid name: lowercase letters, digits and hyphens, at most {max} characters.',
   'notice.collaboratorsInvalid': 'Collaborators must be active administrators or publishers.',

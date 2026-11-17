@@ -37,17 +37,25 @@
 
   var sessionPromise = null;
 
+  /** Resolves `{session, transient}`; `transient` marks an answer that says nothing about the viewer (network trouble, a server error). */
   function loadSession() {
     return fetch(SESSION_URL, { credentials: 'same-origin' }).then(function (res) {
-      if (!res.ok) return null;
+      if (!res.ok) return { session: null, transient: res.status >= 500 || res.status === 429 };
       return res.json().then(function (body) {
-        return body && typeof body === 'object' && body.viewer && typeof body.viewer === 'object' ? body : null;
+        return { session: body && typeof body === 'object' && body.viewer && typeof body.viewer === 'object' ? body : null, transient: false };
       });
-    }).catch(function () { return null; });
+    }).catch(function () { return { session: null, transient: true }; });
   }
 
+  /** The session is fetched once per page; a transient failure is not kept, so the next call asks again. */
   function getSession() {
-    if (!sessionPromise) sessionPromise = loadSession();
+    if (!sessionPromise) {
+      var p = loadSession().then(function (r) {
+        if (r.transient && sessionPromise === p) sessionPromise = null;
+        return r.session;
+      });
+      sessionPromise = p;
+    }
     return sessionPromise;
   }
 
@@ -185,13 +193,15 @@
   var listeners = new Set();
   var source = null;
   var sourceFailed = false;
+  var sourceRetryTimer = null;
+  var sourceRetryDelay = RETRY_MIN_MS;
 
   function refreshWhere(match) {
     Array.from(listeners).forEach(function (l) { if (match(l)) l.refresh(); });
   }
 
   function openSource() {
-    if (source || typeof EventSource === 'undefined') return;
+    if (source || sourceRetryTimer !== null || typeof EventSource === 'undefined') return;
     var es = new EventSource(EVENTS_URL);
     source = es;
     es.addEventListener('change', function (e) {
@@ -202,8 +212,19 @@
     });
     es.addEventListener('reset', function () { refreshWhere(function () { return true; }); });
     es.addEventListener('reload', onReloadEvent);
-    es.addEventListener('error', function () { sourceFailed = true; onStreamError(); });
+    es.addEventListener('error', function () {
+      sourceFailed = true;
+      onStreamError();
+      // The browser retries by itself after a dropped connection, but gives up for good on an HTTP error
+      // (a 502 from the proxy while the server restarts, a 429): then the stream has to be opened anew.
+      if (source !== es || es.readyState !== 2) return;
+      source = null;
+      if (listeners.size === 0 && !keepSourceOpen) return;
+      sourceRetryTimer = setTimeout(function () { sourceRetryTimer = null; openSource(); }, sourceRetryDelay);
+      sourceRetryDelay = Math.min(sourceRetryDelay * 2, RETRY_MAX_MS);
+    });
     es.addEventListener('open', function () {
+      sourceRetryDelay = RETRY_MIN_MS;
       onStreamOpen();
       // Changes landing before the stream opened, or while it was down, are lost: catch up (deduplicated by key).
       sourceFailed = false;
@@ -212,7 +233,9 @@
   }
 
   function closeSourceIfIdle() {
-    if (listeners.size === 0 && source && !keepSourceOpen) {
+    if (listeners.size !== 0 || keepSourceOpen) return;
+    if (sourceRetryTimer !== null) { clearTimeout(sourceRetryTimer); sourceRetryTimer = null; }
+    if (source) {
       source.close();
       source = null;
       sourceFailed = false;
@@ -587,6 +610,7 @@
   var ROOM_NAME_RE = /^[a-z0-9][a-z0-9_.-]{0,47}$/;
   var PRESENCE_KEY_RE = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
   var ROOM_MAX_BYTES = 4096;
+  var PRESENCE_MAX_BYTES = 2048;
   var ROOM_MAX_DEPTH = 8;
   var ROOM_MAX_JOINED = 16;
   var PRESENCE_FLUSH_MS = 50;
@@ -617,12 +641,13 @@
     return max + 1;
   }
 
-  /** Throws a room error unless `value` is plain JSON within the 4 KiB / depth bounds. */
-  function checkRoomJson(value, what) {
+  /** Throws a room error unless `value` is plain JSON within the size (4 KiB unless `maxBytes` says otherwise) and depth bounds. */
+  function checkRoomJson(value, what, maxBytes) {
+    var max = maxBytes || ROOM_MAX_BYTES;
     var text;
     try { text = JSON.stringify(value); } catch (e) { text = undefined; }
     if (text === undefined) throw roomError('invalid_argument', what + ' is not serializable as JSON.');
-    if (byteLength(text) > ROOM_MAX_BYTES) throw roomError('invalid_argument', what + ' has at most ' + ROOM_MAX_BYTES + ' bytes of JSON text.');
+    if (byteLength(text) > max) throw roomError('invalid_argument', what + ' has at most ' + max + ' bytes of JSON text.');
     if (jsonDepth(JSON.parse(text)) > ROOM_MAX_DEPTH) throw roomError('invalid_argument', what + ' is nested too deeply.');
   }
 
@@ -948,7 +973,8 @@
             if (v === null) delete merged[k];
             else { checkRoomJson(v, 'Presence field "' + k + '"'); merged[k] = v; }
           });
-          checkRoomJson(merged, 'Presence');
+          // The server holds the whole presence to this size; a larger one would never reach the other peers.
+          checkRoomJson(merged, 'Presence', PRESENCE_MAX_BYTES);
           myPresence = merged;
           pending = Object.assign(pending || {}, patch);
           if (peerId !== null && rawPeers.has(peerId)) reconcile(Array.from(rawPeers.values()));
@@ -1312,7 +1338,14 @@
 
   function use(name) {
     if (typeof name !== 'string') return Promise.resolve(null);
-    if (!memo.has(name)) memo.set(name, build(name).catch(function () { return null; }));
+    if (!memo.has(name)) {
+      var p = build(name).catch(function () { return null; }).then(function (ns) {
+        // Built without a session because the fetch failed: forget it, so a later call gets the real namespace.
+        if (sessionPromise === null && memo.get(name) === p) memo.delete(name);
+        return ns;
+      });
+      memo.set(name, p);
+    }
     return memo.get(name);
   }
 

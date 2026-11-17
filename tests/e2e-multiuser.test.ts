@@ -99,7 +99,8 @@ describe('multi-user end to end', () => {
       if (hs.status !== 302) return { denied: hs };
       const cb = new URL(hs.headers.location!);
       expect(cb.host).toBe(host);
-      const cbRes = await call(host, 'GET', cb.pathname + cb.search);
+      // The browser brings back the nonce the instance set when it sent it to the platform.
+      const cbRes = await call(host, 'GET', cb.pathname + cb.search, { headers: { Cookie: cookiePair(start, 'lager_nonce') } });
       return { cookie: cookiePair(cbRes, 'lager_inst') };
     };
     const mustOpen = async (session: string, slug: string): Promise<string> => {

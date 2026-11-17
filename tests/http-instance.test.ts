@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { signToken } from '../src/http/tokens.js';
-import { makeHarness, PLATFORM_HOST, type Harness } from './support/http.js';
+import { makeHarness, NONCE, NONCE_COOKIE, PLATFORM_HOST, type Harness } from './support/http.js';
 import { t } from '../src/i18n/index.js';
 
 const TAG = '<script src="/__lager/runtime.js"></script>';
@@ -52,9 +52,9 @@ describe('instance host', () => {
 
   it('instance cookie is HttpOnly and host-only', async () => {
     const { h } = setup();
-    const auth = await request(h.app).get('/auth/instance').query({ slug: 'workout' }).set('Host', PLATFORM_HOST).set('Cookie', await h.login());
+    const auth = await request(h.app).get('/auth/instance').query({ slug: 'workout', n: NONCE }).set('Host', PLATFORM_HOST).set('Cookie', await h.login());
     const loc = new URL(auth.headers.location);
-    const cb = await request(h.app).get(loc.pathname + loc.search).set('Host', loc.host);
+    const cb = await request(h.app).get(loc.pathname + loc.search).set('Host', loc.host).set('Cookie', NONCE_COOKIE);
     expect(cb.status).toBe(302);
     const c = ([] as string[]).concat(cb.headers['set-cookie'])[0];
     expect(c).toContain('HttpOnly');
@@ -91,18 +91,18 @@ describe('instance host', () => {
 
   it('callback return must be a local path', async () => {
     const { h, inst } = setup();
-    const code = signToken({ uid: h.adminId, iid: inst.id, k: 'code', jti: 'j1', ep: 0, h: W }, 'test-secret', 60);
-    const cb = await request(h.app).get('/__lager/callback').query({ code, return: '//evil.example' }).set('Host', W);
+    const code = signToken({ uid: h.adminId, iid: inst.id, k: 'code', jti: 'j1', ep: 0, h: W, n: NONCE }, 'test-secret', 60);
+    const cb = await request(h.app).get('/__lager/callback').query({ code, return: '//evil.example' }).set('Host', W).set('Cookie', NONCE_COOKIE);
     expect(cb.status).toBe(302);
     expect(cb.headers.location).toBe('/');
   });
 
   it('handshake code is single-use', async () => {
     const { h } = setup();
-    const auth = await request(h.app).get('/auth/instance').query({ slug: 'workout' }).set('Host', PLATFORM_HOST).set('Cookie', await h.login());
+    const auth = await request(h.app).get('/auth/instance').query({ slug: 'workout', n: NONCE }).set('Host', PLATFORM_HOST).set('Cookie', await h.login());
     const loc = new URL(auth.headers.location);
-    expect((await request(h.app).get(loc.pathname + loc.search).set('Host', loc.host)).status).toBe(302);
-    const again = await request(h.app).get(loc.pathname + loc.search).set('Host', loc.host);
+    expect((await request(h.app).get(loc.pathname + loc.search).set('Host', loc.host).set('Cookie', NONCE_COOKIE)).status).toBe(302);
+    const again = await request(h.app).get(loc.pathname + loc.search).set('Host', loc.host).set('Cookie', NONCE_COOKIE);
     expect(again.status).toBe(400);
     expect(again.headers['set-cookie']).toBeUndefined();
   });
@@ -152,8 +152,75 @@ describe('instance host', () => {
     expect(u.body.profiles.nope).toBeUndefined();
   });
 
-  it('users endpoint hides email without scope and caps ids', async () => {
+  it('users endpoint resolves nobody for an app without the user capability', async () => {
     const { h } = setup();
+    const inst = await h.enter('workout', await h.login());
+    const u = await request(h.app).get('/__lager/users').query({ ids: h.adminId }).set('Host', W).set('Cookie', inst);
+    expect(u.status).toBe(200);
+    expect(u.body.profiles).toEqual({});
+  });
+
+  it('an anonymous visitor of a public instance gets names but never an address', async () => {
+    const { h } = setup({ caps: { user: { scopes: ['email'] } }, visibility: 'public' });
+    const u = await request(h.app).get('/__lager/users').query({ ids: h.adminId }).set('Host', W);
+    expect(u.body.profiles[h.adminId]).toEqual({ id: h.adminId, name: 'Admin', email: null, isMe: false });
+  });
+
+  it('the page may only be framed by its own origin', async () => {
+    const { h } = setup();
+    const res = await request(h.app).get('/').set('Host', W).set('Cookie', await h.enter('workout', await h.login()));
+    expect(res.headers['content-security-policy']).toBe("frame-ancestors 'self'");
+    expect(res.headers['x-frame-options']).toBe('SAMEORIGIN');
+  });
+
+  it('a sign-in code only works in the browser that started the sign-in', async () => {
+    const { h } = setup();
+    const start = await request(h.app).get('/').set('Host', W);
+    const nonceCookie = ([] as string[]).concat(start.headers['set-cookie'])[0].split(';')[0];
+    expect(nonceCookie).toMatch(/^lager_nonce=[A-Za-z0-9_-]{24}$/);
+    expect(([] as string[]).concat(start.headers['set-cookie'])[0]).toMatch(/HttpOnly/);
+    const startUrl = new URL(start.headers.location);
+    const auth = await request(h.app).get(startUrl.pathname + startUrl.search).set('Host', PLATFORM_HOST).set('Cookie', await h.login());
+    const loc = new URL(auth.headers.location);
+    // Another browser (no nonce, or its own) is not signed in by this code, and the attempt does not burn it.
+    expect((await request(h.app).get(loc.pathname + loc.search).set('Host', W)).status).toBe(400);
+    expect((await request(h.app).get(loc.pathname + loc.search).set('Host', W).set('Cookie', NONCE_COOKIE)).status).toBe(400);
+    const ok = await request(h.app).get(loc.pathname + loc.search).set('Host', W).set('Cookie', nonceCookie);
+    expect(ok.status).toBe(302);
+    expect(([] as string[]).concat(ok.headers['set-cookie']).some((c) => c.startsWith('lager_nonce=;'))).toBe(true);
+    // A code issued without a nonce is good nowhere.
+    const bare = await request(h.app).get('/auth/instance').query({ slug: 'workout' }).set('Host', PLATFORM_HOST).set('Cookie', await h.login());
+    const bareLoc = new URL(bare.headers.location);
+    expect((await request(h.app).get(bareLoc.pathname + bareLoc.search).set('Host', W).set('Cookie', nonceCookie)).status).toBe(400);
+  });
+
+  it('a signed-in viewer keeps the stored nonce and gets a plain login URL', async () => {
+    const { h } = setup();
+    const inst = await h.enter('workout', await h.login());
+    const s = await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', inst);
+    expect(s.body.loginUrl).toBe('http://lager.localhost:8080/auth/instance?slug=workout&return=%2F');
+    expect(s.headers['set-cookie']).toBeUndefined();
+    const anon = await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', NONCE_COOKIE);
+    expect(anon.body.error.loginUrl).toBe(`http://lager.localhost:8080/auth/instance?slug=workout&return=%2F&n=${NONCE}`);
+    expect(anon.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('documents the viewer may not read cannot shape a limited query', async () => {
+    const { h } = setup({ caps: { db: { rules: [{ path: 'config/a-secret', read: 'owner', write: 'owner' }] } } });
+    const owner = await h.login();
+    const ada = h.core.users.create({ email: 'ada@x.y', name: 'Ada', password: 'ada-password-1', role: 'user' });
+    h.core.access.setGrant(h.core.apps.getInstanceBySlug('workout')!, 'user', ada.id, 'interact', h.core.users.get(h.adminId)!);
+    const ownerInst = await h.enter('workout', owner);
+    await db(h, W, ownerInst, { op: 'set', path: 'config/a-secret', data: { v: 'm' } });
+    const adaInst = await h.enter('workout', await h.login('ada@x.y', 'ada-password-1'));
+    await db(h, W, adaInst, { op: 'set', path: 'config/z-mine', data: { v: 'zzz' } });
+    // The hidden document sorts first; with the limit applied before the read filter the answer would be empty and leak a match.
+    const probe = await db(h, W, adaInst, { op: 'query', path: 'config', query: { where: [['v', '>=', 'a']], limit: 1 } });
+    expect(probe.body.docs.map((d: { path: string }) => d.path)).toEqual(['config/z-mine']);
+  });
+
+  it('users endpoint hides email without scope and caps ids', async () => {
+    const { h } = setup({ caps: { user: {} } });
     const inst = await h.enter('workout', await h.login());
     const u = await request(h.app).get('/__lager/users').query({ ids: h.adminId }).set('Host', W).set('Cookie', inst);
     expect(u.body.profiles[h.adminId].email).toBeNull();

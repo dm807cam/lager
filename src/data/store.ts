@@ -221,13 +221,14 @@ export class InstanceData {
     return true;
   }
 
-  query(instanceId: string, collectionPath: string, spec: QuerySpec = {}): Doc[] {
+  query(instanceId: string, collectionPath: string, spec: QuerySpec = {}, visible?: (path: string) => boolean): Doc[] {
     assertCollectionPath(collectionPath);
     const db = this.open(instanceId, false);
     // validate the spec even when there is nothing to query
     if (!db) { runQuery([], spec); return []; }
     const rows = db.prepare('SELECT * FROM docs WHERE parent = ?').all(collectionPath) as unknown as DocRow[];
-    const docs = rows.map(toDoc);
+    // Documents the caller may not see are dropped before filtering, sorting and limiting, so they cannot shape the result.
+    const docs = rows.map(toDoc).filter((d) => !visible || visible(d.path));
     return runQuery(docs, spec);
   }
 
@@ -239,12 +240,11 @@ export class InstanceData {
     if (typeof opts.holder !== 'string' || opts.holder === '' || Buffer.byteLength(opts.holder) > 200) {
       throw new LagerError('invalid_argument', 'holder must be a non-empty string of at most 200 bytes.');
     }
-    if (opts.data !== undefined) {
-      assertDocData(opts.data);
-      this.assertQuota(instanceId);
-    }
+    if (opts.data !== undefined) assertDocData(opts.data);
     const ttl = Math.min(Math.max(Number.isFinite(opts.ttlMs) ? Math.floor(opts.ttlMs!) : DEFAULT_TTL_MS, 1), MAX_TTL_MS);
     const db = this.open(instanceId, true)!;
+    // Renewing a lease on an existing document adds nothing; everything else (new data, a new document) counts against the quota.
+    if (opts.data !== undefined || !this.row(db, docPath)) this.assertQuota(instanceId);
     const result = this.transaction(db, (): AcquireResult => {
       const nowMs = Date.now();
       const now = new Date(nowMs).toISOString();

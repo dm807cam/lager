@@ -27,6 +27,15 @@ describe('config', () => {
     expect(loadConfig({ ...base, LAGER_PUBLIC_URL: 'https://lager.example.org', LAGER_PORT: '3000' }).port).toBe(3000);
   });
 
+  it('parses LAGER_HOST and LAGER_ACCESS_LOG', () => {
+    const base = { LAGER_PUBLIC_URL: 'http://lager.localhost:8080', LAGER_APPS_DOMAIN: 'apps.localhost', LAGER_DATA_DIR: tmp };
+    expect(loadConfig(base).host).toBeUndefined();
+    expect(loadConfig(base).accessLog).toBe(false);
+    expect(loadConfig({ ...base, LAGER_HOST: ' 127.0.0.1 ', LAGER_ACCESS_LOG: 'TRUE' })).toMatchObject({ host: '127.0.0.1', accessLog: true });
+    expect(loadConfig({ ...base, LAGER_HOST: '', LAGER_ACCESS_LOG: '0' })).toMatchObject({ accessLog: false });
+    expect(() => loadConfig({ ...base, LAGER_ACCESS_LOG: 'yes' })).toThrow(/LAGER_ACCESS_LOG/);
+  });
+
   it('parses LAGER_TRUST_PROXY as hop count', () => {
     const base = { LAGER_PUBLIC_URL: 'http://lager.localhost:8080', LAGER_APPS_DOMAIN: 'apps.localhost', LAGER_DATA_DIR: tmp };
     const trust = (v?: string) => loadConfig({ ...base, ...(v === undefined ? {} : { LAGER_TRUST_PROXY: v }) }).trustProxy;

@@ -28,6 +28,7 @@ const NOTICES: Record<string, MessageKey> = {
   other_users_instances: 'notice.otherUsersInstances',
   slug_taken: 'notice.slugTaken',
   slug_retired: 'notice.slugRetired',
+  rules_differ: 'notice.rulesDiffer',
   creation_rate: 'notice.creationRate',
   slug_invalid: 'notice.slugInvalid',
   slug_reserved: 'notice.slugInvalid',
@@ -406,7 +407,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
       const email = field(req, 'owner_email', 254).trim();
       // Only people who deploy this app may create instances for others; for everyone else the field is ignored.
       const owner = email !== '' && core.access.canDeploy(app, user) ? accountByEmail(email) : user;
-      core.apps.createInstance({ appId: app.id, slug: field(req, 'slug', 100).trim(), ownerId: owner.id });
+      core.apps.createInstance({ appId: app.id, slug: field(req, 'slug', 100).trim(), ownerId: owner.id, createdBy: user.id });
     },
   ));
 

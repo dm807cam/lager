@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { LoginLimiter } from '../src/http/platform.js';
 import { csrfToken } from '../src/http/session.js';
-import { makeHarness, PLATFORM_HOST, type Harness } from './support/http.js';
+import { makeHarness, NONCE, NONCE_COOKIE_HTTPS, PLATFORM_HOST, type Harness } from './support/http.js';
 import { t } from '../src/i18n/index.js';
 
 let h: Harness | undefined;
@@ -177,10 +177,10 @@ describe('platform host', () => {
     h.core.apps.deploy({ slug: 'x', html: '<p>x</p>', userId: h.adminId });
     const plain = await request(h.app).get('/auth/instance').query({ slug: 'x' }).set('Host', host).set('Cookie', 'lager_session=' + token);
     expect(plain.headers.location).toContain('/login');
-    const proper = await request(h.app).get('/auth/instance').query({ slug: 'x' }).set('Host', host).set('Cookie', '__Host-lager_session=' + token);
+    const proper = await request(h.app).get('/auth/instance').query({ slug: 'x', n: NONCE }).set('Host', host).set('Cookie', '__Host-lager_session=' + token);
     expect(proper.headers.location).toContain('/__lager/callback');
     const cb = await request(h.app).get(new URL(proper.headers.location).pathname + new URL(proper.headers.location).search)
-      .set('Host', new URL(proper.headers.location).host);
+      .set('Host', new URL(proper.headers.location).host).set('Cookie', NONCE_COOKIE_HTTPS);
     expect(([] as string[]).concat(cb.headers['set-cookie'])[0].startsWith('__Host-lager_inst=')).toBe(true);
   });
 
@@ -200,11 +200,17 @@ describe('login rate limit behind a proxy', () => {
     expect((await attempt(h, '1.2.3.4, 5.6.7.9', 'other@x.y')).status).toBe(401);
   });
 
-  it('limits per account across different IPs', async () => {
+  it('an account under attack from many addresses stays open to its owner, and guessers are cut short', async () => {
     h = makeHarness({ trustProxy: 1 });
     for (let i = 0; i < 10; i++) expect((await attempt(h, `5.6.7.${i}`)).status).toBe(401);
-    expect((await attempt(h, '8.8.8.8', 'admin@x.y', 'pw')).status).toBe(429);
-    expect((await attempt(h, '8.8.8.8', 'ADMIN@x.y ', 'pw')).status).toBe(429);
+    // An address that has not failed on this account still gets in with the right password: nobody can lock the owner out.
+    expect((await attempt(h, '8.8.8.8', 'admin@x.y', 'pw')).status).toBe(302);
+    // A new address gets three guesses on the hot account instead of ten, however the e-mail is spelled.
+    for (let i = 0; i < 3; i++) expect((await attempt(h, '9.9.9.9', i === 1 ? 'ADMIN@x.y ' : 'admin@x.y')).status).toBe(401);
+    expect((await attempt(h, '9.9.9.9', 'admin@x.y', 'pw')).status).toBe(429);
+    expect((await attempt(h, '9.9.9.9', 'ADMIN@x.y ', 'pw')).status).toBe(429);
+    // The same address is still free to sign in to another account.
+    expect((await attempt(h, '9.9.9.9', 'nobody@x.y')).status).toBe(401);
   });
 
   it('LoginLimiter drops expired entries', () => {

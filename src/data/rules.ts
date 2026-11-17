@@ -30,13 +30,15 @@ function check(rules: DbRule[] | undefined, viewer: Viewer, path: string, kind: 
   if (priv !== null) return priv;
   if (kind === 'write' && viewer.userId === null) return false;
 
-  let best: DbRule | undefined;
+  // The most specific matching rule that sets this kind decides; a rule that only sets `write` leaves `read` to the broader rule.
+  let required: string = kind === 'read' ? DEFAULT_READ : DEFAULT_WRITE;
   let bestLen = 0;
   for (const rule of rules ?? []) {
+    const level = rule[kind];
+    if (level === undefined) continue;
     const len = ruleMatches(rule, segs, viewer);
-    if (len > bestLen) { best = rule; bestLen = len; }
+    if (len > bestLen) { required = level; bestLen = len; }
   }
-  const required: string = best?.[kind] ?? (kind === 'read' ? DEFAULT_READ : DEFAULT_WRITE);
   // "self" and "none" are held by nobody; unknown levels fail closed.
   if (required === 'self' || required === 'none' || !(required in RANK)) return false;
   return RANK[viewer.level] >= RANK[required];

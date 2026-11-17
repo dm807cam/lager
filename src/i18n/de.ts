@@ -156,6 +156,7 @@ export const de: Record<MessageKey, string> = {
   'notice.otherUsersInstances': 'Andere Nutzer haben Instanzen dieser App. Sie müssen zuerst gelöscht werden.',
   'notice.slugTaken': 'Dieser Name ist schon vergeben.',
   'notice.slugRetired': 'Dieser Name wurde bereits verwendet und ist gesperrt.',
+  'notice.rulesDiffer': 'Nur der Eigentümer kann diese Version aktivieren: Ihre Datenregeln weichen von der aktiven ab.',
   'notice.creationRate': 'Du hast heute zu viele Instanzen angelegt. Versuche es morgen wieder.',
   'notice.slugInvalid': 'Ungültiger Name: Kleinbuchstaben, Ziffern und Bindestriche, höchstens {max} Zeichen.',
   'notice.collaboratorsInvalid': 'Mitarbeiter müssen aktive Administratoren oder Publisher sein.',

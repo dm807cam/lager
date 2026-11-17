@@ -140,7 +140,7 @@ describe('stage 3 end to end', () => {
       expect(hs.status).toBe(302);
       const cb = new URL(hs.headers.location!);
       expect(cb.host).toBe(host);
-      return cookiePair(await call(cb.host, 'GET', cb.pathname + cb.search), 'lager_inst');
+      return cookiePair(await call(cb.host, 'GET', cb.pathname + cb.search, { headers: { Cookie: cookiePair(start, 'lager_nonce') } }), 'lager_inst');
     };
     const token = async (session: string): Promise<Record<string, string>> => {
       const res = await call(PLATFORM, 'POST', '/api/tokens', { headers: { ...API, Cookie: session }, body: JSON.stringify({ name: 'e2e' }) });

@@ -36,6 +36,20 @@ export function createHttpApp(core: Core, extensions: PlatformExtension[] = []):
   app.disable('x-powered-by');
   app.set('trust proxy', config.trustProxy);
 
+  if (config.accessLog) {
+    // The query string is left out: it can carry sign-in codes and reset tokens.
+    app.use((req, res, next) => {
+      const start = process.hrtime.bigint();
+      res.on('close', () => {
+        const ms = Number((process.hrtime.bigint() - start) / 1_000_000n);
+        const host = String(req.headers.host ?? '-').replace(/[^\x21-\x7e]/g, '?').slice(0, 100);
+        const urlPath = req.originalUrl.split('?')[0].replace(/[^\x21-\x7e]/g, '?').slice(0, 200);
+        console.log(`${new Date().toISOString()} ${req.ip ?? '-'} ${req.method} ${host}${urlPath} ${res.statusCode} ${ms}ms`);
+      });
+      next();
+    });
+  }
+
   const platformHost = config.publicUrl.hostname.toLowerCase();
   const suffix = '.' + config.appsDomain.toLowerCase();
   const platform = createPlatformRouter(core, extensions);
