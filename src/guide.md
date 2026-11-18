@@ -10,6 +10,7 @@ If you have a shell and a `LAGER_TOKEN`, upload the file directly instead of sen
 Afterwards tell the user the URL that comes back and every warning in `warnings`.
 Sharing: the same instance with `share_instance` (shared data) or a separate instance with `create_instance` (separate data); the section "Sharing and instances" in `get_guide` explains the difference.
 To move an existing claude.ai artifact here: first `check_artifact` (best effort: it sees only `claude.use("…")` calls written with a string literal), then follow the section "Moving existing artifacts" in `get_guide`.
+To change an app that already exists (also one from an earlier conversation), first fetch its code with `get_version` and edit that; redeploy with the capabilities it returns.
 Details (rules, limits, versions, instances, pre-filling data): the `get_guide` tool.
 
 ---
@@ -73,6 +74,7 @@ Example sign-off – everyone signs off only for themselves, and even the owner 
 Every deploy with changed content or changed capabilities creates the next version and activates it on all instances with automatic updates. Identical content creates no new version (`createdVersion: false`).
 
 - `get_app {slug}` shows all versions and instances.
+- `get_version {app, version?}` returns the complete HTML of a version (default: the latest deployed one) together with its capabilities and the app's title; `get_version {instance}` returns the version active on that instance, which may be one the page saved itself (`savedByInstance`). Use it whenever you continue work on an existing app: never rebuild an app from memory or from its description. If `get_app` shows an instance whose `activeVersion` is not `latestVersion` (pinned, rolled back or saved by the page itself), ask the user which code to build on before you deploy: a deploy moves every instance that follows deploys to the new version. Redeploy the edited HTML with the same `capabilities` (or deliberately changed ones), because a deploy without `capabilities` declares none. From a shell, `GET /api/apps/<slug>/versions/<n>` with the bearer token saves the HTML to a file instead.
 - `activate_version {instance, version}` activates any existing version – backwards and forwards.
 - `set_auto_update {instance, on}` switches whether the instance follows new deploys; switching it on moves the instance to the latest deployed version at once.
 - Before every version change Lager automatically takes a snapshot of the instance's data. `list_snapshots {instance}` shows them, `restore_snapshot {instance, snapshot}` restores one (the current state is saved first).
@@ -147,7 +149,7 @@ Artifacts from the claude.ai chat that use `window.storage.get/set/delete/list(k
 
 An existing artifact (from the claude.ai chat or from elsewhere) moves like this:
 
-1. **Read the source.** Get the complete HTML of the existing artifact. For an earlier Lager version the user downloads it under "HTML" in the version list (`GET /api/apps/<slug>/versions/<n>`).
+1. **Read the source.** Get the complete HTML of the existing artifact. For a version already on Lager use `get_version {app, version?}` (or, from a shell, `GET /api/apps/<slug>/versions/<n>`; the user finds it under "HTML" in the version list).
 2. **Check.** `check_artifact {html, capabilities?}` (or `POST /api/check`) is best effort: it finds only `claude.use("…")` calls with a string literal as the name (not `claude.use(name)`), so read the code yourself as well. It names `used` (namespaces used), `unsupported` (namespaces Lager does not offer, which return `null`), `undeclared` (used but not declared) and `warnings` (browser storage, `claude.complete`).
 3. **Replace.** Rework everything `unsupported` names: check for `null` and hide the feature or replace it. `localStorage`, `sessionStorage` and `indexedDB` switch to `claude.use("db")`; `window.storage` keeps working unchanged (see above); `claude.complete` keeps working once `complete` is declared and the administrator has set up a model (otherwise it rejects, so handle the error). Tell the user which features are lost as a result.
 4. **Declare.** Enter every namespace used in `capabilities` (`db`, `user`, `assets`, `room`, `artifact`, `downloads`, and `complete` for `claude.complete`; `permissions` needs nothing), with rules and scopes. Check again with `check_artifact` until `undeclared` and `unsupported` are empty.
