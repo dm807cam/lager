@@ -153,6 +153,11 @@ describe('mcp endpoint', () => {
     await call(owner, 'share_instance', { instance: 'todo', email: 'viewer@x.y', level: 'interact' });
 
     expect((await getVersion(collab.client, { app: 'todo' })).html).toBe('<p>secret code</p>');
+    await call(owner, 'create_instance', { app: 'todo', slug: 'portal' });
+    await call(owner, 'share_instance', { instance: 'portal', email: 'viewer@x.y', level: 'admin' });
+    const viaInstance = await call(viewer.client, 'get_version', { instance: 'portal' });
+    expect(viaInstance.json.error.code).toBe('forbidden');
+    expect(viaInstance.json.error.message).not.toContain('todo');
     for (const args of [{ app: 'todo' }, { instance: 'todo' }]) {
       const res = await call(viewer.client, 'get_version', args);
       expect(res.isError).toBe(true);

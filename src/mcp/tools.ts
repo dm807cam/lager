@@ -238,7 +238,7 @@ export function downloadableVersion(core: Core, user: User, slug: string, number
 /**
  * The source of one version, so a later session can continue developing an app it did not deploy: by `app` (with `version`,
  * default the latest deployed one) or by `instance` (the version active there, which may be one the instance saved itself).
- * Access is that of the HTML download. Returns the HTML and what a redeploy needs alongside it (title, capabilities).
+ * Access is that of the HTML download. Returns the HTML and what a redeploy needs alongside it (the app's current title, the version's capabilities).
  */
 export function versionSource(core: Core, user: User, input: { app?: string; version?: number; instance?: string }): {
   meta: { app: string; title: string; version: number; createdAt: string; note: string | null; sizeBytes: number; capabilities: Capabilities; savedByInstance: string | null };
@@ -246,26 +246,27 @@ export function versionSource(core: Core, user: User, input: { app?: string; ver
 } {
   if ((input.app === undefined) === (input.instance === undefined)) throw new LagerError('invalid_argument', 'Give exactly one of app or instance.');
   if (input.instance !== undefined && input.version !== undefined) throw new LagerError('invalid_argument', 'version goes with app; an instance always gives its active version.');
+  let source: { html: string; version: Version };
   let app: App;
-  let number: number;
   if (input.instance !== undefined) {
     const inst = core.apps.getInstanceBySlug(input.instance);
-    if (!inst) throw new LagerError('not_found', `Instance "${input.instance}" not found.`);
-    if (!core.access.canSeeInstance(inst, user)) throw new LagerError('forbidden', `You have no access to instance "${input.instance}".`);
-    app = core.apps.getApp(inst.appId)!;
-    number = inst.activeVersion;
+    const found = inst ? core.apps.getApp(inst.appId) : null;
+    if (!inst || !found) throw new LagerError('not_found', `Instance "${input.instance}" not found.`);
+    app = found;
+    // Refused in terms of the instance: the caller may not know the app, and its slug is not theirs to learn.
+    const refused = new LagerError('forbidden', `You may not read the code of instance "${input.instance}" (owners and collaborators of the app, or managers of an instance that saved its own page).`);
+    if (!core.access.canSeeInstance(inst, user)) throw refused;
+    try {
+      source = downloadableVersion(core, user, app.slug, inst.activeVersion);
+    } catch (e) {
+      throw e instanceof LagerError && e.code === 'forbidden' ? refused : e;
+    }
   } else {
     app = appBySlug(core, input.app!);
-    if (input.version === undefined) {
-      if (!core.access.canReadApp(app, user)) throw new LagerError('forbidden', `You have no access to app "${app.slug}".`);
-      const latest = core.apps.latestDeployedVersion(app.id);
-      if (!latest) throw new LagerError('not_found', `App "${app.slug}" has no versions.`);
-      number = latest.number;
-    } else {
-      number = input.version;
-    }
+    // An app always has a deployed version; 0 only lets downloadableVersion answer forbidden or not_found as usual.
+    source = downloadableVersion(core, user, app.slug, input.version ?? core.apps.latestDeployedVersion(app.id)?.number ?? 0);
   }
-  const { html, version } = downloadableVersion(core, user, app.slug, number);
+  const { html, version } = source;
   const savedBy = version.instanceId ? core.apps.getInstance(version.instanceId)?.slug ?? null : null;
   return {
     meta: {

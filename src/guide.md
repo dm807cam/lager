@@ -10,7 +10,7 @@ If you have a shell and a `LAGER_TOKEN`, upload the file directly instead of sen
 Afterwards tell the user the URL that comes back and every warning in `warnings`.
 Sharing: the same instance with `share_instance` (shared data) or a separate instance with `create_instance` (separate data); the section "Sharing and instances" in `get_guide` explains the difference.
 To move an existing claude.ai artifact here: first `check_artifact` (best effort: it sees only `claude.use("…")` calls written with a string literal), then follow the section "Moving existing artifacts" in `get_guide`.
-To change an app that already exists (also one from an earlier conversation), first fetch its current code with `get_version {app}` and edit that; redeploy with the capabilities it returns.
+To change an app that already exists (also one from an earlier conversation), first fetch its code with `get_version` and edit that; redeploy with the capabilities it returns.
 Details (rules, limits, versions, instances, pre-filling data): the `get_guide` tool.
 
 ---
@@ -74,7 +74,7 @@ Example sign-off – everyone signs off only for themselves, and even the owner 
 Every deploy with changed content or changed capabilities creates the next version and activates it on all instances with automatic updates. Identical content creates no new version (`createdVersion: false`).
 
 - `get_app {slug}` shows all versions and instances.
-- `get_version {app, version?}` returns the complete HTML of a version (default: the latest deployed one) together with its title and capabilities; `get_version {instance}` returns the version active on that instance, which may be one the page saved itself (`savedByInstance`). Use it whenever you continue work on an existing app: never rebuild an app from memory or from its description. Redeploy the edited HTML with the same `capabilities` (or deliberately changed ones), because a deploy without `capabilities` declares none. From a shell, `GET /api/apps/<slug>/versions/<n>` with the bearer token saves the HTML to a file instead.
+- `get_version {app, version?}` returns the complete HTML of a version (default: the latest deployed one) together with its capabilities and the app's title; `get_version {instance}` returns the version active on that instance, which may be one the page saved itself (`savedByInstance`). Use it whenever you continue work on an existing app: never rebuild an app from memory or from its description. If `get_app` shows an instance whose `activeVersion` is not `latestVersion` (pinned, rolled back or saved by the page itself), ask the user which code to build on before you deploy: a deploy moves every instance that follows deploys to the new version. Redeploy the edited HTML with the same `capabilities` (or deliberately changed ones), because a deploy without `capabilities` declares none. From a shell, `GET /api/apps/<slug>/versions/<n>` with the bearer token saves the HTML to a file instead.
 - `activate_version {instance, version}` activates any existing version – backwards and forwards.
 - `set_auto_update {instance, on}` switches whether the instance follows new deploys; switching it on moves the instance to the latest deployed version at once.
 - Before every version change Lager automatically takes a snapshot of the instance's data. `list_snapshots {instance}` shows them, `restore_snapshot {instance, snapshot}` restores one (the current state is saved first).
