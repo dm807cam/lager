@@ -56,12 +56,12 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 const guide = fs.readFileSync(new URL('../src/guide.md', import.meta.url), 'utf8');
 
 describe('mcp endpoint', () => {
-  it('lists the twenty-one tools and exposes instructions', async () => {
+  it('lists the twenty-two tools and exposes instructions', async () => {
     const r = await start();
     const client = await connect(r);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'activate_version', 'add_domain', 'check_artifact', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'export_data', 'get_app', 'get_guide',
+      'activate_version', 'add_domain', 'check_artifact', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'export_data', 'get_app', 'get_guide', 'get_version',
       'import_data', 'list_apps', 'list_shares', 'list_snapshots', 'remove_domain', 'restore_snapshot', 'set_app_icon', 'set_auto_update', 'set_visibility', 'share_instance', 'unshare_instance',
     ]);
     expect(client.getServerVersion()?.name).toBe('lager');
@@ -91,6 +91,94 @@ describe('mcp endpoint', () => {
     const missing = await call(client, 'get_app', { slug: 'nope' });
     expect(missing.isError).toBe(true);
     expect(missing.json.error.code).toBe('not_found');
+  });
+
+  /** Calls get_version and returns its JSON block and its raw HTML block. */
+  async function getVersion(client: Client, args: Record<string, unknown>): Promise<{ meta: any; html: string }> {
+    const res = await client.callTool({ name: 'get_version', arguments: args });
+    expect(res.isError).not.toBe(true);
+    const content = res.content as { type: string; text: string }[];
+    expect(content.map((c) => c.type)).toEqual(['text', 'text']);
+    return { meta: JSON.parse(content[0].text), html: content[1].text };
+  }
+
+  it('get_version returns the source so a later session can continue the app', async () => {
+    const r = await start();
+    const client = await connect(r);
+    const v1 = '<!doctype html>\n<p class="a">"one"</p>';
+    const v2 = '<!doctype html>\n<script>const db = await claude.use("db");</script>';
+    await call(client, 'deploy_app', { slug: 'todo', html: v1, title: 'Todo', note: 'first' });
+    await call(client, 'deploy_app', { slug: 'todo', html: v2, capabilities: { db: { rules: [{ path: 'tasks', write: 'admin' }] }, user: {} }, note: 'second' });
+
+    const latest = await getVersion(client, { app: 'todo' });
+    expect(latest.html).toBe(v2);
+    expect(latest.meta).toMatchObject({
+      app: 'todo', title: 'Todo', version: 2, note: 'second', savedByInstance: null,
+      capabilities: { db: { rules: [{ path: 'tasks', write: 'admin' }] }, user: {} },
+    });
+    expect(latest.meta.sizeBytes).toBe(Buffer.byteLength(v2));
+
+    const first = await getVersion(client, { app: 'todo', version: 1 });
+    expect(first.html).toBe(v1);
+    expect(first.meta).toMatchObject({ version: 1, note: 'first', capabilities: {} });
+
+    await call(client, 'activate_version', { instance: 'todo', version: 1 });
+    expect((await getVersion(client, { instance: 'todo' })).html).toBe(v1);
+
+    // Redeploying what came back with the same capabilities is a no-op.
+    const again = await call(client, 'deploy_app', { slug: 'todo', html: latest.html, capabilities: latest.meta.capabilities });
+    expect(again.json).toMatchObject({ version: 2, createdVersion: false });
+
+    for (const [args, code] of [
+      [{ app: 'todo', version: 9 }, 'not_found'],
+      [{ app: 'nope' }, 'not_found'],
+      [{ instance: 'nope' }, 'not_found'],
+      [{}, 'invalid_argument'],
+      [{ app: 'todo', instance: 'todo' }, 'invalid_argument'],
+      [{ instance: 'todo', version: 1 }, 'invalid_argument'],
+    ] as const) {
+      const res = await call(client, 'get_version', args);
+      expect(res.isError, JSON.stringify(args)).toBe(true);
+      expect(res.json.error.code, JSON.stringify(args)).toBe(code);
+    }
+  });
+
+  it('get_version: collaborators read the code, people the instance is only shared with do not', async () => {
+    const r = await start();
+    const owner = await connect(r);
+    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>secret code</p>' });
+    const collab = await asUser(r, 'collab@x.y', 'publisher');
+    const viewer = await asUser(r, 'viewer@x.y');
+    r.h.core.apps.addCollaborator(r.h.core.apps.getApp('todo')!.id, collab.id, r.h.adminId);
+    await call(owner, 'share_instance', { instance: 'todo', email: 'viewer@x.y', level: 'interact' });
+
+    expect((await getVersion(collab.client, { app: 'todo' })).html).toBe('<p>secret code</p>');
+    for (const args of [{ app: 'todo' }, { instance: 'todo' }]) {
+      const res = await call(viewer.client, 'get_version', args);
+      expect(res.isError).toBe(true);
+      expect(res.json.error.code).toBe('forbidden');
+    }
+  });
+
+  it('get_version by instance returns a page the instance saved itself, to its managers only', async () => {
+    const r = await start();
+    const owner = await connect(r);
+    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>deployed</p>', capabilities: { artifact: {} } });
+    const inst = r.h.core.apps.getInstanceBySlug('todo')!;
+    const saved = '<!doctype html><p>saved by the page</p>';
+    r.h.core.apps.selfPublish({ instanceId: inst.id, html: saved, baseVersion: 1, userId: r.h.adminId });
+
+    const got = await getVersion(owner, { instance: 'todo' });
+    expect(got.html).toBe(saved);
+    expect(got.meta).toMatchObject({ version: 2, savedByInstance: 'todo', capabilities: { artifact: {} } });
+    // By app, the latest deployed version is still the deployed one.
+    expect((await getVersion(owner, { app: 'todo' })).html).toBe('<p>deployed</p>');
+
+    const collab = await asUser(r, 'collab@x.y', 'publisher');
+    r.h.core.apps.addCollaborator(inst.appId, collab.id, r.h.adminId);
+    const res = await call(collab.client, 'get_version', { app: 'todo', version: 2 });
+    expect(res.isError).toBe(true);
+    expect(res.json.error.code).toBe('forbidden');
   });
 
   it('deploy_app surfaces lint warnings', async () => {
@@ -197,6 +285,9 @@ describe('mcp endpoint', () => {
     const attempts: [string, Record<string, unknown>][] = [
       ['deploy_app', { slug: 'theirs', html: '<p>x</p>' }],
       ['get_app', { slug: 'theirs' }],
+      ['get_version', { app: 'theirs' }],
+      ['get_version', { app: 'theirs', version: 1 }],
+      ['get_version', { instance: 'theirs' }],
       ['activate_version', { instance: 'theirs', version: 1 }],
       ['create_instance', { app: 'theirs', slug: 'mine-now' }],
       ['set_visibility', { instance: 'theirs', visibility: 'public' }],
@@ -616,7 +707,7 @@ describe('mcp endpoint', () => {
     const client = new Client({ name: 't', version: '1' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${r.base}/mcp`), { authProvider: provider }));
     clients.push(client);
-    expect((await client.listTools()).tools).toHaveLength(21);
+    expect((await client.listTools()).tools).toHaveLength(22);
   });
 
   describe('icons and descriptions', () => {

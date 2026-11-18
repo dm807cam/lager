@@ -235,6 +235,47 @@ export function downloadableVersion(core: Core, user: User, slug: string, number
   return { html: core.apps.readVersionHtml(app.id, number), version };
 }
 
+/**
+ * The source of one version, so a later session can continue developing an app it did not deploy: by `app` (with `version`,
+ * default the latest deployed one) or by `instance` (the version active there, which may be one the instance saved itself).
+ * Access is that of the HTML download. Returns the HTML and what a redeploy needs alongside it (title, capabilities).
+ */
+export function versionSource(core: Core, user: User, input: { app?: string; version?: number; instance?: string }): {
+  meta: { app: string; title: string; version: number; createdAt: string; note: string | null; sizeBytes: number; capabilities: Capabilities; savedByInstance: string | null };
+  html: string;
+} {
+  if ((input.app === undefined) === (input.instance === undefined)) throw new LagerError('invalid_argument', 'Give exactly one of app or instance.');
+  if (input.instance !== undefined && input.version !== undefined) throw new LagerError('invalid_argument', 'version goes with app; an instance always gives its active version.');
+  let app: App;
+  let number: number;
+  if (input.instance !== undefined) {
+    const inst = core.apps.getInstanceBySlug(input.instance);
+    if (!inst) throw new LagerError('not_found', `Instance "${input.instance}" not found.`);
+    if (!core.access.canSeeInstance(inst, user)) throw new LagerError('forbidden', `You have no access to instance "${input.instance}".`);
+    app = core.apps.getApp(inst.appId)!;
+    number = inst.activeVersion;
+  } else {
+    app = appBySlug(core, input.app!);
+    if (input.version === undefined) {
+      if (!core.access.canReadApp(app, user)) throw new LagerError('forbidden', `You have no access to app "${app.slug}".`);
+      const latest = core.apps.latestDeployedVersion(app.id);
+      if (!latest) throw new LagerError('not_found', `App "${app.slug}" has no versions.`);
+      number = latest.number;
+    } else {
+      number = input.version;
+    }
+  }
+  const { html, version } = downloadableVersion(core, user, app.slug, number);
+  const savedBy = version.instanceId ? core.apps.getInstance(version.instanceId)?.slug ?? null : null;
+  return {
+    meta: {
+      app: app.slug, title: app.title, version: version.number, createdAt: version.createdAt, note: version.note,
+      sizeBytes: version.sizeBytes, capabilities: version.capabilities, savedByInstance: savedBy,
+    },
+    html,
+  };
+}
+
 /** The artifact check for a signed-in publisher or administrator. */
 export function runArtifactCheck(user: User, html: unknown, capabilities: unknown): ArtifactCheck {
   if (user.disabled || (user.role !== 'admin' && user.role !== 'publisher')) {
@@ -364,13 +405,17 @@ function result(value: unknown, isError = false): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(value) }], ...(isError ? { isError: true } : {}) };
 }
 
+function errorResult(e: unknown): CallToolResult {
+  if (e instanceof LagerError) return result({ error: { code: e.code, message: e.message } }, true);
+  console.error(e);
+  return result({ error: { code: 'internal', message: 'Internal server error.' } }, true);
+}
+
 async function runAsync(fn: () => Promise<unknown>): Promise<CallToolResult> {
   try {
     return result(await fn());
   } catch (e) {
-    if (e instanceof LagerError) return result({ error: { code: e.code, message: e.message } }, true);
-    console.error(e);
-    return result({ error: { code: 'internal', message: 'Internal server error.' } }, true);
+    return errorResult(e);
   }
 }
 
@@ -378,9 +423,7 @@ function run(fn: () => unknown): CallToolResult {
   try {
     return result(fn());
   } catch (e) {
-    if (e instanceof LagerError) return result({ error: { code: e.code, message: e.message } }, true);
-    console.error(e);
-    return result({ error: { code: 'internal', message: 'Internal server error.' } }, true);
+    return errorResult(e);
   }
 }
 
@@ -444,6 +487,21 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     description: 'Show one of your apps (owned or collaborating) with instances and all versions.',
     inputSchema: { slug: slugArg },
   }, ({ slug }) => run(() => appDetail(core, user, readableApp(core, user, slug))));
+
+  server.registerTool('get_version', {
+    description: 'Get the source of an app so you can continue developing it, e.g. in a new conversation: the complete HTML of a version plus its title and capabilities. Give app (with version, default the latest deployed one) or instance (the version active there, possibly one the page saved itself). Returns two text blocks: first JSON {app, title, version, createdAt, note, sizeBytes, capabilities, savedByInstance}, then the raw HTML. Edit that HTML and redeploy it with deploy_app, passing the same capabilities (or deliberately changed ones): a deploy without capabilities declares none.',
+    inputSchema: {
+      app: slugArg.optional(), version: z.number().int().positive().optional().describe('Version number from get_app; default: the latest deployed version'),
+      instance: slugArg.optional().describe('Instead of app: the instance whose active version you want'),
+    },
+  }, ({ app, version, instance }) => {
+    try {
+      const { meta, html } = versionSource(core, user, { app, version, instance });
+      return { content: [{ type: 'text', text: JSON.stringify(meta) }, { type: 'text', text: html }] };
+    } catch (e) {
+      return errorResult(e);
+    }
+  });
 
   server.registerTool('activate_version', {
     description: 'Activate any existing version on an instance (roll back or forward). A snapshot of the instance data is taken first.',
