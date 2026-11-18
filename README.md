@@ -159,9 +159,32 @@ curl -X PUT -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: text/html"
 
 Whoever saves a page with `artifact.publish` detaches that instance from the app's deploys: it no longer follows new deploys automatically. A deploy lists such instances in the field `pinned` and in its warnings. To follow deploys again, turn "Update automatically" back on: on the instance page, with `POST /api/instances/<slug>/auto-update` and the body `{"on": true}`, or with the MCP tool `set_auto_update`; turning it on moves the instance to the latest deployed version at once (the saved page stays among that instance's saved versions). The saved versions do not appear in the app's version list; only the managers of the instance that saved them can download their HTML.
 
-Everything else stays unavailable: for other names (for example `sample` or `tts`) `claude.use` always returns `null`, and `claude.complete` does not exist (the call rejects with an error message). In the `artifact` building block, `publish` with several files, `edit`, `sync` and `metadata` reject with an error code, and `room.sendToClaudeSession` rejects because Lager has no conversation with Claude beside the page. `check_artifact` (MCP) and `POST /api/check` show before a deploy what an artifact uses, what Lager does not offer and what is not yet declared. The check is best effort: it only sees `claude.use("…")` calls whose name is a string literal.
+Everything else stays unavailable: for other names (for example `sample` or `tts`) `claude.use` always returns `null`, and `claude.complete` works only once an administrator connects a language model (see [Bring your own model](#bring-your-own-model)). In the `artifact` building block, `publish` with several files, `edit`, `sync` and `metadata` reject with an error code, and `room.sendToClaudeSession` rejects because Lager has no conversation with Claude beside the page. `check_artifact` (MCP) and `POST /api/check` show before a deploy what an artifact uses, what Lager does not offer and what is not yet declared. The check is best effort: it only sees `claude.use("…")` calls whose name is a string literal.
 
 The event streams (`/__lager/db/events`, `/__lager/room/events`) and the files at `/_blob/<id>` answer only the instance's own page: a request that the browser marks as coming from another site or from another instance (even one under the same apps domain) is refused, so another page cannot open them or embed the files with the visitor's cookies.
+
+## Bring your own model
+
+Artifacts built on claude.ai often call `window.claude.complete(prompt)` to ask Claude something from inside the page: a recipe app suggests a meal, a journal summarizes the week. On Lager that call goes to a language model **you** connect, paid with your own API key.
+
+Under **Administration → AI model**, pick a provider, enter the model name and the API key, and press **Send a test message**:
+
+| Provider | Model example | Notes |
+| --- | --- | --- |
+| Anthropic (Claude) | `claude-opus-5-5` | Messages API |
+| OpenAI | `gpt-5` | |
+| OpenRouter | `anthropic/claude-opus-5-5` | one key for hundreds of models |
+| DeepSeek | `deepseek-chat` | |
+| Google Gemini | `gemini-2.5-flash` | OpenAI-compatible endpoint |
+| Mistral, Groq | `mistral-large-latest`, `llama-3.3-70b-versatile` | |
+| Ollama (local) | `llama3.2` | no key; default address `http://127.0.0.1:11434/v1` |
+| Other OpenAI-compatible server | any | enter the server address (LM Studio, vLLM, LiteLLM, Together, …) |
+
+- **Apps opt in.** Only apps that declare `{"complete": {}}` can call the model; `check_artifact` reports a missing declaration.
+- **Guests can't spend your credit.** Only signed-in people with at least contributor access to an app can use it. Each person gets a limited number of requests per hour (60 by default) and at most three at a time, and the administrator sets the longest answer (16,000 tokens by default).
+- **The key stays on the server.** It is stored encrypted with the server secret (`secret.key` or `LAGER_SECRET`). The page never shows it again, only its last four characters. Changing the secret makes the stored key unreadable, so you enter it again. Switching providers removes the old key.
+- **Errors stay private.** Viewers get a short message such as "The language model rejected the request". What the provider said goes to the server log and to the administrator's test.
+- **Choose Off** to stop all calls and forget the key.
 
 ## App icons and home-screen install
 
@@ -317,7 +340,7 @@ curl -X POST -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: applicati
 **What cannot be moved automatically:**
 
 - Data that lives only in the user's browser (`localStorage`, `sessionStorage`, `indexedDB`): the old artifact must save it once as a file, which you then import.
-- Building blocks that Lager does not offer (`claude.complete`, `sample`, `tts` and similar): the feature is dropped or must be replaced.
+- Building blocks that Lager does not offer (`sample`, `tts` and similar): the feature is dropped or must be replaced. `claude.complete` works when the app declares `complete` and a model is connected.
 - Uploaded files: they must be uploaded again through the app, and the references to them change.
 - Private areas of other users, grants, domains, snapshots and earlier versions from another platform.
 
@@ -355,7 +378,7 @@ To restore, stop Lager and copy the contents back (or unpack the archive into an
 - The quota applies to the data of an instance (documents, uploaded files, self-saved pages), not to deployed versions, snapshots or the trash (which is emptied after the retention period). There is no limit on the total size.
 - Snapshots back up only documents, not uploaded files and not self-saved pages.
 - The trash is emptied after `LAGER_TRASH_DAYS` days (default 30) and cannot be restored through Lager.
-- Only the building blocks `db`, `user`, `permissions`, `assets`, `room`, `artifact` (`self`) and `downloads`; all other names return `null`, `claude.complete` is missing, and there are no messages to Claude from the page.
+- Only the building blocks `db`, `user`, `permissions`, `assets`, `room`, `artifact` (`self`) and `downloads`; all other names return `null`, `claude.complete` needs a model the administrator connects, and there are no messages to Claude from the page.
 - Realtime rooms live only in memory: no history, nothing survives a restart, and several Lager processes do not share rooms.
 - For custom domains, Lager does not check who owns the host name.
 - No TLS of its own: HTTPS is handled by the proxy in front.

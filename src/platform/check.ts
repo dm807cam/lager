@@ -33,12 +33,15 @@ export function checkArtifact(html: string, capabilities: Capabilities = {}): Ar
     const v = Object.prototype.hasOwnProperty.call(capabilities, k) ? (capabilities as Record<string, unknown>)[k] : undefined;
     return v !== null && typeof v === 'object';
   });
-  const undeclared = used.filter((n) => SUPPORTED_CAPABILITIES.includes(n) && n !== 'permissions' && !declared(n));
+  const callsComplete = COMPLETE_RE.test(html);
+  // `claude.complete` is not reached through `use()`, but it needs its own declaration all the same.
+  const undeclared = [...used.filter((n) => SUPPORTED_CAPABILITIES.includes(n) && n !== 'permissions' && !declared(n)),
+    ...(callsComplete && !declared('complete') ? ['complete'] : [])];
   const warnings = [
     ...storageWarnings(html),
     ...unsupported.map((n) => `"${n}" is not provided by Lager; claude.use("${n}") returns null.`),
-    ...undeclared.map((n) => `"${n}" is used but not declared in capabilities.`),
-    ...(COMPLETE_RE.test(html) ? ['claude.complete is not provided by Lager; the call rejects with an error.'] : []),
+    ...undeclared.map((n) => n === 'complete' ? 'claude.complete is used but "complete" is not declared in capabilities; the call rejects.' : `"${n}" is used but not declared in capabilities.`),
+    ...(callsComplete ? ['claude.complete calls the language model the server administrator set up; it rejects when none is set up, for guests and for viewers who may only view.'] : []),
   ];
   return { used, unsupported, undeclared, warnings };
 }

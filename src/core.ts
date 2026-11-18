@@ -5,6 +5,7 @@ import { Rooms } from './data/rooms.js';
 import { InstanceData } from './data/store.js';
 import { OAuthStore } from './mcp/oauth.js';
 import { Accounts } from './platform/accounts.js';
+import { AiModels } from './platform/ai.js';
 import { Access } from './platform/access.js';
 import { Apps } from './platform/apps.js';
 import { openPlatformDb } from './platform/db.js';
@@ -36,12 +37,14 @@ export interface Core {
   domains: Domains;
   /** Every authorization decision on apps and instances. */
   access: Access;
+  /** The language model apps reach through `window.claude.complete` (bring your own model). */
+  ai: AiModels;
   /** App icons rendered from the SVG Claude supplies. `await core.icons.ready()` before `set` or `setDefault`. */
   icons: AppIcons;
   close(): void;
 }
 
-export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
+export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typeof fetch }): Core {
   const db = openPlatformDb(config.dataDir);
   const users = new Users(db);
   if (config.adminPassword !== undefined && ADMIN_PASSWORD_PLACEHOLDERS.includes(config.adminPassword) && config.publicUrl.protocol === 'https:' && users.count() === 0) {
@@ -62,6 +65,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
   users.onDisabled((id) => { oauth.revokeUser(id); });
   users.onDemoted((id) => { accounts.deleteInvitesBy(id); });
   const icons = new AppIcons(config.dataDir);
+  const ai = new AiModels(db, config.secret, opts?.fetch);
   const hub = new Hub();
   const data = new InstanceData(config.dataDir, hub, config.snapshotKeep, config.instanceQuotaBytes);
   // Pages an instance saved itself count like its documents and uploads against the one instance quota.
@@ -82,7 +86,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer }): Core {
   apps.onActivated((inst) => { hub.publish(inst.id, { type: 'reload', version: inst.activeVersion }); });
   return {
     config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, accounts, groups, domains, access,
-    icons,
+    icons, ai,
     close() {
       icons.close();
       assets.close();

@@ -15,6 +15,7 @@ import { mountArtifactRoutes } from './instance-artifact.js';
 import { mountPwaRoutes } from './instance-pwa.js';
 import { mountAssetRoutes } from './instance-assets.js';
 import { mountRoomRoutes, STREAM_LIMITS } from './instance-room.js';
+import { mountCompleteRoutes } from './instance-complete.js';
 import { assertOwnOrigin } from './origin.js';
 import { StreamLimiter } from './stream-limit.js';
 import { requestLocale } from './locale.js';
@@ -360,6 +361,7 @@ export function createInstanceRouter(core: Core): express.Router {
   mountAssetRoutes(router, core, ctxOf, requireAccess);
   mountRoomRoutes(router, core, ctxOf, requireAccess, activeCapabilities);
   mountArtifactRoutes(router, core, ctxOf, requireAccess);
+  mountCompleteRoutes(router, core, ctxOf, requireAccess);
 
   router.use((req, res) => { sendNotFound(core, req, res); });
   return router;

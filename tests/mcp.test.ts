@@ -551,8 +551,8 @@ describe('mcp endpoint', () => {
     const client = await connect(r);
     const res = await call(client, 'check_artifact', { html: '<script>claude.use("db"); claude.use("tts"); claude.complete("x")</script>', capabilities: {} });
     expect(res.isError).toBe(false);
-    expect(res.json).toMatchObject({ used: ['db', 'tts'], unsupported: ['tts'], undeclared: ['db'] });
-    expect(res.json.warnings).toHaveLength(3);
+    expect(res.json).toMatchObject({ used: ['db', 'tts'], unsupported: ['tts'], undeclared: ['db', 'complete'] });
+    expect(res.json.warnings).toHaveLength(4);
     expect((await call(client, 'check_artifact', { html: '<p>x</p>' })).json).toEqual({ used: [], unsupported: [], undeclared: [], warnings: [] });
     const plain = await asUser(r, 'plain@x.y');
     expect((await call(plain.client, 'check_artifact', { html: '<p>x</p>' })).json.error.code).toBe('forbidden');

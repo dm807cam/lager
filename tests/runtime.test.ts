@@ -40,6 +40,7 @@ let users: Record<string, { id: string; name: string; email: string | null; isMe
 let clock: number;
 let roomReply: (body: any) => Response;
 let artifactReply: (body: any) => Response | Promise<Response>;
+let completeReply: (body: any) => Response | Promise<Response>;
 
 const parentOf = (path: string): string => path.split('/').slice(0, -1).join('/');
 const dbCalls = (): any[] => calls.filter(([u]) => u === '/__lager/db').map(([, init]) => JSON.parse(init.body));
@@ -110,6 +111,7 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
   }
   if (url === '/__lager/room') return roomReply(JSON.parse(init.body));
   if (url === '/__lager/artifact') return artifactReply(JSON.parse(init.body));
+  if (url === '/__lager/complete') return completeReply(JSON.parse(init.body));
   if (url === '/__lager/assets' || url.startsWith('/__lager/assets/')) {
     const type = init?.headers?.['Content-Type'] as string | undefined;
     if (init?.method === 'POST') {
@@ -144,6 +146,7 @@ beforeEach(() => {
   calls = []; docs = new Map(); users = {}; clock = 0;
   roomReply = () => json({ ok: true });
   artifactReply = () => json({ version: '2' });
+  completeReply = () => json({ text: 'ok' });
   session = sessionOf(OWNER);
   FakeEventSource.instances = [];
   g.fetch = fakeFetch;
@@ -227,10 +230,26 @@ describe('claude.use', () => {
     expect(Object.isFrozen(g.storage)).toBe(true);
   });
 
-  it('claude.complete rejects', async () => {
+  it('claude.complete sends the prompt and resolves the answer text', async () => {
     const claude = boot();
-    await expect(claude.complete()).rejects.toThrow('claude.complete is not available on this Lager server');
-    await expect(claude.complete()).rejects.toBeInstanceOf(Error);
+    completeReply = (b) => json({ text: `echo ${JSON.stringify(b)}`, model: 'm', stopReason: 'end_turn' });
+    expect(await claude.complete('hi')).toBe('echo {"messages":"hi"}');
+    const call = calls.find(([u]) => u === '/__lager/complete')!;
+    expect(call[1].method).toBe('POST');
+    expect(call[1].headers['X-Lager-Request']).toBe('1');
+    const history = [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }, { role: 'user', content: 'c' }];
+    expect(await claude.complete(history, { system: 's', maxTokens: 50, other: 1 }))
+      .toBe(`echo ${JSON.stringify({ messages: history, system: 's', maxTokens: 50 })}`);
+  });
+
+  it('claude.complete rejects with the server code', async () => {
+    const claude = boot();
+    await expect(claude.complete()).rejects.toMatchObject({ code: 'invalid_argument' });
+    completeReply = () => json({ error: { code: 'not_configured', message: 'No language model is set up on this server.' } }, 503);
+    await expect(claude.complete('x')).rejects.toMatchObject({ code: 'not_configured', message: 'No language model is set up on this server.' });
+    completeReply = () => new Response('<html>bad gateway</html>', { status: 502 });
+    await expect(claude.complete('x')).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(claude.complete('x')).rejects.toBeInstanceOf(Error);
   });
 });
 

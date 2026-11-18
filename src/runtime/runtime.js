@@ -1,4 +1,5 @@
-/* Lager browser runtime: provides window.claude.use("db" | "user" | "assets" | "room" | "artifact" | "self" | "downloads" | "permissions") and window.storage
+/* Lager browser runtime: provides window.claude.use("db" | "user" | "assets" | "room" | "artifact" | "self" | "downloads" | "permissions"),
+   window.claude.complete and window.storage
    on top of the /__lager/* endpoints. Plain ES2020, no dependencies. */
 (function () {
   'use strict';
@@ -12,6 +13,7 @@
   var DB_URL = '/__lager/db';
   var ASSETS_URL = '/__lager/assets';
   var EVENTS_URL = '/__lager/db/events';
+  var COMPLETE_URL = '/__lager/complete';
   var RETRY_MIN_MS = 1000;
   var RETRY_MAX_MS = 30000;
   var MAX_PROFILE_IDS = 100;
@@ -1433,9 +1435,47 @@
   // It is shared with the first `claude.use()`; pages that declare neither open no event stream.
   setTimeout(function () { getSession().then(watchReloads).catch(function () { /* no session, no watching */ }); }, 0);
 
+  // ------------------------------------------------------------------ complete
+
+  function completeError(code, message) {
+    var e = new Error(message || 'The language model request failed.');
+    e.code = code || 'unavailable';
+    return e;
+  }
+
+  /**
+   * Asks the language model the server's administrator set up. `prompt` is a string or a list of `{role, content}`
+   * messages; `options` may carry `system` and `maxTokens`. Resolves the answer text, like claude.ai's claude.complete.
+   */
+  function complete(prompt, options) {
+    return Promise.resolve().then(function () {
+      if (typeof prompt !== 'string' && !Array.isArray(prompt)) throw completeError('invalid_argument', 'complete expects a prompt string or a list of messages.');
+      var body = { messages: prompt };
+      if (options && typeof options === 'object') {
+        if (options.system !== undefined) body.system = options.system;
+        if (options.maxTokens !== undefined) body.maxTokens = options.maxTokens;
+      }
+      return fetch(COMPLETE_URL, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-Lager-Request': '1' },
+        body: JSON.stringify(body),
+      });
+    }).then(function (res) {
+      return res.json().catch(function () { return null; }).then(function (data) {
+        if (!res.ok || !data || typeof data.text !== 'string') {
+          var err = data && data.error;
+          throw completeError(err && err.code, err && err.message);
+        }
+        return data.text;
+      });
+    }, function (e) {
+      throw e && e.code ? e : completeError('unavailable', 'The language model could not be reached.');
+    });
+  }
+
   window.claude = Object.freeze({
     use: use,
-    complete: function () { return Promise.reject(new Error('claude.complete is not available on this Lager server')); },
+    complete: complete,
   });
   window.storage = storage;
 })();

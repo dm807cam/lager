@@ -56,11 +56,19 @@ describe('checkArtifact', () => {
 
   it('warns about claude.complete and browser storage', () => {
     const r = checkArtifact('<script>window.claude.complete("hi"); localStorage.x = 1</script>', {});
-    expect(r.warnings).toHaveLength(2);
+    expect(r.warnings).toHaveLength(3);
     expect(r.warnings.some((w) => w.includes('localStorage'))).toBe(true);
-    expect(r.warnings.some((w) => w.includes('claude.complete'))).toBe(true);
+    expect(r.warnings.some((w) => w.includes('"complete" is not declared'))).toBe(true);
     expect(checkArtifact('<script>const f = claude.complete; f()</script>', {}).warnings).toHaveLength(0);
-    expect(checkArtifact('<script>claude.complete ("x")</script>', {}).warnings).toHaveLength(1);
+    expect(checkArtifact('<script>claude.complete ("x")</script>', {}).warnings).toHaveLength(2);
+  });
+
+  it('claude.complete needs the complete declaration', () => {
+    expect(checkArtifact('<script>claude.complete("x")</script>', {}).undeclared).toEqual(['complete']);
+    const declared = checkArtifact('<script>claude.complete("x")</script>', { complete: {} });
+    expect(declared.undeclared).toEqual([]);
+    expect(declared.unsupported).toEqual([]);
+    expect(declared.warnings).toHaveLength(1);
   });
 
   it('clean artifact has no warnings', () => {

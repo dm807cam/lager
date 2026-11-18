@@ -5,7 +5,7 @@ import { requestLocale } from './locale.js';
 import { instanceHostPage, notFoundPage } from './pages.js';
 
 const STATUS: Record<ErrorCode, number> = {
-  not_found: 404, forbidden: 403, invalid_argument: 400, conflict: 409, unauthenticated: 401, quota_exceeded: 507,
+  not_found: 404, forbidden: 403, invalid_argument: 400, conflict: 409, unauthenticated: 401, quota_exceeded: 507, unavailable: 503,
 };
 
 export function sendError(res: Response, err: unknown, extra?: Record<string, unknown>): void {

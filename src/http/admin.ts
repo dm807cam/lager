@@ -7,6 +7,7 @@ import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { localeOf, requestLocale } from './locale.js';
 import { MAX_NAME } from '../platform/groups.js';
 import type { CustomDomainsMode, RegistrationMode } from '../platform/settings.js';
+import { AiError, HOURLY_LIMIT_MAX, MAX_TOKENS_LIMIT, PRESETS, PROVIDER_IDS, TEST_PROMPT, type ProviderId } from '../platform/ai.js';
 import type { Instance } from '../platform/apps.js';
 import type { Role, User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
@@ -19,10 +20,13 @@ const ROLES: readonly Role[] = ['admin', 'publisher', 'user'];
 const ROLE_KEYS: Record<Role, MessageKey> = { admin: 'role.admin', publisher: 'role.publisher', user: 'role.user' };
 const DOMAIN_KEYS: Record<CustomDomainsMode, MessageKey> = { admins: 'admin.domains.admins', publishers: 'admin.domains.publishers' };
 const MODE_KEYS: Record<RegistrationMode, MessageKey> = { open: 'admin.mode.open', invite: 'admin.mode.invite', closed: 'admin.mode.closed' };
-const SECTIONS: Array<[Section, MessageKey]> = [['users', 'admin.section.users'], ['invites', 'admin.section.invites'], ['groups', 'admin.section.groups'], ['settings', 'admin.section.settings'], ['apps', 'admin.section.apps']];
+const SECTIONS: Array<[Section, MessageKey]> = [['users', 'admin.section.users'], ['invites', 'admin.section.invites'], ['groups', 'admin.section.groups'], ['settings', 'admin.section.settings'], ['ai', 'admin.section.ai'], ['apps', 'admin.section.apps']];
 const MAX_FIELD = 300;
+/** Product names stay as they are; only the two generic entries are words that need translating. */
+const providerLabel = (locale: Locale, id: ProviderId): string =>
+  id === 'ollama' ? t(locale, 'admin.ai.provider.ollama') : id === 'custom' ? t(locale, 'admin.ai.provider.custom') : PRESETS[id].label;
 
-type Section = 'users' | 'invites' | 'groups' | 'settings' | 'apps';
+type Section = 'users' | 'invites' | 'groups' | 'settings' | 'ai' | 'apps';
 /** A note above the section; `once` carries a one-time link and is never stored. */
 interface Msg { ok?: string; error?: string; once?: { title: string; link: string } }
 
@@ -130,6 +134,35 @@ ${settingRow('custom-domains', t(locale, 'admin.settings.customDomains'), t(loca
   return shell(core, locale, admin, 'settings', t(locale, 'admin.section.settings'), body, msg);
 }
 
+function aiSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
+  const csrf = csrfToken(core, admin);
+  const cfg = core.ai.view();
+  const providers: Option[] = [['', t(locale, 'admin.ai.off')], ...PROVIDER_IDS.map((id): Option => [id, providerLabel(locale, id)])];
+  const examples = (['anthropic', 'openai', 'openrouter', 'deepseek', 'ollama'] as const).map((id) => PRESETS[id].modelHint).join(', ');
+  const status = cfg.provider && core.ai.configured
+    ? notice('success', t(locale, 'admin.ai.status.on', { provider: providerLabel(locale, cfg.provider), model: cfg.model }))
+    : `<p class="hint">${esc(t(locale, 'admin.ai.status.off'))}</p>`;
+  const body = `<p class="hint">${esc(t(locale, 'admin.ai.intro'))}</p>${status}
+${form('/admin/ai', csrf, `<div>
+${settingRow('ai-provider', t(locale, 'admin.ai.provider'), t(locale, 'admin.ai.provider.hint'),
+    `<select id="ai-provider" name="provider">${optionList(providers, cfg.provider ?? '')}</select>`)}
+${settingRow('ai-model', t(locale, 'admin.ai.model'), t(locale, 'admin.ai.model.hint', { examples }),
+    `<input id="ai-model" name="model" maxlength="200" autocomplete="off" spellcheck="false" value="${esc(cfg.model)}">`)}
+${settingRow('ai-key', t(locale, 'admin.ai.key'), t(locale, 'admin.ai.key.hint'),
+    `<input id="ai-key" name="apiKey" type="password" maxlength="1000" autocomplete="off" spellcheck="false">`,
+    cfg.keyHint ? `<p class="hint">${esc(t(locale, 'admin.ai.keySaved', { hint: cfg.keyHint }))}</p>` : '')}
+${settingRow('ai-base-url', t(locale, 'admin.ai.baseUrl'), t(locale, 'admin.ai.baseUrl.hint'),
+    `<input id="ai-base-url" name="baseUrl" type="url" maxlength="500" autocomplete="off" spellcheck="false" placeholder="https://…/v1" value="${esc(cfg.baseUrl)}">`)}
+${settingRow('ai-max-tokens', t(locale, 'admin.ai.maxTokens'), t(locale, 'admin.ai.maxTokens.hint'),
+    `<input id="ai-max-tokens" name="maxTokens" type="number" inputmode="numeric" min="1" max="${MAX_TOKENS_LIMIT}" step="1" required value="${cfg.maxTokens}">`)}
+${settingRow('ai-hourly', t(locale, 'admin.ai.hourlyLimit'), t(locale, 'admin.ai.hourlyLimit.hint'),
+    `<input id="ai-hourly" name="hourlyLimit" type="number" inputmode="numeric" min="1" max="${HOURLY_LIMIT_MAX}" step="1" required value="${cfg.hourlyLimit}">`)}
+</div>`, esc(t(locale, 'common.save')), 'primary', 'stack settings-form')}
+<p class="hint">${esc(t(locale, 'admin.ai.access'))}</p>
+${core.ai.configured ? `<div class="subsection">${form('/admin/ai/test', csrf, '', esc(t(locale, 'admin.ai.test')), 'secondary')}</div>` : ''}`;
+  return shell(core, locale, admin, 'ai', t(locale, 'admin.section.ai'), body, msg);
+}
+
 function appsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const emailOf = new Map(core.users.list().map((u) => [u.id, u.email]));
@@ -226,6 +259,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     else send(res, 200, html);
   });
   router.get('/admin/settings', noStore, admin, (_req, res) => { send(res, 200, settingsSection(core, localeOf(res), adminOf(res))); });
+  router.get('/admin/ai', noStore, admin, (_req, res) => { send(res, 200, aiSection(core, localeOf(res), adminOf(res))); });
   router.get('/admin/apps', noStore, admin, (_req, res) => { send(res, 200, appsSection(core, localeOf(res), adminOf(res))); });
 
   const domainInstanceOf = (req: Request): Instance => {
@@ -365,6 +399,33 @@ export const adminExtension: PlatformExtension = (router, core) => {
       core.settings.setCustomDomains(domains);
       res.redirect('/admin/settings');
     } catch (e) { failWith(res, e, (m) => settingsSection(core, localeOf(res), user, m), { invalid_argument: 'admin.settings.invalid' }); }
+  }));
+
+  // --- language model ---
+
+  router.post('/admin/ai', ...action((req, res, user) => {
+    const int = (name: string): number => { const raw = field(req, name).trim(); return /^\d+$/.test(raw) ? Number(raw) : NaN; };
+    const provider = field(req, 'provider');
+    const key = field(req, 'apiKey', 1000);
+    try {
+      core.ai.configure(provider === ''
+        ? { provider: null }
+        : { provider: provider as ProviderId, model: field(req, 'model'), baseUrl: field(req, 'baseUrl', 600), apiKey: key === '' ? undefined : key, maxTokens: int('maxTokens'), hourlyLimit: int('hourlyLimit') });
+      res.redirect('/admin/ai');
+    } catch (e) { failWith(res, e, (m) => aiSection(core, localeOf(res), user, m), { invalid_argument: 'admin.ai.invalid' }); }
+  }));
+
+  router.post('/admin/ai/test', ...action(async (_req, res, user) => {
+    const locale = localeOf(res);
+    try {
+      const out = await core.ai.complete([{ role: 'user', content: TEST_PROMPT }], { maxTokens: Math.min(core.ai.maxTokens, 2000) });
+      const answer = out.text.trim().slice(0, 200) || '–';
+      send(res, 200, aiSection(core, locale, user, { ok: t(locale, 'admin.ai.testOk', { model: out.model, answer }) }));
+    } catch (e) {
+      if (!(e instanceof AiError)) throw e;
+      // The administrator sees what the provider said; app viewers never do.
+      send(res, 200, aiSection(core, locale, user, { error: t(locale, 'admin.ai.testFailed', { error: [e.message, e.detail].filter(Boolean).join(' ') }) }));
+    }
   }));
 
   // --- instances ---
