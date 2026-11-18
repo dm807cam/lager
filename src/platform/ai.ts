@@ -3,8 +3,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import { LagerError } from '../errors.js';
 
 /**
- * Bring your own model: the administrator connects one language model provider, and apps that declare the `complete`
- * capability call it through `window.claude.complete`. Requests go out with plain `fetch`, either to the Anthropic
+ * Bring your own model: the administrator connects language model providers and puts people in AI groups that pick a
+ * provider, a model and an hourly limit; apps that declare the `complete` capability call it through `window.claude.complete`. Requests go out with plain `fetch`, either to the Anthropic
  * Messages API or to an OpenAI-compatible chat completions endpoint, which covers most other providers.
  */
 
@@ -52,18 +52,23 @@ const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
 export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
 
-/** What the administration page shows; the key itself never leaves the server, only its last four characters. */
-export interface AiConfigView {
-  provider: ProviderId | null; model: string; baseUrl: string; keyHint: string | null;
-  maxTokens: number; hourlyLimit: number;
-}
+export const DEFAULT_GROUP = 'default';
+const MAX_NAME = 60;
 
-export interface AiConfigInput {
-  provider: ProviderId | null; model?: string; baseUrl?: string;
+/** A connected provider as the administration page shows it; the key itself never leaves the server, only its last four characters. */
+export interface AiProvider { id: string; name: string; type: ProviderId; baseUrl: string; keyHint: string | null; createdAt: string }
+export interface AiProviderInput {
+  name: string; type: ProviderId; baseUrl?: string;
   /** `undefined` keeps the stored key, `''` removes it. */
   apiKey?: string;
-  maxTokens?: number; hourlyLimit?: number;
 }
+
+/** Who gets which model: every person is in at most one AI group; everyone else is in the default group. */
+export interface AiGroup { id: string; name: string; providerId: string | null; model: string; hourlyLimit: number; memberCount: number; isDefault: boolean }
+export interface AiGroupInput { name: string; providerId: string | null; model?: string; hourlyLimit: number }
+
+/** What one person's call goes to. */
+export interface AiRoute { groupId: string; providerId: string; model: string; hourlyLimit: number }
 
 export interface Completion { text: string; model: string; stopReason: string | null }
 
@@ -85,21 +90,26 @@ type Fetch = typeof fetch;
 
 const isProvider = (v: unknown): v is ProviderId => typeof v === 'string' && Object.hasOwn(PRESETS, v);
 
+interface ProviderRow { id: string; name: string; type: string; base_url: string | null; key_enc: string | null; created_at: string }
+interface GroupRow { id: string; name: string; provider_id: string | null; model: string; hourly_limit: number; member_count: number }
+
+const GROUP_SELECT = `SELECT g.id, g.name, g.provider_id, g.model, g.hourly_limit,
+  (SELECT COUNT(*) FROM users u WHERE u.ai_group_id = g.id) AS member_count FROM ai_groups g`;
+
+const bad = (msg: string): never => { throw new LagerError('invalid_argument', msg, 'ai_invalid'); };
+
+function cleanName(name: unknown, what: string): string {
+  const v = typeof name === 'string' ? name.trim() : '';
+  if (!v || v.length > MAX_NAME) bad(`The ${what} name must be 1 to ${MAX_NAME} characters.`);
+  return v;
+}
+
 export class AiModels {
   private keyBytes: Buffer;
 
   constructor(private db: DatabaseSync, secret: string, private fetchImpl: Fetch = (...a) => fetch(...a)) {
     // A key of its own, so the stored API key cannot be read with a session-signing key and the other way round.
     this.keyBytes = crypto.createHash('sha256').update(`lager-ai-key:${secret}`).digest();
-  }
-
-  private read(key: string): string | undefined {
-    return (this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined)?.value;
-  }
-
-  private write(key: string, value: string | null): void {
-    if (value === null) this.db.prepare('DELETE FROM settings WHERE key = ?').run(key);
-    else this.db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
   }
 
   private encrypt(plain: string): string {
@@ -110,7 +120,7 @@ export class AiModels {
   }
 
   /** `null` when nothing is stored or the server secret changed since the key was saved. */
-  private decrypt(stored: string | undefined): string | null {
+  private decrypt(stored: string | null | undefined): string | null {
     if (!stored) return null;
     const [v, iv, tag, ct] = stored.split(':');
     if (v !== 'v1' || !iv || !tag || ct === undefined) return null;
@@ -123,54 +133,43 @@ export class AiModels {
     }
   }
 
-  private intSetting(key: string, fallback: number, min: number, max: number): number {
-    const n = Number(this.read(key));
-    return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
+  // --- longest answer ---
+
+  get maxTokens(): number {
+    const n = Number((this.db.prepare("SELECT value FROM settings WHERE key = 'ai_max_tokens'").get() as { value: string } | undefined)?.value);
+    return Number.isInteger(n) && n >= 1 && n <= MAX_TOKENS_LIMIT ? n : DEFAULT_MAX_TOKENS;
   }
 
-  get provider(): ProviderId | null {
-    const v = this.read('ai_provider');
-    return isProvider(v) ? v : null;
+  setMaxTokens(n: number): void {
+    if (!Number.isInteger(n) || n < 1 || n > MAX_TOKENS_LIMIT) bad(`The answer length must be a whole number from 1 to ${MAX_TOKENS_LIMIT}.`);
+    this.db.prepare("INSERT INTO settings (key, value) VALUES ('ai_max_tokens', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(n));
   }
 
-  get maxTokens(): number { return this.intSetting('ai_max_tokens', DEFAULT_MAX_TOKENS, 1, MAX_TOKENS_LIMIT); }
-  get hourlyLimit(): number { return this.intSetting('ai_hourly_limit', DEFAULT_HOURLY_LIMIT, 1, HOURLY_LIMIT_MAX); }
+  // --- providers ---
 
-  private apiKey(): string | null { return this.decrypt(this.read('ai_key')); }
-
-  /** The base URL in use: the stored override, else the preset's. */
-  private baseUrl(provider: ProviderId): string {
-    return (this.read('ai_base_url') || PRESETS[provider].baseUrl).replace(/\/+$/, '');
+  private providerRow(id: string): ProviderRow | undefined {
+    return this.db.prepare('SELECT * FROM ai_providers WHERE id = ?').get(id) as ProviderRow | undefined;
   }
 
-  view(): AiConfigView {
-    const provider = this.provider;
-    const key = this.apiKey();
-    return {
-      provider, model: this.read('ai_model') ?? '', baseUrl: this.read('ai_base_url') ?? '',
-      keyHint: key ? `…${key.slice(-4)}` : null, maxTokens: this.maxTokens, hourlyLimit: this.hourlyLimit,
-    };
+  private toProvider(r: ProviderRow): AiProvider {
+    const key = this.decrypt(r.key_enc);
+    return { id: r.id, name: r.name, type: r.type as ProviderId, baseUrl: r.base_url ?? '', keyHint: key ? `…${key.slice(-4)}` : null, createdAt: r.created_at };
   }
 
-  /** Whether apps can call a model right now. */
-  get configured(): boolean {
-    const provider = this.provider;
-    if (!provider || !this.read('ai_model')) return false;
-    if (!this.baseUrl(provider)) return false;
-    return !PRESETS[provider].keyRequired || this.apiKey() !== null;
+  listProviders(): AiProvider[] {
+    return (this.db.prepare('SELECT * FROM ai_providers ORDER BY name COLLATE NOCASE').all() as unknown as ProviderRow[]).map((r) => this.toProvider(r));
   }
 
-  /** Validates everything before storing anything. `provider: null` turns the feature off and forgets the key. */
-  configure(input: AiConfigInput): void {
-    const bad = (msg: string): never => { throw new LagerError('invalid_argument', msg, 'ai_invalid'); };
-    if (input.provider === null) {
-      for (const k of ['ai_provider', 'ai_model', 'ai_base_url', 'ai_key']) this.write(k, null);
-      return;
-    }
-    if (!isProvider(input.provider)) bad('Unknown provider.');
-    const preset = PRESETS[input.provider];
-    const model = (input.model ?? '').trim();
-    if (!model || model.length > MAX_MODEL || /\s/.test(model)) bad('Enter the model name without spaces.');
+  getProvider(id: string): AiProvider | null {
+    const r = this.providerRow(id);
+    return r ? this.toProvider(r) : null;
+  }
+
+  /** Checks a provider form against what is stored (`current`) and returns the row values to write. */
+  private validateProvider(input: AiProviderInput, current?: ProviderRow): { name: string; type: ProviderId; baseUrl: string | null; keyEnc: string | null } {
+    const name = cleanName(input.name, 'provider');
+    if (!isProvider(input.type)) bad('Unknown provider.');
+    const preset = PRESETS[input.type];
     const baseUrl = (input.baseUrl ?? '').trim().replace(/\/+$/, '');
     if (baseUrl) {
       let url: URL | null = null;
@@ -179,31 +178,167 @@ export class AiModels {
     } else if (!preset.baseUrl) bad('Enter the address of the server.');
     const key = input.apiKey === undefined ? undefined : input.apiKey.trim();
     if (key !== undefined && (key.length > MAX_KEY || /\s/.test(key))) bad('The API key looks wrong.');
-    // Switching providers drops the old key: a key for one provider is never sent to another.
-    const switching = this.provider !== input.provider;
-    const keyAfter = key !== undefined ? key : switching ? '' : (this.apiKey() ?? '');
+    // A key goes only where it was entered for: a new type or a new address drops it.
+    const moved = !current || current.type !== input.type || (current.base_url ?? '') !== baseUrl;
+    const keyAfter = key !== undefined ? key : moved ? '' : (this.decrypt(current?.key_enc) ?? '');
     if (preset.keyRequired && !keyAfter) bad('This provider needs an API key.');
-    const maxTokens = input.maxTokens ?? this.maxTokens;
-    if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > MAX_TOKENS_LIMIT) bad(`The answer length must be a whole number from 1 to ${MAX_TOKENS_LIMIT}.`);
-    const hourlyLimit = input.hourlyLimit ?? this.hourlyLimit;
-    if (!Number.isInteger(hourlyLimit) || hourlyLimit < 1 || hourlyLimit > HOURLY_LIMIT_MAX) bad(`The hourly limit must be a whole number from 1 to ${HOURLY_LIMIT_MAX}.`);
-    this.write('ai_provider', input.provider);
-    this.write('ai_model', model);
-    this.write('ai_base_url', baseUrl || null);
-    if (key !== undefined || switching) this.write('ai_key', keyAfter ? this.encrypt(keyAfter) : null);
-    this.write('ai_max_tokens', String(maxTokens));
-    this.write('ai_hourly_limit', String(hourlyLimit));
+    const keepCipher = key === undefined && !moved && current?.key_enc && keyAfter;
+    return { name, type: input.type, baseUrl: baseUrl || null, keyEnc: keepCipher ? current!.key_enc : keyAfter ? this.encrypt(keyAfter) : null };
   }
 
-  /** Sends one conversation to the configured model and returns its text answer. */
-  async complete(messages: ChatMessage[], opts: { maxTokens?: number; signal?: AbortSignal } = {}): Promise<Completion> {
-    const provider = this.provider;
-    const model = this.read('ai_model') ?? '';
-    if (!provider || !this.configured) throw new AiError('not_configured', 'No language model is set up on this server.', 503);
-    const preset = PRESETS[provider];
-    const key = this.apiKey();
+  private assertProviderNameFree(name: string, exceptId?: string): void {
+    const clash = this.db.prepare('SELECT id FROM ai_providers WHERE name = ? COLLATE NOCASE').get(name) as { id: string } | undefined;
+    if (clash && clash.id !== exceptId) throw new LagerError('conflict', `A provider named "${name}" already exists.`, 'ai_name_taken');
+  }
+
+  createProvider(input: AiProviderInput): AiProvider {
+    const v = this.validateProvider(input);
+    this.assertProviderNameFree(v.name);
+    const id = crypto.randomUUID();
+    this.db.prepare('INSERT INTO ai_providers (id, name, type, base_url, key_enc, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, v.name, v.type, v.baseUrl, v.keyEnc, new Date().toISOString());
+    return this.getProvider(id)!;
+  }
+
+  updateProvider(id: string, input: AiProviderInput): AiProvider {
+    const current = this.providerRow(id);
+    if (!current) throw new LagerError('not_found', 'Provider not found.');
+    const v = this.validateProvider(input, current);
+    this.assertProviderNameFree(v.name, id);
+    this.db.prepare('UPDATE ai_providers SET name = ?, type = ?, base_url = ?, key_enc = ? WHERE id = ?').run(v.name, v.type, v.baseUrl, v.keyEnc, id);
+    return this.getProvider(id)!;
+  }
+
+  groupsUsing(providerId: string): AiGroup[] {
+    return this.listGroups().filter((g) => g.providerId === providerId);
+  }
+
+  deleteProvider(id: string): void {
+    if (!this.providerRow(id)) throw new LagerError('not_found', 'Provider not found.');
+    const users = this.groupsUsing(id);
+    if (users.length) throw new LagerError('conflict', `The provider is used by ${users.length} AI group(s).`, 'ai_provider_in_use');
+    this.db.prepare('DELETE FROM ai_providers WHERE id = ?').run(id);
+  }
+
+  // --- AI groups ---
+
+  private toGroup(r: GroupRow): AiGroup {
+    return { id: r.id, name: r.name, providerId: r.provider_id, model: r.model, hourlyLimit: r.hourly_limit, memberCount: r.member_count, isDefault: r.id === DEFAULT_GROUP };
+  }
+
+  listGroups(): AiGroup[] {
+    const rows = this.db.prepare(`${GROUP_SELECT} ORDER BY g.id = '${DEFAULT_GROUP}', g.name COLLATE NOCASE`).all() as unknown as GroupRow[];
+    return rows.map((r) => this.toGroup(r));
+  }
+
+  getGroup(id: string): AiGroup | null {
+    const r = this.db.prepare(`${GROUP_SELECT} WHERE g.id = ?`).get(id) as GroupRow | undefined;
+    return r ? this.toGroup(r) : null;
+  }
+
+  private validateGroup(input: AiGroupInput, isDefault: boolean): { name: string; providerId: string | null; model: string; hourlyLimit: number } {
+    const name = isDefault ? '' : cleanName(input.name, 'AI group');
+    const model = (input.model ?? '').trim();
+    if (input.providerId !== null) {
+      if (!this.providerRow(input.providerId)) throw new LagerError('not_found', 'Provider not found.');
+      if (!model || model.length > MAX_MODEL || /\s/.test(model)) bad('Enter the model name without spaces.');
+    } else if (model.length > MAX_MODEL || /\s/.test(model)) bad('Enter the model name without spaces.');
+    const limit = input.hourlyLimit;
+    if (!Number.isInteger(limit) || limit < 1 || limit > HOURLY_LIMIT_MAX) bad(`The hourly limit must be a whole number from 1 to ${HOURLY_LIMIT_MAX}.`);
+    return { name, providerId: input.providerId, model, hourlyLimit: limit };
+  }
+
+  private assertGroupNameFree(name: string, exceptId?: string): void {
+    const clash = this.db.prepare(`SELECT id FROM ai_groups WHERE name = ? COLLATE NOCASE AND id != '${DEFAULT_GROUP}'`).get(name) as { id: string } | undefined;
+    if (clash && clash.id !== exceptId) throw new LagerError('conflict', `An AI group named "${name}" already exists.`, 'ai_name_taken');
+  }
+
+  createGroup(input: AiGroupInput): AiGroup {
+    const v = this.validateGroup(input, false);
+    this.assertGroupNameFree(v.name);
+    const id = crypto.randomUUID();
+    this.db.prepare('INSERT INTO ai_groups (id, name, provider_id, model, hourly_limit, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, v.name, v.providerId, v.model, v.hourlyLimit, new Date().toISOString());
+    return this.getGroup(id)!;
+  }
+
+  updateGroup(id: string, input: AiGroupInput): AiGroup {
+    if (!this.getGroup(id)) throw new LagerError('not_found', 'AI group not found.');
+    const v = this.validateGroup(input, id === DEFAULT_GROUP);
+    if (id !== DEFAULT_GROUP) this.assertGroupNameFree(v.name, id);
+    this.db.prepare('UPDATE ai_groups SET name = ?, provider_id = ?, model = ?, hourly_limit = ? WHERE id = ?').run(v.name, v.providerId, v.model, v.hourlyLimit, id);
+    return this.getGroup(id)!;
+  }
+
+  /** Its people move to the default group. */
+  deleteGroup(id: string): void {
+    if (id === DEFAULT_GROUP) throw new LagerError('forbidden', 'The default AI group cannot be deleted.', 'ai_default_fixed');
+    if (!this.getGroup(id)) throw new LagerError('not_found', 'AI group not found.');
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare('UPDATE users SET ai_group_id = NULL WHERE ai_group_id = ?').run(id);
+      this.db.prepare('DELETE FROM ai_groups WHERE id = ?').run(id);
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  // --- people ---
+
+  groupIdOf(userId: string): string {
+    const r = this.db.prepare('SELECT g.id FROM users u JOIN ai_groups g ON g.id = u.ai_group_id WHERE u.id = ?').get(userId) as { id: string } | undefined;
+    return r?.id ?? DEFAULT_GROUP;
+  }
+
+  assign(userId: string, groupId: string): void {
+    if (!this.getGroup(groupId)) throw new LagerError('not_found', 'AI group not found.');
+    const res = this.db.prepare('UPDATE users SET ai_group_id = ? WHERE id = ?').run(groupId === DEFAULT_GROUP ? null : groupId, userId);
+    if (Number(res.changes) === 0) throw new LagerError('not_found', 'User not found.');
+  }
+
+  /** A group's route, or `null` when it is Off, its provider is gone or a required key is missing or unreadable. */
+  private routeOf(group: AiGroup | null): AiRoute | null {
+    if (!group || !group.providerId || !group.model) return null;
+    if (!this.usable(group.providerId)) return null;
+    return { groupId: group.id, providerId: group.providerId, model: group.model, hourlyLimit: group.hourlyLimit };
+  }
+
+  private usable(providerId: string): boolean {
+    const p = this.providerRow(providerId);
+    if (!p || !isProvider(p.type)) return false;
+    const preset = PRESETS[p.type];
+    if (!(p.base_url || preset.baseUrl)) return false;
+    return !preset.keyRequired || this.decrypt(p.key_enc) !== null;
+  }
+
+  routeFor(userId: string): AiRoute | null {
+    return this.routeOf(this.getGroup(this.groupIdOf(userId)));
+  }
+
+  /** What the administrator's test button sends to: the model of the first AI group using the provider, else the preset's example. */
+  testRoute(providerId: string): AiRoute {
+    const p = this.providerRow(providerId);
+    if (!p || !isProvider(p.type)) throw new LagerError('not_found', 'Provider not found.');
+    const model = this.groupsUsing(providerId).find((g) => g.model)?.model ?? PRESETS[p.type].modelHint;
+    return { groupId: '', providerId, model, hourlyLimit: 1 };
+  }
+
+  /** Whether anyone can call a model right now. */
+  get configured(): boolean {
+    return this.listGroups().some((g) => this.routeOf(g) !== null);
+  }
+
+  /** Sends one conversation to the route's provider and returns its text answer. */
+  async complete(route: AiRoute, messages: ChatMessage[], opts: { maxTokens?: number; signal?: AbortSignal } = {}): Promise<Completion> {
+    const row = this.providerRow(route.providerId);
+    if (!row || !isProvider(row.type) || !this.usable(row.id) || !route.model) throw new AiError('not_configured', 'No language model is available to you.', 503);
+    const preset = PRESETS[row.type];
+    const key = this.decrypt(row.key_enc);
+    const model = route.model;
     const maxTokens = Math.min(opts.maxTokens ?? this.maxTokens, this.maxTokens);
-    const base = this.baseUrl(provider);
+    const base = (row.base_url || preset.baseUrl).replace(/\/+$/, '');
     const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
     let url: string;
