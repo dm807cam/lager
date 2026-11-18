@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const MIGRATIONS: string[] = [
+export const MIGRATIONS: string[] = [
   `
   CREATE TABLE users (
     id TEXT PRIMARY KEY,
@@ -169,6 +169,43 @@ const MIGRATIONS: string[] = [
   ALTER TABLE apps ADD COLUMN description TEXT NOT NULL DEFAULT '';
   ALTER TABLE apps ADD COLUMN theme_color TEXT NOT NULL DEFAULT '#1f2a5c';
   ALTER TABLE apps ADD COLUMN icon_version INTEGER NOT NULL DEFAULT 0;
+  `,
+  // Several language model providers and AI groups; the single provider of earlier versions moves over.
+  `
+  CREATE TABLE ai_providers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    type TEXT NOT NULL,
+    base_url TEXT,
+    key_enc TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE ai_groups (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    provider_id TEXT,
+    model TEXT NOT NULL DEFAULT '',
+    hourly_limit INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX ai_groups_name ON ai_groups(name COLLATE NOCASE) WHERE id != 'default';
+  ALTER TABLE users ADD COLUMN ai_group_id TEXT;
+  INSERT INTO ai_providers (id, name, type, base_url, key_enc, created_at)
+    SELECT 'migrated',
+      CASE value WHEN 'anthropic' THEN 'Anthropic (Claude)' WHEN 'openai' THEN 'OpenAI' WHEN 'openrouter' THEN 'OpenRouter'
+        WHEN 'deepseek' THEN 'DeepSeek' WHEN 'gemini' THEN 'Google Gemini' WHEN 'mistral' THEN 'Mistral' WHEN 'groq' THEN 'Groq'
+        WHEN 'ollama' THEN 'Ollama' ELSE 'Custom server' END,
+      value,
+      NULLIF((SELECT value FROM settings WHERE key = 'ai_base_url'), ''),
+      NULLIF((SELECT value FROM settings WHERE key = 'ai_key'), ''),
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    FROM settings WHERE key = 'ai_provider' AND value IN ('anthropic','openai','openrouter','deepseek','gemini','mistral','groq','ollama','custom');
+  INSERT INTO ai_groups (id, name, provider_id, model, hourly_limit, created_at) VALUES ('default', '',
+    CASE WHEN EXISTS (SELECT 1 FROM ai_providers WHERE id = 'migrated') AND COALESCE((SELECT value FROM settings WHERE key = 'ai_model'), '') != '' THEN 'migrated' END,
+    COALESCE((SELECT value FROM settings WHERE key = 'ai_model'), ''),
+    COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'ai_hourly_limit' AND value GLOB '[0-9]*' AND value NOT GLOB '*[^0-9]*' AND CAST(value AS INTEGER) BETWEEN 1 AND 10000), 60),
+    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+  DELETE FROM settings WHERE key IN ('ai_provider', 'ai_model', 'ai_base_url', 'ai_key', 'ai_hourly_limit');
   `,
 ];
 
