@@ -310,7 +310,11 @@ export class AiModels {
     if (!p || !isProvider(p.type)) return false;
     const preset = PRESETS[p.type];
     if (!(p.base_url || preset.baseUrl)) return false;
-    return !preset.keyRequired || this.decrypt(p.key_enc) !== null;
+    // A saved key that no longer decrypts (the server secret changed) blocks the provider even when its type needs
+    // none: the call would otherwise go out without the key the administrator entered.
+    const key = this.decrypt(p.key_enc);
+    if (p.key_enc && key === null) return false;
+    return !preset.keyRequired || key !== null;
   }
 
   routeFor(userId: string): AiRoute | null {

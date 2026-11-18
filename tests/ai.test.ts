@@ -172,6 +172,17 @@ describe('AI groups', () => {
     expect(first.sent).toHaveLength(0);
   });
 
+  it('a saved key that no longer decrypts blocks a provider even when its type needs none', async () => {
+    const first = setup();
+    const p = first.ai.createProvider({ name: 'Proxy', type: 'custom', baseUrl: 'http://10.0.0.5:8000/v1', apiKey: 'sk-proxy-1' });
+    first.ai.updateGroup(DEFAULT_GROUP, { name: '', providerId: p.id, model: 'm', hourlyLimit: 5 });
+    const route = first.ai.routeFor('anyone')!;
+    const other = new AiModels(first.db, 'another-secret', first.fake);
+    expect(other.routeFor('anyone')).toBeNull();
+    await expect(other.complete(route, [{ role: 'user', content: 'x' }])).rejects.toMatchObject({ reason: 'not_configured', status: 503 });
+    expect(first.sent).toHaveLength(0);
+  });
+
   it('send each route to its own provider with only that provider\'s key', async () => {
     const { ai, db, sent } = setup((s) => s.url.includes('anthropic')
       ? json({ content: [{ type: 'text', text: 'a' }] })
