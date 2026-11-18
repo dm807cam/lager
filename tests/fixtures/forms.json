@@ -356,6 +356,14 @@
   ],
   "admin users": [
     {
+      "action": "/admin/users/{user:admin@x.y}/ai-group",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "group"
+      ]
+    },
+    {
       "action": "/admin/users/{user:admin@x.y}/disabled",
       "method": "post",
       "fields": [
@@ -376,6 +384,14 @@
       "fields": [
         "csrf",
         "role"
+      ]
+    },
+    {
+      "action": "/admin/users/{user:nova@x.y}/ai-group",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "group"
       ]
     },
     {
@@ -402,6 +418,14 @@
       ]
     },
     {
+      "action": "/admin/users/{user:pia@x.y}/ai-group",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "group"
+      ]
+    },
+    {
       "action": "/admin/users/{user:pia@x.y}/disabled",
       "method": "post",
       "fields": [
@@ -422,6 +446,14 @@
       "fields": [
         "csrf",
         "role"
+      ]
+    },
+    {
+      "action": "/admin/users/{user:uwe@x.y}/ai-group",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "group"
       ]
     },
     {

@@ -818,6 +818,24 @@
   ],
   "admin users": [
     {
+      "action": "/admin/users/{user:admin@x.y}/ai-group",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "group",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
       "action": "/admin/users/{user:admin@x.y}/disabled",
       "method": "post",
       "fields": [
@@ -860,6 +878,24 @@
         },
         {
           "name": "role",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/admin/users/{user:nova@x.y}/ai-group",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "group",
           "type": "select",
           "required": false,
           "maxlength": null
@@ -916,6 +952,24 @@
       ]
     },
     {
+      "action": "/admin/users/{user:pia@x.y}/ai-group",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "group",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
       "action": "/admin/users/{user:pia@x.y}/disabled",
       "method": "post",
       "fields": [
@@ -958,6 +1012,24 @@
         },
         {
           "name": "role",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/admin/users/{user:uwe@x.y}/ai-group",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "group",
           "type": "select",
           "required": false,
           "maxlength": null

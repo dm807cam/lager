@@ -7,7 +7,7 @@ import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { localeOf, requestLocale } from './locale.js';
 import { MAX_NAME } from '../platform/groups.js';
 import type { CustomDomainsMode, RegistrationMode } from '../platform/settings.js';
-import { AiError, HOURLY_LIMIT_MAX, MAX_TOKENS_LIMIT, PRESETS, PROVIDER_IDS, TEST_PROMPT, type ProviderId } from '../platform/ai.js';
+import { AiError, DEFAULT_GROUP, DEFAULT_HOURLY_LIMIT, HOURLY_LIMIT_MAX, MAX_TOKENS_LIMIT, PRESETS, PROVIDER_IDS, TEST_PROMPT, type AiGroup, type AiGroupInput, type AiProvider, type AiProviderInput, type ProviderId } from '../platform/ai.js';
 import type { Instance } from '../platform/apps.js';
 import type { Role, User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
@@ -47,6 +47,7 @@ const STATUS_TONES = { disabled: 'danger', active: 'success', unverified: 'warni
 
 function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
+  const aiGroups: Option[] = [[DEFAULT_GROUP, t(locale, 'admin.ai.everyoneElse')], ...core.ai.listGroups().filter((g) => !g.isDefault).map((g): Option => [g.id, g.name])];
   const rows = core.users.list().map((u) => {
     const base = `/admin/users/${encodeURIComponent(u.id)}`;
     const state = u.disabled ? 'disabled' : u.verified ? 'active' : 'unverified';
@@ -54,6 +55,7 @@ function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): strin
     return [
       `<div class="cell-user">${avatar(u, 'sm')}<div><strong>${esc(u.name)}</strong><span>${esc(u.email)}</span></div></div>`,
       `<form method="post" action="${base}/role" class="inline-form">${hiddenField('csrf', csrf)}<select name="role" aria-label="${esc(t(locale, 'admin.users.roleOf', { email: u.email }))}">${roleOptions(locale, u.role)}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
+      `<form method="post" action="${base}/ai-group" class="inline-form">${hiddenField('csrf', csrf)}<select name="group" aria-label="${esc(t(locale, 'admin.users.aiGroupOf', { email: u.email }))}">${optionList(aiGroups, core.ai.groupIdOf(u.id))}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
       badge(status, { tone: STATUS_TONES[state], dot: true }),
       `<span class="num">${dateText(locale, u.createdAt)}</span>`,
       `<div class="btn-row">${form(`${base}/disabled`, csrf, hiddenField('disabled', u.disabled ? '0' : '1'), esc(t(locale, u.disabled ? 'common.activate' : 'common.deactivate')), 'quiet', '', true)}
@@ -61,7 +63,7 @@ ${form(`${base}/reset-link`, csrf, '', esc(t(locale, 'admin.users.resetLink')), 
     ];
   });
   return shell(core, locale, admin, 'users', t(locale, 'admin.section.users'),
-    dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.users.role'), t(locale, 'common.status'), t(locale, 'common.created'), ''], rows), msg);
+    dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.users.role'), t(locale, 'admin.users.aiGroup'), t(locale, 'common.status'), t(locale, 'common.created'), ''], rows), msg);
 }
 
 function invitesSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
@@ -134,33 +136,94 @@ ${settingRow('custom-domains', t(locale, 'admin.settings.customDomains'), t(loca
   return shell(core, locale, admin, 'settings', t(locale, 'admin.section.settings'), body, msg);
 }
 
-function aiSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
-  const csrf = csrfToken(core, admin);
-  const cfg = core.ai.view();
-  const providers: Option[] = [['', t(locale, 'admin.ai.off')], ...PROVIDER_IDS.map((id): Option => [id, providerLabel(locale, id)])];
-  const examples = (['anthropic', 'openai', 'openrouter', 'deepseek', 'ollama'] as const).map((id) => PRESETS[id].modelHint).join(', ');
-  const status = cfg.provider && core.ai.configured
-    ? notice('success', t(locale, 'admin.ai.status.on', { provider: providerLabel(locale, cfg.provider), model: cfg.model }))
-    : `<p class="hint">${esc(t(locale, 'admin.ai.status.off'))}</p>`;
-  const body = `<p class="hint">${esc(t(locale, 'admin.ai.intro'))}</p>${status}
-${form('/admin/ai', csrf, `<div>
+const aiBack = (locale: Locale): string => `<a class="back" href="/admin/ai">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.ai.all'))}</a>`;
+const aiGroupName = (locale: Locale, g: AiGroup): string => g.isDefault ? t(locale, 'admin.ai.everyoneElse') : g.name;
+
+/** Name, type, key and address of a provider; `p` fills the edit form. */
+function providerFields(locale: Locale, p?: AiProvider): string {
+  const types: Option[] = PROVIDER_IDS.map((id): Option => [id, providerLabel(locale, id)]);
+  return `<div>
+${settingRow('ai-provider-name', t(locale, 'common.name'), t(locale, 'admin.ai.providerName.hint'),
+    `<input id="ai-provider-name" name="name" required maxlength="${MAX_NAME}" autocomplete="off" value="${esc(p?.name ?? '')}">`)}
 ${settingRow('ai-provider', t(locale, 'admin.ai.provider'), t(locale, 'admin.ai.provider.hint'),
-    `<select id="ai-provider" name="provider">${optionList(providers, cfg.provider ?? '')}</select>`)}
-${settingRow('ai-model', t(locale, 'admin.ai.model'), t(locale, 'admin.ai.model.hint', { examples }),
-    `<input id="ai-model" name="model" maxlength="200" autocomplete="off" spellcheck="false" value="${esc(cfg.model)}">`)}
+    `<select id="ai-provider" name="type">${optionList(types, p?.type ?? 'anthropic')}</select>`)}
 ${settingRow('ai-key', t(locale, 'admin.ai.key'), t(locale, 'admin.ai.key.hint'),
     `<input id="ai-key" name="apiKey" type="password" maxlength="1000" autocomplete="off" spellcheck="false">`,
-    cfg.keyHint ? `<p class="hint">${esc(t(locale, 'admin.ai.keySaved', { hint: cfg.keyHint }))}</p>` : '')}
+    p?.keyHint ? `<p class="hint">${esc(t(locale, 'admin.ai.keySaved', { hint: p.keyHint }))}</p>` : '')}
 ${settingRow('ai-base-url', t(locale, 'admin.ai.baseUrl'), t(locale, 'admin.ai.baseUrl.hint'),
-    `<input id="ai-base-url" name="baseUrl" type="url" maxlength="500" autocomplete="off" spellcheck="false" placeholder="https://…/v1" value="${esc(cfg.baseUrl)}">`)}
-${settingRow('ai-max-tokens', t(locale, 'admin.ai.maxTokens'), t(locale, 'admin.ai.maxTokens.hint'),
-    `<input id="ai-max-tokens" name="maxTokens" type="number" inputmode="numeric" min="1" max="${MAX_TOKENS_LIMIT}" step="1" required value="${cfg.maxTokens}">`)}
+    `<input id="ai-base-url" name="baseUrl" type="url" maxlength="500" autocomplete="off" spellcheck="false" placeholder="https://…/v1" value="${esc(p?.baseUrl ?? '')}">`)}
+</div>`;
+}
+
+/** Name (not for Everyone else), provider or Off, model and hourly limit of an AI group. */
+function groupFields(core: Core, locale: Locale, g?: AiGroup): string {
+  const providers: Option[] = [['', t(locale, 'admin.ai.off')], ...core.ai.listProviders().map((p): Option => [p.id, p.name])];
+  const examples = (['anthropic', 'openai', 'openrouter', 'deepseek', 'ollama'] as const).map((id) => PRESETS[id].modelHint).join(', ');
+  const name = g?.isDefault ? '' : settingRow('ai-group-name', t(locale, 'common.name'), t(locale, 'admin.ai.groupName.hint'),
+    `<input id="ai-group-name" name="name" required maxlength="${MAX_NAME}" autocomplete="off" value="${esc(g?.name ?? '')}">`);
+  return `<div>${name}
+${settingRow('ai-group-provider', t(locale, 'admin.ai.provider'), t(locale, 'admin.ai.groupProvider.hint'),
+    `<select id="ai-group-provider" name="provider">${optionList(providers, g?.providerId ?? '')}</select>`)}
+${settingRow('ai-model', t(locale, 'admin.ai.model'), t(locale, 'admin.ai.model.hint', { examples }),
+    `<input id="ai-model" name="model" maxlength="200" autocomplete="off" spellcheck="false" value="${esc(g?.model ?? '')}">`)}
 ${settingRow('ai-hourly', t(locale, 'admin.ai.hourlyLimit'), t(locale, 'admin.ai.hourlyLimit.hint'),
-    `<input id="ai-hourly" name="hourlyLimit" type="number" inputmode="numeric" min="1" max="${HOURLY_LIMIT_MAX}" step="1" required value="${cfg.hourlyLimit}">`)}
-</div>`, esc(t(locale, 'common.save')), 'primary', 'stack settings-form')}
-<p class="hint">${esc(t(locale, 'admin.ai.access'))}</p>
-${core.ai.configured ? `<div class="subsection">${form('/admin/ai/test', csrf, '', esc(t(locale, 'admin.ai.test')), 'secondary')}</div>` : ''}`;
+    `<input id="ai-hourly" name="hourlyLimit" type="number" inputmode="numeric" min="1" max="${HOURLY_LIMIT_MAX}" step="1" required value="${g?.hourlyLimit ?? DEFAULT_HOURLY_LIMIT}">`)}
+</div>`;
+}
+
+function aiSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
+  const csrf = csrfToken(core, admin);
+  const providers = core.ai.listProviders();
+  const groups = core.ai.listGroups();
+  const nameOf = new Map(providers.map((p) => [p.id, p.name]));
+  const status = core.ai.configured
+    ? notice('success', t(locale, 'admin.ai.status.on'))
+    : `<p class="hint">${esc(t(locale, 'admin.ai.status.off'))}</p>`;
+  const providerRows = providers.map((p) => [
+    `<a href="/admin/ai/providers/${encodeURIComponent(p.id)}"><strong>${esc(p.name)}</strong></a>`,
+    esc(providerLabel(locale, p.type)),
+    p.baseUrl ? `<span class="mono">${esc(p.baseUrl)}</span>` : '<span class="muted">–</span>',
+    p.keyHint ? `<span class="mono">${esc(p.keyHint)}</span>` : '<span class="muted">–</span>',
+  ]);
+  const groupRows = groups.map((g) => [
+    `<a href="/admin/ai/groups/${encodeURIComponent(g.id)}"><strong>${esc(aiGroupName(locale, g))}</strong></a>`,
+    g.providerId ? esc(nameOf.get(g.providerId) ?? '–') : badge(t(locale, 'admin.ai.off')),
+    g.providerId ? `<span class="mono">${esc(g.model)}</span>` : '<span class="muted">–</span>',
+    `<span class="num">${g.hourlyLimit}</span>`,
+    `<span class="num">${g.isDefault ? '–' : g.memberCount}</span>`,
+  ]);
+  const body = `<p class="hint">${esc(t(locale, 'admin.ai.intro'))}</p>${status}
+<div class="subsection"><h3>${esc(t(locale, 'admin.ai.providers'))}</h3>
+${providers.length ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.ai.provider'), t(locale, 'admin.ai.baseUrl'), t(locale, 'admin.ai.key')], providerRows) : emptyState(t(locale, 'admin.ai.providers.none'))}
+<div class="gap-top">${form('/admin/ai/providers', csrf, providerFields(locale), `${icon('plus')}${esc(t(locale, 'admin.ai.providers.add'))}`, 'secondary', 'stack settings-form')}</div></div>
+<div class="subsection"><h3>${esc(t(locale, 'admin.ai.groups'))}</h3><p class="hint">${esc(t(locale, 'admin.ai.groups.hint'))}</p>
+${dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.ai.provider'), t(locale, 'admin.ai.model'), t(locale, 'admin.ai.hourlyLimit'), t(locale, 'admin.ai.people')], groupRows)}
+${providers.length ? `<div class="gap-top">${form('/admin/ai/groups', csrf, groupFields(core, locale), `${icon('plus')}${esc(t(locale, 'admin.ai.groups.add'))}`, 'secondary', 'stack settings-form')}</div>` : ''}</div>
+<div class="subsection">${form('/admin/ai/max-tokens', csrf, `<div>${settingRow('ai-max-tokens', t(locale, 'admin.ai.maxTokens'), t(locale, 'admin.ai.maxTokens.hint'),
+    `<input id="ai-max-tokens" name="maxTokens" type="number" inputmode="numeric" min="1" max="${MAX_TOKENS_LIMIT}" step="1" required value="${core.ai.maxTokens}">`)}</div>`, esc(t(locale, 'common.save')), 'secondary', 'stack settings-form')}</div>
+<p class="hint">${esc(t(locale, 'admin.ai.access'))}</p>`;
   return shell(core, locale, admin, 'ai', t(locale, 'admin.section.ai'), body, msg);
+}
+
+function aiProviderPage(core: Core, locale: Locale, admin: User, id: string, msg?: Msg): string | null {
+  const p = core.ai.getProvider(id);
+  if (!p) return null;
+  const csrf = csrfToken(core, admin);
+  const base = `/admin/ai/providers/${encodeURIComponent(p.id)}`;
+  const body = `${form(base, csrf, providerFields(locale, p), esc(t(locale, 'common.save')), 'primary', 'stack settings-form')}
+<div class="subsection btn-row">${form(`${base}/test`, csrf, '', esc(t(locale, 'admin.ai.test')), 'secondary')}
+${form(`${base}/delete`, csrf, '', `${icon('trash')}${esc(t(locale, 'admin.ai.deleteProvider'))}`, 'danger')}</div>`;
+  return shell(core, locale, admin, 'ai', t(locale, 'admin.ai.providerPage', { name: p.name }), body, msg, base, aiBack(locale));
+}
+
+function aiGroupPage(core: Core, locale: Locale, admin: User, id: string, msg?: Msg): string | null {
+  const g = core.ai.getGroup(id);
+  if (!g) return null;
+  const csrf = csrfToken(core, admin);
+  const base = `/admin/ai/groups/${encodeURIComponent(g.id)}`;
+  const body = `${g.isDefault ? `<p class="hint">${esc(t(locale, 'admin.ai.groups.hint'))}</p>` : ''}${form(base, csrf, groupFields(core, locale, g), esc(t(locale, 'common.save')), 'primary', 'stack settings-form')}
+${g.isDefault ? '' : `<div class="subsection">${form(`${base}/delete`, csrf, '', `${icon('trash')}${esc(t(locale, 'admin.ai.deleteGroup'))}`, 'danger')}</div>`}`;
+  return shell(core, locale, admin, 'ai', t(locale, 'admin.ai.groupPage', { name: aiGroupName(locale, g) }), body, msg, base, aiBack(locale));
 }
 
 function appsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
@@ -260,6 +323,13 @@ export const adminExtension: PlatformExtension = (router, core) => {
   });
   router.get('/admin/settings', noStore, admin, (_req, res) => { send(res, 200, settingsSection(core, localeOf(res), adminOf(res))); });
   router.get('/admin/ai', noStore, admin, (_req, res) => { send(res, 200, aiSection(core, localeOf(res), adminOf(res))); });
+  for (const [kind, view] of [['providers', aiProviderPage], ['groups', aiGroupPage]] as const) {
+    router.get(`/admin/ai/${kind}/:id`, noStore, admin, (req, res) => {
+      const html = view(core, localeOf(res), adminOf(res), param(req, 'id'));
+      if (html === null) send(res, 404, missingPage(localeOf(res), 'admin.ai.notFound', backLink(localeOf(res), '/admin/ai', t(localeOf(res), 'admin.ai.all'))));
+      else send(res, 200, html);
+    });
+  }
   router.get('/admin/apps', noStore, admin, (_req, res) => { send(res, 200, appsSection(core, localeOf(res), adminOf(res))); });
 
   const domainInstanceOf = (req: Request): Instance => {
@@ -403,29 +473,101 @@ export const adminExtension: PlatformExtension = (router, core) => {
 
   // --- language model ---
 
-  router.post('/admin/ai', ...action((req, res, user) => {
-    const int = (name: string): number => { const raw = field(req, name).trim(); return /^\d+$/.test(raw) ? Number(raw) : NaN; };
-    const provider = field(req, 'provider');
+  const aiMessages = { conflict: 'admin.ai.nameTaken', invalid_argument: 'admin.ai.invalid', not_found: 'admin.ai.notFound', forbidden: 'admin.ai.defaultFixed' } as const;
+  const int = (req: Request, name: string): number => { const raw = field(req, name).trim(); return /^\d+$/.test(raw) ? Number(raw) : NaN; };
+  const providerInput = (req: Request): AiProviderInput => {
     const key = field(req, 'apiKey', 1000);
+    return { name: field(req, 'name'), type: field(req, 'type') as ProviderId, baseUrl: field(req, 'baseUrl', 600), apiKey: key === '' ? undefined : key };
+  };
+  const groupInput = (req: Request): AiGroupInput =>
+    ({ name: field(req, 'name'), providerId: field(req, 'provider') || null, model: field(req, 'model'), hourlyLimit: int(req, 'hourlyLimit') });
+  /** A sub-page whose provider or group vanished falls back to the overview with the message. */
+  const aiFail = (res: Response, user: User, e: unknown, page: (m: Msg) => string | null): void =>
+    failWith(res, e, (m) => page(m) ?? aiSection(core, localeOf(res), user, m), aiMessages);
+
+  router.post('/admin/ai/providers', ...action((req, res, user) => {
     try {
-      core.ai.configure(provider === ''
-        ? { provider: null }
-        : { provider: provider as ProviderId, model: field(req, 'model'), baseUrl: field(req, 'baseUrl', 600), apiKey: key === '' ? undefined : key, maxTokens: int('maxTokens'), hourlyLimit: int('hourlyLimit') });
+      core.ai.createProvider(providerInput(req));
       res.redirect('/admin/ai');
-    } catch (e) { failWith(res, e, (m) => aiSection(core, localeOf(res), user, m), { invalid_argument: 'admin.ai.invalid' }); }
+    } catch (e) { aiFail(res, user, e, (m) => aiSection(core, localeOf(res), user, m)); }
   }));
 
-  router.post('/admin/ai/test', ...action(async (_req, res, user) => {
+  router.post('/admin/ai/providers/:id', ...action((req, res, user) => {
+    const id = param(req, 'id');
+    try {
+      core.ai.updateProvider(id, providerInput(req));
+      res.redirect('/admin/ai');
+    } catch (e) { aiFail(res, user, e, (m) => aiProviderPage(core, localeOf(res), user, id, m)); }
+  }));
+
+  router.post('/admin/ai/providers/:id/delete', ...action((req, res, user) => {
+    const id = param(req, 'id');
     const locale = localeOf(res);
     try {
-      const out = await core.ai.complete([{ role: 'user', content: TEST_PROMPT }], { maxTokens: Math.min(core.ai.maxTokens, 2000) });
-      const answer = out.text.trim().slice(0, 200) || '–';
-      send(res, 200, aiSection(core, locale, user, { ok: t(locale, 'admin.ai.testOk', { model: out.model, answer }) }));
+      core.ai.deleteProvider(id);
+      res.redirect('/admin/ai');
     } catch (e) {
-      if (!(e instanceof AiError)) throw e;
-      // The administrator sees what the provider said; app viewers never do.
-      send(res, 200, aiSection(core, locale, user, { error: t(locale, 'admin.ai.testFailed', { error: [e.message, e.detail].filter(Boolean).join(' ') }) }));
+      if (e instanceof LagerError && e.reason === 'ai_provider_in_use') {
+        const groups = core.ai.groupsUsing(id).map((g) => aiGroupName(locale, g)).join(', ');
+        send(res, 409, aiProviderPage(core, locale, user, id, { error: t(locale, 'admin.ai.providerInUse', { groups }) }) ?? '');
+        return;
+      }
+      aiFail(res, user, e, (m) => aiProviderPage(core, locale, user, id, m));
     }
+  }));
+
+  router.post('/admin/ai/providers/:id/test', ...action(async (req, res, user) => {
+    const id = param(req, 'id');
+    const locale = localeOf(res);
+    try {
+      const out = await core.ai.complete(core.ai.testRoute(id), [{ role: 'user', content: TEST_PROMPT }], { maxTokens: Math.min(core.ai.maxTokens, 2000) });
+      const answer = out.text.trim().slice(0, 200) || '–';
+      send(res, 200, aiProviderPage(core, locale, user, id, { ok: t(locale, 'admin.ai.testOk', { model: out.model, answer }) }) ?? '');
+    } catch (e) {
+      if (e instanceof AiError) {
+        // The administrator sees what the provider said; app viewers never do.
+        send(res, 200, aiProviderPage(core, locale, user, id, { error: t(locale, 'admin.ai.testFailed', { error: [e.message, e.detail].filter(Boolean).join(' ') }) }) ?? '');
+        return;
+      }
+      aiFail(res, user, e, (m) => aiProviderPage(core, locale, user, id, m));
+    }
+  }));
+
+  router.post('/admin/ai/groups', ...action((req, res, user) => {
+    try {
+      core.ai.createGroup(groupInput(req));
+      res.redirect('/admin/ai');
+    } catch (e) { aiFail(res, user, e, (m) => aiSection(core, localeOf(res), user, m)); }
+  }));
+
+  router.post('/admin/ai/groups/:id', ...action((req, res, user) => {
+    const id = param(req, 'id');
+    try {
+      core.ai.updateGroup(id, groupInput(req));
+      res.redirect('/admin/ai');
+    } catch (e) { aiFail(res, user, e, (m) => aiGroupPage(core, localeOf(res), user, id, m)); }
+  }));
+
+  router.post('/admin/ai/groups/:id/delete', ...action((req, res, user) => {
+    const id = param(req, 'id');
+    try {
+      core.ai.deleteGroup(id);
+      res.redirect('/admin/ai');
+    } catch (e) { aiFail(res, user, e, (m) => aiGroupPage(core, localeOf(res), user, id, m)); }
+  }));
+
+  router.post('/admin/ai/max-tokens', ...action((req, res, user) => {
+    try {
+      core.ai.setMaxTokens(int(req, 'maxTokens'));
+      res.redirect('/admin/ai');
+    } catch (e) { aiFail(res, user, e, (m) => aiSection(core, localeOf(res), user, m)); }
+  }));
+
+  router.post('/admin/users/:id/ai-group', ...action((req, res, user) => {
+    try {
+      core.ai.assign(param(req, 'id'), field(req, 'group'));
+      res.redirect('/admin/users');
+    } catch (e) { failWith(res, e, (m) => usersSection(core, localeOf(res), user, m), { not_found: 'admin.ai.notFound' }); }
   }));
 
   // --- instances ---
