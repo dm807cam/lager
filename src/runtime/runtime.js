@@ -1445,9 +1445,11 @@
 
   /**
    * Asks the language model the server's administrator set up. `prompt` is a string or a list of `{role, content}`
-   * messages; `options` may carry `system` and `maxTokens`. Resolves the answer text, like claude.ai's claude.complete.
+   * messages; `options` may carry `system`, `maxTokens` and `full`. Resolves the answer text, like claude.ai's claude.complete; with
+   * `full: true` it resolves `{text, model, stopReason, truncated}` instead, so an app can tell a cut-off answer from a bad one.
    */
   function complete(prompt, options) {
+    var wantFull = !!options && typeof options === 'object' && options.full === true;
     return Promise.resolve().then(function () {
       if (typeof prompt !== 'string' && !Array.isArray(prompt)) throw completeError('invalid_argument', 'complete expects a prompt string or a list of messages.');
       var body = { messages: prompt };
@@ -1466,7 +1468,8 @@
           var err = data && data.error;
           throw completeError(err && err.code, err && err.message);
         }
-        return data.text;
+        if (!wantFull) return data.text;
+        return { text: data.text, model: typeof data.model === 'string' ? data.model : null, stopReason: typeof data.stopReason === 'string' ? data.stopReason : null, truncated: data.truncated === true };
       });
     }, function (e) {
       throw e && e.code ? e : completeError('unavailable', 'The language model could not be reached.');

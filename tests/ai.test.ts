@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AiError, AiModels, DEFAULT_HOURLY_LIMIT, DEFAULT_MAX_TOKENS } from '../src/platform/ai.js';
+import { AiError, AiModels, DEFAULT_HOURLY_LIMIT, DEFAULT_MAX_TOKENS, isTruncated, stripReasoning } from '../src/platform/ai.js';
 import { openPlatformDb } from '../src/platform/db.js';
 
 interface Sent { url: string; headers: Record<string, string>; body: any }
@@ -117,6 +117,43 @@ describe('AiModels.complete', () => {
     ai.configure({ provider: 'deepseek', model: 'deepseek-chat', apiKey: 'sk-d' });
     await ai.complete(msgs);
     expect(sent[2].url).toBe('https://api.deepseek.com/v1/chat/completions');
+  });
+
+  it('removes inline reasoning from OpenAI-compatible answers', async () => {
+    const reply = (content: string) => () => json({ choices: [{ finish_reason: 'stop', message: { content } }] });
+    const cases: Array<[string, string]> = [
+      ['<think>use {braces} here</think>\n{"a":1}', '{"a":1}'],
+      ['<think>a</think><think>b</think>done', 'done'],
+      ['<thinking>plan</thinking><answer>42</answer>', '<thinking>plan</thinking><answer>42</answer>'],
+      ['reasoning without opener</think>answer', 'answer'],
+      ['<think>ran out of tokens {', ''],
+      ['plain', 'plain'],
+      // The tags are the answer's own text when they are not at the start.
+      ['DeepSeek wraps reasoning in `<think>` tags.', 'DeepSeek wraps reasoning in `<think>` tags.'],
+      ['{"html":"<thinking>"}', '{"html":"<thinking>"}'],
+      ['<think>a</think>real </think> tail', 'real </think> tail'],
+      ['<reasoning>step</reasoning><answer>42</answer>', '<reasoning>step</reasoning><answer>42</answer>'],
+    ];
+    for (const [input, want] of cases) {
+      const { ai } = setup(reply(input));
+      ai.configure({ provider: 'deepseek', model: 'm', apiKey: 'k' });
+      expect((await ai.complete([{ role: 'user', content: 'x' }])).text).toBe(want);
+    }
+  });
+
+  it('strips a long run of reasoning tags in linear time', () => {
+    const started = Date.now();
+    stripReasoning('<think>'.repeat(40_000));
+    stripReasoning('<think>x</think>'.repeat(40_000));
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it('reports whether the answer was cut off', () => {
+    expect(isTruncated('max_tokens')).toBe(true);
+    expect(isTruncated('length')).toBe(true);
+    expect(isTruncated('model_length')).toBe(true);
+    expect(isTruncated('end_turn')).toBe(false);
+    expect(isTruncated(null)).toBe(false);
   });
 
   it('uses a custom address and sends no key when there is none', async () => {

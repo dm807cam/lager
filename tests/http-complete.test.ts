@@ -44,7 +44,7 @@ describe('POST /__lager/complete', () => {
     const res = await env.ask(env.owner, { messages: [{ role: 'user', content: 'hi' }], system: 'brief', maxTokens: 10 });
     expect(res.status).toBe(200);
     expect(res.headers['cache-control']).toBe('no-store');
-    expect(res.body).toEqual({ text: 'answer', model: 'claude-opus-5-5', stopReason: 'end_turn' });
+    expect(res.body).toEqual({ text: 'answer', model: 'claude-opus-5-5', stopReason: 'end_turn', truncated: false });
     expect(env.sent[0]).toMatchObject({ system: 'brief', max_tokens: 10, messages: [{ role: 'user', content: 'hi' }] });
   });
 

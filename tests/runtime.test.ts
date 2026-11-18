@@ -242,6 +242,15 @@ describe('claude.use', () => {
       .toBe(`echo ${JSON.stringify({ messages: history, system: 's', maxTokens: 50 })}`);
   });
 
+  it('claude.complete with full resolves text, stop reason and truncation', async () => {
+    const claude = boot();
+    completeReply = () => json({ text: '{"a"', model: 'm', stopReason: 'max_tokens', truncated: true });
+    expect(await claude.complete('x', { full: true })).toEqual({ text: '{"a"', model: 'm', stopReason: 'max_tokens', truncated: true });
+    expect(await claude.complete('x')).toBe('{"a"');
+    const sent = JSON.parse(calls.filter(([u]) => u === '/__lager/complete').at(-1)![1].body);
+    expect(sent.full).toBeUndefined();
+  });
+
   it('claude.complete rejects with the server code', async () => {
     const claude = boot();
     await expect(claude.complete()).rejects.toMatchObject({ code: 'invalid_argument' });

@@ -67,6 +67,9 @@ export interface AiConfigInput {
 
 export interface Completion { text: string; model: string; stopReason: string | null }
 
+/** Whether the provider stopped because the answer hit the length limit (Anthropic `max_tokens`, OpenAI `length`, Mistral `model_length`). */
+export const isTruncated = (stopReason: string | null): boolean => stopReason === 'max_tokens' || stopReason === 'length' || stopReason === 'model_length' || stopReason === 'model_context_window_exceeded';
+
 /**
  * A provider call that failed. `message` is safe to show any viewer of an app; `detail` carries what the provider said
  * and is shown to administrators only (it can name the account or the model).
@@ -274,15 +277,38 @@ function parseAnthropic(json: unknown, model: string): Completion {
   return { text, model: typeof json.model === 'string' ? json.model : model, stopReason };
 }
 
+/**
+ * Reasoning models served over OpenAI-compatible APIs (DeepSeek, Ollama, Groq and others) often put their reasoning
+ * inline at the start of `content`. It is not the answer, and its braces and prose break apps that parse the reply,
+ * so it is cut. Only the start of the reply is touched: the tags in the middle of an answer are the answer's own text
+ * (an app may ask for a `<thinking>` or `<reasoning>` section and parse it; only `<think>`, what reasoning models send, is removed), and every pass scans each part of the text at most once.
+ */
+export function stripReasoning(text: string): string {
+  let out = text;
+  let stripped = false;
+  for (;;) {
+    const closed = out.replace(/^\s*<think>[\s\S]*?<\/think>/i, '');
+    if (closed === out) break;
+    out = closed;
+    stripped = true;
+  }
+  // Reasoning that ran out of tokens never closes: nothing after the opener is an answer.
+  if (/^\s*<think>/i.test(out)) return '';
+  // Some servers drop the opening tag and send only `reasoning</think>answer`; the closer is then the first tag.
+  // (An answer that is plain prose and mentions a literal `</think>` with no opener anywhere is cut too; that is rarer.)
+  if (!stripped && !/<think>/i.test(out)) out = out.replace(/^[^<]*<\/think>/i, '');
+  return out.trim();
+}
+
 function parseOpenAi(json: unknown, model: string): Completion {
   const choice = isObj(json) && Array.isArray(json.choices) ? json.choices[0] : undefined;
   const message = isObj(choice) ? choice.message : undefined;
   if (!isObj(message)) throw new AiError('bad_response', 'The language model sent an answer Lager cannot read.');
   const content = message.content;
   // Some servers return content as a list of parts.
-  const text = typeof content === 'string' ? content
+  const text = stripReasoning(typeof content === 'string' ? content
     : Array.isArray(content) ? content.map((p) => (isObj(p) && typeof p.text === 'string' ? p.text : '')).join('')
-      : '';
+      : '');
   if (!text && typeof message.refusal === 'string' && message.refusal) throw new AiError('refused', 'The language model declined to answer.', 422);
   const finish = isObj(choice) && typeof choice.finish_reason === 'string' ? choice.finish_reason : null;
   return { text, model: isObj(json) && typeof json.model === 'string' ? json.model : model, stopReason: finish };

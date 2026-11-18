@@ -2,7 +2,7 @@ import express from 'express';
 import type { Response } from 'express';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
-import { AiError, type ChatMessage } from '../platform/ai.js';
+import { AiError, isTruncated, type ChatMessage } from '../platform/ai.js';
 import type { Ctx } from './instance.js';
 import { RateLimiter } from './ratelimit.js';
 
@@ -85,7 +85,7 @@ export function mountCompleteRoutes(router: express.Router, core: Core, ctxOf: (
       res.on('close', () => { if (!res.writableEnded) abort.abort(); });
       try {
         const out = await core.ai.complete(messages, { maxTokens: maxTokens as number | undefined, signal: abort.signal });
-        res.set('Cache-Control', 'no-store').json({ text: out.text, model: out.model, stopReason: out.stopReason });
+        res.set('Cache-Control', 'no-store').json({ text: out.text, model: out.model, stopReason: out.stopReason, truncated: isTruncated(out.stopReason) });
       } finally {
         const n = (inFlight.get(userId) ?? 1) - 1;
         if (n > 0) inFlight.set(userId, n); else inFlight.delete(userId);
