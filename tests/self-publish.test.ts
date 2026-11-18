@@ -241,19 +241,24 @@ describe('migration 5 (a database behind the latest still upgrades cleanly)', ()
     old.exec('ALTER TABLE versions DROP COLUMN instance_id');
     old.exec('DROP TABLE instance_domains');
     old.exec('ALTER TABLE users DROP COLUMN locale');
+    old.exec('DROP TABLE ai_providers');
+    old.exec('DROP TABLE ai_groups');
+    old.exec('ALTER TABLE users DROP COLUMN ai_group_id');
     old.exec('PRAGMA user_version = 4');
     old.exec('PRAGMA foreign_keys = OFF');
     old.exec(`INSERT INTO apps (id, slug, title, owner_id, created_at) VALUES ('a1', 'old', 'Old', 'o', 'x')`);
     old.exec(`INSERT INTO versions (app_id, number, sha256, size_bytes, capabilities, created_by, created_at) VALUES ('a1', 1, 's', 1, '{}', 'o', 'x')`);
     old.close();
     const db = openPlatformDb(d);
-    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(9);
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(10);
     expect(db.prepare('SELECT instance_id FROM versions').get()).toEqual({ instance_id: null });
     // The counter starts after the highest existing number; versions(instance_id) is indexed.
     expect(db.prepare("SELECT next_version FROM apps WHERE id = 'a1'").get()).toEqual({ next_version: 2 });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'versions_instance'").get()).toEqual({ name: 'versions_instance' });
     // Migration 9: existing apps start without description, with the default colour and icon version 0.
     expect(db.prepare("SELECT description, theme_color, icon_version FROM apps WHERE id = 'a1'").get()).toEqual({ description: '', theme_color: '#1f2a5c', icon_version: 0 });
+    // Migration 10: the default AI group exists.
+    expect(db.prepare("SELECT id FROM ai_groups").all().map((r) => ({ ...r }))).toEqual([{ id: 'default' }]);
     db.close();
   });
 });

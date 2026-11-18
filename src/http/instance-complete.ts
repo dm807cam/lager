@@ -2,7 +2,7 @@ import express from 'express';
 import type { Response } from 'express';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
-import { AiError, isTruncated, type ChatMessage } from '../platform/ai.js';
+import { AiError, HOURLY_LIMIT_MAX, isTruncated, type ChatMessage } from '../platform/ai.js';
 import type { Ctx } from './instance.js';
 import { RateLimiter } from './ratelimit.js';
 
@@ -47,12 +47,12 @@ export function toMessages(input: unknown, system: unknown): ChatMessage[] {
 }
 
 /**
- * Mounts `POST /__lager/complete`: the page's `window.claude.complete` asks the language model the administrator set up.
+ * Mounts `POST /__lager/complete`: the page's `window.claude.complete` asks the model of the caller's AI group.
  * Only signed-in viewers with at least `interact` may call it, so guests on public apps cannot spend the server's credit.
  */
 export function mountCompleteRoutes(router: express.Router, core: Core, ctxOf: (res: Response) => Ctx, requireAccess: (ctx: Ctx) => void): void {
-  let limiter = new RateLimiter(core.ai.hourlyLimit, WINDOW_MS);
-  let limiterFor = core.ai.hourlyLimit;
+  // One window per person; each request is checked against the limit of the person's AI group at that moment.
+  const limiter = new RateLimiter(HOURLY_LIMIT_MAX, WINDOW_MS);
   const inFlight = new Map<string, number>();
 
   router.post('/__lager/complete', express.json({ limit: BODY_LIMIT }), async (req, res, next) => {
@@ -65,16 +65,15 @@ export function mountCompleteRoutes(router: express.Router, core: Core, ctxOf: (
       if (userId === null) throw new LagerError('unauthenticated', 'Sign in to use the language model.');
       const level = ctx.viewer.level;
       if (level !== 'interact' && level !== 'admin' && level !== 'owner') throw new LagerError('forbidden', 'You may only view this app.');
-      if (!core.ai.configured) { reply(res, { status: 503, code: 'not_configured', message: 'No language model is set up on this server.' }); return; }
+      const route = core.ai.routeFor(userId);
+      if (!route) { reply(res, { status: 503, code: 'not_configured', message: 'No language model is available to you.' }); return; }
       const body: unknown = req.body;
       if (!isObject(body)) throw new LagerError('invalid_argument', 'Request body must be a JSON object.');
       const messages = toMessages(body.messages, body.system);
       const maxTokens = body.maxTokens;
       if (maxTokens !== undefined && (!Number.isInteger(maxTokens) || (maxTokens as number) < 1)) throw new LagerError('invalid_argument', 'maxTokens must be a positive whole number.');
-      // The limit is a setting; a change takes effect with a fresh window.
-      if (limiterFor !== core.ai.hourlyLimit) { limiter = new RateLimiter(core.ai.hourlyLimit, WINDOW_MS); limiterFor = core.ai.hourlyLimit; }
       const running = inFlight.get(userId) ?? 0;
-      if (running >= MAX_IN_FLIGHT_PER_USER || !limiter.hit(userId)) {
+      if (running >= MAX_IN_FLIGHT_PER_USER || !limiter.hit(userId, route.hourlyLimit)) {
         res.set('Retry-After', running >= MAX_IN_FLIGHT_PER_USER ? '5' : '60');
         reply(res, { status: 429, code: 'rate_limited', message: 'Too many requests to the language model; try again later.' });
         return;
@@ -84,7 +83,7 @@ export function mountCompleteRoutes(router: express.Router, core: Core, ctxOf: (
       const abort = new AbortController();
       res.on('close', () => { if (!res.writableEnded) abort.abort(); });
       try {
-        const out = await core.ai.complete(messages, { maxTokens: maxTokens as number | undefined, signal: abort.signal });
+        const out = await core.ai.complete(route, messages, { maxTokens: maxTokens as number | undefined, signal: abort.signal });
         res.set('Cache-Control', 'no-store').json({ text: out.text, model: out.model, stopReason: out.stopReason, truncated: isTruncated(out.stopReason) });
       } finally {
         const n = (inFlight.get(userId) ?? 1) - 1;

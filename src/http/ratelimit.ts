@@ -7,15 +7,15 @@ export class RateLimiter {
 
   constructor(private max: number, private windowMs: number, private maxKeys = 10_000) {}
 
-  /** Records an attempt; returns false (and records nothing) when the key already used up its budget. */
-  hit(key: string): boolean {
+  /** Records an attempt; returns false (and records nothing) when the key already used up its budget (`max`, else the one given at construction). */
+  hit(key: string, max = this.max): boolean {
     const now = Date.now();
     const cutoff = now - this.windowMs;
     for (const [k, list] of this.hits) {
       if (list[list.length - 1] <= cutoff) this.hits.delete(k);
     }
     const list = (this.hits.get(key) ?? []).filter((t) => t > cutoff);
-    if (list.length >= this.max) {
+    if (list.length >= max) {
       this.hits.set(key, list);
       return false;
     }
