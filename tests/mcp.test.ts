@@ -61,7 +61,7 @@ describe('mcp endpoint', () => {
     const client = await connect(r);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'activate_version', 'add_domain', 'check_artifact', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'export_data', 'get_app', 'get_guide', 'get_version',
+      'activate_version', 'add_domain', 'check_app', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'export_data', 'get_app', 'get_guide', 'get_version',
       'import_data', 'list_apps', 'list_shares', 'list_snapshots', 'remove_domain', 'restore_snapshot', 'set_app_icon', 'set_auto_update', 'set_visibility', 'share_instance', 'unshare_instance',
     ]);
     expect(client.getServerVersion()?.name).toBe('lager');
@@ -83,23 +83,23 @@ describe('mcp endpoint', () => {
       expect(JSON.stringify(tool.inputSchema), tool.name).not.toContain('propertyNames');
     }
     const readOnly = tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name).sort();
-    expect(readOnly).toEqual(['check_artifact', 'export_data', 'get_app', 'get_guide', 'get_version', 'list_apps', 'list_shares', 'list_snapshots', 'db_read'].sort());
+    expect(readOnly).toEqual(['check_app', 'export_data', 'get_app', 'get_guide', 'get_version', 'list_apps', 'list_shares', 'list_snapshots', 'db_read'].sort());
     const destructive = tools.filter((t) => t.annotations?.destructiveHint === true).map((t) => t.name).sort();
     expect(destructive).toEqual(['db_write', 'import_data', 'remove_domain', 'restore_snapshot', 'unshare_instance']);
     const deploy = tools.find((t) => t.name === 'deploy_app')!;
     const caps = (deploy.inputSchema.properties as Record<string, { properties?: Record<string, unknown> }>).capabilities;
-    expect(Object.keys(caps.properties ?? {})).toEqual(['db', 'user', 'assets', 'room', 'artifact', 'downloads', 'complete']);
+    expect(Object.keys(caps.properties ?? {})).toEqual(['db', 'user', 'assets', 'room', 'page', 'downloads', 'complete']);
     expect(deploy.description).toContain('get_guide');
   });
 
-  it('deploy_app accepts capabilities beyond the listed ones, such as the self alias', async () => {
+  it('deploy_app keeps capability names it does not list, which the check reports as unsupported', async () => {
     const r = await start();
     const client = await connect(r);
-    const res = await call(client, 'deploy_app', { slug: 'selfie', html: '<!doctype html><p>hi</p>', capabilities: { self: {}, db: { rules: [] } } });
+    const res = await call(client, 'deploy_app', { slug: 'selfie', html: '<!doctype html><p>hi</p>', capabilities: { future: {}, db: { rules: [] } } });
     expect(res.isError).toBe(false);
     const version = await client.callTool({ name: 'get_version', arguments: { app: 'selfie' } });
     const meta = JSON.parse((version.content as Array<{ text: string }>)[0].text);
-    expect(Object.keys(meta.capabilities).sort()).toEqual(['db', 'self']);
+    expect(Object.keys(meta.capabilities).sort()).toEqual(['db', 'future']);
   });
 
   it('deploy_app then get_app', async () => {
@@ -136,7 +136,7 @@ describe('mcp endpoint', () => {
     const r = await start();
     const client = await connect(r);
     const v1 = '<!doctype html>\n<p class="a">"one"</p>';
-    const v2 = '<!doctype html>\n<script>const db = await claude.use("db");</script>';
+    const v2 = '<!doctype html>\n<script>const db = await lager.use("db");</script>';
     await call(client, 'deploy_app', { slug: 'todo', html: v1, title: 'Todo', note: 'first' });
     await call(client, 'deploy_app', { slug: 'todo', html: v2, capabilities: { db: { rules: [{ path: 'tasks', write: 'admin' }] }, user: {} }, note: 'second' });
 
@@ -198,14 +198,14 @@ describe('mcp endpoint', () => {
   it('get_version by instance returns a page the instance saved itself, to its managers only', async () => {
     const r = await start();
     const owner = await connect(r);
-    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>deployed</p>', capabilities: { artifact: {} } });
+    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>deployed</p>', capabilities: { page: {} } });
     const inst = r.h.core.apps.getInstanceBySlug('todo')!;
     const saved = '<!doctype html><p>saved by the page</p>';
     r.h.core.apps.selfPublish({ instanceId: inst.id, html: saved, baseVersion: 1, userId: r.h.adminId });
 
     const got = await getVersion(owner, { instance: 'todo' });
     expect(got.html).toBe(saved);
-    expect(got.meta).toMatchObject({ version: 2, savedByInstance: 'todo', capabilities: { artifact: {} } });
+    expect(got.meta).toMatchObject({ version: 2, savedByInstance: 'todo', capabilities: { page: {} } });
     // By app, the latest deployed version is still the deployed one.
     expect((await getVersion(owner, { app: 'todo' })).html).toBe('<p>deployed</p>');
 
@@ -672,16 +672,16 @@ describe('mcp endpoint', () => {
     expect((await call(act.client, 'import_data', { instance: 'todo', docs: [{ path: 'open/c', data: {} }] })).json.error.code).toBe('forbidden');
   });
 
-  it('check_artifact', async () => {
+  it('check_app', async () => {
     const r = await start();
     const client = await connect(r);
-    const res = await call(client, 'check_artifact', { html: '<script>claude.use("db"); claude.use("tts"); claude.complete("x")</script>', capabilities: {} });
+    const res = await call(client, 'check_app', { html: '<script>lager.use("db"); lager.use("tts"); lager.complete("x")</script>', capabilities: {} });
     expect(res.isError).toBe(false);
     expect(res.json).toMatchObject({ used: ['db', 'tts'], unsupported: ['tts'], undeclared: ['db', 'complete'] });
     expect(res.json.warnings).toHaveLength(4);
-    expect((await call(client, 'check_artifact', { html: '<p>x</p>' })).json).toEqual({ used: [], unsupported: [], undeclared: [], warnings: [] });
+    expect((await call(client, 'check_app', { html: '<p>x</p>' })).json).toEqual({ used: [], unsupported: [], undeclared: [], warnings: [] });
     const plain = await asUser(r, 'plain@x.y');
-    expect((await call(plain.client, 'check_artifact', { html: '<p>x</p>' })).json.error.code).toBe('forbidden');
+    expect((await call(plain.client, 'check_app', { html: '<p>x</p>' })).json.error.code).toBe('forbidden');
   });
 
   it('no bearer → 401 with WWW-Authenticate resource_metadata', async () => {

@@ -5,8 +5,8 @@
 <h1 align="center">Lager</h1>
 
 <p align="center">
-  <strong>The only two apps you'll ever need: Claude + Lager.</strong><br>
-  Claude builds the app. Lager runs it on your own server, keeps its data and lets you share it with anyone.
+  <strong>The only two apps you'll ever need: your AI + Lager.</strong><br>
+  Your AI builds the app. Lager runs it on your own server, keeps its data and lets you share it with anyone.
 </p>
 
 <p align="center">
@@ -29,18 +29,18 @@
 
 ---
 
-Ask Claude for a shopping list your family shares, a booking sheet for your club or a tracker for your plants, and Claude builds it in a minute. But the result stays inside a chat. To use it on your phone or share it with someone who has no Claude account, you would normally have to host it yourself: a server, a container, a database, a domain.
+Ask an AI assistant such as Claude or ChatGPT for a shopping list your family shares, a booking sheet for your club or a tracker for your plants, and it builds one in a minute. But the result stays inside a chat. To use it on your phone or share it with someone who has no AI account, you would normally have to host it yourself: a server, a container, a database, a domain.
 
-**Lager removes that step.** Connect your Lager server to Claude once. From then on Claude publishes every app it builds straight to your server: with its own address, its own data, versions you can roll back, and an icon on your home screen. The people you share it with need only a browser.
+**Lager removes that step.** Connect your Lager server to your assistant once. From then on it publishes every app it builds straight to your server: with its own address, its own data, versions you can roll back, and an icon on your home screen. The people you share it with need only a browser.
 
 ## Why Lager? 🤩
 
-- 🚀 **From prompt to app in one step.** Claude deploys through Lager's MCP connector. You get a link such as `groceries.apps.example.com`, not a file to download.
+- 🚀 **From prompt to app in one step.** Your assistant deploys through Lager's MCP connector. You get a link such as `groceries.apps.example.com`, not a file to download.
 - 💾 **Data that stays.** Every app instance has its own document database with live updates, plus file uploads, so the app keeps its state across devices and people.
 - 👪 **Share with anyone.** Share one instance so everyone works in the same data, or hand out separate copies of the app. Your family and friends do not need an AI subscription.
 - ⏪ **Versions and rollback.** Every deploy is a numbered version. Lager takes a snapshot of the data before the active version changes, so you can always go back.
 - 🤝 **Works with your AI.** Claude, ChatGPT, Cursor, VS Code, Gemini CLI: any assistant that speaks MCP can build and deploy apps, and the apps run the same whoever built them.
-- 🧠 **Bring your own model.** Apps that call `claude.complete()` use a model you connect: Anthropic, OpenAI, OpenRouter, Mistral, a local Ollama, or any OpenAI-compatible server. You set the limits per person.
+- 🧠 **Bring your own model.** Apps that call `lager.complete()` use a model you connect: Anthropic, OpenAI, OpenRouter, Mistral, a local Ollama, or any OpenAI-compatible server. You set the limits per person.
 - 📱 **Feels like a real app.** Icons, theme colours and home-screen install for every app, in light and dark mode.
 - 🔒 **Yours.** One Node.js process, SQLite and a data directory. No other services and no telemetry: the server only contacts the outside world when you set up mail or connect a model.
 - 🌍 **Multilingual.** The interface is available in English, German, French and Spanish, and [adding a language](CONTRIBUTING.md#translations) takes one file.
@@ -48,7 +48,7 @@ Ask Claude for a shopping list your family shares, a booking sheet for your club
 ## How it works
 
 ```
- You ──"build me a shared groceries list"──▶ Claude
+ You ──"build me a shared groceries list"──▶ your AI
                                                │  deploy_app (MCP)
                                                ▼
                                       ┌─────────────────┐
@@ -58,10 +58,10 @@ Ask Claude for a shopping list your family shares, a booking sheet for your club
                                                │  https://groceries.apps.example.com
                        ┌───────────────────────┼───────────────────────┐
                        ▼                       ▼                       ▼
-                   your phone             your laptop        a friend without Claude
+                   your phone             your laptop         a friend without AI
 ```
 
-Apps are single HTML files in the format of Claude artifacts. Instead of the browser's local storage they keep data through the same `claude.use("db")` interface artifacts use on claude.ai, and Lager provides it. The name is only the interface: an app written by ChatGPT or Gemini uses the same calls. Artifacts you already have can usually move to Lager with few changes, and your assistant can do the move for you.
+Apps are single HTML files. Lager injects a small runtime, `window.lager`, into every page: `lager.use("db")` for a live document database, `lager.use("user")` for the viewer, `lager.complete()` for a language model, and more. Any AI can write against it, because the guide it reads through MCP explains the API with a complete example. Apps from elsewhere, such as claude.ai artifacts, move over with a few changes, and your assistant does the conversion.
 
 ## Quick start
 
@@ -89,7 +89,7 @@ Lager works with every assistant that supports remote MCP servers. Sign-in uses 
 | ChatGPT | Developer mode → create a connector with `https://lager.example.com/mcp` and OAuth |
 | Cursor, VS Code, Gemini CLI, … | Add `https://lager.example.com/mcp` as an HTTP MCP server |
 
-Then ask for an app, for example *"Build a shared groceries list for my family and put it on Lager."* Configuration snippets for each assistant, API tokens and the optional Claude skill: [Connecting your AI](docs/connecting-ai.md).
+Then ask for an app, for example *"Build a shared groceries list for my family and put it on Lager."* Configuration snippets for each assistant, API tokens and the optional skill for Claude: [Connecting your AI](docs/connecting-ai.md).
 
 ## Features
 
@@ -99,7 +99,7 @@ Then ask for an app, for example *"Build a shared groceries list for my family a
 | **Data** | Document database with live updates and access rules, file uploads, realtime rooms with presence, pages that save themselves, file downloads, snapshots, NDJSON export and import |
 | **People** | Several accounts with roles (administrator, publisher, user), invitations, open or closed registration, groups, four access levels per instance, public instances |
 | **Interfaces** | Browser dashboard, REST API, MCP endpoint (Streamable HTTP) with OAuth 2.1 and dynamic client registration, or API tokens |
-| **AI** | `claude.complete()` routed to the providers you connect, AI groups with their own model and hourly limit per person, keys stored encrypted |
+| **AI** | `lager.complete()` routed to the providers you connect, AI groups with their own model and hourly limit per person, keys stored encrypted |
 | **Operations** | Single process, SQLite, one data directory, online backup command, trash with retention, multi-architecture Docker images |
 
 What Lager deliberately does not do (no single sign-on, no built-in TLS, no replication, …) is listed under [Limits](docs/limits.md#what-lager-cannot-do).

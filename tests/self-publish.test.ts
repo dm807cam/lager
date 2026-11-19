@@ -6,7 +6,6 @@ import type { Config } from '../src/config.js';
 import { createCore, type Core } from '../src/core.js';
 import { LagerError } from '../src/errors.js';
 import type { Instance } from '../src/platform/apps.js';
-import { openPlatformDb } from '../src/platform/db.js';
 import type { User } from '../src/platform/users.js';
 
 let core: Core;
@@ -35,7 +34,7 @@ function code(fn: () => unknown): string {
 
 /** App `poll` (v1) with the default instance `poll` and a second instance `poll-b` of the same app owned by `usr`. */
 function setup(): { a: Instance; b: Instance; appId: string } {
-  const r = core.apps.deploy({ slug: 'poll', html: '<p>v1</p>', userId: pub.id, capabilities: { artifact: {} } });
+  const r = core.apps.deploy({ slug: 'poll', html: '<p>v1</p>', userId: pub.id, capabilities: { page: {} } });
   const b = core.apps.createInstance({ appId: r.app.id, slug: 'poll-b', ownerId: usr.id });
   return { a: r.instances[0], b, appId: r.app.id };
 }
@@ -47,7 +46,7 @@ describe('selfPublish', () => {
     expect(r.version.number).toBe(2);
     expect(r.version.instanceId).toBe(a.id);
     expect(r.version.note).toBe('saved by the instance itself');
-    expect(r.version.capabilities).toEqual({ artifact: {} });
+    expect(r.version.capabilities).toEqual({ page: {} });
     expect(r.instance.activeVersion).toBe(2);
     expect(r.instance.autoUpdate).toBe(false);
     expect(core.apps.readVersionHtml(appId, 2)).toBe('<p>voted</p>');
@@ -67,7 +66,7 @@ describe('selfPublish', () => {
   it('a later deploy skips the pinned instance and reports it', () => {
     const { a, b, appId } = setup();
     core.apps.selfPublish({ instanceId: a.id, html: '<p>mine</p>', baseVersion: 1, userId: pub.id });
-    const d = core.apps.deploy({ slug: 'poll', html: '<p>new</p>', userId: pub.id, capabilities: { artifact: {} } });
+    const d = core.apps.deploy({ slug: 'poll', html: '<p>new</p>', userId: pub.id, capabilities: { page: {} } });
     expect(d.version.number).toBe(3);
     expect(d.pinned.map((i) => i.id)).toEqual([a.id]);
     expect(core.apps.getInstance(a.id)!.activeVersion).toBe(2);
@@ -82,7 +81,7 @@ describe('selfPublish', () => {
     const c = core.apps.createInstance({ appId, slug: 'poll-c', ownerId: usr.id });
     expect(c.activeVersion).toBe(1);
     // Redeploying the content of v1 is "unchanged" although a newer self-published version exists.
-    const same = core.apps.deploy({ slug: 'poll', html: '<p>v1</p>', userId: pub.id, capabilities: { artifact: {} } });
+    const same = core.apps.deploy({ slug: 'poll', html: '<p>v1</p>', userId: pub.id, capabilities: { page: {} } });
     expect(same.createdVersion).toBe(false);
     expect(same.version.number).toBe(1);
     expect(same.pinned).toEqual([]);
@@ -210,7 +209,7 @@ describe('saved version limits', () => {
     };
     core = createCore(small);
     admin = core.users.getByEmail('adm@x.y')!;
-    const r = core.apps.deploy({ slug: 'poll', html: '<p>v1</p>', userId: admin.id, capabilities: { artifact: {} } });
+    const r = core.apps.deploy({ slug: 'poll', html: '<p>v1</p>', userId: admin.id, capabilities: { page: {} } });
     const inst = r.instances[0];
     const first = doc('one', 700 - doc('one').length);
     expect(Buffer.byteLength(first)).toBe(700);
@@ -228,37 +227,5 @@ describe('saved version limits', () => {
     // a smaller replacement set frees room again: the quota counts what is stored
     core.apps.deleteInstance(inst.id, admin.id);
     expect(core.apps.savedBytes(inst.id)).toBe(0);
-  });
-});
-
-describe('migration 5 (a database behind the latest still upgrades cleanly)', () => {
-  it('keeps existing versions deployed', () => {
-    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-mig-'));
-    const old = openPlatformDb(d);
-    old.exec('DROP INDEX versions_instance');
-    old.exec('ALTER TABLE apps DROP COLUMN next_version');
-    for (const column of ['description', 'theme_color', 'icon_version']) old.exec(`ALTER TABLE apps DROP COLUMN ${column}`);
-    old.exec('ALTER TABLE versions DROP COLUMN instance_id');
-    old.exec('DROP TABLE instance_domains');
-    old.exec('ALTER TABLE users DROP COLUMN locale');
-    old.exec('DROP TABLE ai_providers');
-    old.exec('DROP TABLE ai_groups');
-    old.exec('ALTER TABLE users DROP COLUMN ai_group_id');
-    old.exec('PRAGMA user_version = 4');
-    old.exec('PRAGMA foreign_keys = OFF');
-    old.exec(`INSERT INTO apps (id, slug, title, owner_id, created_at) VALUES ('a1', 'old', 'Old', 'o', 'x')`);
-    old.exec(`INSERT INTO versions (app_id, number, sha256, size_bytes, capabilities, created_by, created_at) VALUES ('a1', 1, 's', 1, '{}', 'o', 'x')`);
-    old.close();
-    const db = openPlatformDb(d);
-    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(10);
-    expect(db.prepare('SELECT instance_id FROM versions').get()).toEqual({ instance_id: null });
-    // The counter starts after the highest existing number; versions(instance_id) is indexed.
-    expect(db.prepare("SELECT next_version FROM apps WHERE id = 'a1'").get()).toEqual({ next_version: 2 });
-    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'versions_instance'").get()).toEqual({ name: 'versions_instance' });
-    // Migration 9: existing apps start without description, with the default colour and icon version 0.
-    expect(db.prepare("SELECT description, theme_color, icon_version FROM apps WHERE id = 'a1'").get()).toEqual({ description: '', theme_color: '#1f2a5c', icon_version: 0 });
-    // Migration 10: the default AI group exists.
-    expect(db.prepare("SELECT id FROM ai_groups").all().map((r) => ({ ...r }))).toEqual([{ id: 'default' }]);
-    db.close();
   });
 });

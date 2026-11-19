@@ -22,8 +22,8 @@
 <ul id="notes"></ul>
 <script>
 (async () => {
-  const db = await claude.use("db");
-  const user = await claude.use("user");
+  const db = await lager.use("db");
+  const user = await lager.use("user");
   // Every member of the user namespace is an async function.
   const name = user ? await user.name() : "";
   if (name) document.getElementById("who").textContent = "Signed in as " + name;

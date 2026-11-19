@@ -1,6 +1,5 @@
 import express from 'express';
 import type { RequestHandler } from 'express';
-import { metadataHandler } from '@modelcontextprotocol/sdk/server/auth/handlers/metadata.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { bearerUser } from '../http/api.js';
@@ -50,9 +49,6 @@ export const mcpExtension: PlatformExtension = (router, core) => {
   }
   if (auth) {
     router.post(['/token', '/revoke'], ...clientAuthentication(core));
-    // Connections made before the resource moved to /mcp, and clients that only try the root, still find the metadata.
-    router.use('/.well-known/oauth-protected-resource',
-      metadataHandler({ resource: resourceUrl.href, authorization_servers: [`${origin}/`], resource_name: 'Lager' }));
     router.use(auth);
   }
 

@@ -10,7 +10,7 @@ The language of a page is chosen in this order: the signed-in account's language
 
 To add a language (see also the [contributing guide](../CONTRIBUTING.md#translations)):
 
-1. Copy `src/i18n/en.ts` to a new file such as `src/i18n/it.ts` and translate the values. Keep the `{name}` placeholders, and keep "Lager", "Claude" and the role name "Publisher" as they are.
+1. Copy `src/i18n/en.ts` to a new file such as `src/i18n/it.ts` and translate the values. Keep the `{name}` placeholders, and keep "Lager", product names such as "Claude" or "ChatGPT", and the role name "Publisher" as they are.
 2. In `src/i18n/index.ts`, import the catalog and add it to `CATALOGS`, `LOCALES` and `LOCALE_NAMES`.
 3. Add the language to the small table in `src/runtime/runtime.js` (`SAVE_FILE`) that holds the one sentence the browser runtime shows itself: the confirmation before a download (it also formats the file size).
 

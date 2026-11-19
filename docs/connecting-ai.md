@@ -84,13 +84,13 @@ Any MCP client with Streamable HTTP transport works. If it supports OAuth with d
 ## What every assistant gets
 
 - **The same 22 tools**, with titles and read-only or destructive hints, and the guide for building apps (the `get_guide` tool). Lager also sends a short version of the guide as MCP server instructions; clients that do not show those to the model still find a pointer to `get_guide` in the `deploy_app` description.
-- **The same app runtime.** Apps call `claude.use("db")`, `claude.complete(…)` and so on. The name `window.claude` comes from the Claude artifact format that Lager is compatible with. It has nothing to do with which assistant writes the app: an app built by ChatGPT uses the same calls and runs the same way.
-- **The same AI inside apps.** `claude.complete()` in an app is answered by the model your administrator connected under [Bring your own model](ai-models.md), whether that is Claude, GPT, Gemini, Mistral or a local Ollama, and regardless of which assistant built the app.
+- **The same app runtime.** Apps call `lager.use("db")`, `lager.complete(…)` and so on, whichever assistant writes them: an app built by ChatGPT uses the same calls and runs the same way as one built by Claude.
+- **The same AI inside apps.** `lager.complete()` in an app is answered by the model your administrator connected under [Bring your own model](ai-models.md), whether that is Claude, GPT, Gemini, Mistral or a local Ollama, and regardless of which assistant built the app.
 
 Differences between assistants:
 
 - **The Lager skill is for Claude only** (see below). Other assistants get the same content through the guide.
-- **Quality varies by model.** Smaller models more often forget to declare capabilities or use `localStorage`. Lager warns about both in the deploy result (`warnings`), and `check_artifact` checks an app before it is deployed.
+- **Quality varies by model.** Smaller models more often forget to declare capabilities or use `localStorage`. Lager warns about both in the deploy result (`warnings`), and `check_app` checks an app before it is deployed.
 - **Very large apps:** the whole HTML travels as one tool argument. Some assistants limit how much they write in one call; if a deploy is cut off, ask for a smaller app or deploy from a shell with an API token (`curl`, below).
 
 ## Deploying from a shell
@@ -101,7 +101,7 @@ curl -X PUT -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: text/html"
   "https://lager.example.com/api/apps/notes?title=Notes&capabilities=%7B%22db%22%3A%7B%7D%2C%22user%22%3A%7B%7D%7D"
 ```
 
-The deploy response contains the addresses of the instance (first the one under the apps domain, then custom domains), the warnings, and the instances that were not updated (`pinned`). `examples/notes.html` is a small example app (a note list with `claude.use("db")`), and `examples/board.html` is a shared pin board with uploads, presence and export (see [Building blocks](building-apps.md#building-blocks)).
+The deploy response contains the addresses of the instance (first the one under the apps domain, then custom domains), the warnings, and the instances that were not updated (`pinned`). `examples/notes.html` is a small example app (a note list with `lager.use("db")`), and `examples/board.html` is a shared pin board with uploads, presence and export (see [Building blocks](building-apps.md#building-blocks)).
 
 ## Installing the skill (Claude)
 

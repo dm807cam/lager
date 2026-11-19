@@ -22,18 +22,18 @@ const isObject = (v: unknown): v is object => v !== null && typeof v === 'object
 /** The page must be a complete HTML document: optional BOM and whitespace, then a doctype. */
 const DOCTYPE = /^\uFEFF?\s*<!doctype html/i;
 
-/** `{publish: false}` under either name stops the page from saving itself, for every viewer. */
+/** `{publish: false}` stops the page from saving itself, for every viewer. */
 function publishDisabled(ctx: Ctx): boolean {
-  return [ctx.caps.artifact, ctx.caps.self].some((d) => isObject(d) && (d as Record<string, unknown>).publish === false);
+  return isObject(ctx.caps.page) && (ctx.caps.page as Record<string, unknown>).publish === false;
 }
 
-/** The app declares `artifact` or its alias `self`. */
+/** The app declares `page`. */
 function declared(ctx: Ctx): boolean {
-  return isObject(ctx.caps.artifact) || isObject(ctx.caps.self);
+  return isObject(ctx.caps.page);
 }
 
-/** Mounts `POST /__lager/artifact`: the page saves itself as a new version that belongs to this instance only. */
-export function mountArtifactRoutes(router: express.Router, core: Core, ctxOf: (res: Response) => Ctx, requireAccess: (ctx: Ctx) => void): void {
+/** Mounts `POST /__lager/page`: the page saves itself as a new version that belongs to this instance only. */
+export function mountPageRoutes(router: express.Router, core: Core, ctxOf: (res: Response) => Ctx, requireAccess: (ctx: Ctx) => void): void {
   /** Publish attempts per instance within the last hour: failed ones count too, and the limit is checked before the body is read. */
   const recent = new Map<string, number[]>();
   const publishesInWindow = (instanceId: string, now: number): number[] => {
@@ -42,7 +42,7 @@ export function mountArtifactRoutes(router: express.Router, core: Core, ctxOf: (
     return fresh;
   };
 
-  router.post('/__lager/artifact', (req: Request, res: Response, next) => {
+  router.post('/__lager/page', (req: Request, res: Response, next) => {
     try {
       if (req.get('X-Lager-Request') !== '1') throw new LagerError('forbidden', 'Missing X-Lager-Request header.');
       const ctx = ctxOf(res);

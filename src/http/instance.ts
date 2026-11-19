@@ -11,7 +11,7 @@ import type { User } from '../platform/users.js';
 import { clearCookie, instanceCookieName, NONCE_RE, nonceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
 import { safeReturnPath, sendError, sendNotFound } from './errors.js';
 import { injectRuntime } from './inject.js';
-import { mountArtifactRoutes } from './instance-artifact.js';
+import { mountPageRoutes } from './instance-page.js';
 import { mountPwaRoutes } from './instance-pwa.js';
 import { mountAssetRoutes } from './instance-assets.js';
 import { mountRoomRoutes, STREAM_LIMITS } from './instance-room.js';
@@ -360,7 +360,7 @@ export function createInstanceRouter(core: Core): express.Router {
 
   mountAssetRoutes(router, core, ctxOf, requireAccess);
   mountRoomRoutes(router, core, ctxOf, requireAccess, activeCapabilities);
-  mountArtifactRoutes(router, core, ctxOf, requireAccess);
+  mountPageRoutes(router, core, ctxOf, requireAccess);
   mountCompleteRoutes(router, core, ctxOf, requireAccess);
 
   router.use((req, res) => { sendNotFound(core, req, res); });

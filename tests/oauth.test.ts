@@ -96,15 +96,11 @@ describe('oauth', () => {
       code_challenge_methods_supported: ['S256'],
       grant_types_supported: ['authorization_code', 'refresh_token'],
     });
-    const pr = await request(h.app).get('/.well-known/oauth-protected-resource').set('Host', h.host)
+    // RFC 9728: the protected resource is the MCP endpoint, so its metadata lives at the path-aware location the 401 challenge names.
+    const pr = await request(h.app).get('/.well-known/oauth-protected-resource/mcp').set('Host', h.host)
       .set('X-Forwarded-Host', 'evil.example').set('X-Forwarded-Proto', 'https');
     expect(pr.status).toBe(200);
     expect(pr.body).toMatchObject({ resource: `${BASE}/mcp`, authorization_servers: [`${BASE}/`] });
-    // RFC 9728 path-aware location for the resource https://…/mcp, which the 401 challenge names.
-    const pathAware = await request(h.app).get('/.well-known/oauth-protected-resource/mcp').set('Host', h.host);
-    expect(pathAware.status).toBe(200);
-    expect(pathAware.body).toMatchObject({ resource: `${BASE}/mcp`, authorization_servers: [`${BASE}/`] });
-    expect(pathAware.headers['access-control-allow-origin']).toBe('*');
     expect(pr.headers['access-control-allow-origin']).toBe('*');
   });
 

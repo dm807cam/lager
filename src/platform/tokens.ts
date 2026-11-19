@@ -26,7 +26,7 @@ export function sameHash(a: string, b: string): boolean {
   return x.length === y.length && x.length > 0 && crypto.timingSafeEqual(x, y);
 }
 
-/** Static API tokens `lgr_…` used as bearer tokens by Claude Code and scripts. */
+/** Static API tokens `lgr_…` used as bearer tokens by MCP clients and scripts. */
 export class ApiTokens {
   constructor(private db: DatabaseSync, private users: Users) {}
 

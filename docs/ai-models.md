@@ -1,6 +1,6 @@
 # Bring your own model
 
-Artifacts built on claude.ai often call `window.claude.complete(prompt)` to ask Claude something from inside the page: a recipe app suggests a meal, a journal summarizes the week. On Lager that call goes to a language model **you** connect, paid with your own API key. This does not depend on which assistant built the app: an app that ChatGPT wrote calls the same model as one Claude wrote.
+Apps can call `lager.complete(prompt)` to ask a language model something from inside the page: a recipe app suggests a meal, a journal summarizes the week. That call goes to a language model **you** connect, paid with your own API key. It does not depend on which assistant built the app: an app that ChatGPT wrote calls the same model as one Claude wrote.
 
 Under **Administration → AI model**:
 
@@ -19,7 +19,7 @@ Under **Administration → AI model**:
 | Ollama (local) | `llama3.2` | no key; default address `http://127.0.0.1:11434/v1` |
 | Other OpenAI-compatible server | any | enter the server address (LM Studio, vLLM, LiteLLM, Together, …) |
 
-- **Apps opt in.** Only apps that declare `{"complete": {}}` can call the model; `check_artifact` reports a missing declaration.
+- **Apps opt in.** Only apps that declare `{"complete": {}}` can call the model; `check_app` reports a missing declaration.
 - **Guests can't spend your credit.** Only signed-in people with at least contributor access to an app can use it. Each person gets the requests per hour of their AI group (60 by default) and at most three at a time, and the administrator sets the longest answer for everyone (16,000 tokens by default).
 - **The key stays on the server.** It is stored encrypted with the server secret (`secret.key` or `LAGER_SECRET`). The page never shows it again, only its last four characters. Changing the secret makes the stored key unreadable, so you enter it again. Changing a provider's type or address removes its key, so a key never goes to a server it was not entered for.
 - **Errors stay private.** Viewers get a short message such as "The language model rejected the request". What the provider said goes to the server log and to the administrator's test.

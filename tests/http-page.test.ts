@@ -26,7 +26,7 @@ interface Res { status: number; body: any; text: string }
 async function setup() {
   h = makeHarness();
   const core = h.core;
-  const first = core.apps.deploy({ slug: 'pollo', html: '<p>v1</p>', userId: h.adminId, capabilities: { artifact: {} } });
+  const first = core.apps.deploy({ slug: 'pollo', html: '<p>v1</p>', userId: h.adminId, capabilities: { page: {} } });
   const inst = first.instances[0];
   const two = core.apps.createInstance({ appId: first.app.id, slug: 'pollo-two', ownerId: h.adminId });
   const plain = core.apps.deploy({ slug: 'plain', html: '<p>x</p>', userId: h.adminId }).instances[0];
@@ -69,7 +69,7 @@ function request(env: Env, method: string, path: string, host: string, cookie: s
 }
 
 const publish = (env: Env, cookie: string | undefined, payload: unknown, host = HOST, header = true): Promise<Res> =>
-  request(env, 'POST', '/__lager/artifact', host, cookie, typeof payload === 'string' ? payload : JSON.stringify(payload), header ? { 'X-Lager-Request': '1' } : {});
+  request(env, 'POST', '/__lager/page', host, cookie, typeof payload === 'string' ? payload : JSON.stringify(payload), header ? { 'X-Lager-Request': '1' } : {});
 
 function events(env: Env, cookie: string, host = HOST): Promise<{ next(event: string): Promise<any> }> {
   return new Promise((resolve, reject) => {
@@ -105,7 +105,7 @@ function events(env: Env, cookie: string, host = HOST): Promise<{ next(event: st
   });
 }
 
-describe('POST /__lager/artifact', () => {
+describe('POST /__lager/page', () => {
   it('owner publishes; the page then serves the new html', async () => {
     const env = await setup();
     const res = await publish(env, env.owner, { html: '<!doctype html><p>voted</p>', baseVersion: 1 });
@@ -151,12 +151,6 @@ describe('POST /__lager/artifact', () => {
     expect(env.core.apps.getInstance(env.inst.id)!.activeVersion).toBe(1);
   });
 
-  it('accepts the self declaration as well', async () => {
-    const env = await setup();
-    env.core.apps.deploy({ slug: 'plain', html: '<p>x2</p>', userId: env.admin.id, capabilities: { self: {} } });
-    expect((await publish(env, env.ownerPlain, { html: '<!doctype html><p>y</p>', baseVersion: 2 }, PLAIN)).body).toEqual({ version: '3' });
-  });
-
   it('stale baseVersion → 409', async () => {
     const env = await setup();
     expect((await publish(env, env.owner, { html: '<!doctype html><p>a</p>', baseVersion: 1 })).status).toBe(200);
@@ -194,7 +188,7 @@ describe('POST /__lager/artifact', () => {
     // The 61st attempt is refused although its body is never sent.
     const res = await new Promise<number>((resolve, reject) => {
       const req = http.request({
-        host: '127.0.0.1', port: env.port, path: '/__lager/artifact', method: 'POST',
+        host: '127.0.0.1', port: env.port, path: '/__lager/page', method: 'POST',
         headers: { Host: HOST, Cookie: env.owner, 'X-Lager-Request': '1', 'Content-Type': 'application/json', 'Content-Length': '100000' },
       }, (r) => { r.resume(); resolve(r.statusCode!); });
       req.on('error', reject);
@@ -225,15 +219,12 @@ describe('POST /__lager/artifact', () => {
     expect(r.body).toEqual({ version: '2' });
   });
 
-  it('{publish:false} refuses everyone with not_granted, under either name', async () => {
+  it('{publish:false} refuses everyone with not_granted', async () => {
     const env = await setup();
-    env.core.apps.deploy({ slug: 'plain', html: '<p>locked</p>', userId: env.admin.id, capabilities: { artifact: { publish: false } } });
+    env.core.apps.deploy({ slug: 'plain', html: '<p>locked</p>', userId: env.admin.id, capabilities: { page: { publish: false } } });
     const r = await publish(env, env.ownerPlain, { html: '<!doctype html><p>y</p>', baseVersion: 2 }, PLAIN);
     expect([r.status, r.body.error.code]).toEqual([403, 'not_granted']);
-    env.core.apps.deploy({ slug: 'plain', html: '<p>locked2</p>', userId: env.admin.id, capabilities: { self: { publish: false } } });
-    const r2 = await publish(env, env.ownerPlain, { html: '<!doctype html><p>y</p>', baseVersion: 3 }, PLAIN);
-    expect([r2.status, r2.body.error.code]).toEqual([403, 'not_granted']);
-    expect(env.core.apps.getInstance(env.plain.id)!.activeVersion).toBe(3);
+    expect(env.core.apps.getInstance(env.plain.id)!.activeVersion).toBe(2);
   });
 
   it('requires X-Lager-Request', async () => {

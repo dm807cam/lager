@@ -4,7 +4,7 @@ import { LagerError } from '../errors.js';
 
 /**
  * Bring your own model: the administrator connects language model providers and puts people in AI groups that pick a
- * provider, a model and an hourly limit; apps that declare the `complete` capability call it through `window.claude.complete`. Requests go out with plain `fetch`, either to the Anthropic
+ * provider, a model and an hourly limit; apps that declare the `complete` capability call it through `window.lager.complete`. Requests go out with plain `fetch`, either to the Anthropic
  * Messages API or to an OpenAI-compatible chat completions endpoint, which covers most other providers.
  */
 

@@ -35,7 +35,7 @@ You do not need to write server code to make a real difference:
 | You like… | You could… |
 | --- | --- |
 | Languages | [Translate the interface](#translations) into a new language or review an existing translation |
-| Building things with Claude | [Contribute an example app](#example-apps) that shows what Lager can do |
+| Building things with AI | [Contribute an example app](#example-apps) that shows what Lager can do |
 | Writing | Improve the [documentation](#documentation), write a how-to, or fix something that confused you |
 | Testing | Try a release on your setup (Raspberry Pi, Unraid, a VPS, behind Traefik or Caddy…) and report what broke |
 | Helping people | Answer questions in [Discussions](https://github.com/dm807cam/lager/discussions) |
@@ -60,7 +60,7 @@ Open a [feature request](https://github.com/dm807cam/lager/issues/new?template=f
 What fits Lager well:
 
 - **One process, one data directory.** Lager runs as a single Node.js process with SQLite. Features that need an extra service (Redis, Postgres, a message queue, a separate worker container) are very unlikely to be accepted.
-- **Compatible with Claude artifacts.** Apps use the same `claude.use(…)` interface as artifacts on claude.ai. Lager implements that interface rather than inventing its own.
+- **One runtime for every AI.** Apps reach Lager only through `window.lager` (`lager.use(…)`, `lager.complete(…)`), and nothing in Lager depends on which assistant wrote an app. New features extend that runtime and the guide that explains it.
 - **Safe by default.** Apps run code that nobody reviewed, and visitors may be anonymous. New features keep instances isolated from each other and from the platform.
 - **Simple to run.** A person with a home server and a weekend should be able to operate Lager.
 
@@ -121,15 +121,15 @@ curl -X PUT -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: text/html"
 
 Open <http://notes.apps.localhost:8080>.
 
-### Connecting Claude Code to your development server
+### Connecting an AI assistant to your development server
 
-OAuth also works without HTTPS on `localhost`, so you can connect Claude Code to your local server and let it deploy apps there:
+OAuth also works without HTTPS on `localhost`, so you can connect any MCP client to your local server and let it deploy apps there. With Claude Code:
 
 ```sh
 claude mcp add --transport http lager-dev http://localhost:8080/mcp
 ```
 
-Then run `/mcp` in Claude Code and sign in.
+Then run `/mcp` in Claude Code and sign in. [Connecting your AI](docs/connecting-ai.md) has the setup for other assistants.
 
 ## Project layout
 
@@ -142,13 +142,13 @@ src/
 ├── data/              Per-instance document store, query engine, data rules, assets, rooms, trash
 ├── http/              Express routers: platform pages, dashboard, admin, REST API, instance hosting
 ├── mcp/               MCP endpoint, its tools and the OAuth server
-├── runtime/runtime.js The browser runtime injected into every app (`window.claude`)
+├── runtime/runtime.js The browser runtime injected into every app (`window.lager`)
 ├── static/            Stylesheet and script of the web interface
 ├── i18n/              Text catalogs (en, de, fr, es)
-├── guide.md           The guide Claude reads (served over MCP, mirrored in the skill)
+├── guide.md           The guide every AI reads (served over MCP, mirrored in the skill)
 └── backup.ts          Online backup command
 tests/                 Vitest suites (unit, HTTP and end-to-end)
-examples/              Example artifacts, each with a test
+examples/              Example apps, each with a test
 skill/lager/           The Lager skill for Claude
 docs/                  User documentation, plus design notes in docs/superpowers/
 ```
@@ -198,7 +198,7 @@ Some tests protect rules of the project rather than single features. If one of t
 
 Lager is available in English, German, French and Spanish. English is the source of every text. Adding a language is one of the best first contributions: you need no knowledge of the server, and the tests tell you what is missing.
 
-1. Copy `src/i18n/en.ts` to a new file named after the language code, for example `src/i18n/it.ts`, and translate the values. Keep the `{name}` placeholders, and keep "Lager", "Claude" and the role name "Publisher" as they are.
+1. Copy `src/i18n/en.ts` to a new file named after the language code, for example `src/i18n/it.ts`, and translate the values. Keep the `{name}` placeholders, and keep "Lager", product names such as "Claude" or "ChatGPT", and the role name "Publisher" as they are.
 2. In `src/i18n/index.ts`, import the catalog and add it to `CATALOGS`, `LOCALES` and `LOCALE_NAMES`.
 3. In `src/runtime/runtime.js`, add the language to the small `SAVE_FILE` table. It holds the one sentence the browser runtime shows itself: the confirmation before a download.
 4. Run `npm run typecheck && npm test`. The type checker reports every missing key. The tests check placeholders, unused keys, values left in English, and that every page and mail renders in your language.
@@ -210,10 +210,10 @@ To improve an existing translation, edit its file and explain in the pull reques
 
 Example apps show new users what Lager can do, and they are a good way to contribute without touching the server. An example in `examples/` should:
 
-- be a **single HTML file** that works as a Claude artifact, with inline scripts and styles or scripts from a CDN;
-- keep data only through `claude.use("db")` and the other [building blocks](docs/building-apps.md#building-blocks), never `localStorage`, `sessionStorage` or `indexedDB`;
-- still load and explain itself when a building block is missing (`claude.use` then returns `null`);
-- pass the check: `POST /api/check`, or the `check_artifact` MCP tool, reports no undeclared or unsupported building blocks;
+- be a **single HTML file**, with inline scripts and styles or scripts from a CDN;
+- keep data only through `lager.use("db")` and the other [building blocks](docs/building-apps.md#building-blocks), never `localStorage`, `sessionStorage` or `indexedDB`;
+- still load and explain itself when a building block is missing (`lager.use` then returns `null`);
+- pass the check: `POST /api/check`, or the `check_app` MCP tool, reports no undeclared or unsupported building blocks;
 - come with a test in `tests/example-<name>.test.ts` that runs it against the real runtime, like `tests/example-notes.test.ts`;
 - be listed with its `capabilities` in the pull request description.
 

@@ -3,81 +3,92 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createCore, type Core } from '../src/core.js';
-import { checkArtifact, SUPPORTED_CAPABILITIES } from '../src/platform/check.js';
-import { lintArtifact } from '../src/platform/lint.js';
+import { checkApp, SUPPORTED_CAPABILITIES } from '../src/platform/check.js';
 
 let core: Core | undefined;
 afterEach(() => { core?.close(); core = undefined; });
 
-describe('checkArtifact', () => {
+describe('checkApp', () => {
   it('lists the capabilities Lager provides', () => {
-    expect([...SUPPORTED_CAPABILITIES].sort()).toEqual(['artifact', 'assets', 'db', 'downloads', 'permissions', 'room', 'self', 'user']);
+    expect([...SUPPORTED_CAPABILITIES].sort()).toEqual(['assets', 'db', 'downloads', 'page', 'permissions', 'room', 'user']);
   });
 
   it('finds used capabilities in both quote styles', () => {
     const html = `<script>
-      const a = await window.claude.use( "assets" );
-      const b = await claude.use('room');
-      const c = await claude.use("db"); const d = await claude.use("db");
+      const a = await window.lager.use( "assets" );
+      const b = await lager.use('room');
+      const c = await lager.use("db"); const d = await lager.use("db");
     </script>`;
-    expect(checkArtifact(html, { db: {}, room: {}, assets: {} }).used).toEqual(['assets', 'db', 'room']);
+    expect(checkApp(html, { db: {}, room: {}, assets: {} }).used).toEqual(['assets', 'db', 'room']);
   });
 
   it('treats a capability as declared only when its value is an object', () => {
-    const html = '<script>claude.use("db"); claude.use("room"); claude.use("assets")</script>';
-    expect(checkArtifact(html, { db: {}, room: true, assets: null } as never).undeclared).toEqual(['assets', 'room']);
+    const html = '<script>lager.use("db"); lager.use("room"); lager.use("assets")</script>';
+    expect(checkApp(html, { db: {}, room: true, assets: null } as never).undeclared).toEqual(['assets', 'room']);
   });
 
   it('ignores calls whose argument is not a string literal', () => {
-    expect(checkArtifact('<script>claude.use(name); claude.use(`x${y}`)</script>').used).toEqual([]);
+    expect(checkApp('<script>lager.use(name); lager.use(`x${y}`)</script>').used).toEqual([]);
   });
 
   it('reports unsupported and undeclared ones', () => {
-    const html = '<script>claude.use("sample"); claude.use("tts"); claude.use("db"); claude.use("permissions");</script>';
-    const r = checkArtifact(html, {});
+    const html = '<script>lager.use("sample"); lager.use("tts"); lager.use("db"); lager.use("permissions");</script>';
+    const r = checkApp(html, {});
     expect(r.used).toEqual(['db', 'permissions', 'sample', 'tts']);
     expect(r.unsupported).toEqual(['sample', 'tts']);
     expect(r.undeclared).toEqual(['db']);
-    expect(r.warnings).toContain('"sample" is not provided by Lager; claude.use("sample") returns null.');
-    expect(r.warnings).toContain('"tts" is not provided by Lager; claude.use("tts") returns null.');
+    expect(r.warnings).toContain('"sample" is not provided by Lager; lager.use("sample") returns null.');
+    expect(r.warnings).toContain('"tts" is not provided by Lager; lager.use("tts") returns null.');
     expect(r.warnings).toContain('"db" is used but not declared in capabilities.');
     expect(r.warnings).toHaveLength(3);
   });
 
-  it('treats artifact and self as aliases when declaring', () => {
-    expect(checkArtifact('<script>claude.use("artifact")</script>', { self: {} }).undeclared).toEqual([]);
-    expect(checkArtifact('<script>claude.use("self")</script>', { artifact: {} }).undeclared).toEqual([]);
-    expect(checkArtifact('<script>claude.use("self")</script>', {}).undeclared).toEqual(['self']);
+  it('names no aliases: artifact and self are not capabilities', () => {
+    expect(checkApp('<script>lager.use("page")</script>', { page: {} }).undeclared).toEqual([]);
+    expect(checkApp('<script>lager.use("artifact"); lager.use("self")</script>', { artifact: {}, self: {} }).unsupported).toEqual(['artifact', 'self']);
+  });
+
+  it('asks to convert apps written for claude.ai', () => {
+    const r = checkApp(`<script>
+      const db = await window.claude.use("db");
+      const answer = await claude.complete("hi");
+      await window.storage.set("k", "v", true);
+    </script>`, { db: {} });
+    // Calls through window.claude are not Lager calls, so nothing counts as used or undeclared.
+    expect(r.used).toEqual([]);
+    expect(r.undeclared).toEqual([]);
+    expect(r.warnings).toEqual([
+      'The app uses window.claude, which does not exist on Lager - use window.lager with the same calls (lager.use, lager.complete).',
+      'The app uses window.storage, which does not exist on Lager - keep the data in lager.use("db") instead.',
+    ]);
+    expect(checkApp('<script>const s = await storage.get("k")</script>').warnings).toHaveLength(1);
+    expect(checkApp('<script>sessionStorage.get("k"); db.storage.get("x")</script>').warnings.some((w) => w.includes('window.storage'))).toBe(false);
   });
 
   it('without a declaration given every used supported capability is undeclared', () => {
-    expect(checkArtifact('<script>claude.use("user")</script>').undeclared).toEqual(['user']);
+    expect(checkApp('<script>lager.use("user")</script>').undeclared).toEqual(['user']);
   });
 
-  it('warns about claude.complete and browser storage', () => {
-    const r = checkArtifact('<script>window.claude.complete("hi"); localStorage.x = 1</script>', {});
+  it('warns about lager.complete and browser storage', () => {
+    const r = checkApp('<script>window.lager.complete("hi"); localStorage.x = 1</script>', {});
     expect(r.warnings).toHaveLength(3);
     expect(r.warnings.some((w) => w.includes('localStorage'))).toBe(true);
     expect(r.warnings.some((w) => w.includes('"complete" is not declared'))).toBe(true);
-    expect(checkArtifact('<script>const f = claude.complete; f()</script>', {}).warnings).toHaveLength(0);
-    expect(checkArtifact('<script>claude.complete ("x")</script>', {}).warnings).toHaveLength(2);
+    expect(checkApp('<script>const f = lager.complete; f()</script>', {}).warnings).toHaveLength(0);
+    expect(checkApp('<script>lager.complete ("x")</script>', {}).warnings).toHaveLength(2);
   });
 
-  it('claude.complete needs the complete declaration', () => {
-    expect(checkArtifact('<script>claude.complete("x")</script>', {}).undeclared).toEqual(['complete']);
-    const declared = checkArtifact('<script>claude.complete("x")</script>', { complete: {} });
+  it('lager.complete needs the complete declaration', () => {
+    expect(checkApp('<script>lager.complete("x")</script>', {}).undeclared).toEqual(['complete']);
+    const declared = checkApp('<script>lager.complete("x")</script>', { complete: {} });
     expect(declared.undeclared).toEqual([]);
     expect(declared.unsupported).toEqual([]);
     expect(declared.warnings).toHaveLength(1);
   });
 
-  it('clean artifact has no warnings', () => {
-    const r = checkArtifact('<p>hi</p><script>claude.use("db")</script>', { db: {} });
+  it('a clean app has no warnings', () => {
+    const r = checkApp('<p>hi</p><script>lager.use("db")</script>', { db: {} });
     expect(r).toEqual({ used: ['db'], unsupported: [], undeclared: [], warnings: [] });
-  });
-
-  it('lintArtifact reports only the storage rules', () => {
-    expect(lintArtifact('<script>claude.use("db"); claude.complete(); indexedDB.open("x")</script>')).toHaveLength(1);
   });
 
   it('deploy returns the combined warnings', () => {
@@ -89,7 +100,7 @@ describe('checkArtifact', () => {
     const adminId = core.users.list()[0].id;
     const r = core.apps.deploy({
       slug: 'chk', userId: adminId, capabilities: { user: {} },
-      html: '<script>claude.use("db"); claude.use("sample"); sessionStorage.x=1</script>',
+      html: '<script>lager.use("db"); lager.use("sample"); sessionStorage.x=1</script>',
     });
     expect(r.warnings).toHaveLength(3);
     expect(r.warnings.some((w) => w.includes('sessionStorage'))).toBe(true);

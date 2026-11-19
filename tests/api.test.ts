@@ -352,13 +352,13 @@ describe('capability declarations and auto-update', () => {
       { assets: true }, { room: 'yes' }, { db: null }, { downloads: false }, { user: [] },
       { assets: { upload: 'view' } }, { assets: { upload: true } },
       { room: { topics: [] } }, { room: { topics: { move: 'admin' } } }, { room: { topics: { move: true } } },
-      { artifact: { publish: 'no' } }, { self: { publish: 1 } },
+      { page: { publish: 'no' } }, { page: { publish: 1 } },
     ]) {
       const res = await put(bad);
       expect(res.status, JSON.stringify(bad)).toBe(400);
       expect(res.body.error.code).toBe('invalid_argument');
     }
-    for (const ok of [{}, { assets: {} }, { assets: { upload: 'interact' } }, { room: { topics: { move: 'interact' } } }, { artifact: { publish: false } }, { self: {}, downloads: {} }]) {
+    for (const ok of [{}, { assets: {} }, { assets: { upload: 'interact' } }, { room: { topics: { move: 'interact' } } }, { page: { publish: false } }, { page: {}, downloads: {} }]) {
       expect((await put(ok)).status, JSON.stringify(ok)).toBe(200);
     }
   });
@@ -554,7 +554,7 @@ describe('export, import, version download and check', () => {
   it('POST /api/check', async () => {
     const { h, token } = setup();
     const post = (body: object, auth = `Bearer ${token}`) => request(h.app).post('/api/check').set('Host', h.host).set('Authorization', auth).send(body);
-    const res = await post({ html: '<script>claude.use("db"); claude.use("sample")</script>', capabilities: { user: {} } });
+    const res = await post({ html: '<script>lager.use("db"); lager.use("sample")</script>', capabilities: { user: {} } });
     expect(res.status).toBe(200);
     expect(res.body.used).toEqual(['db', 'sample']);
     expect(res.body.unsupported).toEqual(['sample']);

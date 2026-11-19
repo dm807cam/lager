@@ -10,7 +10,7 @@ import { canRead, canWrite, type Viewer } from '../data/rules.js';
 import { LagerError } from '../errors.js';
 import type { GrantLevel } from '../platform/access.js';
 import { normalizeDescription, normalizeThemeColor, type App, type Capabilities, type DbRule, type DeployResult, type Instance, type Version, type Visibility } from '../platform/apps.js';
-import { checkArtifact, type ArtifactCheck } from '../platform/check.js';
+import { checkApp, type AppCheck } from '../platform/check.js';
 import type { User } from '../platform/users.js';
 
 const GUIDE = fs.readFileSync(new URL('../guide.md', import.meta.url), 'utf8');
@@ -277,13 +277,13 @@ export function versionSource(core: Core, user: User, input: { app?: string; ver
   };
 }
 
-/** The artifact check for a signed-in publisher or administrator. */
-export function runArtifactCheck(user: User, html: unknown, capabilities: unknown): ArtifactCheck {
+/** The app check for a signed-in publisher or administrator. */
+export function runAppCheck(user: User, html: unknown, capabilities: unknown): AppCheck {
   if (user.disabled || (user.role !== 'admin' && user.role !== 'publisher')) {
-    throw new LagerError('forbidden', 'Only administrators and publishers can check artifacts.');
+    throw new LagerError('forbidden', 'Only administrators and publishers can check apps.');
   }
   if (typeof html !== 'string') throw new LagerError('invalid_argument', 'html must be a string.');
-  return checkArtifact(html, checkCapabilities(capabilities ?? undefined));
+  return checkApp(html, checkCapabilities(capabilities ?? undefined));
 }
 
 // ---- sharing (REST and MCP) -------------------------------------------------
@@ -393,9 +393,9 @@ export function checkCapabilities(value: unknown): Capabilities | undefined {
       for (const [topic, level] of Object.entries(topics as Record<string, unknown>)) if (level !== 'interact') bad(`room.topics.${topic} must be "interact".`);
     }
   }
-  for (const name of ['artifact', 'self']) {
-    const publish = caps[name] === undefined ? undefined : (caps[name] as Record<string, unknown>).publish;
-    if (publish !== undefined && typeof publish !== 'boolean') bad(`${name}.publish must be true or false.`);
+  if (caps.page !== undefined) {
+    const publish = (caps.page as Record<string, unknown>).publish;
+    if (publish !== undefined && typeof publish !== 'boolean') bad('page.publish must be true or false.');
   }
   return caps as Capabilities;
 }
@@ -458,13 +458,13 @@ const visibilityArg = z.enum(['private', 'users', 'public']);
 const jsonObject = (): z.ZodObject<{}, z.core.$catchall<z.ZodUnknown>> => z.object({}).catchall(z.unknown());
 
 const capabilitiesArg = z.object({
-  db: jsonObject().optional().describe('Document database (claude.use("db")). Optional {"rules": [{path, read?, write?}]}'),
-  user: jsonObject().optional().describe('Viewer and people (claude.use("user")). Optional {"scopes": ["email", "profile"]}'),
-  assets: jsonObject().optional().describe('File uploads (claude.use("assets")). Optional {"upload": "interact"}'),
-  room: jsonObject().optional().describe('Realtime rooms with presence (claude.use("room")). Optional {"topics": {"<topic>": "interact"}}'),
-  artifact: jsonObject().optional().describe('The page saves itself (claude.use("artifact")). {"publish": false} disables saving'),
-  downloads: jsonObject().optional().describe('Offer files to save (claude.use("downloads"))'),
-  complete: jsonObject().optional().describe('Language model calls through claude.complete()'),
+  db: jsonObject().optional().describe('Document database (lager.use("db")). Optional {"rules": [{path, read?, write?}]}'),
+  user: jsonObject().optional().describe('Viewer and people (lager.use("user")). Optional {"scopes": ["email", "profile"]}'),
+  assets: jsonObject().optional().describe('File uploads (lager.use("assets")). Optional {"upload": "interact"}'),
+  room: jsonObject().optional().describe('Realtime rooms with presence (lager.use("room")). Optional {"topics": {"<topic>": "interact"}}'),
+  page: jsonObject().optional().describe('The page saves itself (lager.use("page")). {"publish": false} disables saving'),
+  downloads: jsonObject().optional().describe('Offer files to save (lager.use("downloads"))'),
+  complete: jsonObject().optional().describe('Language model calls through lager.complete()'),
 }).catchall(z.unknown())
   .describe('Every runtime capability the HTML uses, e.g. {"db":{},"user":{}}. A capability that is not declared is null at runtime.');
 
@@ -475,7 +475,7 @@ const themeColorArg = z.string().describe('Hex colour such as #1f2a5c that match
 type ToolName =
   | 'deploy_app' | 'set_app_icon' | 'list_apps' | 'get_app' | 'get_version' | 'activate_version' | 'create_instance'
   | 'set_auto_update' | 'set_visibility' | 'share_instance' | 'unshare_instance' | 'list_shares' | 'add_domain'
-  | 'remove_domain' | 'db_read' | 'db_write' | 'import_data' | 'export_data' | 'check_artifact' | 'list_snapshots'
+  | 'remove_domain' | 'db_read' | 'db_write' | 'import_data' | 'export_data' | 'check_app' | 'list_snapshots'
   | 'restore_snapshot' | 'get_guide';
 
 /**
@@ -502,7 +502,7 @@ const TOOL_META: Record<ToolName, { title: string; annotations: ToolAnnotations 
   db_write: { title: 'Write app data', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false } },
   import_data: { title: 'Import app data', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   export_data: { title: 'Export app data', annotations: { readOnlyHint: true } },
-  check_artifact: { title: 'Check app HTML', annotations: { readOnlyHint: true } },
+  check_app: { title: 'Check app HTML', annotations: { readOnlyHint: true } },
   list_snapshots: { title: 'List snapshots', annotations: { readOnlyHint: true } },
   restore_snapshot: { title: 'Restore snapshot', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false } },
   get_guide: { title: 'Read the Lager guide', annotations: { readOnlyHint: true } },
@@ -517,9 +517,9 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   const server = new McpServer({ name: 'lager', version: '0.1.0' }, { instructions: INSTRUCTIONS });
 
   server.registerTool('deploy_app', { ...toolMeta('deploy_app'),
-    description: 'Deploy an app (one self-contained HTML file) as a new version. Creates the app and its default instance on first deploy. Call get_guide once before your first deploy in a conversation: apps keep their data through the window.claude runtime it describes, never through localStorage. Pass capabilities for every runtime feature the HTML uses, and icon_svg, description and theme_color when you create an app. Returns the instance URLs, the icon URL and warnings to tell the user.',
+    description: 'Deploy an app (one self-contained HTML file) as a new version. Creates the app and its default instance on first deploy. Call get_guide once before your first deploy in a conversation: apps keep their data through the window.lager runtime it describes, never through localStorage. Pass capabilities for every runtime feature the HTML uses, and icon_svg, description and theme_color when you create an app. Returns the instance URLs, the icon URL and warnings to tell the user.',
     inputSchema: {
-      slug: slugArg, html: z.string().describe('Complete HTML of the artifact'), title: z.string().optional(),
+      slug: slugArg, html: z.string().describe('Complete HTML of the app'), title: z.string().optional(),
       capabilities: capabilitiesArg.optional(), note: z.string().optional().describe('Short version note'),
       icon_svg: iconSvgArg.optional(), description: descriptionArg.optional(), theme_color: themeColorArg.optional(),
     },
@@ -672,7 +672,7 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }));
 
   server.registerTool('import_data', { ...toolMeta('import_data'),
-    description: `Write many documents at once, e.g. to move the data of an existing artifact here: up to ${MAX_IMPORT_DOCS_MCP} {path, data} documents, all validated first and written in one transaction (existing documents are replaced). You are held to the same rules as db_write; other users' private areas cannot be written. Returns {imported}.`,
+    description: `Write many documents at once, e.g. to move the data of an existing app here: up to ${MAX_IMPORT_DOCS_MCP} {path, data} documents, all validated first and written in one transaction (existing documents are replaced). You are held to the same rules as db_write; other users' private areas cannot be written. Returns {imported}.`,
     inputSchema: {
       instance: slugArg,
       docs: z.array(z.object({ path: z.string().describe('Document path, e.g. tasks/t1'), data: jsonObject() })).min(1).max(MAX_IMPORT_DOCS_MCP),
@@ -707,10 +707,10 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     return { docs, truncated };
   }));
 
-  server.registerTool('check_artifact', { ...toolMeta('check_artifact'),
-    description: 'Check the HTML of an existing artifact before deploying it: which runtime capabilities it uses via claude.use("…"), which of them Lager cannot provide (claude.use returns null), which are missing from the capabilities declaration, and warnings (browser storage, claude.complete). Returns {used, unsupported, undeclared, warnings}.',
+  server.registerTool('check_app', { ...toolMeta('check_app'),
+    description: 'Check the HTML of an app before deploying it, especially one written for another host such as claude.ai: which runtime capabilities it uses via lager.use("…"), which of them Lager cannot provide (lager.use returns null), which are missing from the capabilities declaration, and warnings (browser storage, APIs of other hosts such as window.claude or window.storage that must be converted, lager.complete). Returns {used, unsupported, undeclared, warnings}.',
     inputSchema: { html: z.string(), capabilities: capabilitiesArg.optional() },
-  }, ({ html, capabilities }) => run(() => runArtifactCheck(user, html, capabilities)));
+  }, ({ html, capabilities }) => run(() => runAppCheck(user, html, capabilities)));
 
   server.registerTool('list_snapshots', { ...toolMeta('list_snapshots'),
     description: 'List the data snapshots of an instance, newest first.',
@@ -726,7 +726,7 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }));
 
   server.registerTool('get_guide', { ...toolMeta('get_guide'),
-    description: 'Read this first, before you build, change or move an app: how Lager apps are written (the window.claude runtime API for data, users, files, realtime and language-model calls), how to declare capabilities, icons, sharing, versions and limits.',
+    description: 'Read this first, before you build, change or move an app: how Lager apps are written (the window.lager runtime API for data, users, files, realtime and language-model calls), how to declare capabilities, icons, sharing, versions and limits.',
     inputSchema: {},
   }, () => result({ guide: GUIDE }));
 

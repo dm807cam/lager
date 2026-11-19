@@ -54,12 +54,12 @@ async function until(check: () => boolean): Promise<void> {
   for (let i = 0; i < 100 && !check(); i++) await new Promise((r) => setTimeout(r, 5));
 }
 
-afterEach(() => { delete g.claude; delete g.storage; document.body.innerHTML = ''; });
+afterEach(() => { delete g.lager; document.body.innerHTML = ''; });
 
 describe('the complete example in the guide', () => {
   it('is a whole HTML document that declares nothing the runtime lacks', () => {
     expect(EXAMPLE.startsWith('<!doctype html>')).toBe(true);
-    expect(EXAMPLE).toContain('claude.use("db")');
+    expect(EXAMPLE).toContain('lager.use("db")');
     expect(EXAMPLE).not.toMatch(/localStorage|sessionStorage|indexedDB/);
   });
 

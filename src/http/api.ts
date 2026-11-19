@@ -6,7 +6,7 @@ import type { Core } from '../core.js';
 import { assertDocData, parseDocPath } from '../data/paths.js';
 import { LagerError } from '../errors.js';
 import {
-  addDomainTo, appDetail, domainInstance, downloadableVersion, runArtifactCheck, appSummary, checkCapabilities, createInstanceFor, domainsJson, removeDomainFrom, deployWithIcon, updateAppLook, grantPrincipal, grantsJson, instanceJson, managedInstance, readableApp, transferAccess,
+  addDomainTo, appDetail, domainInstance, downloadableVersion, runAppCheck, appSummary, checkCapabilities, createInstanceFor, domainsJson, removeDomainFrom, deployWithIcon, updateAppLook, grantPrincipal, grantsJson, instanceJson, managedInstance, readableApp, transferAccess,
 } from '../mcp/tools.js';
 import type { GrantLevel } from '../platform/access.js';
 import type { Instance, Visibility } from '../platform/apps.js';
@@ -352,7 +352,7 @@ export const apiExtension: PlatformExtension = (router, core) => {
 
   router.post('/api/check', noStore, auth, express.json({ limit: MAX_JSON }), (req, res) => {
     const body = bodyObject(req);
-    res.json(runArtifactCheck(userOf(res), body.html, body.capabilities));
+    res.json(runAppCheck(userOf(res), body.html, body.capabilities));
   });
 
   router.get('/api/instances/:slug/domains', noStore, auth, (req, res) => {

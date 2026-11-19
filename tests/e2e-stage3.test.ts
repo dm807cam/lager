@@ -210,19 +210,19 @@ describe('stage 3 end to end', () => {
     for (let i = 0; i < 7; i++) expect((await openStream(hostOf('board'), owner, '/__lager/room/events?room=pins')).status).toBe(200);
     expect((await openStream(hostOf('board'), owner, '/__lager/room/events?room=pins')).status).toBe(429);
 
-    // 4. A page that declares `artifact` saves itself; a later redeploy reports the instance as pinned and leaves the saved page alone.
+    // 4. A page that declares `page` saves itself; a later redeploy reports the instance as pinned and leaves the saved page alone.
     const shell = '<!doctype html><html><body><p>Version eins</p></body></html>';
-    expect((await deploy('page', shell, { artifact: {} })).status).toBe(200);
+    expect((await deploy('page', shell, { page: {} })).status).toBe(200);
     const pageOwner = await open(pSession, hostOf('page'));
     const save = (cookie: string, body: unknown): Promise<Res> =>
-      call(hostOf('page'), 'POST', '/__lager/artifact', { headers: { ...API, Cookie: cookie }, body: JSON.stringify(body) });
+      call(hostOf('page'), 'POST', '/__lager/page', { headers: { ...API, Cookie: cookie }, body: JSON.stringify(body) });
     expect((await save(pageOwner, { html: '<p>kein Doctype</p>', baseVersion: 1 })).status).toBe(400);
     const saved = await save(pageOwner, { html: shell.replace('Version eins', 'Selbst gespeichert'), baseVersion: 1 });
     expect(saved.status).toBe(200);
     expect(parse(saved)).toEqual({ version: '2' });
     expect((await call(hostOf('page'), 'GET', '/', { headers: { Cookie: pageOwner } })).body).toContain('Selbst gespeichert');
     expect((await save(pageOwner, { html: shell, baseVersion: 1 })).status).toBe(409);
-    const redeploy = await deploy('page', shell.replace('Version eins', 'Neu deployt'), { artifact: {} });
+    const redeploy = await deploy('page', shell.replace('Version eins', 'Neu deployt'), { page: {} });
     expect(redeploy.status).toBe(200);
     expect(parse(redeploy)).toMatchObject({ createdVersion: true, pinned: ['page'] });
     expect(parse(redeploy).warnings.join(' ')).toContain('page');

@@ -14,14 +14,14 @@ curl -X POST -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: applicati
   --data-binary @board.ndjson https://lager.example.com/api/instances/board-2/import
 ```
 
-**Downloading the HTML of a version:** The version list of an app has an HTML link per version; over REST it is `GET /api/apps/<slug>/versions/<n>`, and the MCP tool `get_version` returns the same HTML together with the version's capabilities and the app's title, so that Claude can continue developing an app in a new conversation. The file arrives as an attachment (`text/plain`, with `X-Content-Type-Options: nosniff`) and is never rendered on the platform. Everyone who may read the app (owner and collaborators) can download deployed versions; self-saved versions only the managers of the instance that saved them.
+**Downloading the HTML of a version:** The version list of an app has an HTML link per version; over REST it is `GET /api/apps/<slug>/versions/<n>`, and the MCP tool `get_version` returns the same HTML together with the version's capabilities and the app's title, so that an assistant can continue developing an app in a new conversation. The file arrives as an attachment (`text/plain`, with `X-Content-Type-Options: nosniff`) and is never rendered on the platform. Everyone who may read the app (owner and collaborators) can download deployed versions; self-saved versions only the managers of the instance that saved them.
 
-**Moving an existing artifact with Claude:** Give Claude the source of the artifact and let it, with the Lager connector connected or the skill installed, follow the section "Moving existing artifacts" of the guide (`get_guide`). Claude checks the HTML with `check_artifact` (used, unsupported and undeclared building blocks, browser storage, `claude.complete`), converts what is supported, declares the building blocks, deploys, transfers data with `import_data` and spot-checks the result.
+**Moving an app from elsewhere with your assistant:** Give your assistant the source of the app (for example a claude.ai artifact) and let it, with the Lager connector connected, follow the section "Moving existing apps" of the guide (`get_guide`). It checks the HTML with `check_app` (used, unsupported and undeclared building blocks, browser storage, APIs of other hosts such as `window.claude` and `window.storage`), converts them to `window.lager`, declares the building blocks, deploys, transfers data with `import_data` and spot-checks the result.
 
 **What cannot be moved automatically:**
 
-- Data that lives only in the user's browser (`localStorage`, `sessionStorage`, `indexedDB`): the old artifact must save it once as a file, which you then import.
-- Building blocks that Lager does not offer (`sample`, `tts` and similar): the feature is dropped or must be replaced. `claude.complete` works when the app declares `complete` and a model is connected.
+- Data that lives only in the user's browser (`localStorage`, `sessionStorage`, `indexedDB`): the old app must save it once as a file, which you then import.
+- Functions of the old host that Lager does not offer: the feature is dropped or must be replaced. A language model call becomes `lager.complete` and works when the app declares `complete` and a model is connected.
 - Uploaded files: they must be uploaded again through the app, and the references to them change.
 - Private areas of other users, grants, domains, snapshots and earlier versions from another platform.
 

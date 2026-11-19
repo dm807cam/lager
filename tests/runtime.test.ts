@@ -39,7 +39,7 @@ let session: { status: number; body: unknown } | 'network-error';
 let users: Record<string, { id: string; name: string; email: string | null; isMe: boolean }>;
 let clock: number;
 let roomReply: (body: any) => Response;
-let artifactReply: (body: any) => Response | Promise<Response>;
+let pageReply: (body: any) => Response | Promise<Response>;
 let completeReply: (body: any) => Response | Promise<Response>;
 
 const parentOf = (path: string): string => path.split('/').slice(0, -1).join('/');
@@ -110,7 +110,7 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
     }
   }
   if (url === '/__lager/room') return roomReply(JSON.parse(init.body));
-  if (url === '/__lager/artifact') return artifactReply(JSON.parse(init.body));
+  if (url === '/__lager/page') return pageReply(JSON.parse(init.body));
   if (url === '/__lager/complete') return completeReply(JSON.parse(init.body));
   if (url === '/__lager/assets' || url.startsWith('/__lager/assets/')) {
     const type = init?.headers?.['Content-Type'] as string | undefined;
@@ -135,17 +135,16 @@ const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 const es = (): FakeEventSource => FakeEventSource.instances[FakeEventSource.instances.length - 1];
 
 function boot(): any {
-  delete g.claude;
-  delete g.storage;
+  delete g.lager;
   delete g.__lagerRuntime;
   (0, eval)(SOURCE);
-  return g.claude;
+  return g.lager;
 }
 
 beforeEach(() => {
   calls = []; docs = new Map(); users = {}; clock = 0;
   roomReply = () => json({ ok: true });
-  artifactReply = () => json({ version: '2' });
+  pageReply = () => json({ version: '2' });
   completeReply = () => json({ text: 'ok' });
   session = sessionOf(OWNER);
   FakeEventSource.instances = [];
@@ -153,27 +152,27 @@ beforeEach(() => {
   g.EventSource = FakeEventSource;
 });
 // The runtime reads its session shortly after it starts; let that settle inside the test that booted it.
-afterEach(async () => { await flush(); await flush(); delete g.claude; delete g.storage; delete g.__lagerHost; delete g.__lagerRuntime; });
+afterEach(async () => { await flush(); await flush(); delete g.lager; delete g.__lagerHost; delete g.__lagerRuntime; });
 
 describe('double inclusion', () => {
   it('a second load of the runtime returns at once and keeps the first one\'s state', async () => {
-    const claude = boot();
-    const first = await claude.use('db');
+    const lager = boot();
+    const first = await lager.use('db');
     (0, eval)(SOURCE);
-    expect(g.claude).toBe(claude);
-    expect(await g.claude.use('db')).toBe(first);
+    expect(g.lager).toBe(lager);
+    expect(await g.lager.use('db')).toBe(first);
   });
 });
 
-describe('claude.use', () => {
+describe('lager.use', () => {
   it('use is memoized and unknown names resolve null', async () => {
-    const claude = boot();
-    const a = await claude.use('db');
+    const lager = boot();
+    const a = await lager.use('db');
     expect(a).not.toBeNull();
-    expect(await claude.use('db')).toBe(a);
-    expect(await claude.use('nope')).toBeNull();
-    expect(await claude.use('constructor')).toBeNull();
-    await claude.use('user');
+    expect(await lager.use('db')).toBe(a);
+    expect(await lager.use('nope')).toBeNull();
+    expect(await lager.use('constructor')).toBeNull();
+    await lager.use('user');
     const sessionCalls = calls.filter(([u]) => u === '/__lager/session');
     expect(sessionCalls).toHaveLength(1);
     expect(sessionCalls[0][1]).toEqual({ credentials: 'same-origin' });
@@ -186,9 +185,9 @@ describe('claude.use', () => {
 
   it('db is null when the session is 401', async () => {
     session = { status: 401, body: { error: { code: 'unauthenticated', message: 'Sign in required.' } } };
-    const claude = boot();
-    expect(await claude.use('db')).toBeNull();
-    const user = await claude.use('user');
+    const lager = boot();
+    expect(await lager.use('db')).toBeNull();
+    const user = await lager.use('user');
     expect(user).not.toBeNull();
     expect(await user.isOwner()).toBe(false);
     expect(await user.id()).toBeNull();
@@ -196,16 +195,14 @@ describe('claude.use', () => {
 
   it('a failed session fetch is not kept: the next use asks again and gets the namespace', async () => {
     session = 'network-error';
-    const claude = boot();
-    expect(await claude.use('db')).toBeNull();
-    await expect(g.storage.get('k', true)).rejects.toThrow();
+    const lager = boot();
+    expect(await lager.use('db')).toBeNull();
     session = { status: 503, body: {} };
-    expect(await claude.use('db')).toBeNull();
+    expect(await lager.use('db')).toBeNull();
     session = sessionOf(OWNER);
-    const db = await claude.use('db');
+    const db = await lager.use('db');
     expect(db).not.toBeNull();
-    expect(await claude.use('db')).toBe(db);
-    expect((await g.storage.set('k', 'v', true)).key).toBe('k');
+    expect(await lager.use('db')).toBe(db);
     // A definite answer (not signed in) is kept as before.
     session = { status: 401, body: { error: { code: 'unauthenticated' } } };
     const other = boot();
@@ -221,44 +218,44 @@ describe('claude.use', () => {
     expect(await boot().use('db')).toBeNull();
   });
 
-  it('window.claude is frozen', async () => {
-    const claude = boot();
-    expect(Object.isFrozen(claude)).toBe(true);
-    expect(Object.keys(claude).sort()).toEqual(['complete', 'use']);
-    expect(Object.isFrozen(await claude.use('db'))).toBe(true);
-    expect(Object.isFrozen(await claude.use('user'))).toBe(true);
-    expect(Object.isFrozen(g.storage)).toBe(true);
+  it('window.lager is frozen', async () => {
+    const lager = boot();
+    expect(Object.isFrozen(lager)).toBe(true);
+    expect(Object.keys(lager).sort()).toEqual(['complete', 'use']);
+    expect(Object.isFrozen(await lager.use('db'))).toBe(true);
+    expect(Object.isFrozen(await lager.use('user'))).toBe(true);
+    expect(g.storage).toBeUndefined();
   });
 
-  it('claude.complete sends the prompt and resolves the answer text', async () => {
-    const claude = boot();
+  it('lager.complete sends the prompt and resolves the answer text', async () => {
+    const lager = boot();
     completeReply = (b) => json({ text: `echo ${JSON.stringify(b)}`, model: 'm', stopReason: 'end_turn' });
-    expect(await claude.complete('hi')).toBe('echo {"messages":"hi"}');
+    expect(await lager.complete('hi')).toBe('echo {"messages":"hi"}');
     const call = calls.find(([u]) => u === '/__lager/complete')!;
     expect(call[1].method).toBe('POST');
     expect(call[1].headers['X-Lager-Request']).toBe('1');
     const history = [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }, { role: 'user', content: 'c' }];
-    expect(await claude.complete(history, { system: 's', maxTokens: 50, other: 1 }))
+    expect(await lager.complete(history, { system: 's', maxTokens: 50, other: 1 }))
       .toBe(`echo ${JSON.stringify({ messages: history, system: 's', maxTokens: 50 })}`);
   });
 
-  it('claude.complete with full resolves text, stop reason and truncation', async () => {
-    const claude = boot();
+  it('lager.complete with full resolves text, stop reason and truncation', async () => {
+    const lager = boot();
     completeReply = () => json({ text: '{"a"', model: 'm', stopReason: 'max_tokens', truncated: true });
-    expect(await claude.complete('x', { full: true })).toEqual({ text: '{"a"', model: 'm', stopReason: 'max_tokens', truncated: true });
-    expect(await claude.complete('x')).toBe('{"a"');
+    expect(await lager.complete('x', { full: true })).toEqual({ text: '{"a"', model: 'm', stopReason: 'max_tokens', truncated: true });
+    expect(await lager.complete('x')).toBe('{"a"');
     const sent = JSON.parse(calls.filter(([u]) => u === '/__lager/complete').at(-1)![1].body);
     expect(sent.full).toBeUndefined();
   });
 
-  it('claude.complete rejects with the server code', async () => {
-    const claude = boot();
-    await expect(claude.complete()).rejects.toMatchObject({ code: 'invalid_argument' });
+  it('lager.complete rejects with the server code', async () => {
+    const lager = boot();
+    await expect(lager.complete()).rejects.toMatchObject({ code: 'invalid_argument' });
     completeReply = () => json({ error: { code: 'not_configured', message: 'No language model is set up on this server.' } }, 503);
-    await expect(claude.complete('x')).rejects.toMatchObject({ code: 'not_configured', message: 'No language model is set up on this server.' });
+    await expect(lager.complete('x')).rejects.toMatchObject({ code: 'not_configured', message: 'No language model is set up on this server.' });
     completeReply = () => new Response('<html>bad gateway</html>', { status: 502 });
-    await expect(claude.complete('x')).rejects.toMatchObject({ code: 'unavailable' });
-    await expect(claude.complete('x')).rejects.toBeInstanceOf(Error);
+    await expect(lager.complete('x')).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(lager.complete('x')).rejects.toBeInstanceOf(Error);
   });
 });
 
@@ -898,99 +895,23 @@ describe('permissions', () => {
   });
 });
 
-describe('window.storage', () => {
-  it('storage personal and shared map to the right doc paths', async () => {
-    boot();
-    expect(await g.storage.set('a key/1', 'v1')).toEqual({ key: 'a key/1', value: 'v1', shared: false });
-    expect(await g.storage.set('k2', 'v2', true)).toEqual({ key: 'k2', value: 'v2', shared: true });
-    expect(dbCalls()).toEqual([
-      { op: 'set', path: 'data/users/u1/storage/kv/a%20key%2F1', data: { key: 'a key/1', value: 'v1' } },
-      { op: 'set', path: 'kv/k2', data: { key: 'k2', value: 'v2' } },
-    ]);
-    expect(await g.storage.get('a key/1')).toEqual({ key: 'a key/1', value: 'v1', shared: false });
-    expect(await g.storage.get('k2', true)).toEqual({ key: 'k2', value: 'v2', shared: true });
-    expect(await g.storage.delete('k2', true)).toEqual({ key: 'k2', deleted: true, shared: true });
-    expect(await g.storage.delete('a key/1')).toEqual({ key: 'a key/1', deleted: true, shared: false });
-    expect(docs.size).toBe(0);
-    expect(dbCalls().slice(-2)).toEqual([
-      { op: 'delete', path: 'kv/k2' },
-      { op: 'delete', path: 'data/users/u1/storage/kv/a%20key%2F1' },
-    ]);
-  });
-
-  it('storage personal calls reject for anonymous viewers', async () => {
-    session = sessionOf({ id: null, name: '', email: null, level: 'interact', isOwner: false, canEdit: false });
-    boot();
-    await expect(g.storage.set('k', 'v')).rejects.toThrow('Not signed in');
-    await expect(g.storage.get('k')).rejects.toThrow('Not signed in');
-    await expect(g.storage.list()).rejects.toThrow('Not signed in');
-    await expect(g.storage.delete('k')).rejects.toThrow('Not signed in');
-    expect(await g.storage.set('k', 'v', true)).toEqual({ key: 'k', value: 'v', shared: true });
-  });
-
-  it('storage.get throws on a missing key', async () => {
-    boot();
-    await expect(g.storage.get('nope')).rejects.toThrow('Key not found: nope');
-    await expect(g.storage.get('nope', true)).rejects.toThrow('Key not found: nope');
-    await expect(g.storage.get('nope')).rejects.toBeInstanceOf(Error);
-  });
-
-  it('storage validates keys and values', async () => {
-    boot();
-    await expect(g.storage.set('', 'v')).rejects.toBeInstanceOf(Error);
-    await expect(g.storage.set('x'.repeat(201), 'v')).rejects.toBeInstanceOf(Error);
-    await expect(g.storage.set(5, 'v')).rejects.toBeInstanceOf(Error);
-    await expect(g.storage.set('k', 5)).rejects.toBeInstanceOf(Error);
-    await expect(g.storage.get('')).rejects.toBeInstanceOf(Error);
-    expect((await g.storage.set('x'.repeat(200), 'v')).key).toHaveLength(200);
-  });
-
-  it('storage rejects keys whose encoded form exceeds 200 bytes', async () => {
-    boot();
-    const before = dbCalls().length;
-    await expect(g.storage.set('x'.repeat(201), 'v')).rejects.toThrow('Key too long');
-    await expect(g.storage.get('ä'.repeat(100))).rejects.toThrow('Key too long'); // 100 chars, 600 encoded bytes
-    await expect(g.storage.delete('/'.repeat(67))).rejects.toThrow('Key too long'); // %2F x 67 = 201
-    expect((await g.storage.set('/'.repeat(66), 'v')).key).toHaveLength(66); // 198 encoded
-    expect(dbCalls().length).toBe(before + 1);
-  });
-
-  it('storage.list filters by prefix', async () => {
-    boot();
-    await g.storage.set('b2', '1');
-    await g.storage.set('a1', '1');
-    await g.storage.set('b1', '1');
-    await g.storage.set('b3', '1', true);
-    expect(await g.storage.list()).toEqual({ keys: ['a1', 'b1', 'b2'], prefix: '', shared: false });
-    expect(await g.storage.list('b')).toEqual({ keys: ['b1', 'b2'], prefix: 'b', shared: false });
-    expect(await g.storage.list('b', true)).toEqual({ keys: ['b3'], prefix: 'b', shared: true });
-    expect(await g.storage.list('zz')).toEqual({ keys: [], prefix: 'zz', shared: false });
-    expect(dbCalls().slice(-4).map((c) => c.path)).toEqual(['data/users/u1/storage/kv', 'data/users/u1/storage/kv', 'kv', 'data/users/u1/storage/kv']);
-  });
-});
-
 describe('path parity with the server validators', () => {
   it('every path the runtime sends is accepted by the server', async () => {
-    const claude = boot();
-    await g.storage.set('a key/1', 'v');
-    await g.storage.set('k', 'v', true);
-    await g.storage.get('a key/1');
-    await g.storage.get('k', true);
-    await g.storage.list('a');
-    await g.storage.list('k', true);
-    await g.storage.delete('a key/1');
-    await g.storage.delete('k', true);
-    const db = await claude.use('db');
+    const lager = boot();
+    const db = await lager.use('db');
     await db.doc('tasks/t1').set({ a: 1 });
+    await db.collection('tasks').doc().set({ a: 1 });
+    await db.collection('lists/l1/items').add({ a: 1 });
     await db.collection('tasks').get();
+    await db.doc('settings/main').delete();
 
     const sent = dbCalls();
-    expect(sent).toHaveLength(10);
+    expect(sent).toHaveLength(5);
     for (const c of sent) {
       if (c.op === 'query') expect(() => assertCollectionPath(c.path), c.path).not.toThrow();
       else expect(() => parseDocPath(c.path), c.path).not.toThrow();
     }
-    expect(sent.filter((c) => c.op === 'query').map((c) => c.path)).toEqual(['data/users/u1/storage/kv', 'kv', 'tasks']);
+    expect(sent.filter((c) => c.op === 'query').map((c) => c.path)).toEqual(['tasks']);
   });
 });
 
@@ -1026,11 +947,11 @@ describe('room', () => {
 
   it('is frozen, lazy, and shows up in permissions', async () => {
     withRoom();
-    const claude = boot();
-    const room = await claude.use('room');
+    const lager = boot();
+    const room = await lager.use('room');
     expect(Object.isFrozen(room)).toBe(true);
     expect(FakeEventSource.instances).toHaveLength(0);
-    expect(await (await claude.use('permissions')).state('room')).toBe('granted');
+    expect(await (await lager.use('permissions')).state('room')).toBe('granted');
     withRoom(OWNER, {});
     expect(await (await boot().use('permissions')).state('room')).toBe('unavailable');
   });
@@ -1112,7 +1033,7 @@ describe('room', () => {
       expect(await code(room.emit('t', 1))).toBe(expected);
     }
     roomReply = () => json({ ok: true });
-  artifactReply = () => json({ version: '2' });
+  pageReply = () => json({ version: '2' });
     const before = roomPosts().length;
     vi.useFakeTimers(); // the retry timer must not outlive this test
     es().emit('error');
@@ -1312,17 +1233,10 @@ describe('room', () => {
     expect(await code(room.join('r16'))).toBe('limit_reached');
   });
 
-  it('sending to Claude is not available', async () => {
-    withRoom();
-    const room = await boot().use('room');
-    expect(await room.canSendToClaudeSession()).toBe('off');
-    expect(await code(room.sendToClaudeSession({ a: 1 }))).toBe('claude_unavailable');
-    expect(FakeEventSource.instances).toHaveLength(0);
-  });
 });
 
-describe('artifact and self', () => {
-  const declare = (caps: Record<string, unknown> = { artifact: {} }, viewer: Record<string, unknown> = OWNER): void => {
+describe('page', () => {
+  const declare = (caps: Record<string, unknown> = { page: {} }, viewer: Record<string, unknown> = OWNER): void => {
     session = { status: 200, body: { ...(sessionOf(viewer).body as object), capabilities: caps } };
   };
   const DOC = '<!doctype html><p>x</p>';
@@ -1331,12 +1245,13 @@ describe('artifact and self', () => {
   const READER = { ...OWNER, level: 'interact', isOwner: false, canEdit: false };
   const failure = (p: Promise<unknown>): Promise<{ code: string }> => p.then(() => { throw new Error('resolved'); }, (e: { code: string }) => e);
 
-  it('artifact.publish posts html with the loaded version and maps errors', async () => {
+  it('page.publish posts html with the loaded version and maps errors', async () => {
     declare();
-    const artifact = await boot().use('artifact');
-    expect(Object.isFrozen(artifact)).toBe(true);
-    expect(await artifact.publish(DOC)).toEqual({ version: '2' });
-    const post = calls.find(([u]) => u === '/__lager/artifact')!;
+    const page = await boot().use('page');
+    expect(Object.isFrozen(page)).toBe(true);
+    expect(Object.keys(page)).toEqual(['publish']);
+    expect(await page.publish(DOC)).toEqual({ version: '2' });
+    const post = calls.find(([u]) => u === '/__lager/page')!;
     expect(post[1].method).toBe('POST');
     expect(post[1].credentials).toBe('same-origin');
     expect(post[1].headers).toEqual({ 'Content-Type': 'application/json', 'X-Lager-Request': '1' });
@@ -1346,54 +1261,34 @@ describe('artifact and self', () => {
       [413, 'too_large', 'too_large'], [400, 'invalid_content', 'invalid_content'], [429, 'rate_limited', 'rate_limited'], [500, 'internal', 'upstream_error'],
     ];
     for (const [status, code, expected] of cases) {
-      artifactReply = () => json({ error: { code, message: 'x' } }, status);
-      expect((await failure(artifact.publish(DOC))).code, `${status} ${code}`).toBe(expected);
+      pageReply = () => json({ error: { code, message: 'x' } }, status);
+      expect((await failure(page.publish(DOC))).code, `${status} ${code}`).toBe(expected);
     }
-    artifactReply = () => { throw new TypeError('offline'); };
-    expect((await failure(artifact.publish(DOC))).code).toBe('upstream_error');
-    artifactReply = () => new Response('<html>', { status: 502 });
-    expect((await failure(artifact.publish(DOC))).code).toBe('upstream_error');
-    expect((await failure(artifact.publish(''))).code).toBe('invalid_content');
-    expect((await failure(artifact.publish('<p>no doctype</p>'))).code).toBe('invalid_content');
-    expect((await failure(artifact.publish('<p>x</p><!doctype html>'))).code).toBe('invalid_content');
-    artifactReply = () => json({ error: { code: 'quota_exceeded', message: 'x' } }, 507);
-    expect((await failure(artifact.publish(DOC))).code).toBe('too_large');
-    artifactReply = () => json({ version: '2' });
-    expect(await artifact.publish('\uFEFF \n<!DOCTYPE HTML><html></html>')).toEqual({ version: '2' });
-    expect((await failure(artifact.publish(5 as never))).code).toBe('invalid_content');
-  });
-
-  it('members Lager cannot serve reject with the contract codes', async () => {
-    declare();
-    const artifact = await boot().use('artifact');
-    const before = calls.length;
-    expect((await failure(artifact.publish({ 'index.html': DOC }))).code).toBe('capability_disabled');
-    expect((await failure(artifact.edit([{ op: 'remove', target: 'a' }]))).code).toBe('capability_removed');
-    expect((await failure(artifact.sync(() => 1))).code).toBe('capability_removed');
-    expect((await failure(artifact.metadata(['x']))).code).toBe('capability_removed');
-    expect(calls.length).toBe(before);
+    pageReply = () => { throw new TypeError('offline'); };
+    expect((await failure(page.publish(DOC))).code).toBe('upstream_error');
+    pageReply = () => new Response('<html>', { status: 502 });
+    expect((await failure(page.publish(DOC))).code).toBe('upstream_error');
+    expect((await failure(page.publish(''))).code).toBe('invalid_content');
+    expect((await failure(page.publish('<p>no doctype</p>'))).code).toBe('invalid_content');
+    expect((await failure(page.publish('<p>x</p><!doctype html>'))).code).toBe('invalid_content');
+    pageReply = () => json({ error: { code: 'quota_exceeded', message: 'x' } }, 507);
+    expect((await failure(page.publish(DOC))).code).toBe('too_large');
+    pageReply = () => json({ version: '2' });
+    expect(await page.publish('\uFEFF \n<!DOCTYPE HTML><html></html>')).toEqual({ version: '2' });
+    expect((await failure(page.publish(5 as never))).code).toBe('invalid_content');
   });
 
   it('read-only viewers reject not_writer without a request', async () => {
-    declare({ artifact: {} }, READER);
-    const artifact = await boot().use('artifact');
-    expect(artifact).not.toBeNull();
-    expect((await failure(artifact.publish(DOC))).code).toBe('not_writer');
-    expect(calls.some(([u]) => u === '/__lager/artifact')).toBe(false);
-  });
-
-  it('self is the same namespace as artifact', async () => {
-    declare({ self: {} });
-    const claude = boot();
-    const self = await claude.use('self');
-    expect(self).not.toBeNull();
-    expect(await claude.use('artifact')).toBe(self);
-    expect(await self.publish(DOC)).toEqual({ version: '2' });
+    declare({ page: {} }, READER);
+    const page = await boot().use('page');
+    expect(page).not.toBeNull();
+    expect((await failure(page.publish(DOC))).code).toBe('not_writer');
+    expect(calls.some(([u]) => u === '/__lager/page')).toBe(false);
   });
 
   it('a reload event with a newer version reloads the page once', async () => {
     declare();
-    await boot().use('artifact');
+    await boot().use('page');
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(es().url).toBe('/__lager/db/events');
     es().emit('reload', { version: 1 });
@@ -1404,10 +1299,10 @@ describe('artifact and self', () => {
   });
 
   it('the stream stays open for reload events when db listeners come and go, and a bad event is ignored', async () => {
-    declare({ artifact: {}, db: {} });
-    const claude = boot();
-    await claude.use('artifact');
-    const db = await claude.use('db');
+    declare({ page: {}, db: {} });
+    const lager = boot();
+    await lager.use('page');
+    const db = await lager.use('db');
     const off = db.doc('a/b').onSnapshot(() => {});
     await flush();
     off();
@@ -1419,8 +1314,8 @@ describe('artifact and self', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it('every view follows saves even when the page never calls use("artifact")', async () => {
-    declare({ artifact: {}, db: {} });
+  it('every view follows saves even when the page never calls use("page")', async () => {
+    declare({ page: {}, db: {} });
     boot();
     await flush();
     await flush();
@@ -1430,36 +1325,29 @@ describe('artifact and self', () => {
     expect(reload).not.toHaveBeenCalled();
     es().emit('reload', { version: 2 });
     expect(reload).toHaveBeenCalledTimes(1);
-    // The alias counts as well.
-    FakeEventSource.instances = [];
-    declare({ self: {} });
-    boot();
-    await flush();
-    await flush();
-    expect(FakeEventSource.instances).toHaveLength(1);
   });
 
   it('a page that declares neither opens no stream and reads the session only once', async () => {
     declare({ db: {}, user: {} });
-    const claude = boot();
+    const lager = boot();
     await flush();
     await flush();
     expect(FakeEventSource.instances).toHaveLength(0);
-    await claude.use('user');
-    await claude.use('db');
+    await lager.use('user');
+    await lager.use('db');
     expect(FakeEventSource.instances).toHaveLength(0);
     expect(calls.filter(([u]) => u === '/__lager/session')).toHaveLength(1);
   });
 
-  it('a stream that db listeners opened before use("artifact") still catches up on a missed version', async () => {
-    declare({ db: {}, artifact: {} });
-    const claude = boot();
+  it('a stream that db listeners opened before use("page") still catches up on a missed version', async () => {
+    declare({ db: {}, page: {} });
+    const lager = boot();
     // No timer turn in between: the listener opens the stream before the runtime's own session read would.
-    const db = await claude.use('db');
+    const db = await lager.use('db');
     const off = db.doc('a/b').onSnapshot(() => {});
     es().emit('open');
-    session = { status: 200, body: { ...(sessionOf(OWNER).body as any), capabilities: { db: {}, artifact: {} }, instance: { id: 'i1', slug: 'demo', appSlug: 'demo', version: 3 } } };
-    await claude.use('artifact');
+    session = { status: 200, body: { ...(sessionOf(OWNER).body as any), capabilities: { db: {}, page: {} }, instance: { id: 'i1', slug: 'demo', appSlug: 'demo', version: 3 } } };
+    await lager.use('page');
     await new Promise((r) => setTimeout(r, 0));
     expect(reload).toHaveBeenCalledTimes(1);
     off();
@@ -1467,46 +1355,46 @@ describe('artifact and self', () => {
 
   it('is null when not declared, and shows up in permissions when declared', async () => {
     declare({});
+    expect(await boot().use('page')).toBeNull();
     expect(await boot().use('artifact')).toBeNull();
     expect(await boot().use('self')).toBeNull();
     declare();
     const p = await boot().use('permissions');
-    expect(await p.state('artifact')).toBe('granted');
-    expect(await p.state('self')).toBe('unavailable');
+    expect(await p.state('page')).toBe('granted');
   });
 
-  it('publish:false stops saving for everyone, under either name', async () => {
-    for (const caps of [{ artifact: { publish: false } }, { self: { publish: false } }, { artifact: {}, self: { publish: false } }]) {
+  it('publish:false stops saving for everyone', async () => {
+    for (const caps of [{ page: { publish: false } }]) {
       for (const viewer of [OWNER, READER]) {
         declare(caps, viewer);
-        const artifact = await boot().use('artifact');
-        expect(artifact).not.toBeNull();
-        expect((await failure(artifact.publish(DOC))).code).toBe('not_granted');
+        const page = await boot().use('page');
+        expect(page).not.toBeNull();
+        expect((await failure(page.publish(DOC))).code).toBe('not_granted');
       }
     }
-    expect(calls.some(([u]) => u === '/__lager/artifact')).toBe(false);
-    artifactReply = () => json({ error: { code: 'not_granted', message: 'x' } }, 403);
+    expect(calls.some(([u]) => u === '/__lager/page')).toBe(false);
+    pageReply = () => json({ error: { code: 'not_granted', message: 'x' } }, 403);
     declare();
-    expect((await failure((await boot().use('artifact')).publish(DOC))).code).toBe('not_granted');
+    expect((await failure((await boot().use('page')).publish(DOC))).code).toBe('not_granted');
   });
 
   it('a conflict reloads this view once, and still rejects', async () => {
     declare();
-    const artifact = await boot().use('artifact');
-    artifactReply = () => json({ error: { code: 'conflict', message: 'x' } }, 409);
-    expect((await failure(artifact.publish(DOC))).code).toBe('conflict');
-    expect((await failure(artifact.publish(DOC))).code).toBe('conflict');
+    const page = await boot().use('page');
+    pageReply = () => json({ error: { code: 'conflict', message: 'x' } }, 409);
+    expect((await failure(page.publish(DOC))).code).toBe('conflict');
+    expect((await failure(page.publish(DOC))).code).toBe('conflict');
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
   it('a publish before the stream is open still ends in a reload; with an open stream the event does it', async () => {
     declare();
-    const artifact = await boot().use('artifact');
-    await artifact.publish(DOC);
+    const page = await boot().use('page');
+    await page.publish(DOC);
     expect(reload).toHaveBeenCalledTimes(1);
     declare();
     reload.mockClear();
-    const second = await boot().use('artifact');
+    const second = await boot().use('page');
     es().emit('open');
     await flush();
     await second.publish(DOC);
@@ -1517,12 +1405,12 @@ describe('artifact and self', () => {
 
   it('when the stream (re)opens and the live version differs, the view reloads once', async () => {
     declare();
-    await boot().use('artifact');
+    await boot().use('page');
     es().emit('open');
     await flush();
     expect(reload).not.toHaveBeenCalled();
     expect(calls.filter(([u]) => u === '/__lager/session').length).toBe(2);
-    session = { status: 200, body: { ...(sessionOf(OWNER).body as any), capabilities: { artifact: {} }, instance: { id: 'i1', slug: 'demo', appSlug: 'demo', version: 4 } } };
+    session = { status: 200, body: { ...(sessionOf(OWNER).body as any), capabilities: { page: {} }, instance: { id: 'i1', slug: 'demo', appSlug: 'demo', version: 4 } } };
     es().emit('error');
     es().emit('open');
     await flush();

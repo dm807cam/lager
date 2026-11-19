@@ -11,7 +11,7 @@ const attr = (s: string): string =>
 /** The insertion point (`<head>`, else `<html>`, else the doctype) must lie within this many characters of the start. */
 const INSERT_LIMIT = 64 * 1024;
 /**
- * The artifact's own manifest, viewport, theme-color, apple-touch-icon and icon links are looked for in its `<head>` element, and
+ * The app's own manifest, viewport, theme-color, apple-touch-icon and icon links are looked for in its `<head>` element, and
  * only when that element ends (`</head>` or `<body`) within this many characters. A longer head is treated as having none of
  * them, so a crafted document cannot make the scan expensive; the worst case is a duplicate tag.
  */

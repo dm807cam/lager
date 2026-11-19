@@ -47,7 +47,7 @@ export function toMessages(input: unknown, system: unknown): ChatMessage[] {
 }
 
 /**
- * Mounts `POST /__lager/complete`: the page's `window.claude.complete` asks the model of the caller's AI group.
+ * Mounts `POST /__lager/complete`: the page's `window.lager.complete` asks the model of the caller's AI group.
  * Only signed-in viewers with at least `interact` may call it, so guests on public apps cannot spend the server's credit.
  */
 export function mountCompleteRoutes(router: express.Router, core: Core, ctxOf: (res: Response) => Ctx, requireAccess: (ctx: Ctx) => void): void {
