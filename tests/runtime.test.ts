@@ -105,7 +105,7 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
       case 'query': return json({ docs: runQuery(b.path, b.query ?? {}) });
       case 'acquire':
         if (b.path === 'locks/busy') return json({ acquired: false, expiresAt: 'x', holder: 'someone' });
-        return json({ acquired: true, version: 1, holder: b.options.holder, expiresAt: 'x' });
+        return json({ acquired: true, version: 1, expiresAt: 'x' });
       default: return json({ error: { code: 'invalid_argument', message: 'op' } }, 400);
     }
   }
@@ -277,7 +277,7 @@ describe('db', () => {
     expect((await ref.get()).data()).toEqual({ title: 'a', n: 2 });
     expect(await ref.delete()).toBeUndefined();
     expect((await ref.get()).exists).toBe(false);
-    expect(await ref.acquire({ holder: 'tab1', ttlMs: 5000 })).toEqual({ acquired: true, version: 1, holder: 'tab1', expiresAt: 'x' });
+    expect(await ref.acquire({ holder: 'tab1', ttlMs: 5000 })).toEqual({ acquired: true, version: 1, expiresAt: 'x' });
     expect(await db.doc('locks/busy').acquire({ holder: 'tab1' })).toEqual({ acquired: false, expiresAt: 'x' });
 
     expect(dbCalls()).toEqual([
@@ -735,6 +735,17 @@ describe('user', () => {
     expect(userCalls()).toHaveLength(2);
     expect(userCalls()[1]).toBe('/__lager/users?ids=u3');
     expect(await user.profiles([])).toEqual({});
+
+    // A miss is not kept for good: someone the instance gets to know resolves after about a minute.
+    users.ghost = { id: 'ghost', name: 'Gus', email: null, isMe: false };
+    expect(await user.profiles('ghost')).toEqual({});
+    expect(userCalls()).toHaveLength(2);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 61_000);
+    try {
+      expect((await user.profiles('ghost')).ghost.name).toBe('Gus');
+      expect(userCalls()[2]).toBe('/__lager/users?ids=ghost');
+    } finally { clock.mockRestore(); }
   });
 
   it('user.search calls the endpoint and never rejects', async () => {

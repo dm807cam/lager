@@ -11,7 +11,7 @@ The limits Lager enforces and what it deliberately does not do.
 - **Paths and documents:** Paths are limited to 16 segments and 1000 bytes, and a segment to 200 bytes of letters, digits and `_ - . ~ : @ +` (not `.` or `..`); the server and the browser runtime enforce the same rule, so every stored document stays reachable from the app. A document is at most 256 KiB.
 - **Domains:** At most 10 custom domains per instance.
 - **Saved versions:** An instance keeps its last 20 self-saved pages; older ones are deleted.
-- **Snapshots:** They contain only the documents of the instance. `restore_snapshot` does not restore uploaded files or self-saved pages.
+- **Snapshots:** They contain only the documents of the instance. `restore_snapshot` does not restore uploaded files or self-saved pages. Only the owner of the instance can restore one, in the dashboard or with `restore_snapshot`: a restore rolls back all documents, including other people's private areas and data the app's rules keep from managers.
 - **Reserved names:** The name of a deleted instance stays reserved for its former owner. Other accounts cannot take it over, because otherwise stored browser data and service workers of the old instance would carry over to the new one.
 
 ## What Lager cannot do

@@ -700,7 +700,7 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }));
 
   server.registerTool('db_write', { ...toolMeta('db_write'),
-    description: `Write instance data, e.g. to seed it after a deploy. Up to ${MAX_DB_OPS} operations, applied in order: set (replace), update (deep merge), delete.`,
+    description: `Write instance data, e.g. to seed it after a deploy. Up to ${MAX_DB_OPS} operations, applied in order: set (replace), update (deep merge; needs read access to the path too), delete.`,
     inputSchema: {
       instance: slugArg,
       ops: z.array(z.object({
@@ -715,6 +715,8 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     for (const o of ops) {
       parseDocPath(o.path);
       if (!canWrite(rules, viewer, o.path)) throw new LagerError('forbidden', `You may not write "${o.path}" (another user's private area or a rule of the app).`);
+      // A merge is size-checked as a whole and would reveal how big a document is that the caller may not read.
+      if (o.op === 'update' && !canRead(rules, viewer, o.path)) throw new LagerError('forbidden', `You may not read "${o.path}", so you cannot merge into it: use set (replace) instead of update.`);
       if (o.op !== 'delete') {
         if (o.data === undefined) throw new LagerError('invalid_argument', `${o.op} on "${o.path}" needs data.`);
         assertDocData(o.data);
@@ -782,10 +784,12 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }, ({ instance }) => run(() => ({ snapshots: core.data.listSnapshots(managedInstance(core, user, instance).id) })));
 
   server.registerTool('restore_snapshot', { ...toolMeta('restore_snapshot'),
-    description: 'Restore instance data from a snapshot. The current data is saved as a snapshot first.',
+    description: 'Restore instance data from a snapshot (owner of the instance only: it rolls back all data, including what the app\'s rules keep from managers). The current data is saved as a snapshot first.',
     inputSchema: { instance: slugArg, snapshot: z.string().describe('Snapshot id from list_snapshots') },
   }, ({ instance, snapshot }) => run(() => {
-    core.data.restore(managedInstance(core, user, instance).id, snapshot);
+    const inst = managedInstance(core, user, instance);
+    if (!core.access.canRestoreInstance(inst, user)) throw new LagerError('forbidden', `Only the owner of instance "${instance}" may restore a snapshot.`);
+    core.data.restore(inst.id, snapshot);
     return { restored: snapshot };
   }));
 

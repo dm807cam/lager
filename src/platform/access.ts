@@ -144,6 +144,21 @@ export class Access {
     return { instances: this.apps.listDiscoverable(user.id, CATALOG_LIMIT), apps: this.apps.listSelfServiceApps(CATALOG_LIMIT) };
   }
 
+  /** Whether the instance belongs to `userId` or is shared with them, directly or through a group (any level, also while disabled). */
+  isConnected(instance: Instance, userId: string): boolean {
+    if (instance.ownerId === userId) return true;
+    return this.db.prepare(
+      `SELECT 1 FROM grants WHERE instance_id = ? AND (
+         (principal_type = 'user' AND principal_id = ?)
+         OR (principal_type = 'group' AND principal_id IN (SELECT group_id FROM group_members WHERE user_id = ?))) LIMIT 1`,
+    ).get(instance.id, userId, userId) !== undefined;
+  }
+
+  /** Restoring a snapshot rolls back everything, including data the rules keep from managers: only the owner of an instance that is not disabled. */
+  canRestoreInstance(instance: Instance, user: User): boolean {
+    return this.levelFor(instance, user) === 'owner';
+  }
+
   /** Active users who can open the instance: owner, direct grantees and members of granted groups. */
   /** `matchEmail = false` matches the query against names only (so addresses cannot be probed). */
   usersWithAccess(instance: Instance, query?: string, limit = DEFAULT_LIMIT, matchEmail = true): User[] {
