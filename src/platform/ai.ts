@@ -3,9 +3,11 @@ import type { DatabaseSync } from 'node:sqlite';
 import { LagerError } from '../errors.js';
 
 /**
- * Bring your own model: the administrator connects language model providers and puts people in AI groups that pick a
- * provider, a model and an hourly limit; apps that declare the `complete` capability call it through `window.lager.complete`. Requests go out with plain `fetch`, either to the Anthropic
- * Messages API or to an OpenAI-compatible chat completions endpoint, which covers most other providers.
+ * Bring your own model: the administrator connects language model providers, names the models people may use in a
+ * catalog (`fast`, `smart`, …) and puts people in AI groups, each with a default model, further allowed models and an
+ * hourly limit. Apps that declare the `complete` capability call it through `window.lager.complete`; an app may ask for
+ * one catalog model, which is used for every viewer whose group allows it. Requests go out with plain `fetch`, either to
+ * the Anthropic Messages API or to an OpenAI-compatible chat completions endpoint, which covers most other providers.
  */
 
 export type ProviderId = 'anthropic' | 'openai' | 'openrouter' | 'deepseek' | 'gemini' | 'mistral' | 'groq' | 'ollama' | 'custom';
@@ -63,12 +65,26 @@ export interface AiProviderInput {
   apiKey?: string;
 }
 
-/** Who gets which model: every person is in at most one AI group; everyone else is in the default group. */
-export interface AiGroup { id: string; name: string; providerId: string | null; model: string; hourlyLimit: number; memberCount: number; isDefault: boolean }
-export interface AiGroupInput { name: string; providerId: string | null; model?: string; hourlyLimit: number }
+/** One entry of the model catalog. `id` is the name apps ask for; `model` is the name the provider uses. */
+export interface AiModel { id: string; providerId: string; model: string; description: string; createdAt: string }
+export interface AiModelInput { id?: string; providerId: string; model: string; description?: string }
 
-/** What one person's call goes to. */
-export interface AiRoute { groupId: string; providerId: string; model: string; hourlyLimit: number }
+/**
+ * Who gets which model: every person is in at most one AI group; everyone else is in the default group. `modelId` is
+ * the default model (`null`: off); `allowed` lists the further catalog models an app may pick for the group's people.
+ */
+export interface AiGroup { id: string; name: string; modelId: string | null; allowed: string[]; hourlyLimit: number; memberCount: number; isDefault: boolean }
+export interface AiGroupInput { name: string; modelId: string | null; allowed?: string[]; hourlyLimit: number }
+
+/** What one person's call goes to. `modelId` is the catalog entry, `model` the provider's name for it. */
+export interface AiRoute { groupId: string; modelId: string; providerId: string; model: string; hourlyLimit: number }
+
+/** A catalog model as one person may use it: `isDefault` marks the default model of their group. */
+export interface AllowedModel extends AiModel { providerName: string; isDefault: boolean }
+
+/** Catalog names: lower case letters, digits, dots and hyphens, starting with a letter or digit. */
+export const MODEL_ID_RE = /^[a-z0-9][a-z0-9.-]{0,39}$/;
+export const MAX_MODEL_DESCRIPTION = 200;
 
 export interface Completion { text: string; model: string; stopReason: string | null }
 
@@ -91,10 +107,13 @@ type Fetch = typeof fetch;
 const isProvider = (v: unknown): v is ProviderId => typeof v === 'string' && Object.hasOwn(PRESETS, v);
 
 interface ProviderRow { id: string; name: string; type: string; base_url: string | null; key_enc: string | null; created_at: string }
-interface GroupRow { id: string; name: string; provider_id: string | null; model: string; hourly_limit: number; member_count: number }
+interface ModelRow { id: string; provider_id: string; model: string; description: string; created_at: string }
+interface GroupRow { id: string; name: string; model_id: string | null; hourly_limit: number; member_count: number; allowed: string | null }
 
-const GROUP_SELECT = `SELECT g.id, g.name, g.provider_id, g.model, g.hourly_limit,
-  (SELECT COUNT(*) FROM users u WHERE u.ai_group_id = g.id) AS member_count FROM ai_groups g`;
+const GROUP_SELECT = `SELECT g.id, g.name, g.model_id, g.hourly_limit,
+  (SELECT COUNT(*) FROM users u WHERE u.ai_group_id = g.id) AS member_count,
+  (SELECT group_concat(m.model_id, ' ') FROM (SELECT model_id FROM ai_group_models WHERE group_id = g.id ORDER BY model_id) m) AS allowed
+  FROM ai_groups g`;
 
 const bad = (msg: string): never => { throw new LagerError('invalid_argument', msg, 'ai_invalid'); };
 
@@ -209,21 +228,80 @@ export class AiModels {
     return this.getProvider(id)!;
   }
 
-  groupsUsing(providerId: string): AiGroup[] {
-    return this.listGroups().filter((g) => g.providerId === providerId);
+  /** The catalog models that call this provider. */
+  modelsUsing(providerId: string): AiModel[] {
+    return this.listModels().filter((m) => m.providerId === providerId);
   }
 
   deleteProvider(id: string): void {
     if (!this.providerRow(id)) throw new LagerError('not_found', 'Provider not found.');
-    const users = this.groupsUsing(id);
-    if (users.length) throw new LagerError('conflict', `The provider is used by ${users.length} AI group(s).`, 'ai_provider_in_use');
+    const models = this.modelsUsing(id);
+    if (models.length) throw new LagerError('conflict', `The provider is used by ${models.length} model(s).`, 'ai_provider_in_use');
     this.db.prepare('DELETE FROM ai_providers WHERE id = ?').run(id);
+  }
+
+  // --- model catalog ---
+
+  private toModel(r: ModelRow): AiModel {
+    return { id: r.id, providerId: r.provider_id, model: r.model, description: r.description, createdAt: r.created_at };
+  }
+
+  listModels(): AiModel[] {
+    return (this.db.prepare('SELECT * FROM ai_models ORDER BY id').all() as unknown as ModelRow[]).map((r) => this.toModel(r));
+  }
+
+  getModel(id: string): AiModel | null {
+    const r = this.db.prepare('SELECT * FROM ai_models WHERE id = ?').get(id) as ModelRow | undefined;
+    return r ? this.toModel(r) : null;
+  }
+
+  private validateModel(input: AiModelInput): { providerId: string; model: string; description: string } {
+    if (typeof input.providerId !== 'string' || !this.providerRow(input.providerId)) throw new LagerError('not_found', 'Provider not found.');
+    const model = typeof input.model === 'string' ? input.model.trim() : '';
+    if (!model || model.length > MAX_MODEL || /\s/.test(model)) bad('Enter the model name without spaces.');
+    const description = typeof input.description === 'string' ? input.description.trim().replace(/\s+/g, ' ') : '';
+    if (description.length > MAX_MODEL_DESCRIPTION) bad(`The description may have at most ${MAX_MODEL_DESCRIPTION} characters.`);
+    return { providerId: input.providerId, model, description };
+  }
+
+  createModel(input: AiModelInput): AiModel {
+    const id = typeof input.id === 'string' ? input.id.trim() : '';
+    if (!MODEL_ID_RE.test(id)) bad('The name must be 1 to 40 lower case letters, digits, dots or hyphens.');
+    const v = this.validateModel(input);
+    if (this.getModel(id)) throw new LagerError('conflict', `A model named "${id}" already exists.`, 'ai_name_taken');
+    this.db.prepare('INSERT INTO ai_models (id, provider_id, model, description, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(id, v.providerId, v.model, v.description, new Date().toISOString());
+    return this.getModel(id)!;
+  }
+
+  /** The name stays: apps refer to it. */
+  updateModel(id: string, input: AiModelInput): AiModel {
+    if (!this.getModel(id)) throw new LagerError('not_found', 'Model not found.');
+    const v = this.validateModel(input);
+    this.db.prepare('UPDATE ai_models SET provider_id = ?, model = ?, description = ? WHERE id = ?').run(v.providerId, v.model, v.description, id);
+    return this.getModel(id)!;
+  }
+
+  /** The AI groups whose default model this is. */
+  groupsDefaultingTo(modelId: string): AiGroup[] {
+    return this.listGroups().filter((g) => g.modelId === modelId);
+  }
+
+  /** Refused while a group uses it as its default; it leaves the allowed lists, and apps that chose it follow their declaration again. */
+  deleteModel(id: string): void {
+    if (!this.getModel(id)) throw new LagerError('not_found', 'Model not found.');
+    const groups = this.groupsDefaultingTo(id);
+    if (groups.length) throw new LagerError('conflict', `The model is the default of ${groups.length} AI group(s).`, 'ai_model_in_use');
+    this.db.prepare('DELETE FROM ai_models WHERE id = ?').run(id);
   }
 
   // --- AI groups ---
 
   private toGroup(r: GroupRow): AiGroup {
-    return { id: r.id, name: r.name, providerId: r.provider_id, model: r.model, hourlyLimit: r.hourly_limit, memberCount: r.member_count, isDefault: r.id === DEFAULT_GROUP };
+    return {
+      id: r.id, name: r.name, modelId: r.model_id, allowed: r.allowed ? r.allowed.split(' ') : [],
+      hourlyLimit: r.hourly_limit, memberCount: r.member_count, isDefault: r.id === DEFAULT_GROUP,
+    };
   }
 
   listGroups(): AiGroup[] {
@@ -236,16 +314,31 @@ export class AiModels {
     return r ? this.toGroup(r) : null;
   }
 
-  private validateGroup(input: AiGroupInput, isDefault: boolean): { name: string; providerId: string | null; model: string; hourlyLimit: number } {
+  private validateGroup(input: AiGroupInput, isDefault: boolean): { name: string; modelId: string | null; allowed: string[]; hourlyLimit: number } {
     const name = isDefault ? '' : cleanName(input.name, 'AI group');
-    const model = (input.model ?? '').trim();
-    if (input.providerId !== null) {
-      if (!this.providerRow(input.providerId)) throw new LagerError('not_found', 'Provider not found.');
-      if (!model || model.length > MAX_MODEL || /\s/.test(model)) bad('Enter the model name without spaces.');
-    } else if (model.length > MAX_MODEL || /\s/.test(model)) bad('Enter the model name without spaces.');
+    if (input.modelId !== null && !this.getModel(input.modelId)) throw new LagerError('not_found', 'Model not found.');
+    const allowed = [...new Set(input.allowed ?? [])].filter((id) => id !== input.modelId);
+    for (const id of allowed) if (!this.getModel(id)) throw new LagerError('not_found', 'Model not found.');
     const limit = input.hourlyLimit;
     if (!Number.isInteger(limit) || limit < 1 || limit > HOURLY_LIMIT_MAX) bad(`The hourly limit must be a whole number from 1 to ${HOURLY_LIMIT_MAX}.`);
-    return { name, providerId: input.providerId, model, hourlyLimit: limit };
+    return { name, modelId: input.modelId, allowed, hourlyLimit: limit };
+  }
+
+  private writeAllowed(groupId: string, allowed: string[]): void {
+    this.db.prepare('DELETE FROM ai_group_models WHERE group_id = ?').run(groupId);
+    const insert = this.db.prepare('INSERT INTO ai_group_models (group_id, model_id) VALUES (?, ?)');
+    for (const id of allowed) insert.run(groupId, id);
+  }
+
+  private inTransaction(fn: () => void): void {
+    this.db.exec('BEGIN');
+    try {
+      fn();
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
   }
 
   private assertGroupNameFree(name: string, exceptId?: string): void {
@@ -257,8 +350,11 @@ export class AiModels {
     const v = this.validateGroup(input, false);
     this.assertGroupNameFree(v.name);
     const id = crypto.randomUUID();
-    this.db.prepare('INSERT INTO ai_groups (id, name, provider_id, model, hourly_limit, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, v.name, v.providerId, v.model, v.hourlyLimit, new Date().toISOString());
+    this.inTransaction(() => {
+      this.db.prepare('INSERT INTO ai_groups (id, name, model_id, hourly_limit, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(id, v.name, v.modelId, v.hourlyLimit, new Date().toISOString());
+      this.writeAllowed(id, v.allowed);
+    });
     return this.getGroup(id)!;
   }
 
@@ -266,7 +362,10 @@ export class AiModels {
     if (!this.getGroup(id)) throw new LagerError('not_found', 'AI group not found.');
     const v = this.validateGroup(input, id === DEFAULT_GROUP);
     if (id !== DEFAULT_GROUP) this.assertGroupNameFree(v.name, id);
-    this.db.prepare('UPDATE ai_groups SET name = ?, provider_id = ?, model = ?, hourly_limit = ? WHERE id = ?').run(v.name, v.providerId, v.model, v.hourlyLimit, id);
+    this.inTransaction(() => {
+      this.db.prepare('UPDATE ai_groups SET name = ?, model_id = ?, hourly_limit = ? WHERE id = ?').run(v.name, v.modelId, v.hourlyLimit, id);
+      this.writeAllowed(id, v.allowed);
+    });
     return this.getGroup(id)!;
   }
 
@@ -274,15 +373,10 @@ export class AiModels {
   deleteGroup(id: string): void {
     if (id === DEFAULT_GROUP) throw new LagerError('forbidden', 'The default AI group cannot be deleted.', 'ai_default_fixed');
     if (!this.getGroup(id)) throw new LagerError('not_found', 'AI group not found.');
-    this.db.exec('BEGIN');
-    try {
+    this.inTransaction(() => {
       this.db.prepare('UPDATE users SET ai_group_id = NULL WHERE ai_group_id = ?').run(id);
       this.db.prepare('DELETE FROM ai_groups WHERE id = ?').run(id);
-      this.db.exec('COMMIT');
-    } catch (e) {
-      this.db.exec('ROLLBACK');
-      throw e;
-    }
+    });
   }
 
   // --- people ---
@@ -298,11 +392,11 @@ export class AiModels {
     if (Number(res.changes) === 0) throw new LagerError('not_found', 'User not found.');
   }
 
-  /** A group's route, or `null` when it is Off, its provider is gone or a required key is missing or unreadable. */
-  private routeOf(group: AiGroup | null): AiRoute | null {
-    if (!group || !group.providerId || !group.model) return null;
-    if (!this.usable(group.providerId)) return null;
-    return { groupId: group.id, providerId: group.providerId, model: group.model, hourlyLimit: group.hourlyLimit };
+  /** The route to one catalog model for a group, or `null` when the model is gone or its provider unusable. */
+  private routeTo(group: AiGroup, modelId: string): AiRoute | null {
+    const m = this.getModel(modelId);
+    if (!m || !this.usable(m.providerId)) return null;
+    return { groupId: group.id, modelId: m.id, providerId: m.providerId, model: m.model, hourlyLimit: group.hourlyLimit };
   }
 
   private usable(providerId: string): boolean {
@@ -317,21 +411,53 @@ export class AiModels {
     return !preset.keyRequired || key !== null;
   }
 
-  routeFor(userId: string): AiRoute | null {
-    return this.routeOf(this.getGroup(this.groupIdOf(userId)));
+  /** The catalog models a group's people may use, the default first. Empty while the group is off. */
+  private allowedIn(group: AiGroup | null): string[] {
+    return group?.modelId ? [group.modelId, ...group.allowed.filter((id) => id !== group.modelId)] : [];
   }
 
-  /** What the administrator's test button sends to: the model of the first AI group using the provider, else the preset's example. */
+  /**
+   * Where one person's call goes. `wanted` is the catalog model the app asks for: it is used when the person's group
+   * allows it and its provider works; otherwise the group's default model answers. `null` while the group is off or no
+   * allowed model can be reached.
+   */
+  routeFor(userId: string, wanted?: string | null): AiRoute | null {
+    const group = this.getGroup(this.groupIdOf(userId));
+    const allowed = this.allowedIn(group);
+    if (!group || allowed.length === 0) return null;
+    if (wanted && allowed.includes(wanted)) {
+      const route = this.routeTo(group, wanted);
+      if (route) return route;
+    }
+    return this.routeTo(group, allowed[0]!);
+  }
+
+  /** The catalog models one person may use, the default of their group first, with the provider names the administrator gave. */
+  allowedModelsFor(userId: string): AllowedModel[] {
+    const group = this.getGroup(this.groupIdOf(userId));
+    const names = new Map(this.listProviders().map((p) => [p.id, p.name]));
+    return this.allowedIn(group).flatMap((id, i) => {
+      const m = this.getModel(id);
+      return m ? [{ ...m, providerName: names.get(m.providerId) ?? '', isDefault: i === 0 }] : [];
+    });
+  }
+
+  /** Whether this person may ask for the catalog model `id` (in an app's declaration or as an app's choice). */
+  mayUse(userId: string, id: string): boolean {
+    return this.allowedIn(this.getGroup(this.groupIdOf(userId))).includes(id);
+  }
+
+  /** What the administrator's test button sends to: the first catalog model of the provider, else the preset's example. */
   testRoute(providerId: string): AiRoute {
     const p = this.providerRow(providerId);
     if (!p || !isProvider(p.type)) throw new LagerError('not_found', 'Provider not found.');
-    const model = this.groupsUsing(providerId).find((g) => g.model)?.model ?? PRESETS[p.type].modelHint;
-    return { groupId: '', providerId, model, hourlyLimit: 1 };
+    const entry = this.modelsUsing(providerId)[0];
+    return { groupId: '', modelId: entry?.id ?? '', providerId, model: entry?.model ?? PRESETS[p.type].modelHint, hourlyLimit: 1 };
   }
 
   /** Whether anyone can call a model right now. */
   get configured(): boolean {
-    return this.listGroups().some((g) => this.routeOf(g) !== null);
+    return this.listGroups().some((g) => this.allowedIn(g).some((id) => this.routeTo(g, id) !== null));
   }
 
   /** Sends one conversation to the route's provider and returns its text answer. */

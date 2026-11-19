@@ -11,7 +11,12 @@ import type { User, Users } from './users.js';
 
 export type RuleLevel = 'view' | 'interact' | 'admin' | 'owner' | 'self';
 export interface DbRule { path: string; read?: RuleLevel; write?: RuleLevel }
-export interface Capabilities { db?: { rules?: DbRule[] }; user?: { scopes?: string[] }; assets?: { upload?: 'interact' }; room?: { topics?: Record<string, 'interact'> }; [k: string]: unknown }
+export interface Capabilities {
+  db?: { rules?: DbRule[] }; user?: { scopes?: string[] }; assets?: { upload?: 'interact' }; room?: { topics?: Record<string, 'interact'> };
+  /** `model` names a catalog model; without it every viewer gets the default model of their AI group. */
+  complete?: { model?: string };
+  [k: string]: unknown;
+}
 export type Visibility = 'private' | 'users' | 'public';
 export type SelfInstances = 'off' | 'users';
 export type UsersLevel = 'view' | 'interact';
@@ -23,6 +28,8 @@ export interface App {
   themeColor: string;
   /** Bumps on every icon change; part of every icon URL so caches never serve an old picture. */
   iconVersion: number;
+  /** The catalog model chosen for the app; `null` follows the `complete.model` declaration of the active version. */
+  aiModelId: string | null;
 }
 export interface Version {
   appId: string; number: number; sha256: string; sizeBytes: number;
@@ -63,7 +70,7 @@ const CREATION_WINDOW_MS = 24 * 3600_000;
 
 interface AppRow {
   id: string; slug: string; title: string; owner_id: string; created_at: string; self_instances: SelfInstances;
-  description: string; theme_color: string; icon_version: number;
+  description: string; theme_color: string; icon_version: number; ai_model_id: string | null;
 }
 interface VersionRow {
   app_id: string; number: number; sha256: string; size_bytes: number;
@@ -77,7 +84,7 @@ interface InstanceRow {
 
 const toApp = (r: AppRow): App => ({
   id: r.id, slug: r.slug, title: r.title, ownerId: r.owner_id, createdAt: r.created_at, selfInstances: r.self_instances,
-  description: r.description, themeColor: r.theme_color, iconVersion: Number(r.icon_version),
+  description: r.description, themeColor: r.theme_color, iconVersion: Number(r.icon_version), aiModelId: r.ai_model_id,
 });
 
 export const MAX_DESCRIPTION = 200;
@@ -272,7 +279,7 @@ export class Apps {
         this.countCreation(user);
         app = {
           id: crypto.randomUUID(), slug: input.slug, title: input.title || input.slug, ownerId: user.id, createdAt: now, selfInstances: 'off',
-          description: description ?? '', themeColor: themeColor ?? DEFAULT_THEME_COLOR, iconVersion: 0,
+          description: description ?? '', themeColor: themeColor ?? DEFAULT_THEME_COLOR, iconVersion: 0, aiModelId: null,
         };
         this.db
           .prepare('INSERT INTO apps (id, slug, title, owner_id, created_at, description, theme_color) VALUES (?, ?, ?, ?, ?, ?, ?)')
@@ -629,6 +636,13 @@ export class Apps {
       this.db.prepare('UPDATE instances SET disabled_at = NULL WHERE id = ?').run(instance.id);
     }
     return this.getInstance(instanceId)!;
+  }
+
+  /** Who may choose, and which models they may choose, is decided by the caller (see `setAppModel` in the tools). */
+  setAiModel(appId: string, modelId: string | null): App {
+    const res = this.db.prepare('UPDATE apps SET ai_model_id = ? WHERE id = ?').run(modelId, appId);
+    if (Number(res.changes) === 0) throw new LagerError('not_found', 'App not found.');
+    return this.getApp(appId)!;
   }
 
   setSelfInstances(appId: string, mode: SelfInstances, userId: string): App {

@@ -236,7 +236,7 @@ describe('platform database schema version', () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-schema-'));
     const fresh = openPlatformDb(d);
     expect((fresh.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
-    expect(fresh.prepare('SELECT id, provider_id, hourly_limit FROM ai_groups').all().map((r) => ({ ...r }))).toEqual([{ id: 'default', provider_id: null, hourly_limit: 60 }]);
+    expect(fresh.prepare('SELECT id, model_id, hourly_limit FROM ai_groups').all().map((r) => ({ ...r }))).toEqual([{ id: 'default', model_id: null, hourly_limit: 60 }]);
     fresh.exec('PRAGMA user_version = 10');
     fresh.close();
     expect(() => openPlatformDb(d)).toThrow(/schema version 10, but this Lager knows only 1/);

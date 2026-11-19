@@ -6,7 +6,7 @@ import type { Core } from '../core.js';
 import { assertDocData, parseDocPath } from '../data/paths.js';
 import { LagerError } from '../errors.js';
 import {
-  addDomainTo, appDetail, domainInstance, downloadableVersion, runAppCheck, appSummary, checkCapabilities, createInstanceFor, domainsJson, removeDomainFrom, deployWithIcon, updateAppLook, grantPrincipal, grantsJson, instanceJson, managedInstance, readableApp, transferAccess,
+  addDomainTo, appDetail, domainInstance, downloadableVersion, runAppCheck, appSummary, checkCapabilities, createInstanceFor, domainsJson, removeDomainFrom, deployWithIcon, updateAppLook, grantPrincipal, grantsJson, instanceJson, managedInstance, modelsJson, readableApp, setAppModel, transferAccess,
 } from '../mcp/tools.js';
 import type { GrantLevel } from '../platform/access.js';
 import type { Instance, Visibility } from '../platform/apps.js';
@@ -253,6 +253,17 @@ export const apiExtension: PlatformExtension = (router, core) => {
     const body = bodyObject(req);
     const app = readableApp(core, user, req.params.slug as string);
     res.json(await updateAppLook(core, user, app, { description: optionalString(body, 'description'), themeColor: optionalString(body, 'theme_color') }));
+  });
+
+  router.put('/api/apps/:slug/model', noStore, auth, express.json({ limit: '10kb' }), (req, res) => {
+    const user = userOf(res);
+    const model = bodyObject(req).model;
+    if (model !== null && typeof model !== 'string') throw new LagerError('invalid_argument', 'model must be a model name or null.');
+    res.json(setAppModel(core, user, readableApp(core, user, req.params.slug as string), model));
+  });
+
+  router.get('/api/models', noStore, auth, (_req, res) => {
+    res.json(modelsJson(core, userOf(res)));
   });
 
   router.get('/api/apps', noStore, auth, (_req, res) => {
