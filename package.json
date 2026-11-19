@@ -1,7 +1,7 @@
 {
   "name": "lager",
   "version": "0.1.0",
-  "description": "Self-hosted server for Claude artifacts: every app gets its own subdomain, versions with rollback and durable data.",
+  "description": "Self-hosted server for the apps your AI builds: every app gets its own subdomain, versions with rollback and durable data.",
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",

@@ -68,7 +68,7 @@ What fits Lager well:
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) **22.13 or newer** (Lager uses the built-in `node:sqlite`). CI tests on Node 22 and 24.
+- [Node.js](https://nodejs.org/) **22.22 or newer** for development. Lager itself runs on 22.13 or newer (it uses the built-in `node:sqlite`), but the test tools need 22.22. CI runs the tests on Node 22 and 24 and checks that the server starts on 22.13.
 - npm (ships with Node.js)
 - Git
 - Optional: Docker, to test the container image
@@ -268,11 +268,12 @@ git commit -s -m "fix: keep the theme choice after sign-in"
 If you forgot, sign off the commits of your branch afterwards and push again:
 
 ```sh
-git rebase --signoff main
+git fetch upstream
+git rebase --signoff upstream/main
 git push --force-with-lease
 ```
 
-A CI check verifies the sign-off on every commit in a pull request.
+A CI check verifies that every commit in a pull request carries a sign-off with its author's email address. Commits by bots such as Dependabot are exempt, and so are pull requests the repository owner opens: the owner answers for the commits they merge.
 
 ## AI-assisted contributions
 
@@ -301,7 +302,7 @@ Lager exists so that people can build with AI, and you are welcome to use AI too
 
 ### What happens next
 
-- CI runs the type check, the tests, the build, the Docker build and the DCO check. A failing check means the pull request is not ready yet.
+- CI runs the type check, the tests, the build, a start on the oldest supported Node version, the Docker build and the DCO check. A failing check means the pull request is not ready yet.
 - A maintainer reviews the pull request. We aim to respond **within a week**. If you hear nothing after that, a friendly ping in the pull request is welcome.
 - Review is a conversation. Questions are not rejections, and you are welcome to disagree with a reason.
 - If `main` moves on, we may ask you to rebase, because you know your change best.

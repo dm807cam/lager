@@ -34,7 +34,7 @@ body:
       multiple: true
       options:
         - People using apps
-        - People building apps with Claude
+        - People building apps with an AI assistant
         - Administrators running a server
         - Contributors
   - type: checkboxes

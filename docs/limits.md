@@ -8,7 +8,7 @@ The limits Lager enforces and what it deliberately does not do.
 - **Instances per user:** Every account that is not an administrator may own at most as many instances as an administrator sets in the administration area under Settings (1 to 1000, default 20). This applies when creating further instances, including self-service.
 - **New instances per day:** Accounts that are not administrators may create at most 10 instances within 24 hours; deleted instances count, and so does the instance created by the first deploy of an app. This stops anyone from filling the storage by creating, filling and deleting in a loop.
 - **Open connections:** Per viewer and instance at most 8 live-update streams for the database and 8 for rooms; for anonymous visitors the viewer is the client address, and all of them together may hold at most 100 per instance. Further ones get HTTP 429, and the page works without live updates there.
-- **Paths and documents:** Paths are limited to 16 segments and 1000 bytes; a document is at most 256 KiB.
+- **Paths and documents:** Paths are limited to 16 segments and 1000 bytes, and a segment to 200 bytes of letters, digits and `_ - . ~ : @ +` (not `.` or `..`); the server and the browser runtime enforce the same rule, so every stored document stays reachable from the app. A document is at most 256 KiB.
 - **Domains:** At most 10 custom domains per instance.
 - **Saved versions:** An instance keeps its last 20 self-saved pages; older ones are deleted.
 - **Snapshots:** They contain only the documents of the instance. `restore_snapshot` does not restore uploaded files or self-saved pages.

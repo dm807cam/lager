@@ -31,7 +31,7 @@ Every release and every commit on `main` is published as a multi-architecture im
 | Tag | Contains |
 | --- | --- |
 | `ghcr.io/dm807cam/lager:latest` | the newest release |
-| `ghcr.io/dm807cam/lager:1`, `:1.2`, `:1.2.3` | a release line or one exact release |
+| `ghcr.io/dm807cam/lager:1`, `:1.2`, `:1.2.3` | a release line or one exact release (while Lager is 0.x there is no `:0`, because every minor release may break: pin `:0.4` or `:0.4.1`) |
 | `ghcr.io/dm807cam/lager:edge` | the current `main` branch, for testing |
 
 To run a published image, replace `build: .` in `docker-compose.yml` with `image: ghcr.io/dm807cam/lager:latest` and start with `docker compose up -d`. To update, run `docker compose pull && docker compose up -d`. Your data stays in the volume. Back it up before a major version change (see [Backup](data-and-backup.md#backup)).
@@ -64,10 +64,10 @@ Lager sends mail for verifying email addresses, resetting passwords and invitati
 
 ```sh
 LAGER_SMTP_URL=smtps://lager%40example.com:secret@smtp.example.com:465
-LAGER_MAIL_FROM=Lager <lager@example.com>
+LAGER_MAIL_FROM="Lager <lager@example.com>"
 ```
 
-Special characters in the user name and password of the URL must be percent-encoded (`@` becomes `%40`). If `LAGER_MAIL_FROM` is missing, the sender is `Lager <no-reply@<host of LAGER_PUBLIC_URL>>`. If sending fails, Lager writes the error to the log and shows users no error message.
+Keep the quotes around `LAGER_MAIL_FROM`: without them, loading `.env` in a shell (`set -a; . ./.env`) reads `<` as a redirect. Docker Compose accepts the quotes as well. Special characters in the user name and password of the URL must be percent-encoded (`@` becomes `%40`). If `LAGER_MAIL_FROM` is missing, the sender is `Lager <no-reply@<host of LAGER_PUBLIC_URL>>`. If sending fails, Lager writes the error to the log and shows users no error message.
 
 Without `LAGER_SMTP_URL` Lager runs completely, just without mail:
 

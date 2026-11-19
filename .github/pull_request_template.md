@@ -21,7 +21,7 @@ Fixes #
 
 - [ ] `npm run typecheck`, `npm test` and `npm run build` pass locally
 - [ ] New or changed behaviour is covered by tests
-- [ ] Documentation in `docs/` (and `src/guide.md` plus `skill/lager/SKILL.md`, if Claude needs to know) is updated
+- [ ] Documentation in `docs/` (and `src/guide.md` plus `skill/lager/SKILL.md`, if assistants building apps need to know) is updated
 - [ ] New interface text goes through the i18n catalogs, with every language filled in
 - [ ] Every commit is signed off (`git commit -s`), see [DCO](https://github.com/dm807cam/lager/blob/main/CONTRIBUTING.md#signing-off-your-work-dco)
 - [ ] If AI tools helped, I say which and for what, and I have reviewed and run all of the code myself

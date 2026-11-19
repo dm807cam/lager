@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thank you for helping to bring Lager to more people! Adding a language takes one file, see [Translations](https://github.com/dm807cam/lager/blob/main/CONTRIBUTING.md#translations).
+        Thank you for helping to bring Lager to more people! Adding a language takes one catalog file and two small registrations, see [Translations](https://github.com/dm807cam/lager/blob/main/CONTRIBUTING.md#translations).
   - type: input
     id: language
     attributes:

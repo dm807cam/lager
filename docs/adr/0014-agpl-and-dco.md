@@ -9,7 +9,7 @@ Lager is a network service. Under a permissive license, someone could run a modi
 
 ## Decision
 
-Lager is licensed under the GNU Affero General Public License, version 3 or later. Contributions are accepted under the same license ("inbound = outbound"). There is no contributor license agreement. Instead, contributors sign off every commit under the Developer Certificate of Origin (`git commit -s`), and CI checks the sign-off on pull requests.
+Lager is licensed under the GNU Affero General Public License, version 3 or later. Contributions are accepted under the same license ("inbound = outbound"). There is no contributor license agreement. Instead, contributors sign off every commit under the Developer Certificate of Origin (`git commit -s`), and CI checks on pull requests that every commit carries a sign-off with its author's address. Bot commits are exempt, and so are pull requests the repository owner opens, because the owner answers for what they merge.
 
 ## Consequences
 

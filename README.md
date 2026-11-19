@@ -43,7 +43,7 @@ Ask an AI assistant such as Claude or ChatGPT for a shopping list your family sh
 - 🧠 **Bring your own model.** Apps that call `lager.complete()` use a model you connect: Anthropic, OpenAI, OpenRouter, Mistral, a local Ollama, or any OpenAI-compatible server. You set the limits per person.
 - 📱 **Feels like a real app.** Icons, theme colours and home-screen install for every app, in light and dark mode.
 - 🔒 **Yours.** One Node.js process, SQLite and a data directory. No other services and no telemetry: the server only contacts the outside world when you set up mail or connect a model.
-- 🌍 **Multilingual.** The interface is available in English, German, French and Spanish, and [adding a language](CONTRIBUTING.md#translations) takes one file.
+- 🌍 **Multilingual.** The interface is available in English, German, French and Spanish, and [adding a language](CONTRIBUTING.md#translations) takes one catalog file and two small registrations.
 
 ## How it works
 
@@ -121,7 +121,7 @@ All documentation lives in [`docs/`](docs/README.md):
 
 Lager is young, and there is room to shape it. Writing code is only one of many ways to help:
 
-- 🌍 **Translate** the interface into your language. One file, and the tests check it for you. [How to add a language](CONTRIBUTING.md#translations)
+- 🌍 **Translate** the interface into your language. Mostly one file, and the tests check it for you. [How to add a language](CONTRIBUTING.md#translations)
 - 🧩 **Share an example app** that shows what Lager can do. [Example apps](CONTRIBUTING.md#example-apps)
 - 🐛 **Report a bug** or **suggest an idea** in the [issue tracker](https://github.com/dm807cam/lager/issues/new/choose).
 - 📖 **Improve the documentation.** If something confused you, it will confuse the next person too.
@@ -137,7 +137,7 @@ git clone https://github.com/dm807cam/lager.git && cd lager
 npm ci
 cp .env.example .env && set -a && . ./.env && set +a
 LAGER_DATA_DIR=./data npm run dev    # platform at http://localhost:8080, apps at http://<slug>.apps.localhost:8080
-npm test                             # about 900 tests, under a minute
+npm test                             # about 900 tests, under a minute (Node 22.22+)
 ```
 
 ## Security

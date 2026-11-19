@@ -4,7 +4,7 @@ What an app can use on Lager through `window.lager`, and how icons and home-scre
 
 ## Building blocks
 
-An app gets additional functions through `await lager.use("<name>")`. The call never throws and returns `null` when the instance does not offer the building block. A building block is available only if the active version declares it in `capabilities` (except `permissions`). At deploy time you pass `capabilities` as JSON, for example as a query parameter of `PUT /api/apps/<slug>` or as an argument of `deploy_app`. The example [`examples/board.html`](../examples/board.html) (a shared pin board) uses `db`, `user`, `assets`, `room` and `downloads`:
+An app gets additional functions through `await lager.use("<name>")`. The call never throws and returns `null` when the instance does not offer the building block. `db` (for every viewer with an access level), `user` and `permissions` are always there; declaring `db` and `user` adds rules and scopes. Every other building block is available only if the active version declares it in `capabilities`. At deploy time you pass `capabilities` as JSON, for example as a query parameter of `PUT /api/apps/<slug>` or as an argument of `deploy_app`. The example [`examples/board.html`](../examples/board.html) (a shared pin board) uses `db`, `user`, `assets`, `room` and `downloads`:
 
 ```sh
 curl -X PUT -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: text/html" \
