@@ -32,10 +32,10 @@ const API = { ...JSON_HEADERS, 'X-Lager-Request': '1' };
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
 async function boot() {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-e2e-stage3-'));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-e2e-blocks-'));
   const config: Config = {
     dataDir, port: 0, defaultLocale: 'en', publicUrl: new URL(`http://${PLATFORM}`), appsDomain: 'apps.localhost',
-    adminEmail: 'admin@x.y', adminPassword: 'admin-password-1', secret: 'e2e-stage3-secret', snapshotKeep: 20, trustProxy: false,
+    adminEmail: 'admin@x.y', adminPassword: 'admin-password-1', secret: 'e2e-blocks-secret', snapshotKeep: 20, trustProxy: false,
     instanceQuotaBytes: 50 * 1024 * 1024,
   };
   const core = createCore(config, { mailer: new MemoryMailer() });
@@ -109,7 +109,7 @@ const parse = (res: Res): any => JSON.parse(res.body);
 const lines = (res: Res): Array<{ path: string; data: unknown }> =>
   res.body.split('\n').filter((l) => l.trim() !== '').map((l) => JSON.parse(l) as { path: string; data: unknown }).sort((a, b) => a.path.localeCompare(b.path));
 
-describe('stage 3 end to end', () => {
+describe('building blocks end to end', () => {
   it('assets, room, self-publish, custom domain, export/import', async () => {
     const { call, openStream } = await boot();
     const hostOf = (slug: string): string => `${slug}.apps.localhost:8080`;
@@ -156,7 +156,7 @@ describe('stage 3 end to end', () => {
     const grant = (slug: string, email: string, level: string): Promise<Res> =>
       call(PLATFORM, 'PUT', `/api/instances/${slug}/grants`, { headers: { ...petra, ...JSON_HEADERS }, body: JSON.stringify({ email, level }) });
 
-    // 1. The publisher deploys the example with every Stage 3 capability declared: no warnings.
+    // 1. The publisher deploys the example with every building block it uses declared: no warnings.
     const d1 = await deploy('board', board, BOARD_CAPS);
     expect(d1.status).toBe(200);
     expect(parse(d1)).toMatchObject({ app: 'board', version: 1, warnings: ['No icon supplied; a generated one is used. Pass icon_svg to set your own.'], pinned: [] });

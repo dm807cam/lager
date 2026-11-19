@@ -492,8 +492,9 @@ const TOOL_META: Record<ToolName, { title: string; annotations: ToolAnnotations 
   activate_version: { title: 'Activate version', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
   create_instance: { title: 'Create instance', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false } },
   set_auto_update: { title: 'Set automatic updates', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
-  set_visibility: { title: 'Set visibility', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
-  share_instance: { title: 'Share instance', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
+  // Visibility and grants can withdraw access or expose data to everyone: not additive, so destructive.
+  set_visibility: { title: 'Set visibility', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
+  share_instance: { title: 'Share instance', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   unshare_instance: { title: 'Withdraw access', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
   list_shares: { title: 'List shares', annotations: { readOnlyHint: true } },
   add_domain: { title: 'Add custom domain', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },

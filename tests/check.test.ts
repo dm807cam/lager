@@ -61,8 +61,30 @@ describe('checkApp', () => {
       'The app uses window.claude, which does not exist on Lager - use window.lager with the same calls (lager.use, lager.complete).',
       'The app uses window.storage, which does not exist on Lager - keep the data in lager.use("db") instead.',
     ]);
-    expect(checkApp('<script>const s = await storage.get("k")</script>').warnings).toHaveLength(1);
-    expect(checkApp('<script>sessionStorage.get("k"); db.storage.get("x")</script>').warnings.some((w) => w.includes('window.storage'))).toBe(false);
+    expect(checkApp('<script>globalThis.storage.list("")</script>').warnings).toHaveLength(1);
+  });
+
+  it('does not mistake an app variable called storage for claude.ai storage', () => {
+    const r = checkApp('<script>const storage = await lager.use("assets"); await storage.list(); await storage.delete(id)</script>', { assets: {} });
+    expect(r.warnings).toEqual([]);
+  });
+
+  it('warns when the app declares its own lager, which hides the runtime', () => {
+    for (const html of ['<script>var lager = []</script>', '<script>const lager = {items: []}</script>', '<script>function lager() {}</script>']) {
+      expect(checkApp(html).warnings, html).toEqual(['The app declares its own "lager", which hides the Lager runtime; rename that variable.']);
+    }
+    expect(checkApp('<script>const lagerItems = []; window.lager.use("db")</script>', { db: {} }).warnings).toEqual([]);
+  });
+
+  it('names the Lager capability when an app uses or declares a claude.ai name', () => {
+    const used = checkApp('<script>lager.use("artifact")</script>', {});
+    expect(used.warnings).toEqual(['"artifact" is not provided by Lager; lager.use("artifact") returns null. On Lager this is called "page".']);
+    const declared = checkApp('<script>lager.use("page")</script>', { page: {}, self: {}, future: {} });
+    expect(declared.warnings).toEqual([
+      '"self" is declared in capabilities, but Lager has no such capability. On Lager this is called "page".',
+      '"future" is declared in capabilities, but Lager has no such capability.',
+    ]);
+    expect(checkApp('<script>lager.complete("x")</script>', { complete: {} }).warnings.some((w) => w.includes('no such capability'))).toBe(false);
   });
 
   it('without a declaration given every used supported capability is undeclared', () => {

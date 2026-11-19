@@ -32,12 +32,16 @@ describe('not found on an instance host', () => {
 describe('consent page emphasis', () => {
   it('wraps the client name and the redirect host in strong, escaping both', () => {
     for (const locale of LOCALES) {
-      const html = consentPage(locale, '<script>alert(1)</script>', 'claude.ai', 'Ann <i>', {});
+      const html = consentPage(locale, '<script>alert(1)</script>', { kind: 'web', target: 'claude.ai' }, 'Ann <i>', {});
       expect(html, locale).toContain('<strong>&lt;script&gt;alert(1)&lt;/script&gt;</strong>');
       expect(html, locale).toContain('<strong>claude.ai</strong>');
       expect(html, locale).not.toContain('<script>');
       expect(html, locale).toContain('Ann &lt;i&gt;');
       expect(html, locale).not.toContain('\u0001');
+      // An app's own scheme gets the wording for apps on this device, with the address escaped and emphasised.
+      const app = consentPage(locale, 'Cursor', { kind: 'app', target: 'my<app>:/cb' }, 'Ann', {});
+      expect(app, locale).toContain('<strong>my&lt;app&gt;:/cb</strong>');
+      expect(app, locale).not.toContain('\u0001');
     }
   });
 });

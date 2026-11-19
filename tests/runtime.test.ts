@@ -884,7 +884,7 @@ describe('permissions', () => {
     expect(await p.state('mcp')).toBe('unavailable');
     expect(await p.request()).toEqual({ db: 'granted', user: 'granted' });
     expect(await p.request(['db'])).toEqual({ db: 'granted' });
-    expect(await p.manage()).toBeUndefined();
+    expect(Object.keys(p).sort()).toEqual(['request', 'state']);
   });
 
   it('db is unavailable when the session is not', async () => {
@@ -1216,7 +1216,7 @@ describe('room', () => {
     expect(await again).not.toBe(game);
   });
 
-  it('join rejects when the room cannot be opened, and is limited to 16 rooms', async () => {
+  it('join rejects when the room cannot be opened, and is limited to 7 rooms (the server admits 8 streams with the lobby)', async () => {
     withRoom();
     const room = await boot().use('room');
     const failing = room.join('nope');
@@ -1224,13 +1224,13 @@ describe('room', () => {
     es().emit('error');
     expect(await code(failing)).toBe('upstream_error');
     expect(es().closed).toBe(true);
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < 7; i++) {
       const p = room.join('r' + i);
       await tick(0);
       es().emit('hello', { peer: 'x' + i, peers: [] });
       await p;
     }
-    expect(await code(room.join('r16'))).toBe('limit_reached');
+    expect(await code(room.join('r7'))).toBe('limit_reached');
   });
 
 });
@@ -1356,8 +1356,13 @@ describe('page', () => {
   it('is null when not declared, and shows up in permissions when declared', async () => {
     declare({});
     expect(await boot().use('page')).toBeNull();
-    expect(await boot().use('artifact')).toBeNull();
-    expect(await boot().use('self')).toBeNull();
+    // The claude.ai names are not aliases: declaring them grants nothing.
+    declare({ artifact: {}, self: {} });
+    const lager = boot();
+    expect(await lager.use('page')).toBeNull();
+    expect(await lager.use('artifact')).toBeNull();
+    expect(await lager.use('self')).toBeNull();
+    expect(await (await lager.use('permissions')).state('page')).toBe('unavailable');
     declare();
     const p = await boot().use('permissions');
     expect(await p.state('page')).toBe('granted');
@@ -1520,9 +1525,8 @@ describe('downloads', () => {
     expect(await code(downloads.save({ filename: `${'\u20AC'.repeat(81)}.txt`, data: 'x' }))).toBe('bad_request');
     for (const name of ['.txt', ' .csv', 'dir/.json']) expect(await code(downloads.save({ filename: name, data: 'x' })), name).toBe('rejected_extension');
     confirm.mockClear();
-    expect(await code(downloads.save({ filename: 'a.txt', data: 'x', request: 'tok-1' } as never))).toBe('request_unknown');
-    expect(await code(downloads.save({ filename: 'a.txt', data: 'x', request: 7 } as never))).toBe('bad_request');
-    expect(await code(downloads.save({ filename: 'a.txt', data: 'x', request: null } as never))).toBe('resolved');
+    // There are no export requests on Lager: an extra field is simply ignored.
+    expect(await code(downloads.save({ filename: 'a.txt', data: 'x', request: 'tok-1' } as never))).toBe('resolved');
     expect(confirm).toHaveBeenCalledTimes(1);
   });
 

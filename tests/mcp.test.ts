@@ -72,6 +72,16 @@ describe('mcp endpoint', () => {
     expect(g.json.guide).toBe(guide);
   });
 
+  it('every tool the guide names exists', async () => {
+    const r = await start();
+    const client = await connect(r);
+    const registered = new Set((await client.listTools()).tools.map((t) => t.name));
+    const TOOL_LIKE = /`((?:activate|add|check|create|db|deploy|export|get|import|list|remove|restore|set|share|unshare)_[a-z_]+)\b/g;
+    const named = [...new Set([...guide.matchAll(TOOL_LIKE)].map((m) => m[1]))];
+    expect(named.length).toBeGreaterThan(15);
+    for (const name of named) expect(registered.has(name), `guide names ${name}`).toBe(true);
+  });
+
   it('tools carry titles and annotations, and schemas that other MCP clients accept', async () => {
     const r = await start();
     const client = await connect(r);
@@ -85,18 +95,19 @@ describe('mcp endpoint', () => {
     const readOnly = tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name).sort();
     expect(readOnly).toEqual(['check_app', 'export_data', 'get_app', 'get_guide', 'get_version', 'list_apps', 'list_shares', 'list_snapshots', 'db_read'].sort());
     const destructive = tools.filter((t) => t.annotations?.destructiveHint === true).map((t) => t.name).sort();
-    expect(destructive).toEqual(['db_write', 'import_data', 'remove_domain', 'restore_snapshot', 'unshare_instance']);
+    expect(destructive).toEqual(['db_write', 'import_data', 'remove_domain', 'restore_snapshot', 'set_visibility', 'share_instance', 'unshare_instance']);
     const deploy = tools.find((t) => t.name === 'deploy_app')!;
     const caps = (deploy.inputSchema.properties as Record<string, { properties?: Record<string, unknown> }>).capabilities;
     expect(Object.keys(caps.properties ?? {})).toEqual(['db', 'user', 'assets', 'room', 'page', 'downloads', 'complete']);
     expect(deploy.description).toContain('get_guide');
   });
 
-  it('deploy_app keeps capability names it does not list, which the check reports as unsupported', async () => {
+  it('deploy_app keeps capability names the schema does not list, and warns about them', async () => {
     const r = await start();
     const client = await connect(r);
     const res = await call(client, 'deploy_app', { slug: 'selfie', html: '<!doctype html><p>hi</p>', capabilities: { future: {}, db: { rules: [] } } });
     expect(res.isError).toBe(false);
+    expect(res.json.warnings).toContain('"future" is declared in capabilities, but Lager has no such capability.');
     const version = await client.callTool({ name: 'get_version', arguments: { app: 'selfie' } });
     const meta = JSON.parse((version.content as Array<{ text: string }>)[0].text);
     expect(Object.keys(meta.capabilities).sort()).toEqual(['db', 'future']);

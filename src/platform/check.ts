@@ -19,8 +19,16 @@ const COMPLETE_RE = /\blager\s*\.\s*complete\s*\(/;
  */
 const FOREIGN_CHECKS: { api: string; re: RegExp; fix: string }[] = [
   { api: 'window.claude', re: /\bclaude\s*\.\s*(use|complete)\s*\(/, fix: 'use window.lager with the same calls (lager.use, lager.complete)' },
-  { api: 'window.storage', re: /\bwindow\s*\.\s*storage\b|(^|[^.\w$])storage\s*\.\s*(get|set|delete|list)\s*\(/m, fix: 'keep the data in lager.use("db") instead' },
+  // Only the global itself: a variable an app happens to call `storage` (an assets namespace, a helper) is not claude.ai's API.
+  { api: 'window.storage', re: /\b(window|globalThis)\s*\.\s*storage\b/, fix: 'keep the data in lager.use("db") instead' },
 ];
+
+/** Names claude.ai uses for capabilities that exist on Lager under another name. */
+const RENAMED: Record<string, string> = { artifact: 'page', self: 'page' };
+const renameHint = (n: string): string => (RENAMED[n] ? ` On Lager this is called "${RENAMED[n]}".` : '');
+
+/** An app variable called `lager` hides or replaces the runtime, and every lager.use() call then fails. */
+const SHADOW_RE = /\b(var|let|const|function|class)\s+lager\b/;
 
 /** One English warning per browser-storage API, and per API of another app host, that the HTML uses. */
 function storageWarnings(html: string): string[] {
@@ -49,7 +57,10 @@ export function checkApp(html: string, capabilities: Capabilities = {}): AppChec
     ...(callsComplete && !declared('complete') ? ['complete'] : [])];
   const warnings = [
     ...storageWarnings(html),
-    ...unsupported.map((n) => `"${n}" is not provided by Lager; lager.use("${n}") returns null.`),
+    ...(SHADOW_RE.test(html) ? ['The app declares its own "lager", which hides the Lager runtime; rename that variable.'] : []),
+    ...unsupported.map((n) => `"${n}" is not provided by Lager; lager.use("${n}") returns null.${renameHint(n)}`),
+    ...Object.keys(capabilities).filter((n) => !SUPPORTED_CAPABILITIES.includes(n) && n !== 'complete' && !used.includes(n))
+      .map((n) => `"${n}" is declared in capabilities, but Lager has no such capability.${renameHint(n)}`),
     ...undeclared.map((n) => n === 'complete' ? 'lager.complete is used but "complete" is not declared in capabilities; the call rejects.' : `"${n}" is used but not declared in capabilities.`),
     ...(callsComplete ? ['lager.complete calls the language model the server administrator set up; it rejects when none is set up, for guests and for viewers who may only view.'] : []),
   ];

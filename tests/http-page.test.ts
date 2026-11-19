@@ -106,6 +106,15 @@ function events(env: Env, cookie: string, host = HOST): Promise<{ next(event: st
 }
 
 describe('POST /__lager/page', () => {
+  it('claude.ai names grant nothing, and the old route does not exist', async () => {
+    const env = await setup();
+    env.core.apps.deploy({ slug: 'plain', html: '<p>old names</p>', userId: env.admin.id, capabilities: { artifact: {}, self: {} } });
+    const r = await publish(env, env.ownerPlain, { html: '<!doctype html><p>y</p>', baseVersion: 2 }, PLAIN);
+    expect([r.status, r.body.error.code]).toEqual([403, 'not_declared']);
+    const old = await request(env, 'POST', '/__lager/artifact', HOST, env.owner, JSON.stringify({ html: '<!doctype html><p>y</p>', baseVersion: 1 }), { 'X-Lager-Request': '1' });
+    expect(old.status).toBe(404);
+  });
+
   it('owner publishes; the page then serves the new html', async () => {
     const env = await setup();
     const res = await publish(env, env.owner, { html: '<!doctype html><p>voted</p>', baseVersion: 1 });

@@ -613,7 +613,8 @@
   var ROOM_MAX_BYTES = 4096;
   var PRESENCE_MAX_BYTES = 2048;
   var ROOM_MAX_DEPTH = 8;
-  var ROOM_MAX_JOINED = 16;
+  // The server admits 8 streams per viewer and instance; the lobby takes one, so a page can join 7 named rooms.
+  var ROOM_MAX_JOINED = 7;
   var PRESENCE_FLUSH_MS = 50;
   var PRESENCE_RETRY_MS = 1000;
   var FIRST_CONNECT_WAIT_MS = 5000;
@@ -1249,11 +1250,6 @@
         if (!request || typeof request !== 'object' || typeof request.filename !== 'string' || request.filename.length > 512) {
           throw downloadError('bad_request', 'save expects {filename, data}.');
         }
-        // Lager issues no export requests, so any token a page names is unknown.
-        if (request.request !== undefined && request.request !== null) {
-          if (typeof request.request !== 'string') throw downloadError('bad_request', 'request must be a string.');
-          throw downloadError('request_unknown', 'No export request with this token is open.');
-        }
         var name = downloadName(request.filename);
         if (name === '') throw downloadError('bad_request', 'The filename is empty.');
         if (new Blob([name]).size > DOWNLOAD_NAME_MAX_BYTES) throw downloadError('bad_request', 'The filename is longer than 240 bytes.');
@@ -1300,7 +1296,6 @@
         names.forEach(function (n) { o[n] = one(n); });
         return Promise.resolve(o);
       },
-      manage: function () { return Promise.resolve(undefined); },
     });
   }
 

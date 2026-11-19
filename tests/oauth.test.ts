@@ -115,7 +115,8 @@ describe('oauth', () => {
     const q = authorizeQuery(reg.body.client_id, challenge, { redirect_uri: redirect, resource: `${BASE}/mcp` });
     const consent = await request(h.app).get(`/authorize?${q}`).set('Host', h.host).set('Cookie', cookie);
     expect(consent.status).toBe(200);
-    expect(consent.text).toContain('cursor://anysphere.cursor-mcp');
+    expect(consent.text).toContain('cursor://anysphere.cursor-mcp/oauth/callback');
+    expect(consent.text).toContain('the app on this device');
     const approve = await request(h.app).post('/authorize').set('Host', h.host).set('Cookie', cookie).type('form')
       .send({ ...hiddenFields(consent.text), decision: 'approve' });
     expect(approve.status).toBe(302);
@@ -342,5 +343,22 @@ describe('oauth', () => {
     const dump = JSON.stringify(db.prepare('SELECT * FROM oauth_clients').all());
     db.close();
     expect(dump).not.toContain(client.client_secret!);
+  });
+
+  it('a scheme that looks like a domain is shown as an app link, not as that website', async () => {
+    const h = setup();
+    const cookie = await h.login();
+    const redirect = 'chatgpt.com:/connector_platform_oauth_redirect';
+    const reg = await request(h.app).post('/register').set('Host', h.host)
+      .send({ redirect_uris: [redirect], client_name: 'ChatGPT', token_endpoint_auth_method: 'none' });
+    expect(reg.status).toBe(201);
+    const { challenge } = pkce();
+    const page = await request(h.app).get(`/authorize?${authorizeQuery(reg.body.client_id, challenge, { redirect_uri: redirect })}`)
+      .set('Host', h.host).set('Cookie', cookie);
+    expect(page.status).toBe(200);
+    // The whole address is named, in the wording for apps on this device, never "you will be sent on to chatgpt.com:".
+    expect(page.text).toContain('<strong>chatgpt.com:/connector_platform_oauth_redirect</strong>');
+    expect(page.text).toContain('the app on this device');
+    expect(page.text).not.toContain('you will be sent on to');
   });
 });

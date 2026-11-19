@@ -193,6 +193,11 @@ export function openPlatformDb(dataDir: string): DatabaseSync {
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');
   const row = db.prepare('PRAGMA user_version').get() as { user_version: number };
+  if (row.user_version > MIGRATIONS.length) {
+    db.close();
+    throw new Error(`${path.join(dataDir, 'platform.sqlite')} has schema version ${row.user_version}, but this Lager knows only ${MIGRATIONS.length}. `
+      + 'It was created by a newer or a pre-release build; use that build, or start with an empty data directory.');
+  }
   for (let v = row.user_version; v < MIGRATIONS.length; v++) {
     db.exec('BEGIN');
     try {

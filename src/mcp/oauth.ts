@@ -57,11 +57,15 @@ function redirectUriAllowed(uri: string): boolean {
   return /^[a-z][a-z0-9+.-]*:$/.test(u.protocol) && !UNSAFE_SCHEMES.has(u.protocol) && !u.username && !u.password;
 }
 
-/** What the consent page shows as the destination: the host for web redirects, scheme and host for an app's own scheme. */
-export function redirectTarget(uri: string): string {
+/**
+ * What the consent page names as the destination: the host of a web redirect, or, for an app's own scheme, the whole
+ * address without query (`com.example.app:/cb`), so a scheme that looks like a domain (`chatgpt.com:`) is not shown
+ * as if it were that website. The page words the two cases differently.
+ */
+export function redirectTarget(uri: string): { kind: 'web' | 'app'; target: string } {
   const u = new URL(uri);
-  if (u.protocol === 'https:' || u.protocol === 'http:') return u.host;
-  return u.host ? `${u.protocol}//${u.host}` : u.protocol;
+  if (u.protocol === 'https:' || u.protocol === 'http:') return { kind: 'web', target: u.host };
+  return { kind: 'app', target: `${u.protocol}${u.host ? '//' + u.host : ''}${u.pathname}` };
 }
 
 /** Persistence for OAuth clients, authorization codes and tokens. Codes and tokens are stored as SHA-256 only. */
@@ -240,7 +244,7 @@ export class LagerOAuthProvider implements OAuthServerProvider {
     };
   }
 
-  /** The protected resource is the platform origin; a requested resource must live on it. */
+  /** The protected resource is `<origin>/mcp`; Lager treats the whole platform origin as one audience, so a requested resource must live on it. */
   private checkResource(resource: URL | undefined): void {
     if (resource && resource.origin !== this.core.config.publicUrl.origin) {
       throw new InvalidTargetError('Unknown resource.');

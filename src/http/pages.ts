@@ -180,10 +180,10 @@ const emphasise = (text: string, marks: Record<string, string>): string =>
   Object.entries(marks).reduce((html, [mark, value]) => html.replaceAll(mark, () => `<strong>${esc(value)}</strong>`), esc(text));
 
 /** OAuth consent: names the connecting client and where the browser is sent afterwards. Deny comes first, so Enter never approves. */
-export function consentPage(locale: Locale, clientName: string, redirectHost: string, userName: string, fields: Record<string, string>): string {
+export function consentPage(locale: Locale, clientName: string, redirect: { kind: 'web' | 'app'; target: string }, userName: string, fields: Record<string, string>): string {
   return page(locale, t(locale, 'consent.title'), authCard(`<div class="auth-icon">${icon('shield')}</div><h1>${esc(t(locale, 'consent.heading'))}</h1>
 <div class="consent-who"><p>${emphasise(t(locale, 'consent.text', { client: CLIENT_MARK }), { [CLIENT_MARK]: clientName })}</p>
-<p>${emphasise(t(locale, 'consent.signedIn', { user: userName, host: HOST_MARK }), { [HOST_MARK]: redirectHost })}</p></div>
+<p>${emphasise(t(locale, redirect.kind === 'web' ? 'consent.signedIn' : 'consent.signedInApp', { user: userName, host: HOST_MARK }), { [HOST_MARK]: redirect.target })}</p></div>
 <form method="post" action="/authorize">
 ${hidden(fields)}
 <div class="consent-actions"><button type="submit" name="decision" value="deny" class="${btn('secondary')}">${esc(t(locale, 'consent.deny'))}</button>

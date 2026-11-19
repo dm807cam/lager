@@ -127,7 +127,7 @@ export class Apps {
 
   constructor(private db: DatabaseSync, private dataDir: string, private users: Users, private settings?: Settings) {}
 
-  /** Replaces the Stage 1 owner-only rule for deploy, activate, visibility and users-level changes. */
+  /** Who may deploy, activate versions and change visibility or the users level (owner, collaborators, instance managers). */
   setChecks(checks: AccessChecks): void {
     this.checks = checks;
   }

@@ -43,6 +43,14 @@ describe('catalogs', () => {
     expect(t('en', 'brand.pitch')).toBe('We used to buy apps. Now your AI builds any app you can imagine, on the spot. Lager is where they run — on your server, with your data staying yours.');
   });
 
+  it('no catalog names an API that apps do not have', () => {
+    for (const locale of LOCALES) {
+      for (const key of Object.keys({ en, de, fr, es }[locale]) as MessageKey[]) {
+        expect(t(locale, key), `${locale}:${key}`).not.toMatch(/claude\.(use|complete)|window\.(claude|storage)|check_artifact/);
+      }
+    }
+  });
+
   it('translations differ from English for the main strings', () => {
     for (const locale of ['de', 'fr', 'es'] as const) {
       for (const key of ['login.title', 'login.submit', 'brand.tagline', 'mail.verify.subject'] as const) {
