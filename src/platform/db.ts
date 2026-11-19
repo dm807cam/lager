@@ -201,6 +201,17 @@ export const MIGRATIONS: string[] = [
   INSERT INTO ai_groups (id, name, model_id, hourly_limit, created_at)
     VALUES ('default', '', NULL, 60, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
   `,
+  `
+  -- A visitor's agreement that an instance they reach through its visibility alone learns who they are; \`email\` says
+  -- whether the agreement covered the address. Gone with the instance and with the account.
+  CREATE TABLE instance_signins (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+    email INTEGER NOT NULL DEFAULT 0,
+    confirmed_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, instance_id)
+  );
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

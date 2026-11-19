@@ -14,13 +14,13 @@ beforeEach(() => {
 });
 
 describe('Users', () => {
-  it('creates and verifies', () => {
+  it('creates and verifies', async () => {
     const u = users.create({ email: 'Ann@Example.com', name: 'Ann', password: 'pw-123', role: 'publisher' });
     expect(u.role).toBe('publisher');
-    expect(users.verifyPassword('Ann@Example.com', 'pw-123')).toEqual(u);
-    expect(users.verifyPassword('ann@example.com', 'pw-123')?.id).toBe(u.id);
-    expect(users.verifyPassword('ann@example.com', 'wrong')).toBeNull();
-    expect(users.verifyPassword('nobody@example.com', 'pw-123')).toBeNull();
+    expect(await users.verifyPassword('Ann@Example.com', 'pw-123')).toEqual(u);
+    expect((await users.verifyPassword('ann@example.com', 'pw-123'))?.id).toBe(u.id);
+    expect(await users.verifyPassword('ann@example.com', 'wrong')).toBeNull();
+    expect(await users.verifyPassword('nobody@example.com', 'pw-123')).toBeNull();
     expect(users.get(u.id)).toEqual(u);
     expect(users.getByEmail('ANN@example.com')).toEqual(u);
     expect(users.list()).toHaveLength(1);
@@ -66,19 +66,19 @@ describe('Users', () => {
     expect(users.get(v.id)?.verified).toBe(false);
   });
 
-  it('checkLogin reasons', () => {
+  it('checkLogin reasons', async () => {
     const a = users.create({ email: 'a@b.c', name: 'A', password: 'correct-horse', role: 'user' });
     users.create({ email: 'u@b.c', name: 'U', password: 'correct-horse', role: 'user', verified: false });
-    expect(users.checkLogin('a@b.c', 'correct-horse')).toMatchObject({ ok: true, user: { id: a.id } });
-    expect(users.checkLogin('a@b.c', 'wrong')).toEqual({ ok: false, reason: 'invalid' });
-    expect(users.checkLogin('nobody@b.c', 'wrong')).toEqual({ ok: false, reason: 'invalid' });
-    expect(users.checkLogin('u@b.c', 'correct-horse')).toEqual({ ok: false, reason: 'unverified' });
-    expect(users.checkLogin('u@b.c', 'wrong')).toEqual({ ok: false, reason: 'invalid' });
+    expect(await users.checkLogin('a@b.c', 'correct-horse')).toMatchObject({ ok: true, user: { id: a.id } });
+    expect(await users.checkLogin('a@b.c', 'wrong')).toEqual({ ok: false, reason: 'invalid' });
+    expect(await users.checkLogin('nobody@b.c', 'wrong')).toEqual({ ok: false, reason: 'invalid' });
+    expect(await users.checkLogin('u@b.c', 'correct-horse')).toEqual({ ok: false, reason: 'unverified' });
+    expect(await users.checkLogin('u@b.c', 'wrong')).toEqual({ ok: false, reason: 'invalid' });
     users.create({ email: 'root@b.c', name: 'R', password: 'correct-horse', role: 'admin' });
     users.setDisabled(a.id, true);
-    expect(users.checkLogin('a@b.c', 'correct-horse')).toEqual({ ok: false, reason: 'disabled' });
-    expect(users.checkLogin('a@b.c', 'wrong')).toEqual({ ok: false, reason: 'invalid' });
-    expect(users.verifyPassword('a@b.c', 'correct-horse')).toBeNull();
+    expect(await users.checkLogin('a@b.c', 'correct-horse')).toEqual({ ok: false, reason: 'disabled' });
+    expect(await users.checkLogin('a@b.c', 'wrong')).toEqual({ ok: false, reason: 'invalid' });
+    expect(await users.verifyPassword('a@b.c', 'correct-horse')).toBeNull();
   });
 
   it('cannot demote or disable the last active admin', () => {
@@ -99,15 +99,15 @@ describe('Users', () => {
     expect(users.setRole(a1.id, 'user').role).toBe('user');
   });
 
-  it('setPassword enforces length and bumps the epoch', () => {
+  it('setPassword enforces length and bumps the epoch', async () => {
     const u = users.create({ email: 'a@b.c', name: 'A', password: 'old', role: 'user' });
     expect(MIN_PASSWORD_LENGTH).toBe(10);
-    expect(() => users.setPassword(u.id, '123456789')).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+    await expect(users.setPassword(u.id, '123456789')).rejects.toEqual(expect.objectContaining({ code: 'invalid_argument' }));
     expect(users.get(u.id)?.sessionEpoch).toBe(0);
-    users.setPassword(u.id, '1234567890');
+    await users.setPassword(u.id, '1234567890');
     expect(users.get(u.id)?.sessionEpoch).toBe(1);
-    expect(users.verifyPassword('a@b.c', 'old')).toBeNull();
-    expect(users.verifyPassword('a@b.c', '1234567890')?.id).toBe(u.id);
+    expect(await users.verifyPassword('a@b.c', 'old')).toBeNull();
+    expect((await users.verifyPassword('a@b.c', '1234567890'))?.id).toBe(u.id);
   });
 
   it('disabling bumps the epoch, enabling does not', () => {

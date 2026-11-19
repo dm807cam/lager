@@ -415,6 +415,12 @@ describe('error pages, notices and mail in every locale', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       const kinds = ['verify', 'reset', 'invite'] as const;
       expect(mailer.sent, locale).toHaveLength(3);
+      // The fourth mail: somebody registers with an address that already has an account.
+      h.core.accounts.noticeExistingAccount(email, locale);
+      const exists = mailer.sent[3];
+      expect(exists.subject, locale).toBe(t(locale, 'mail.exists.subject'));
+      for (const part of ['intro', 'reset', 'ignore'] as const) expect(exists.text, locale).toContain(t(locale, `mail.exists.${part}`));
+      if (locale !== 'en') expect(exists.text, locale).not.toContain(t('en', 'mail.exists.intro'));
       for (const kind of kinds) {
         const mail = mailer.sent.find((m) => m.subject === t(locale, `mail.${kind}.subject`));
         expect(mail, `${locale} ${kind}`).toBeDefined();

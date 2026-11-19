@@ -48,6 +48,8 @@ This choice needs no domain: the addresses are names on [sslip.io](https://sslip
 
 The devices also need internet access to resolve the names. For anything beyond trying Lager out, use Cloudflare or your own reverse proxy.
 
+Plain http also weakens the separation between apps and the platform: without https a browser lets an app on one Lager address set a cookie for the others, so an app could sign a visitor in to an account of its author's choosing. Lager signs out a browser that sends two session cookies and logs a warning at startup, but it cannot notice a planted cookie in a browser that was not signed in, so host only apps you trust in this mode.
+
 ### Answering ahead of time
 
 Set the answers as environment variables to install without questions, for example on many machines:

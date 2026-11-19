@@ -6,7 +6,7 @@ import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import type { Mailer } from './mail.js';
 import type { Settings } from './settings.js';
 import { hashSecret, sameHash } from './tokens.js';
-import { MAX_NAME_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, type Role, type User, type Users } from './users.js';
+import { hashPassword, MAX_NAME_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, type Role, type User, type Users } from './users.js';
 
 export interface InviteInfo { id: string; email: string | null; role: Role; createdAt: string; expiresAt: string; used: boolean }
 
@@ -23,6 +23,11 @@ const MAIL_KEYS: Record<Kind, { subject: MessageKey; intro: MessageKey; validity
   reset: { subject: 'mail.reset.subject', intro: 'mail.reset.intro', validity: 'mail.validity.reset' },
   invite: { subject: 'mail.invite.subject', intro: 'mail.invite.intro', validity: 'mail.validity.invite' },
 };
+/**
+ * Verification, reset and "already registered" mails the whole server sends per hour: anyone can cause them, and they leave from the
+ * operator's mail account. Invitations are an administrator's own act and do not count.
+ */
+export const MAX_ACCOUNT_MAILS_PER_HOUR = 60;
 const ROLES: readonly Role[] = ['admin', 'publisher', 'user'];
 const EMAIL_RE = /^[^@\s]+@[^@\s]+$/;
 
@@ -43,6 +48,8 @@ const toInvite = (r: TokenRow): InviteInfo => ({
 
 /** Registration, e-mail verification, password reset and invitations. One-time tokens are stored as SHA-256 only. */
 export class Accounts {
+  private mailTimes: number[] = [];
+
   constructor(
     private db: DatabaseSync, private users: Users, private settings: Settings,
     private mailer: Mailer, private config: Config,
@@ -85,13 +92,32 @@ export class Accounts {
   private async deliver(to: string, locale: Locale | null | undefined, url: string, kind: Kind): Promise<void> {
     const lang = locale ?? this.config.defaultLocale;
     const keys = MAIL_KEYS[kind];
-    const text = `${t(lang, keys.intro)}\n\n${url}\n\n${t(lang, keys.validity)}\n`;
+    await this.send(to, t(lang, keys.subject), `${t(lang, keys.intro)}\n\n${url}\n\n${t(lang, keys.validity)}\n`, kind !== 'invite');
+  }
+
+  /** A `counted` mail is dropped once the hourly budget is spent; callers that can tell the visitor check `mailBudgetSpent` first. */
+  private async send(to: string, subject: string, text: string, counted: boolean): Promise<void> {
+    if (counted && !this.mailBudget(true)) {
+      console.warn(`Mail to ${to} was not sent: more than ${MAX_ACCOUNT_MAILS_PER_HOUR} account mails in an hour.`);
+      return;
+    }
     try {
-      await this.mailer.send({ to, subject: t(lang, keys.subject), text });
+      await this.mailer.send({ to, subject, text });
     } catch (e) {
       console.error(`Could not send mail to ${to}:`, e);
     }
   }
+
+  private mailBudget(spend: boolean): boolean {
+    const cutoff = Date.now() - HOUR_MS;
+    this.mailTimes = this.mailTimes.filter((sent) => sent > cutoff);
+    if (this.mailTimes.length >= MAX_ACCOUNT_MAILS_PER_HOUR) return false;
+    if (spend) this.mailTimes.push(Date.now());
+    return true;
+  }
+
+  /** True while the server has sent its `MAX_ACCOUNT_MAILS_PER_HOUR`: a flow that needs a mail should not start. */
+  get mailBudgetSpent(): boolean { return !this.mailBudget(false); }
 
   private async sendVerification(user: User, requestLocale?: Locale): Promise<void> {
     const { token } = this.issue('verify', { userId: user.id });
@@ -121,18 +147,34 @@ export class Accounts {
 
     // An invitation proves a mailbox only when it was sent to exactly this address (checked above); an open one proves none.
     const verified = !this.mailer.enabled || Boolean(invite?.email);
+    // Hashed before the transaction, and before it is known whether the address is taken: both outcomes take the same time.
+    const passwordHash = await hashPassword(input.password);
     let user: User;
     this.db.exec('BEGIN IMMEDIATE');
     try {
       if (invite && !this.consume(invite)) throw new LagerError('forbidden', 'The invitation is invalid or has expired.', 'invite_invalid');
-      user = this.users.create({ email, name, password: input.password, role: invite?.role ?? 'user', verified, locale: input.locale });
+      user = this.users.create({ email, name, password: input.password, passwordHash, role: invite?.role ?? 'user', verified, locale: input.locale });
       this.db.exec('COMMIT');
     } catch (e) {
       this.db.exec('ROLLBACK');
       throw e;
     }
-    if (!verified) await this.sendVerification(user, input.locale);
+    // Started but not awaited, like the notice to an address that is taken: how long the mail server takes says nothing to the visitor.
+    if (!verified) void this.sendVerification(user, input.locale);
     return { user, needsVerification: !verified };
+  }
+
+  /**
+   * Tells the owner of an account that someone tried to register with its address, and how to get in. The registration page
+   * answers as if a new account had been created, so it does not reveal which addresses have one.
+   */
+  noticeExistingAccount(email: string, requestLocale?: Locale): void {
+    const user = this.users.getByEmail(email);
+    if (!user) return;
+    const lang = user.locale ?? requestLocale ?? this.config.defaultLocale;
+    const { origin } = this.config.publicUrl;
+    const text = `${t(lang, 'mail.exists.intro')}\n\n${origin}/login\n\n${t(lang, 'mail.exists.reset')}\n\n${origin}/forgot\n\n${t(lang, 'mail.exists.ignore')}\n`;
+    void this.send(user.email, t(lang, 'mail.exists.subject'), text, true);
   }
 
   /** True while the token is an unused, unexpired verification link; consumes nothing. */
@@ -146,11 +188,11 @@ export class Accounts {
    * register someone else's address, and the owner of the mailbox must not confirm an account whose password another person chose.
    * A wrong password leaves the link usable.
    */
-  verifyEmail(token: string, password: string): User {
+  async verifyEmail(token: string, password: string): Promise<User> {
     const row = this.find('verify', token);
     const user = row?.user_id ? this.users.get(row.user_id) : null;
     if (!row || !user) throw invalidToken();
-    const login = this.users.checkLogin(user.email, typeof password === 'string' ? password : '');
+    const login = await this.users.checkLogin(user.email, typeof password === 'string' ? password : '');
     if (!login.ok && login.reason === 'invalid') throw new LagerError('forbidden', 'The password is wrong.', 'password_wrong');
     if ((!login.ok && login.reason === 'disabled') || !this.consume(row)) throw invalidToken();
     this.users.markVerified(user.id);
@@ -176,12 +218,12 @@ export class Accounts {
     return this.link('/reset', 'token', this.issue('reset', { userId }).token);
   }
 
-  resetPassword(token: string, password: string): User {
+  async resetPassword(token: string, password: string): Promise<User> {
     const row = this.find('reset', token);
     if (!row?.user_id || !this.users.get(row.user_id)) throw invalidToken();
     assertPassword(password);
     if (!this.consume(row)) throw invalidToken();
-    this.users.setPassword(row.user_id, password);
+    await this.users.setPassword(row.user_id, password);
     this.deleteResetLinks(row.user_id);
     this.users.markVerified(row.user_id);
     return this.users.get(row.user_id)!;

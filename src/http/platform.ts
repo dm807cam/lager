@@ -2,16 +2,21 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import express from 'express';
 import type { Core } from '../core.js';
-import { clearCookie, NONCE_RE, sessionCookieName } from './cookies.js';
-import { csrfValid, issueSession, sessionUser } from './session.js';
+import { addressKey } from './client-address.js';
+import { clearCookie, deviceCookieName, NONCE_RE, readCookie, sessionCookieName, setCookie, warnIfPlainHttp } from './cookies.js';
+import { csrfToken, csrfValid, issueSession, sessionUser } from './session.js';
 import { isLocale, t } from '../i18n/index.js';
-import { badCodePage, disabledPage, forbiddenPage, loginPage, notFoundPage, sessionExpiredPage } from './pages.js';
+import { authCard, badCodePage, disabledPage, esc, forbiddenPage, hiddenField, loginPage, notFoundPage, page, sessionExpiredPage } from './pages.js';
+import { btn, icon } from './ui.js';
 import { LANG_COOKIE, ONE_YEAR_SECONDS, requestLocale } from './locale.js';
 import { LagerError } from '../errors.js';
 import { safeReturnPath, sendError } from './errors.js';
 import { sameOriginGuard } from './origin.js';
-import { signToken } from './tokens.js';
+import { signToken, verifyToken } from './tokens.js';
 import { hostUrl, instanceUrl } from '../config.js';
+import type { Instance } from '../platform/apps.js';
+import type { User } from '../platform/users.js';
+import type { Locale } from '../i18n/index.js';
 import { normalizeHost } from '../platform/domains.js';
 import { fallbackIconPath } from '../platform/fallback-icon.js';
 import type { PlatformExtension } from './app.js';
@@ -36,17 +41,29 @@ const MAX_FAILURES = 10;
 const MAX_FAILURES_HOT_ACCOUNT = 3;
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_TRACKED_KEYS = 10_000;
+/** Consecutive failures on one account, from anywhere, before it refuses sign-ins for a while. */
+const ACCOUNT_MAX_FAILURES = 10;
+/** The first pause; every further failure doubles it, up to the longest one. */
+const ACCOUNT_PAUSE_MS = 30 * 1000;
+const ACCOUNT_PAUSE_MAX_MS = 15 * 60 * 1000;
 
 /**
  * Failed login attempts within a sliding window, tracked per client IP, per account (e-mail) and per pair of both.
  * An address is refused after `MAX_FAILURES` failures. An account that collected that many failures is not locked for
  * everyone, or anybody could keep its owner out: only addresses that themselves failed on it are refused, and sooner.
  * Expired entries are swept on every failure and the number of tracked keys is capped.
+ *
+ * Addresses are cheap (a botnet, or the 2^64 of one IPv6 prefix), so the account also counts its consecutive failures whatever
+ * the address: from the tenth on, each failure pauses the account, for 30 seconds at first and twice as long each time, up to
+ * 15 minutes. During a pause an attempt is turned away before the password is looked at, with the answer a wrong password gets.
+ * A correct password, or 15 quiet minutes after the last pause, starts the count again. The pause does not apply to a browser
+ * that has signed in to the account before (see the device cookie in the login route), so guessing does not keep the owner out.
  */
 export class LoginLimiter {
   private byIp = new Map<string, number[]>();
   private byAccount = new Map<string, number[]>();
   private byPair = new Map<string, number[]>();
+  private paused = new Map<string, { failures: number; last: number; until: number }>();
   private static pair = (ip: string, account: string): string => `${account}\n${ip}`;
 
   private static recent(map: Map<string, number[]>, key: string): number[] {
@@ -74,6 +91,28 @@ export class LoginLimiter {
       && LoginLimiter.recent(this.byPair, LoginLimiter.pair(ip, account)).length >= MAX_FAILURES_HOT_ACCOUNT;
   }
 
+  /** True while the account takes no sign-in from a browser it does not know. */
+  accountPaused(account: string): boolean {
+    return Date.now() < (this.paused.get(account)?.until ?? 0);
+  }
+
+  /** The password was right: the account's count of consecutive failures starts again. */
+  succeed(account: string): void {
+    this.paused.delete(account);
+  }
+
+  private failAccount(account: string, now: number): void {
+    for (const [key, e] of this.paused) {
+      if (now - Math.max(e.last, e.until) >= WINDOW_MS) this.paused.delete(key);
+    }
+    const failures = (this.paused.get(account)?.failures ?? 0) + 1;
+    const over = failures - ACCOUNT_MAX_FAILURES;
+    // Re-inserted at the end: when the map is full, the accounts that were failed on longest ago go first.
+    this.paused.delete(account);
+    while (this.paused.size >= MAX_TRACKED_KEYS) this.paused.delete(this.paused.keys().next().value as string);
+    this.paused.set(account, { failures, last: now, until: over < 0 ? 0 : now + Math.min(ACCOUNT_PAUSE_MS * 2 ** over, ACCOUNT_PAUSE_MAX_MS) });
+  }
+
   fail(ip: string, account: string): void {
     LoginLimiter.sweep(this.byIp);
     LoginLimiter.sweep(this.byAccount);
@@ -83,6 +122,7 @@ export class LoginLimiter {
     this.byIp.set(ip, [...LoginLimiter.recent(this.byIp, ip), now]);
     this.byAccount.set(account, [...LoginLimiter.recent(this.byAccount, account), now]);
     this.byPair.set(pair, [...LoginLimiter.recent(this.byPair, pair), now]);
+    this.failAccount(account, now);
   }
 }
 
@@ -90,6 +130,18 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
   const router = express.Router();
   const limiter = new LoginLimiter();
   const { config } = core;
+  // A new password, also one set through a reset mail, ends the pause of the account: its owner always has that way in.
+  core.users.onPasswordChanged((id) => {
+    const user = core.users.get(id);
+    if (user) limiter.succeed(user.email.trim().toLowerCase());
+  });
+  warnIfPlainHttp(config);
+
+  /** A browser that signed in to this account before carries a signed cookie saying so; a pause of the account does not apply to it. */
+  const knownDevice = (req: express.Request, account: string): boolean => {
+    const d = verifyToken<{ uid?: unknown; k?: unknown }>(readCookie(req, deviceCookieName(config)), config.secret);
+    return d !== null && d.k === 'dev' && typeof d.uid === 'string' && core.users.getByEmail(account)?.id === d.uid;
+  };
 
   // Platform pages must never be framed: instances are same-site and could trick clicks.
   router.use((_req, res, next) => {
@@ -134,6 +186,25 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
     res.type('image/png').sendFile(file, { dotfiles: 'allow', cacheControl: false });
   });
 
+  /** Whether the version the instance runs asks for the visitor's email address (`user.scopes: ["email"]`). */
+  const declaresEmail = (instance: Instance): boolean => {
+    const scopes = core.apps.listVersions(instance.appId).find((v) => v.number === instance.activeVersion)?.capabilities.user?.scopes;
+    return Array.isArray(scopes) && scopes.includes('email');
+  };
+
+  /** The question before the first sign-in to an instance. Cancel comes first, so Enter never continues. */
+  const signInPage = (locale: Locale, user: User, instance: Instance, host: string, email: boolean, fields: Record<string, string>): string => {
+    const app = core.apps.getApp(instance.appId)?.title || instance.slug;
+    return page(locale, t(locale, 'signin.title'), authCard(`<div class="auth-icon">${icon('shield')}</div><h1>${esc(t(locale, 'signin.heading', { app }))}</h1>
+<div class="consent-who"><p>${esc(t(locale, 'signin.text', { app, host, user: user.name || user.email }))}</p>
+<p>${esc(t(locale, email ? 'signin.sees.email' : 'signin.sees.name'))}</p></div>
+<form method="post" action="/auth/instance">
+${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v]) => hiddenField(k, v)).join('')}
+<div class="consent-actions"><button type="submit" name="decision" value="cancel" class="${btn('secondary')}">${esc(t(locale, 'signin.cancel'))}</button>
+<button type="submit" name="decision" value="continue" class="${btn('primary')}">${esc(t(locale, 'signin.continue'))}</button></div>
+</form>`), { switcher: false });
+  };
+
   // `same-origin` lets browsers send the real Origin on the login post (`no-referrer` would make it `null`, which the guard refuses).
   const loginHeaders: express.RequestHandler = (_req, res, next) => {
     res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'same-origin' });
@@ -169,29 +240,35 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
   });
 
   // App code on an instance origin is same-site and could post this form to sign a visitor into another account.
-  router.post('/login', loginHeaders, sameOriginGuard(core), express.urlencoded({ extended: false, limit: '10kb' }), (req, res) => {
+  router.post('/login', loginHeaders, sameOriginGuard(core), express.urlencoded({ extended: false, limit: '10kb' }), async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const ret = safeReturnPath(body.return);
     const locale = requestLocale(core, req);
-    const ip = req.ip ?? 'unknown';
+    const ip = addressKey(req.ip);
     const account = typeof body.email === 'string' ? body.email.trim().toLowerCase().slice(0, 254) : '';
     if (limiter.blocked(ip, account)) {
       res.status(429).type('html').send(loginPage(locale, ret, t(locale, 'login.tooMany'), { registration: core.settings.registration }));
       return;
     }
-    const result = typeof body.email === 'string' && typeof body.password === 'string'
-      ? core.users.checkLogin(body.email, body.password) : { ok: false as const, reason: 'invalid' as const };
-    if (!result.ok) {
+    // A paused account answers like a wrong password, whether it exists or not, and without the cost of checking one.
+    const result = typeof body.email === 'string' && typeof body.password === 'string' && (!limiter.accountPaused(account) || knownDevice(req, account))
+      ? await core.users.checkLogin(body.email, body.password) : null;
+    if (result === null || !result.ok) {
+      const reason = result?.reason ?? 'invalid';
       // Unverified and disabled are only reported after a correct password, so they do not count as failures.
-      if (result.reason === 'invalid') limiter.fail(ip, account);
-      const message = result.reason === 'unverified' ? t(locale, 'login.unverified')
-        : result.reason === 'disabled' ? t(locale, 'login.disabled') : t(locale, 'login.invalid');
+      // An attempt turned away unseen is neither: counting it would let anyone stretch the pause without end.
+      if (result?.reason === 'invalid') limiter.fail(ip, account);
+      else if (result) limiter.succeed(account);
+      const message = reason === 'unverified' ? t(locale, 'login.unverified')
+        : reason === 'disabled' ? t(locale, 'login.disabled') : t(locale, 'login.invalid');
       res.status(401).type('html').send(loginPage(locale, ret, message, {
-        registration: core.settings.registration, resendEmail: result.reason === 'unverified' ? account : undefined,
+        registration: core.settings.registration, resendEmail: reason === 'unverified' ? account : undefined,
       }));
       return;
     }
+    limiter.succeed(account);
     issueSession(core, res, result.user);
+    setCookie(res, config, deviceCookieName(config), signToken({ uid: result.user.id, k: 'dev' }, config.secret, ONE_YEAR_SECONDS), ONE_YEAR_SECONDS);
     res.redirect(ret);
   });
 
@@ -208,14 +285,25 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
     res.redirect('/login');
   });
 
-  router.get('/auth/instance', (req, res) => {
+  /**
+   * Signs the visitor in to an instance. Whoever reaches it through its visibility alone is asked first, once per instance:
+   * otherwise any public app could send its visitors through here and learn who they are without their doing anything.
+   * `GET` asks or, when nothing needs asking, signs in; `POST` is the answer to the question.
+   */
+  const instanceSignIn: express.RequestHandler = (req, res) => {
+    const answer = req.method === 'POST';
+    const params = ((answer ? req.body : req.query) ?? {}) as Record<string, unknown>;
     const user = sessionUser(core, req);
     if (!user) {
-      res.redirect('/login?return=' + encodeURIComponent(req.originalUrl));
+      res.redirect('/login?return=' + encodeURIComponent(answer ? '/' : req.originalUrl));
       return;
     }
     const locale = requestLocale(core, req, user);
-    const slug = typeof req.query.slug === 'string' ? req.query.slug : '';
+    if (answer && !csrfValid(core, user, params.csrf)) {
+      res.status(403).type('html').send(sessionExpiredPage(locale));
+      return;
+    }
+    const slug = typeof params.slug === 'string' ? params.slug : '';
     const instance = core.apps.getInstanceBySlug(slug);
     if (!instance) {
       res.status(404).type('html').send(notFoundPage(locale));
@@ -223,10 +311,10 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
     }
     // `host` is attacker-controlled: it counts only if it is attached to this very instance, and the redirect uses the stored form.
     let customHost: string | null = null;
-    if (req.query.host !== undefined) {
+    if (params.host !== undefined) {
       try {
-        if (typeof req.query.host !== 'string') throw new LagerError('invalid_argument', 'host must be given once.');
-        customHost = normalizeHost(req.query.host);
+        if (typeof params.host !== 'string') throw new LagerError('invalid_argument', 'host must be given once.');
+        customHost = normalizeHost(params.host);
       } catch {
         res.status(400).type('html').send(badCodePage(locale));
         return;
@@ -245,11 +333,29 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
       return;
     }
     // The instance put a nonce into its own cookie before sending the browser here; the code carries it back, so it is only good in that browser.
-    const nonce = typeof req.query.n === 'string' && NONCE_RE.test(req.query.n) ? req.query.n : undefined;
+    const nonce = typeof params.n === 'string' && NONCE_RE.test(params.n) ? params.n : undefined;
+    const target = customHost ? hostUrl(config, customHost) : instanceUrl(config, instance.slug);
+    const back = safeReturnPath(params.return);
+    const email = declaresEmail(instance);
+    if (answer && params.decision !== 'continue') {
+      // Cancelled. A public instance works without a sign-in; any other would only send the browser straight back to the question.
+      res.redirect(instance.visibility === 'public' ? `${target}/` : '/');
+      return;
+    }
+    if (!core.access.signInConfirmed(instance, user, email)) {
+      // The answer counts for what its page said: if the app began to ask for the address in between, the question comes again.
+      if (!answer || (email && params.email !== '1')) {
+        res.type('html').send(signInPage(locale, user, instance, new URL(target).host, email,
+          { slug: instance.slug, ...(customHost ? { host: customHost } : {}), ...(nonce ? { n: nonce } : {}), return: back, email: email ? '1' : '0' }));
+        return;
+      }
+      core.access.confirmSignIn(instance, user, email);
+    }
     const code = signToken({ uid: user.id, iid: instance.id, k: 'code', jti: crypto.randomUUID(), ep: user.sessionEpoch, n: nonce, h: customHost ?? `${instance.slug}.${config.appsDomain}`.toLowerCase() }, config.secret, 60);
-    const back = safeReturnPath(req.query.return);
-    res.redirect(`${customHost ? hostUrl(config, customHost) : instanceUrl(config, instance.slug)}/__lager/callback?code=${encodeURIComponent(code)}&return=${encodeURIComponent(back)}`);
-  });
+    res.redirect(`${target}/__lager/callback?code=${encodeURIComponent(code)}&return=${encodeURIComponent(back)}`);
+  };
+  router.get('/auth/instance', loginHeaders, instanceSignIn);
+  router.post('/auth/instance', loginHeaders, express.urlencoded({ extended: false, limit: '10kb' }), instanceSignIn);
 
   for (const ext of extensions) ext(router, core);
 

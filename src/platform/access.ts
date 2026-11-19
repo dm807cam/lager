@@ -154,6 +154,31 @@ export class Access {
     ).get(instance.id, userId, userId) !== undefined;
   }
 
+  /**
+   * True when the user reaches the instance through its visibility alone (public, or open to every signed-in user): not the owner,
+   * not someone it is shared with, not someone who manages its app. Such an instance has to be confirmed before it learns who visits.
+   */
+  needsSignInConfirmation(instance: Instance, user: User): boolean {
+    if (this.isConnected(instance, user.id)) return false;
+    const app = this.apps.getApp(instance.appId);
+    return !(app && this.canReadApp(app, user));
+  }
+
+  /** Whether the user agreed that this instance learns their name and, when `email` is asked for, their address. */
+  signInConfirmed(instance: Instance, user: User, email: boolean): boolean {
+    if (!this.needsSignInConfirmation(instance, user)) return true;
+    const row = this.db.prepare('SELECT email FROM instance_signins WHERE user_id = ? AND instance_id = ?').get(user.id, instance.id) as { email: number } | undefined;
+    return row !== undefined && (!email || row.email === 1);
+  }
+
+  /** Remembers the agreement; one that covered the address keeps covering it. */
+  confirmSignIn(instance: Instance, user: User, email: boolean): void {
+    this.db.prepare(
+      `INSERT INTO instance_signins (user_id, instance_id, email, confirmed_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_id, instance_id) DO UPDATE SET email = MAX(email, excluded.email), confirmed_at = excluded.confirmed_at`,
+    ).run(user.id, instance.id, email ? 1 : 0, new Date().toISOString());
+  }
+
   /** Restoring a snapshot rolls back everything, including data the rules keep from managers: only the owner of an instance that is not disabled. */
   canRestoreInstance(instance: Instance, user: User): boolean {
     return this.levelFor(instance, user) === 'owner';

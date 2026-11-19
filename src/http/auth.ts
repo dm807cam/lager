@@ -6,6 +6,7 @@ import { isLocale, LOCALE_NAMES, LOCALES, t, type Locale, type MessageKey } from
 import { hashSecret } from '../platform/tokens.js';
 import { MAX_NAME_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, type User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
+import { addressKey } from './client-address.js';
 import { requestLocale } from './locale.js';
 import { sameOriginGuard } from './origin.js';
 import { authCard, esc, field, messagePage, page, resendForm, sessionExpiredPage } from './pages.js';
@@ -14,6 +15,11 @@ import { RateLimiter } from './ratelimit.js';
 import { csrfToken, csrfValid, issueSession } from './session.js';
 
 const HOUR_MS = 3600_000;
+/**
+ * Accounts the whole server lets people create for themselves per hour, whatever address they come from: each one may send a
+ * mail from the operator's mail account. Registrations through an invitation do not count.
+ */
+export const MAX_REGISTRATIONS_PER_HOUR = 30;
 const MAX_FIELD = 300;
 const MAX_TOKEN = 200;
 
@@ -102,6 +108,9 @@ ${field('new-password', t(locale, 'auth.reset.label'), `<input id="new-password"
 export const authExtension: PlatformExtension = (router, core) => {
   const formBody = express.urlencoded({ extended: false, limit: '10kb' });
   const registerIp = new RateLimiter(5, HOUR_MS);
+  const registrations = new RateLimiter(MAX_REGISTRATIONS_PER_HOUR, HOUR_MS);
+  // Notices to the owner of an address somebody else tried to register, so the form cannot be used to fill a mailbox.
+  const takenEmail = new RateLimiter(3, HOUR_MS);
   const forgotIp = new RateLimiter(5, HOUR_MS);
   const forgotEmail = new RateLimiter(3, HOUR_MS);
   const resendIp = new RateLimiter(5, HOUR_MS);
@@ -118,7 +127,7 @@ export const authExtension: PlatformExtension = (router, core) => {
   /** A password is never cut: a shortened one would be stored but never match at sign-in. Too long a one is refused where it is set. */
   const secret = (req: Request, name: string): string => field(req, name, Infinity);
   const emailKey = (req: Request): string => field(req, 'email', 254).trim().toLowerCase();
-  const ipOf = (req: Request): string => req.ip ?? 'unknown';
+  const ipOf = (req: Request): string => addressKey(req.ip);
   const html = (res: Response, status: number, body: string): void => { res.status(status).type('html').send(body); };
   const localeOf = (req: Request): Locale => requestLocale(core, req);
 
@@ -166,19 +175,28 @@ export const authExtension: PlatformExtension = (router, core) => {
     if (!token && mode === 'invite') { html(res, 403, inviteOnlyPage(locale)); return; }
     const bound = token ? core.accounts.getInvite(token)?.email ?? null : null;
     const again = (status: number, error: string): void => html(res, status, registerForm(locale, values, token, bound, error));
+    // A registration that ends in "check your mail": an open one, or one through an invitation that names no address.
+    const mailed = core.mailer.enabled && !bound;
+    if ((!token && registrations.full('all')) || (mailed && core.accounts.mailBudgetSpent)) { tooMany(req, res); return; }
+    const sent = (): void => html(res, 200, notice(locale, t(locale, 'auth.register.sent.title'), t(locale, 'auth.register.sent.text'), toLogin(locale)));
     if (secret(req, 'password').length < MIN_PASSWORD_LENGTH) { again(400, t(locale, 'auth.password.short', { min: MIN_PASSWORD_LENGTH })); return; }
     try {
       const { user, needsVerification } = await core.accounts.register({
         name: values.name, email: values.email, password: secret(req, 'password'), inviteToken: token || undefined, locale,
       });
-      if (needsVerification) {
-        html(res, 200, notice(locale, t(locale, 'auth.register.sent.title'), t(locale, 'auth.register.sent.text'), toLogin(locale)));
-        return;
-      }
+      if (!token) registrations.hit('all');
+      if (needsVerification) { sent(); return; }
       issueSession(core, res, user);
       res.redirect('/');
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
+      // Where a new account would be told to check its mail, a taken address gets the same answer, and its owner a mail instead:
+      // the form does not say which addresses have an account. Without mail there is no other way to tell the visitor.
+      if (e.reason === 'email_taken' && mailed) {
+        if (takenEmail.hit(emailKey(req))) core.accounts.noticeExistingAccount(values.email, locale);
+        sent();
+        return;
+      }
       again(e.reason === 'email_taken' ? 409 : e.code === 'forbidden' ? 403 : 400, reasonText(locale, e));
     }
   });
@@ -194,13 +212,13 @@ export const authExtension: PlatformExtension = (router, core) => {
   });
 
   // The link proves the mailbox, the password proves who registered: only both together confirm the account.
-  router.post('/verify', ...publicForm, (req, res) => {
+  router.post('/verify', ...publicForm, async (req, res) => {
     const locale = localeOf(req);
     const token = field(req, 'token', MAX_TOKEN);
     const keys = [`ip:${ipOf(req)}`, `link:${hashSecret(token)}`];
     if (keys.some((k) => verifyTries.full(k))) { tooMany(req, res); return; }
     try {
-      core.accounts.verifyEmail(token, secret(req, 'password'));
+      await core.accounts.verifyEmail(token, secret(req, 'password'));
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
       if (e.reason !== 'password_wrong') { html(res, 400, invalidLinkPage(locale)); return; }
@@ -215,7 +233,7 @@ export const authExtension: PlatformExtension = (router, core) => {
 
   router.post('/verify/resend', ...publicForm, async (req, res) => {
     const locale = localeOf(req);
-    if (!resendIp.hit(ipOf(req))) { tooMany(req, res); return; }
+    if (!resendIp.hit(ipOf(req)) || core.accounts.mailBudgetSpent) { tooMany(req, res); return; }
     if (resendEmail.hit(emailKey(req))) await core.accounts.resendVerification(field(req, 'email', 254), locale);
     html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.resend.sent.text'), toLogin(locale)));
   });
@@ -226,7 +244,7 @@ export const authExtension: PlatformExtension = (router, core) => {
 
   router.post('/forgot', ...publicForm, async (req, res) => {
     const locale = localeOf(req);
-    if (!forgotIp.hit(ipOf(req))) { tooMany(req, res); return; }
+    if (!forgotIp.hit(ipOf(req)) || core.accounts.mailBudgetSpent) { tooMany(req, res); return; }
     // Over the per-address budget the request is skipped without any visible difference.
     if (forgotEmail.hit(emailKey(req))) await core.accounts.requestPasswordReset(field(req, 'email', 254), locale);
     html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.forgot.sent'), toLogin(locale)));
@@ -237,12 +255,12 @@ export const authExtension: PlatformExtension = (router, core) => {
     html(res, 200, resetForm(localeOf(req), typeof req.query.token === 'string' ? req.query.token.slice(0, MAX_TOKEN) : ''));
   });
 
-  router.post('/reset', ...publicForm, (req, res) => {
+  router.post('/reset', ...publicForm, async (req, res) => {
     const locale = localeOf(req);
     const token = field(req, 'token', MAX_TOKEN);
     const password = secret(req, 'password');
     try {
-      core.accounts.resetPassword(token, password);
+      await core.accounts.resetPassword(token, password);
       html(res, 200, notice(locale, t(locale, 'auth.reset.done.title'), t(locale, 'auth.reset.done'), toLogin(locale)));
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
@@ -255,16 +273,16 @@ export const authExtension: PlatformExtension = (router, core) => {
 
   const auth = requireUser(core);
   const userOf = (res: Response): User => res.locals.user as User;
-  const accountAction = (run: (req: Request, res: Response, user: User, locale: Locale) => void): RequestHandler[] => [
+  const accountAction = (run: (req: Request, res: Response, user: User, locale: Locale) => void | Promise<void>): RequestHandler[] => [
     hardened, auth, formBody,
-    (req, res) => {
+    async (req, res) => {
       const user = userOf(res);
       const locale = requestLocale(core, req, user);
       if (!csrfValid(core, user, field(req, 'csrf', 2000))) {
         html(res, 403, sessionExpiredPage(locale, '/account', t(locale, 'account.back')));
         return;
       }
-      run(req, res, user, locale);
+      await run(req, res, user, locale);
     },
   ];
 
@@ -295,12 +313,12 @@ export const authExtension: PlatformExtension = (router, core) => {
     html(res, 200, accountPage(core, now, updated, { ok: t(now, 'account.locale.saved') }));
   }));
 
-  router.post('/account/password', ...accountAction((req, res, user, locale) => {
+  router.post('/account/password', ...accountAction(async (req, res, user, locale) => {
     if (!passwordTries.hit(user.id)) {
       html(res, 429, accountPage(core, locale, user, { error: t(locale, 'account.tooMany') }));
       return;
     }
-    if (!core.users.checkLogin(user.email, secret(req, 'current')).ok) {
+    if (!(await core.users.checkLogin(user.email, secret(req, 'current'))).ok) {
       html(res, 400, accountPage(core, locale, user, { error: t(locale, 'account.password.wrong') }));
       return;
     }
@@ -312,7 +330,7 @@ export const authExtension: PlatformExtension = (router, core) => {
       return;
     }
     passwordTries.reset(user.id);
-    core.users.setPassword(user.id, password);
+    await core.users.setPassword(user.id, password);
     // setPassword moved the epoch on, ending every other session; this browser gets a fresh one.
     const fresh = core.users.get(user.id)!;
     issueSession(core, res, fresh);

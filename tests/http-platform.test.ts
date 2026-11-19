@@ -200,11 +200,31 @@ describe('login rate limit behind a proxy', () => {
     expect((await attempt(h, '1.2.3.4, 5.6.7.9', 'other@x.y')).status).toBe(401);
   });
 
-  it('an account under attack from many addresses stays open to its owner, and guessers are cut short', async () => {
+  it('an account under attack from many addresses pauses, stays open to a browser its owner used before, and guessers are cut short', async () => {
     h = makeHarness({ trustProxy: 1 });
-    for (let i = 0; i < 10; i++) expect((await attempt(h, `5.6.7.${i}`)).status).toBe(401);
-    // An address that has not failed on this account still gets in with the right password: nobody can lock the owner out.
-    expect((await attempt(h, '8.8.8.8', 'admin@x.y', 'admin-password-1')).status).toBe(302);
+    // The owner signed in from this browser before the attack: it carries the device cookie.
+    const before = await attempt(h, '7.7.7.7', 'admin@x.y', 'admin-password-1');
+    const device = ([] as string[]).concat(before.headers['set-cookie']).find((c) => c.startsWith('lager_device='))!;
+    expect(device).toContain('HttpOnly');
+    const wrong = await attempt(h, '5.6.7.0');
+    for (let i = 1; i < 10; i++) expect((await attempt(h, `5.6.7.${i}`)).status).toBe(401);
+    // Ten failures from ten addresses: the account pauses. A browser it does not know is turned away with the answer a wrong
+    // password gets, also with the right password, and the password is not even looked at.
+    const check = vi.spyOn(h.core.users, 'checkLogin');
+    const paused = await attempt(h, '8.8.8.8', 'admin@x.y', 'admin-password-1');
+    expect(paused.status).toBe(wrong.status);
+    expect(paused.text).toBe(wrong.text);
+    expect(paused.headers['set-cookie']).toBeUndefined();
+    expect(check).not.toHaveBeenCalled();
+    // A device cookie of another account does not help.
+    const other = h.core.users.create({ email: 'o@x.y', name: 'O', password: 'other-password-1', role: 'user' });
+    const foreign = ([] as string[]).concat((await attempt(h, '7.7.7.8', other.email, 'other-password-1')).headers['set-cookie']).find((c) => c.startsWith('lager_device='))!;
+    check.mockClear();
+    expect((await attempt(h, '8.8.8.8', 'admin@x.y', 'admin-password-1').set('Cookie', foreign.split(';')[0])).status).toBe(401);
+    expect(check).not.toHaveBeenCalled();
+    // The owner's own browser still gets in: guessing does not lock the owner out. That success also ends the pause.
+    expect((await attempt(h, '8.8.4.4', 'admin@x.y', 'admin-password-1').set('Cookie', device.split(';')[0])).status).toBe(302);
+    check.mockRestore();
     // A new address gets three guesses on the hot account instead of ten, however the e-mail is spelled.
     for (let i = 0; i < 3; i++) expect((await attempt(h, '9.9.9.9', i === 1 ? 'ADMIN@x.y ' : 'admin@x.y')).status).toBe(401);
     expect((await attempt(h, '9.9.9.9', 'admin@x.y', 'admin-password-1')).status).toBe(429);

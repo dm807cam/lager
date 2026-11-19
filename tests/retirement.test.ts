@@ -31,7 +31,7 @@ function world() {
   const mk = (email: string, role: 'admin' | 'publisher' | 'user') => h.core.users.create({ email, name: email.split('@')[0], password: 'password-123', role });
   return { admin: h.core.users.get(h.adminId)!, p: mk('p@x.y', 'publisher'), q: mk('q@x.y', 'publisher'), u: mk('u@x.y', 'user') };
 }
-const csrf = (user: User): string => signToken({ uid: user.id, k: 'ui' }, h.core.config.secret, 3600);
+const csrf = (user: User): string => signToken({ uid: user.id, k: 'ui', ep: h.core.users.get(user.id)?.sessionEpoch }, h.core.config.secret, 3600);
 const post = (cookie: string, user: User, path: string, body: Record<string, string> = {}) =>
   request(h.app).post(path).set('Host', h.host).set('Cookie', cookie).type('form').send({ csrf: csrf(user), ...body });
 

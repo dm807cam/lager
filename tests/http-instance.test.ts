@@ -722,7 +722,7 @@ describe('session epoch', () => {
       (c: Awaited<ReturnType<typeof member>>) => c.h.core.users.setDisabled(c.user.id, true),
     ]) {
       const c = await member();
-      kill(c);
+      await kill(c);
       await anonymous(c.h, c.cookie);
       const page = await request(c.h.app).get('/').set('Host', W).set('Cookie', c.cookie);
       expect(page.status).toBe(302);

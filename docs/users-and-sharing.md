@@ -26,6 +26,16 @@ To confirm an email address, the new account opens the link from the mail and en
 
 Passwords need at least 10 characters and may have at most 1024. Changing or resetting a password signs out every other device, disconnects all AI assistants and revokes all API tokens of the account.
 
+With mail configured, the registration form does not say whether an address already has an account: it answers "check your mail" either way, and the owner of a taken address gets a mail that says someone tried to register with it, with the links to sign in and to set a new password. Without mail the form names the taken address, because there is no other way to tell the visitor.
+
+### Limits on signing in and registering
+
+These limits are fixed; they are not settings.
+
+- **Per client address:** 10 failed sign-ins in 15 minutes, and 5 registrations, 5 password-reset requests and 5 requests for a new confirmation mail per hour. An IPv6 address counts as its /64 network, so changing addresses inside one network does not help.
+- **Per account:** after 10 failed sign-ins in a row, from whatever addresses, the account pauses: further attempts are turned away for 30 seconds, then twice as long after each further failure, up to 15 minutes. The answer is the one a wrong password gets, also for addresses without an account. A correct password ends the count, and so do 15 quiet minutes. A browser that has signed in to the account before is not paused (it carries a cookie that says so), so somebody guessing at your account does not keep you out of it on your own devices. On a new device you wait for the pause to end, or set a new password with "Forgot your password?", which ends it at once.
+- **For the whole server:** 30 self-registrations per hour (registrations through an invitation do not count), and 60 confirmation, password-reset and "someone tried to register" mails per hour (invitation mails do not count). Beyond that, the forms answer "Too many requests" until the hour has passed. This keeps a flood of registrations from sending mail without end from your mail account.
+
 Lager creates the first administrator at startup from `LAGER_ADMIN_EMAIL` and `LAGER_ADMIN_PASSWORD`, but only while there is no account at all. You appoint further administrators by changing the role of an existing account. The last active administrator can be neither demoted nor disabled. A disabled account can no longer sign in, and its sessions on the platform and on instances end immediately.
 
 The interface shows administrators metadata only: which apps and instances exist, who owns them and how much storage they use. They can disable an instance, but the interface offers no way to open the data of someone else's instance; they cannot open another account's private instance, and they read data only if they have been granted a level, like any other account. This is a default of the interface, not a technical guarantee against a malicious administrator: administrators control the accounts (links to reset passwords, group memberships) and have access to the server and the data directory. Give the administrator role only to people whose access to the data of all instances you would accept.
@@ -47,6 +57,8 @@ The levels on an instance:
 | Owner (`owner`) | everything, and restore a snapshot or delete the instance; cannot be granted |
 
 With several routes to the same instance (direct grant, group, visibility "all signed-in users"), the highest level applies. For "all signed-in users" the owner chooses whether these accounts are viewers or contributors (default: contributors). Without app rules, everyone from viewer level reads and everyone from contributor level writes; public visitors can never write.
+
+The first time someone opens an instance that they reach only through its visibility ("public" or "all signed-in users"), Lager asks before it signs them in there: "Continue to *app* as *name*?", with what the app will see: the name, and the email address if the app asks for it (`user.scopes: ["email"]`). Lager remembers the answer per account and instance and asks once. If the app later starts to ask for the email address, it keeps the address back from the app until the person has been asked again at their next sign-in to the instance. Cancel signs nobody in: a public instance then opens as for any anonymous visitor. The owner, the people and groups the instance is shared with, and the owner and collaborators of the app are not asked. Without this question, any publisher's public app could send a signed-in visitor through the sign-in and learn who they are without the visitor doing anything.
 
 Administrators create groups in the administration area (Groups) and fill them with accounts. A grant to a group applies to all its members.
 

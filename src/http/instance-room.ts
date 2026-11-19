@@ -7,6 +7,7 @@ import { assertRoomName, type RoomEvent } from '../data/rooms.js';
 import { LagerError } from '../errors.js';
 import type { Instance } from '../platform/apps.js';
 import type { Ctx } from './instance.js';
+import { addressKey } from './client-address.js';
 import { assertOwnOrigin } from './origin.js';
 import { StreamLimiter, type Viewer } from './stream-limit.js';
 
@@ -66,7 +67,7 @@ export function mountRoomRoutes(
     const userId = first.viewer.userId;
     const epoch = first.user?.sessionEpoch;
     const instanceId = first.instance.id;
-    const viewer = limiter.admit(instanceId, userId ?? `ip:${req.ip ?? ''}`, userId === null, room);
+    const viewer = limiter.admit(instanceId, userId ?? `ip:${addressKey(req.ip)}`, userId === null, room);
     if (!viewer) {
       res.status(429).set('Retry-After', '5').json({ error: { code: 'rate_limited', message: 'Too many open connections.' } });
       return;
