@@ -305,6 +305,7 @@ export const en = {
   'admin.users.delete.confirm': "To confirm, enter the email address “{email}”",
   'admin.users.delete.submit': "Delete account for good",
   'admin.users.delete.done': "The account {email} was deleted.",
+  'admin.users.delete.cleanupFailed': "The account {email} was deleted, but cleaning up its files failed. See the server log.",
   'admin.users.delete.self': "You cannot delete your own account.",
   'admin.users.delete.active': "Deactivate the account first. Only a deactivated account can be deleted.",
   'admin.users.delete.target': "There is no active account with this email address that could take over.",

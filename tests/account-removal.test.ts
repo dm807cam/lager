@@ -8,6 +8,7 @@ import { adminExtension } from '../src/http/admin.js';
 import { apiExtension } from '../src/http/api.js';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { esc } from '../src/http/pages.js';
+import { loginLimiter } from '../src/http/platform.js';
 import { csrfToken } from '../src/http/session.js';
 import { LOCALES, t, type MessageKey } from '../src/i18n/index.js';
 import { mcpExtension } from '../src/mcp/http.js';
@@ -78,6 +79,15 @@ async function world(): Promise<World> {
   core.access.setGrant(notes.instances[0], 'user', pia.id, 'admin', admin);
   core.access.setGrant(notes.instances[0], 'user', uwe.id, 'view', pia);
   core.data.set(notes.instances[0].id, 'notes/by-pia', { text: 'stays' }, pia.id);
+  // Her private area in someone else's instance, next to another person's and to paths that only look like hers.
+  for (const p of [`data/users/${pia.id}/settings`, `data/users/${pia.id}/drafts/parts/b`, `data/users/${uwe.id}/settings`, `data/users/${pia.id}x/settings`, `datax/users/${pia.id}/settings`]) {
+    core.data.set(notes.instances[0].id, p, { mine: true }, pia.id);
+  }
+  // She agreed to be known to an instance she reaches through its visibility alone.
+  const open = core.apps.deploy({ slug: 'open', html: '<p>open</p>', userId: boss.id, capabilities: { user: {} } });
+  core.apps.setVisibility(open.instances[0].id, 'users', boss.id);
+  core.access.confirmSignIn(open.instances[0], pia, true);
+  core.access.confirmSignIn(open.instances[0], uwe, false);
 
   const group = core.groups.create('Team');
   core.groups.addMember(group.id, pia.id);
@@ -99,7 +109,7 @@ async function world(): Promise<World> {
   const hh = h;
   const get: World['get'] = (p, c = cookie) => request(hh.app).get(p).set('Host', hh.host).set('Cookie', c);
   const post: World['post'] = (p, body, as = { user: admin, cookie }) =>
-    request(hh.app).post(p).set('Host', hh.host).set('Cookie', as.cookie).type('form').send({ csrf: csrfToken(core, as.user), ...body });
+    request(hh.app).post(p).set('Host', hh.host).set('Cookie', as.cookie).type('form').send({ csrf: csrfToken(core, as.user), decision: 'delete', ...body });
   return { core, admin, boss, pia, uwe, cookie, post, get };
 }
 
@@ -114,7 +124,7 @@ describe('deleting an account', () => {
     expect(references(w.core, w.pia.id)).toEqual([
       'account_tokens.created_by', 'account_tokens.user_id', 'api_tokens.user_id', 'app_collaborators.user_id', 'apps.owner_id',
       'grants.created_by', 'grants.principal_id', 'group_members.user_id', 'instance_creations.user_id', 'instance_domains.created_by',
-      'instances.owner_id', 'oauth_codes.user_id', 'oauth_tokens.user_id', 'retired_slugs.owner_id', 'users.id', 'versions.created_by',
+      'instance_signins.user_id', 'instances.owner_id', 'oauth_codes.user_id', 'oauth_tokens.user_id', 'retired_slugs.owner_id', 'users.id', 'versions.created_by',
     ]);
     expect(dbOf(w.core).prepare('SELECT ai_group_id FROM users WHERE id = ?').get(w.pia.id)).not.toEqual({ ai_group_id: null });
   });
@@ -137,17 +147,21 @@ describe('deleting an account', () => {
     const owned = [...doc.querySelectorAll('dl.facts > div')].map((d) => [d.querySelector('dt')!.textContent, d.querySelector('dd')!.textContent]);
     expect(owned).toEqual([['Apps 1', 'board'], ['Instances 3', 'board, board-two, notes-pia']]);
     const form = doc.querySelector(`form[action="/admin/users/${w.pia.id}/delete"]`)!;
-    const radios = [...form.querySelectorAll<HTMLInputElement>('[role="radiogroup"] input[type="radio"][name="owned"]')];
+    const radios = [...form.querySelectorAll<HTMLInputElement>('fieldset input[type="radio"][name="owned"]')];
     expect(radios.map((r) => [r.value, r.checked])).toEqual([['transfer', true], ['delete', false]]);
-    expect(form.querySelector('[role="radiogroup"]')!.getAttribute('aria-labelledby')).toBe('owned-what');
-    expect(doc.getElementById('owned-what')!.textContent).toBe(t('en', 'admin.users.delete.what'));
+    expect(form.querySelector('fieldset > legend')!.textContent).toBe(t('en', 'admin.users.delete.what'));
+    expect(form.querySelector('[role="radiogroup"]')).toBeNull();
+    // Deleting is never what Enter does: the first submit button of the form, its default, is Cancel.
+    const buttons = [...form.querySelectorAll<HTMLButtonElement>('button[type="submit"]')];
+    expect(buttons.map((b) => [b.name, b.value, b.textContent])).toEqual([['decision', 'cancel', t('en', 'signin.cancel')], ['decision', 'delete', t('en', 'admin.users.delete.submit')]]);
+    expect(buttons[0].hasAttribute('formnovalidate')).toBe(true);
+    expect(buttons[1].classList.contains('btn-danger')).toBe(true);
     // The acting administrator is the default heir; every control has a label and is reachable without script.
     expect(form.querySelector<HTMLInputElement>('input[name="transfer_to"]')!.value).toBe('admin@x.y');
     expect(form.querySelector('input[name="confirm"]')!.getAttribute('data-confirm')).toBe('pia@x.y');
     for (const input of form.querySelectorAll('input:not([type="hidden"])')) {
       expect(input.closest('label') ?? doc.querySelector(`label[for="${input.id}"]`), input.getAttribute('name')!).not.toBeNull();
     }
-    expect(form.querySelector('button[type="submit"]')!.textContent).toBe(t('en', 'admin.users.delete.submit'));
     expect(res.text).toContain(en('admin.users.delete.text', { name: 'Pia', email: 'pia@x.y' }));
 
     // An account that owns nothing is not asked the question.
@@ -156,6 +170,120 @@ describe('deleting an account', () => {
     const empty = await w.get(`/admin/users/${w.uwe.id}/delete`);
     expect(empty.text).toContain(en('admin.users.delete.ownsNothing'));
     expect(empty.text).not.toContain('name="owned"');
+  });
+
+  it('Cancel, the default answer of the form, deletes nothing, with or without the rest filled in', async () => {
+    const w = await world();
+    for (const body of [{ decision: 'cancel' }, { decision: 'cancel', owned: 'delete', confirm: 'pia@x.y' }, { decision: '', owned: 'delete', confirm: 'pia@x.y' }]) {
+      const res = await w.post(`/admin/users/${w.pia.id}/delete`, body);
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe('/admin/users');
+    }
+    expect(w.core.users.get(w.pia.id)).not.toBeNull();
+    expect(w.core.apps.getApp('board')).not.toBeNull();
+  });
+
+  it('the script disables the delete button until the address is typed and leaves Cancel alone', async () => {
+    const w = await world();
+    const html = (await w.get(`/admin/users/${w.pia.id}/delete`)).text;
+    const dom = new JSDOM(html.replace(/<script[^>]*>[\s\S]*?<\/script>/g, ''), { runScripts: 'outside-only' });
+    dom.window.eval(fs.readFileSync(new URL('../src/static/app.js', import.meta.url), 'utf8'));
+    const doc = dom.window.document;
+    const [cancel, del] = [...doc.querySelectorAll<HTMLButtonElement>('form[action$="/delete"] button[type="submit"]')];
+    expect([cancel.disabled, del.disabled]).toEqual([false, true]);
+    const input = doc.querySelector<HTMLInputElement>('input[name="confirm"]')!;
+    input.value = 'pia@x.y';
+    input.dispatchEvent(new dom.window.Event('input'));
+    expect([cancel.disabled, del.disabled]).toEqual([false, false]);
+  });
+
+  it('a refused attempt comes back with the choice and the target that were sent, not with the defaults', async () => {
+    const w = await world();
+    const sent = async (body: Record<string, string>): Promise<{ transfer: boolean; trash: boolean; to: string }> => {
+      const res = await w.post(`/admin/users/${w.pia.id}/delete`, { confirm: 'typo', ...body });
+      expect(res.status).toBe(400);
+      const doc = new JSDOM(res.text).window.document;
+      const radio = (v: string): boolean => doc.querySelector<HTMLInputElement>(`input[name="owned"][value="${v}"]`)!.checked;
+      return { transfer: radio('transfer'), trash: radio('delete'), to: doc.querySelector<HTMLInputElement>('input[name="transfer_to"]')!.value };
+    };
+    // Chose to delete, mistyped the address: the retry must not quietly become a transfer to the administrator.
+    expect(await sent({ owned: 'delete', transfer_to: 'admin@x.y' })).toEqual({ transfer: false, trash: true, to: 'admin@x.y' });
+    expect(await sent({ owned: 'transfer', transfer_to: 'boss@x.y' })).toEqual({ transfer: true, trash: false, to: 'boss@x.y' });
+    expect(await sent({ owned: 'transfer', transfer_to: '"><b>x' })).toEqual({ transfer: true, trash: false, to: '"><b>x' });
+    expect(await sent({ owned: 'transfer', transfer_to: '' })).toEqual({ transfer: true, trash: false, to: '' });
+    // Nothing chosen and nothing entered: the defaults.
+    expect(await sent({ owned: 'neither' })).toEqual({ transfer: true, trash: false, to: 'admin@x.y' });
+    // The same after a refusal that is about the target itself.
+    const target = await w.post(`/admin/users/${w.pia.id}/delete`, { owned: 'transfer', transfer_to: 'nobody@x.y', confirm: 'pia@x.y' });
+    expect(new JSDOM(target.text).window.document.querySelector<HTMLInputElement>('input[name="transfer_to"]')!.value).toBe('nobody@x.y');
+    expect(w.core.users.get(w.pia.id)).not.toBeNull();
+  });
+
+  it('her agreements to sign in to instances go with her, other people\'s stay', async () => {
+    const w = await world();
+    const rows = (): string[] => (dbOf(w.core).prepare('SELECT user_id FROM instance_signins ORDER BY user_id').all() as Array<{ user_id: string }>).map((r) => r.user_id);
+    expect(rows()).toEqual([w.pia.id, w.uwe.id].sort());
+    expect(dbOf(w.core).prepare('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 });
+    w.core.removal.remove(w.pia.id, w.admin, { transferTo: w.admin.id });
+    expect(rows()).toEqual([w.uwe.id]);
+  });
+
+  it('her private areas in other people\'s instances are removed; everything else there stays', async () => {
+    const w = await world();
+    const notes = w.core.apps.getInstanceBySlug('notes')!;
+    const paths = (): string[] => [...w.core.data.exportDocs(notes.id, { includePrivateOf: w.pia.id })].map((d) => d.path)
+      .concat([...w.core.data.exportDocs(notes.id, { includePrivateOf: w.uwe.id })].map((d) => d.path).filter((p) => p.startsWith('data/users/')));
+    expect(paths().filter((p) => p.startsWith(`data/users/${w.pia.id}/`))).toHaveLength(2);
+    const before = w.core.data.usage(notes.id);
+    expect(w.core.removal.remove(w.pia.id, w.admin, { transferTo: w.admin.id })).toEqual({ cleanedUp: true });
+    expect(paths().sort()).toEqual([`data/users/${w.uwe.id}/settings`, `datax/users/${w.pia.id}/settings`, 'notes/by-pia'].sort());
+    // Paths that merely look like hers are nobody's private area and are not touched.
+    for (const p of [`data/users/${w.pia.id}x/settings`, `datax/users/${w.pia.id}/settings`]) expect(w.core.data.get(notes.id, p), p).not.toBeNull();
+    expect(w.core.data.usage(notes.id)).toBeLessThanOrEqual(before);
+    // Bounded per call: a huge area goes in steps, and the count says how much went.
+    const own = w.core.apps.getInstanceBySlug('board')!;
+    for (let i = 0; i < 5; i++) w.core.data.set(own.id, `data/users/gone/i${i}`, { i }, null);
+    expect(w.core.data.purgePrivateArea(own.id, 'gone', 3)).toBe(3);
+    expect(w.core.data.purgePrivateArea(own.id, 'gone', 3)).toBe(2);
+    expect(w.core.data.purgePrivateArea(own.id, 'gone', 3)).toBe(0);
+    expect(w.core.data.purgePrivateArea('00000000-0000-4000-8000-000000000000', 'gone')).toBe(0);
+  });
+
+  it('when moving the files to the trash fails, the account is still gone and the administrator is told to look at the log', async () => {
+    const w = await world();
+    // A file where the trash directory belongs: nothing can be moved there.
+    const trash = path.join(w.core.config.dataDir, 'trash');
+    fs.rmSync(trash, { recursive: true, force: true });
+    fs.writeFileSync(trash, 'in the way');
+    const errors: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args); };
+    let res: request.Response;
+    try {
+      res = await w.post(`/admin/users/${w.pia.id}/delete`, { owned: 'delete', confirm: 'pia@x.y' });
+    } finally { console.error = original; }
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/html/);
+    const doc = new JSDOM(res.text).window.document;
+    expect(doc.querySelector('[role="alert"]')!.textContent).toBe(t('en', 'admin.users.delete.cleanupFailed', { email: 'pia@x.y' }));
+    expect(res.text).not.toContain(en('admin.users.delete.done', { email: 'pia@x.y' }));
+    expect(doc.querySelector('table')).not.toBeNull();
+    expect(errors.some((args) => String(args[0]).includes(`the account ${w.pia.id} was deleted, but cleaning up after it failed`))).toBe(true);
+    // The database side is complete, and what does not need the trash was still done.
+    expect(w.core.users.get(w.pia.id)).toBeNull();
+    expect(references(w.core, w.pia.id)).toEqual([]);
+    expect(w.core.apps.getApp('board')).toBeNull();
+    expect(w.core.domains.instanceIdFor('board.example.org')).toBeNull();
+    expect([...w.core.data.exportDocs(w.core.apps.getInstanceBySlug('notes')!.id, { includePrivateOf: w.pia.id })].map((d) => d.path)).toEqual([`datax/users/${w.pia.id}/settings`, 'notes/by-pia']);
+  });
+
+  it('a pause the address collected at the sign-in page ends with the account', async () => {
+    const w = await world();
+    const limiter = loginLimiter(w.core);
+    for (let i = 0; i < 30 && !limiter.accountPaused('pia@x.y'); i++) limiter.begin(`10.0.${i}.1`, 'pia@x.y', false);
+    expect(limiter.accountPaused('pia@x.y')).toBe(true);
+    expect((await w.post(`/admin/users/${w.pia.id}/delete`, { owned: 'transfer', transfer_to: 'admin@x.y', confirm: 'pia@x.y' })).status).toBe(200);
+    expect(limiter.accountPaused('pia@x.y')).toBe(false);
   });
 
   it('the page renders in every language', async () => {
@@ -310,7 +438,7 @@ describe('deleting an account', () => {
       expect(w.core.users.get(w.admin.id)).not.toBeNull();
       // With the other administrator gone, the one left can neither be deactivated nor, therefore, deleted.
       w.core.users.setDisabled(w.boss.id, true);
-      expect((await w.post(`/admin/users/${w.boss.id}/delete`, { confirm: 'boss@x.y' })).status).toBe(200);
+      expect((await w.post(`/admin/users/${w.boss.id}/delete`, { owned: 'transfer', transfer_to: 'admin@x.y', confirm: 'boss@x.y' })).status).toBe(200);
       expect((await w.post(`/admin/users/${w.admin.id}/disabled`, { disabled: '1' })).status).toBe(409);
       expect(w.core.users.list().filter((u) => u.role === 'admin' && !u.disabled).map((u) => u.email)).toEqual(['admin@x.y']);
     });
@@ -386,7 +514,7 @@ describe('deleting an account', () => {
       const unknown = await w.post('/admin/users/nope/delete', ok);
       expect(unknown.status).toBe(404);
       expect(unknown.text).toContain(en('admin.users.notFound'));
-      const noCsrf = await request(hh.app).post(`/admin/users/${w.pia.id}/delete`).set('Host', hh.host).set('Cookie', w.cookie).type('form').send(ok);
+      const noCsrf = await request(hh.app).post(`/admin/users/${w.pia.id}/delete`).set('Host', hh.host).set('Cookie', w.cookie).type('form').send({ ...ok, decision: 'delete' });
       expect(noCsrf.status).toBe(403);
       const uwe = { user: w.uwe, cookie: await hh.login('uwe@x.y', PASSWORD) };
       expect((await w.post(`/admin/users/${w.pia.id}/delete`, ok, uwe)).status).toBe(403);

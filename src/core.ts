@@ -3,7 +3,7 @@ import { InstanceAssets } from './data/assets.js';
 import { Hub } from './data/hub.js';
 import { RateLimiter } from './http/ratelimit.js';
 import { Rooms } from './data/rooms.js';
-import { InstanceData } from './data/store.js';
+import { InstanceData, PRIVATE_PURGE_LIMIT } from './data/store.js';
 import { OAuthStore } from './mcp/oauth.js';
 import { AccountRemoval } from './platform/account-removal.js';
 import { Accounts } from './platform/accounts.js';
@@ -131,9 +131,25 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   apps.onBeforeActivate((inst, from, to) => { data.snapshot(inst.id, `v${from}-to-v${to}`); });
   // Every open view of the instance reloads when its active version changes.
   apps.onActivated((inst) => { hub.publish(inst.id, { type: 'reload', version: inst.activeVersion }); });
+  const removal = new AccountRemoval(db, users, apps);
+  // The private area of a deleted account in other people's instances is closed to everyone else, yet counts against their
+  // quota: it goes with the account. Every instance is looked at, since any that was open to the account may hold one.
+  removal.onRemoved((userId) => {
+    let failed: unknown;
+    for (const instance of apps.listAllInstances()) {
+      try {
+        if (data.purgePrivateArea(instance.id, userId) >= PRIVATE_PURGE_LIMIT) {
+          console.warn(`lager: the private area of the deleted account ${userId} in instance ${instance.slug} is larger than ${PRIVATE_PURGE_LIMIT} documents; the rest stays.`);
+        }
+      } catch (e) {
+        failed ??= e;
+      }
+    }
+    if (failed !== undefined) throw failed;
+  });
   return {
     config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, accounts, groups, domains, access,
-    icons, ai, removal: new AccountRemoval(db, users, apps), deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000),
+    icons, ai, removal, deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000),
     close() {
       icons.close();
       assets.close();

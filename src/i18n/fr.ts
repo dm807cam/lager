@@ -307,6 +307,7 @@ export const fr: Record<MessageKey, string> = {
   'admin.users.delete.confirm': "Pour confirmer, saisissez l’adresse e-mail « {email} »",
   'admin.users.delete.submit': "Supprimer définitivement le compte",
   'admin.users.delete.done': "Le compte {email} a été supprimé.",
+  'admin.users.delete.cleanupFailed': "Le compte {email} a été supprimé, mais le nettoyage de ses fichiers a échoué. Consultez le journal du serveur.",
   'admin.users.delete.self': "Vous ne pouvez pas supprimer votre propre compte.",
   'admin.users.delete.active': "Désactivez d’abord le compte. Seul un compte désactivé peut être supprimé.",
   'admin.users.delete.target': "Aucun compte actif avec cette adresse e-mail ne peut prendre le relais.",

@@ -848,10 +848,12 @@ export class Apps {
    * those would lose their app. `heirId` (the acting administrator) inherits what must not become anybody's: the names of
    * deleted instances stay reserved, now for them.
    * `finish` runs inside the same transaction, after nothing here points at the account any more, and removes the account
-   * itself: either everything happens or nothing.
+   * itself: either everything happens or nothing. Returned is what is left to do once that is committed: moving the files of
+   * what was deleted to the trash and running the delete hooks. It throws like `deleteApp` when a step fails, and by then
+   * the account is gone, so the caller decides how to report that.
    */
-  releaseOwner(userId: string, plan: { transferTo?: string; heirId: string }, finish: () => void): void {
-    const cleanUp = this.transaction(() => {
+  releaseOwner(userId: string, plan: { transferTo?: string; heirId: string }, finish: () => void): () => void {
+    return this.transaction(() => {
       const apps = this.listApps(userId);
       const gone: Instance[] = [];
       const files: Array<() => void> = [];
@@ -891,6 +893,5 @@ export class Apps {
       finish();
       return (): void => this.afterDelete(gone, ...files);
     });
-    cleanUp();
   }
 }

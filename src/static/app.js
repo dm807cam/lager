@@ -72,10 +72,10 @@
     });
   });
 
-  // Confirm by typing: the danger button stays disabled until the name matches. The server checks it again.
+  // Confirm by typing: the danger button stays disabled until the name matches (a Cancel button next to it stays usable). The server checks it again.
   document.querySelectorAll('input[data-confirm]').forEach(function (input) {
     var form = input.form;
-    var btn = form && form.querySelector('button[type="submit"]');
+    var btn = form && (form.querySelector('button.btn-danger[type="submit"]') || form.querySelector('button[type="submit"]'));
     if (!btn) return;
     var check = function () { btn.disabled = input.value !== input.getAttribute('data-confirm'); };
     input.addEventListener('input', check);

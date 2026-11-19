@@ -12,7 +12,12 @@ export type OwnedPlan = { transferTo: string } | { delete: true };
  * is refused here, and deactivating the last one is refused by `Users.setDisabled`).
  */
 export class AccountRemoval {
+  private removedHooks: Array<(userId: string) => void> = [];
+
   constructor(private db: DatabaseSync, private users: Users, private apps: Apps) {}
+
+  /** Runs after an account is gone for good, for what lives outside the platform database (its private areas in instances). */
+  onRemoved(hook: (userId: string) => void): void { this.removedHooks.push(hook); }
 
   /** The apps the account owns and the instances that belong to it (of its own apps and of other people's). */
   owned(userId: string): { apps: App[]; instances: Instance[] } {
@@ -33,12 +38,16 @@ export class AccountRemoval {
    * Removes the account and every row that points at it, in one transaction: what it owns goes where `plan` says (see
    * `Apps.releaseOwner`), then its sessions (they die with the row), API tokens, OAuth codes and tokens, reset and
    * confirmation links, the invitations it issued, the shares given to it, its group memberships and collaborator entries,
-   * and its AI group (a column of the row). Shares and custom domains it set up for others stay and forget who added them.
+   * its agreements to sign in to instances (they go with the row) and its AI group (a column of the row). Shares and custom domains it set up for others stay and forget who added them.
    * The ids it left as author inside instance databases stay too: they simply no longer resolve to a person.
+   *
+   * Once that is committed the account is gone, whatever happens next. What follows works on files (moving deleted apps and
+   * instances to the trash, the delete hooks, the `onRemoved` hooks) and can fail on its own: every step runs, failures are
+   * logged, and `cleanedUp` tells the caller whether all of it went through.
    */
-  remove(userId: string, by: User, plan: OwnedPlan): void {
+  remove(userId: string, by: User, plan: OwnedPlan): { cleanedUp: boolean } {
     const user = this.removable(userId, by);
-    this.apps.releaseOwner(user.id, { transferTo: 'transferTo' in plan ? plan.transferTo : undefined, heirId: by.id }, () => {
+    const cleanUp = this.apps.releaseOwner(user.id, { transferTo: 'transferTo' in plan ? plan.transferTo : undefined, heirId: by.id }, () => {
       const run = (sql: string, ...params: string[]): void => { this.db.prepare(sql).run(...params); };
       run('DELETE FROM api_tokens WHERE user_id = ?', user.id);
       run('DELETE FROM oauth_tokens WHERE user_id = ?', user.id);
@@ -51,5 +60,15 @@ export class AccountRemoval {
       // Last: the foreign keys refuse this while an app, an instance, a version or a credential still names the account.
       run('DELETE FROM users WHERE id = ?', user.id);
     });
+    let cleanedUp = true;
+    for (const step of [cleanUp, ...this.removedHooks.map((hook) => () => hook(user.id))]) {
+      try {
+        step();
+      } catch (e) {
+        cleanedUp = false;
+        console.error(`lager: the account ${user.id} was deleted, but cleaning up after it failed:`, e);
+      }
+    }
+    return { cleanedUp };
   }
 }

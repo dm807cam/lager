@@ -32,6 +32,9 @@ export const SNAPSHOT_QUOTA_FACTOR = 3;
 /** The newest snapshot at least this old is never pruned, so a burst of new snapshots cannot push out every earlier state. */
 export const SNAPSHOT_OLD_MS = 24 * 60 * 60_000;
 
+/** Documents of a deleted account's private area removed from one instance in one go. */
+export const PRIVATE_PURGE_LIMIT = 50_000;
+
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS docs (
     path TEXT PRIMARY KEY,
@@ -321,6 +324,19 @@ export class InstanceData {
     });
     if (result.acquired) this.notify(instanceId, docPath, parent);
     return result;
+  }
+
+  /**
+   * Deletes the private area of `userId` in the instance (`data/users/<id>/…`), which nobody else can read or remove; for an
+   * account that no longer exists. At most `limit` documents per call, so one instance never holds the server for long;
+   * returns how many went. Nobody is listening on these paths any more, so no change is announced.
+   */
+  purgePrivateArea(instanceId: string, userId: string, limit = PRIVATE_PURGE_LIMIT): number {
+    const db = this.open(instanceId, false);
+    if (!db) return 0;
+    // Everything between "<prefix>/" and "<prefix>0" ("0" follows "/"): a range on the primary key, no scan.
+    const prefix = `data/users/${userId}`;
+    return Number(db.prepare('DELETE FROM docs WHERE path IN (SELECT path FROM docs WHERE path >= ? AND path < ? LIMIT ?)').run(`${prefix}/`, `${prefix}0`, limit).changes);
   }
 
   // ---- export and import ----------------------------------------------

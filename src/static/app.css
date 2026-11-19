@@ -297,6 +297,9 @@ details.menu > summary::-webkit-details-marker { display: none; }
 form { margin: 0; }
 .stack { display: flex; flex-direction: column; gap: var(--s4); }
 .stack > button, .stack > .btn { align-self: flex-start; }
+/* A group of choices: the legend reads like a field label, without the browser's frame. */
+fieldset.stack { min-width: 0; margin: 0; padding: 0; border: 0; }
+fieldset.stack > legend { padding: 0; margin-bottom: var(--s3); font-size: 0.86rem; font-weight: 600; color: var(--ink); }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 label, .label { font-size: 0.86rem; font-weight: 600; color: var(--ink); }
 .hint { color: var(--ink-2); font-size: 0.82rem; line-height: 1.45; }

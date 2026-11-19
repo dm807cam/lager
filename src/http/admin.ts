@@ -12,6 +12,7 @@ import type { OwnedPlan } from '../platform/account-removal.js';
 import type { Instance } from '../platform/apps.js';
 import type { Role, User } from '../platform/users.js';
 import { requireUser, shellFor, type PlatformExtension } from './app.js';
+import { loginLimiter } from './platform.js';
 import { noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, sizeText, visibilityLabel, type Option } from './pages.js';
 import { domainsBody } from './manage.js';
 import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
@@ -78,7 +79,7 @@ const MAX_OWNED_SHOWN = 50;
  * The page between "Delete account" and the deletion: what goes with the account, what it owns, what becomes of that, and
  * the address to type. Null when the account does not exist.
  */
-function deleteUserPage(core: Core, locale: Locale, admin: User, userId: string, msg?: Msg): string | null {
+function deleteUserPage(core: Core, locale: Locale, admin: User, userId: string, msg?: Msg, answered: { owned?: string; transferTo?: string } = {}): string | null {
   const target = core.users.get(userId);
   if (!target) return null;
   const csrf = csrfToken(core, admin);
@@ -90,16 +91,20 @@ function deleteUserPage(core: Core, locale: Locale, admin: User, userId: string,
   const owns = apps.length + instances.length === 0
     ? `<p class="hint">${esc(t(locale, 'admin.users.delete.ownsNothing'))}</p>`
     : `<h3>${esc(t(locale, 'admin.users.delete.owns'))}</h3><dl class="facts">${group(t(locale, 'admin.section.apps'), apps.map((a) => a.slug))}${group(t(locale, 'app.instances'), instances.map((i) => i.slug))}</dl>`;
-  // The safe choice comes first and is preselected: handing over loses nothing.
-  const choice = apps.length + instances.length === 0 ? '' : `<div class="stack" role="radiogroup" aria-labelledby="owned-what"><span class="label" id="owned-what">${esc(t(locale, 'admin.users.delete.what'))}</span>
-<label class="check"><input type="radio" name="owned" value="transfer" checked><span>${esc(t(locale, 'admin.users.delete.transfer'))}</span></label>
-${field('transfer-to', t(locale, 'admin.users.delete.transferEmail'), `<input id="transfer-to" name="transfer_to" type="email" maxlength="254" autocomplete="off" value="${esc(admin.email)}">`, t(locale, 'admin.users.delete.transferHint'))}
-<label class="check"><input type="radio" name="owned" value="delete"><span>${esc(t(locale, 'admin.users.delete.trash'))}</span></label></div>`;
+  // The safe choice comes first and is preselected: handing over loses nothing. After a refusal the page comes back with what
+  // was chosen and entered, so a second try does what the first one meant to do.
+  const trash = answered.owned === 'delete';
+  const choice = apps.length + instances.length === 0 ? '' : `<fieldset class="stack"><legend>${esc(t(locale, 'admin.users.delete.what'))}</legend>
+<label class="check"><input type="radio" name="owned" value="transfer"${trash ? '' : ' checked'}><span>${esc(t(locale, 'admin.users.delete.transfer'))}</span></label>
+${field('transfer-to', t(locale, 'admin.users.delete.transferEmail'), `<input id="transfer-to" name="transfer_to" type="email" maxlength="254" autocomplete="off" value="${esc(answered.transferTo ?? admin.email)}">`, t(locale, 'admin.users.delete.transferHint'))}
+<label class="check"><input type="radio" name="owned" value="delete"${trash ? ' checked' : ''}><span>${esc(t(locale, 'admin.users.delete.trash'))}</span></label></fieldset>`;
+  // Cancel is the first button and so the form's default: Enter in a field never deletes.
   const body = `<p>${esc(t(locale, 'admin.users.delete.text', { name: target.name, email: target.email }))}</p>
 <div class="subsection">${owns}</div>
-<div class="subsection">${form(base, csrf, `${choice}
-${field('confirm', t(locale, 'admin.users.delete.confirm', { email: target.email }), `<input id="confirm" name="confirm" required autocomplete="off" spellcheck="false" data-confirm="${esc(target.email)}">`)}`,
-    `${icon('trash')}${esc(t(locale, 'admin.users.delete.submit'))}`, 'danger', 'stack')}</div>`;
+<div class="subsection"><form method="post" action="${esc(base)}" class="stack">${hiddenField('csrf', csrf)}${choice}
+${field('confirm', t(locale, 'admin.users.delete.confirm', { email: target.email }), `<input id="confirm" name="confirm" required autocomplete="off" spellcheck="false" data-confirm="${esc(target.email)}">`)}
+<div class="btn-row"><button type="submit" name="decision" value="cancel" formnovalidate class="${btn('secondary')}">${esc(t(locale, 'signin.cancel'))}</button>
+<button type="submit" name="decision" value="delete" class="${btn('danger')}">${icon('trash')}${esc(t(locale, 'admin.users.delete.submit'))}</button></div></form></div>`;
   return shell(core, locale, admin, 'users', t(locale, 'admin.users.delete.pageTitle', { email: target.email }), body, msg, base,
     `<a class="back" href="/admin/users">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.section.users'))}</a>`);
 }
@@ -476,13 +481,13 @@ export const adminExtension: PlatformExtension = (router, core) => {
     confirm: 'admin.users.delete.confirmWrong',
   };
   /** A refusal: on the confirmation page while the account can still be deleted, else on the list of users. */
-  const deleteRefused = (res: Response, user: User, id: string, e: unknown): void => {
+  const deleteRefused = (res: Response, user: User, id: string, e: unknown, answered?: { owned?: string; transferTo?: string }): void => {
     if (!(e instanceof LagerError)) throw e;
     const locale = localeOf(res);
     const error = noticeText(locale, (e.reason !== undefined ? DELETE_NOTICES[e.reason] : undefined) ?? (e.code === 'not_found' ? 'admin.users.notFound' : 'validation.generic'));
     const status = e.code === 'not_found' ? 404 : e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400;
     const stays = e.reason !== 'delete_self' && e.reason !== 'delete_active';
-    send(res, status, (stays ? deleteUserPage(core, locale, user, id, { error }) : null) ?? usersSection(core, locale, user, { error }));
+    send(res, status, (stays ? deleteUserPage(core, locale, user, id, { error }, answered) : null) ?? usersSection(core, locale, user, { error }));
   };
 
   router.get('/admin/users/:id/delete', noStore, admin, (req, res) => {
@@ -496,11 +501,14 @@ export const adminExtension: PlatformExtension = (router, core) => {
 
   router.post('/admin/users/:id/delete', ...action((req, res, user) => {
     const id = param(req, 'id');
+    if (field(req, 'decision') !== 'delete') { res.redirect('/admin/users'); return; }
+    const choice = field(req, 'owned');
+    // Only what the form offers comes back in a re-rendered page.
+    const answered = { owned: choice === 'delete' || choice === 'transfer' ? choice : undefined, transferTo: (req.body as Record<string, unknown>).transfer_to === undefined ? undefined : field(req, 'transfer_to', 254) };
     try {
       const target = core.removal.removable(id, user);
       if (field(req, 'confirm', 254) !== target.email) throw new LagerError('invalid_argument', 'The confirmation does not match.', 'confirm');
       const { apps, instances } = core.removal.owned(id);
-      const choice = field(req, 'owned');
       let plan: OwnedPlan = { delete: true };
       if (apps.length + instances.length > 0 && choice !== 'delete') {
         if (choice !== 'transfer') throw new LagerError('invalid_argument', 'owned must be transfer or delete.', 'owned_choice');
@@ -508,9 +516,15 @@ export const adminExtension: PlatformExtension = (router, core) => {
         if (!to) throw new LagerError('invalid_argument', 'No such account.', 'transfer_target');
         plan = { transferTo: to.id };
       }
-      core.removal.remove(id, user, plan);
-      send(res, 200, usersSection(core, localeOf(res), user, { ok: t(localeOf(res), 'admin.users.delete.done', { email: target.email }) }));
-    } catch (e) { deleteRefused(res, user, id, e); }
+      const { cleanedUp } = core.removal.remove(id, user, plan);
+      // A pause the address had collected at the sign-in page does not wait for the next account of that name.
+      loginLimiter(core).succeed(target.email.trim().toLowerCase());
+      const locale = localeOf(res);
+      // The account is gone either way; files that could not be moved are the administrator's to look at, in the log.
+      send(res, 200, usersSection(core, locale, user, cleanedUp
+        ? { ok: t(locale, 'admin.users.delete.done', { email: target.email }) }
+        : { error: t(locale, 'admin.users.delete.cleanupFailed', { email: target.email }) }));
+    } catch (e) { deleteRefused(res, user, id, e, answered); }
   }));
 
   // --- invitations ---
