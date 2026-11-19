@@ -73,6 +73,6 @@ To restore, stop Lager and copy the contents back (or unpack the archive into an
 
 ## Logs and crashes
 
-Lager writes to standard output and standard error: one line at start, one per trash cleanup, every server error with its stack, and mail that could not be sent. With Docker, `docker compose logs -f lager` shows them. Lager ships no systemd unit; if you run it from source under a unit you wrote yourself, `journalctl -u <your unit> -f` shows them. Set `LAGER_ACCESS_LOG=true` for one line per request if your proxy does not keep an access log.
+Lager writes to standard output and standard error: one line at start, one per trash cleanup, every server error with its stack, and mail that could not be sent (with the recipient masked, as in `j***@example.com`). With Docker, `docker compose logs -f lager` shows them. Lager ships no systemd unit; if you run it from source under a unit you wrote yourself, `journalctl -u <your unit> -f` shows them. Set `LAGER_ACCESS_LOG=true` for one line per request if your proxy does not keep an access log.
 
 If a bug escapes every handler, Lager logs it with a timestamp, closes its databases and exits with status 1, so the supervisor restarts it (`restart: unless-stopped` in the Compose file; in a systemd unit of your own, set `Restart=on-failure`). A port that is already taken ends the start with a clear message instead of a stack trace.

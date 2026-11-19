@@ -23,6 +23,16 @@ export function createMailer(config: Config, timeoutMs = SMTP_TIMEOUT_MS): Maile
   };
 }
 
+/**
+ * An address as the log shows it: the first character of the local part and the domain (`j***@example.com`). Enough to tell
+ * which mail failed when you know who was writing, without the log becoming a list of everyone's addresses.
+ */
+export function maskAddress(address: string): string {
+  const at = address.lastIndexOf('@');
+  if (at < 1) return '***';
+  return `${Array.from(address)[0]}***${address.slice(at)}`;
+}
+
 /** Collects mail in memory; for tests. */
 export class MemoryMailer implements Mailer {
   enabled = true;
