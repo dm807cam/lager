@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hub, type HubEvent } from '../src/data/hub.js';
 import { InstanceData } from '../src/data/store.js';
@@ -110,14 +111,70 @@ describe('InstanceData', () => {
     expect(fs.existsSync(path.join(dir, 'instances', 'i2', 'data.sqlite'))).toBe(true);
   });
 
+  it('a where or orderBy that is not a list is an invalid argument, not a crash', () => {
+    store.set('i1', 'tasks/a', { n: 1 }, null);
+    for (const spec of [{ where: {} }, { where: 5 }, { where: 'n' }, { orderBy: {} }, { orderBy: 'n' }, { where: [{}] }, { orderBy: [{}] }]) {
+      expect(code(() => store.query('i1', 'tasks', spec as never)), JSON.stringify(spec)).toBe('invalid_argument');
+      expect(code(() => store.query('nothing-yet', 'tasks', spec as never)), JSON.stringify(spec)).toBe('invalid_argument');
+    }
+  });
+
+  it('remembers who wrote shared documents, not who used a private area', () => {
+    store.set('i1', 'tasks/a', { n: 1 }, 'alice');
+    store.update('i1', 'tasks/a', { n: 2 }, 'bob');
+    store.acquire('i1', 'locks/l', { holder: 'h' }, 'carol');
+    store.importDocs('i1', [{ path: 'tasks/b', data: {} }, { path: 'data/users/dora/prefs', data: {} }], 'dora', { allowPrivateOf: 'dora' });
+    store.set('i1', 'data/users/erin/prefs', { n: 1 }, 'erin');
+    store.set('i1', 'tasks/anon', { n: 1 }, null);
+    store.delete('i1', 'tasks/a');
+    store.delete('i1', 'tasks/b');
+    expect(['alice', 'bob', 'carol', 'dora', 'erin', 'nobody'].map((u) => store.hasAuthor('i1', u))).toEqual([true, true, true, true, false, false]);
+    expect(store.hasAuthor('never-opened', 'alice')).toBe(false);
+  });
+
+  it('a database from before the authors table is filled once from its documents, also after a restore', () => {
+    const file = path.join(dir, 'instances', 'old', 'data.sqlite');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const old = new DatabaseSync(file);
+    old.exec(`CREATE TABLE docs (path TEXT PRIMARY KEY, parent TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT, lease_holder TEXT, lease_expires TEXT)`);
+    const ins = old.prepare("INSERT INTO docs (path, parent, id, data, created_at, updated_at, updated_by) VALUES (?, ?, ?, '{}', 'x', 'x', ?)");
+    ins.run('tasks/a', 'tasks', 'a', 'alice');
+    ins.run('tasks/b', 'tasks', 'b', null);
+    ins.run('data/users/erin/prefs/p', 'data/users/erin/prefs', 'p', 'erin');
+    old.close();
+    expect(store.hasAuthor('old', 'alice')).toBe(true);
+    expect(store.hasAuthor('old', 'erin')).toBe(false);
+    // The backfill runs once: an author whose document is gone is not lost when the database is opened again.
+    store.delete('old', 'tasks/a');
+    store.close();
+    store = new InstanceData(dir, hub, 20);
+    expect(store.hasAuthor('old', 'alice')).toBe(true);
+
+    // A restore brings back the snapshot's own list; a snapshot from before the table is filled like any old database.
+    const snap = store.snapshot('old', 'with-alice')!;
+    store.set('old', 'tasks/c', {}, 'bob');
+    store.restore('old', snap.id);
+    expect([store.hasAuthor('old', 'alice'), store.hasAuthor('old', 'bob')]).toEqual([true, false]);
+    store.set('old', 'tasks/d', {}, 'bob');
+    expect(store.hasAuthor('old', 'bob')).toBe(true);
+    const legacy = new DatabaseSync(path.join(dir, 'instances', 'old', 'snapshots', `${snap.id}.sqlite`));
+    legacy.exec('DROP TABLE authors');
+    legacy.close();
+    store.restore('old', snap.id);
+    expect([store.hasAuthor('old', 'alice'), store.hasAuthor('old', 'bob')]).toEqual([false, false]);
+    expect(store.query('old', 'tasks').map((d) => d.id)).toEqual(['b']);
+  });
+
   it('acquire grants, refuses, expires', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
     const a = store.acquire('i1', 'locks/l1', { holder: 'A', ttlMs: 1000, data: { owner: 'A' } }, null);
-    expect(a.acquired).toBe(true);
+    expect(a).toEqual({ acquired: true, expiresAt: '2026-01-01T00:00:01.000Z', version: 1 });
     expect(store.get('i1', 'locks/l1')!.data).toEqual({ owner: 'A' });
     const b = store.acquire('i1', 'locks/l1', { holder: 'B', ttlMs: 1000 }, null);
-    expect(b).toMatchObject({ acquired: false, holder: 'A' });
+    // The holder string is the lease's only credential: a refused caller must not learn it.
+    expect(b).toEqual({ acquired: false, expiresAt: '2026-01-01T00:00:01.000Z', version: 1 });
     expect(store.acquire('i1', 'locks/l1', { holder: 'A', ttlMs: 1000 }, null).acquired).toBe(true);
     vi.setSystemTime(new Date('2026-01-01T00:00:02Z'));
     const c = store.acquire('i1', 'locks/l1', { holder: 'B', ttlMs: 1000, data: { extra: 1 } }, null);

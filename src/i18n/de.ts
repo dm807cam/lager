@@ -235,6 +235,7 @@ export const de: Record<MessageKey, string> = {
   'instance.snapshots.title': 'Schnappschüsse',
   'instance.snapshots.none': 'Noch keine Schnappschüsse.',
   'instance.snapshots.restore': 'Wiederherstellen',
+  'instance.snapshots.ownerOnly': 'Nur der Besitzer kann einen Schnappschuss wiederherstellen.',
   'instance.delete.title': 'Instanz löschen',
   'instance.delete.text': 'Die Instanz und ihre Daten werden entfernt. Die Daten landen im Papierkorb des Servers.',
   'instance.delete.confirm': 'Gib zur Bestätigung den Namen „{name}“ ein',

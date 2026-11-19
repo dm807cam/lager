@@ -321,6 +321,18 @@ describe('mcp endpoint', () => {
     expect(doc.json.doc.data).toEqual({ v: 1 });
     const bad = await call(client, 'restore_snapshot', { instance: 'todo', snapshot: '../../x' });
     expect(bad.isError).toBe(true);
+
+    // A manager lists snapshots but cannot restore: that would roll back data the rules keep from them.
+    const adm = r.h.core.users.create({ email: 'adm@x.y', name: 'adm', password: 'pw-adm-12345', role: 'user' });
+    r.h.core.access.setGrant(r.h.core.apps.getInstanceBySlug('todo')!, 'user', adm.id, 'admin', r.h.core.users.get(r.h.adminId)!);
+    const manager = await connect(r, r.h.core.tokens.create(adm.id, 'mcp').token);
+    await call(client, 'db_write', { instance: 'todo', ops: [{ op: 'set', path: 'tasks/t1', data: { v: 3 } }] });
+    const listed = await call(manager, 'list_snapshots', { instance: 'todo' });
+    expect(listed.isError).toBe(false);
+    const refused = await call(manager, 'restore_snapshot', { instance: 'todo', snapshot: listed.json.snapshots[0].id });
+    expect(refused.isError).toBe(true);
+    expect(refused.json.error.code).toBe('forbidden');
+    expect(r.h.core.data.get(r.h.core.apps.getInstanceBySlug('todo')!.id, 'tasks/t1')!.data).toEqual({ v: 3 });
   });
 
   it('tools on a foreign app are forbidden', async () => {
@@ -540,6 +552,15 @@ describe('mcp endpoint', () => {
     const read = await call(adm.client, 'db_read', { instance: 'todo', path: 'locked/a' });
     expect(read.isError).toBe(true);
     expect(read.json.error.code).toBe('forbidden');
+    // A path a manager may write but not read: replacing is fine, merging would measure the hidden document.
+    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>2</p>', capabilities: { db: { rules: [...rules, { path: 'inbox', read: 'owner', write: 'admin' }] } } });
+    await call(owner, 'db_write', { instance: 'todo', ops: [{ op: 'set', path: 'inbox/a', data: { pad: 'x'.repeat(200 * 1024) } }] });
+    const merge = await call(adm.client, 'db_write', { instance: 'todo', ops: [{ op: 'update', path: 'inbox/a', data: { pad2: 'y'.repeat(100 * 1024) } }] });
+    expect(merge.isError).toBe(true);
+    expect(merge.json.error.code).toBe('forbidden');
+    expect(merge.json.error.message).toContain('use set');
+    expect(r.h.core.data.get(inst.id, 'inbox/a')!.version).toBe(1);
+    expect((await call(adm.client, 'db_write', { instance: 'todo', ops: [{ op: 'set', path: 'inbox/b', data: { v: 1 } }] })).json).toEqual({ applied: 1 });
     // Everything else stays open to the Verwalter.
     expect((await call(adm.client, 'db_write', { instance: 'todo', ops: [{ op: 'set', path: 'tasks/t1', data: { v: 3 } }] })).json).toEqual({ applied: 1 });
     expect((await call(adm.client, 'db_read', { instance: 'todo', path: 'tasks/t1' })).json.doc.data).toEqual({ v: 3 });

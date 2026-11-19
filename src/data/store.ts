@@ -11,7 +11,7 @@ export interface Doc {
   createdAt: string; updatedAt: string; updatedBy: string | null;
 }
 export interface SnapshotInfo { id: string; label: string; createdAt: string; sizeBytes: number }
-export interface AcquireResult { acquired: boolean; version?: number; expiresAt?: string; holder?: string }
+export interface AcquireResult { acquired: boolean; version?: number; expiresAt?: string }
 
 interface DocRow {
   path: string; parent: string; id: string; data: string; version: number;
@@ -42,6 +42,14 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS docs_parent ON docs(parent);
 `;
+
+/**
+ * Everyone who ever wrote a shared document here, so their name stays resolvable after the document was edited by
+ * someone else or deleted. Private areas are left out: nobody else may learn that an account used the instance privately.
+ */
+const AUTHORS_SCHEMA = 'CREATE TABLE authors (user_id TEXT PRIMARY KEY) WITHOUT ROWID';
+const AUTHORS_BACKFILL = `INSERT OR IGNORE INTO authors (user_id)
+  SELECT DISTINCT updated_by FROM docs WHERE updated_by IS NOT NULL AND path NOT LIKE 'data/users/%'`;
 
 const toDoc = (r: DocRow): Doc => ({
   path: r.path, id: r.id, data: JSON.parse(r.data) as Record<string, unknown>, version: r.version,
@@ -148,6 +156,10 @@ export class InstanceData {
     db.exec('PRAGMA journal_mode = WAL');
     db.exec('PRAGMA busy_timeout = 5000');
     db.exec(SCHEMA);
+    // A database from before the authors table (also a restored snapshot) gets it once, filled from the documents it holds.
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'authors'").get()) {
+      db.exec(`BEGIN IMMEDIATE; ${AUTHORS_SCHEMA}; ${AUTHORS_BACKFILL}; COMMIT`);
+    }
     this.dbs.set(instanceId, db);
     return db;
   }
@@ -166,6 +178,12 @@ export class InstanceData {
 
   private row(db: DatabaseSync, docPath: string): DocRow | undefined {
     return db.prepare('SELECT * FROM docs WHERE path = ?').get(docPath) as DocRow | undefined;
+  }
+
+  /** Remembers a signed-in writer of a shared document; call inside the write's transaction. */
+  private recordAuthor(db: DatabaseSync, docPath: string, by: string | null): void {
+    if (by === null || privateAreaOwner(docPath.split('/')) !== undefined) return;
+    db.prepare('INSERT OR IGNORE INTO authors (user_id) VALUES (?)').run(by);
   }
 
   private notify(instanceId: string, docPath: string, parent: string): void {
@@ -197,6 +215,7 @@ export class InstanceData {
         db.prepare('INSERT INTO docs (path, parent, id, data, version, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, 1, ?, ?, ?)')
           .run(docPath, parent, id, json, now, now, by);
       }
+      this.recordAuthor(db, docPath, by);
       return toDoc(this.row(db, docPath)!);
     });
     this.notify(instanceId, docPath, parent);
@@ -209,6 +228,12 @@ export class InstanceData {
 
   update(instanceId: string, docPath: string, data: Record<string, unknown>, by: string | null): Doc {
     return this.write(instanceId, docPath, data, by, true);
+  }
+
+  /** Whether `userId` ever wrote a document of the instance outside the private areas. */
+  hasAuthor(instanceId: string, userId: string): boolean {
+    const db = this.open(instanceId, false);
+    return db !== null && db.prepare('SELECT 1 FROM authors WHERE user_id = ?').get(userId) !== undefined;
   }
 
   delete(instanceId: string, docPath: string): boolean {
@@ -253,7 +278,8 @@ export class InstanceData {
         existing?.lease_holder && existing.lease_holder !== opts.holder &&
         existing.lease_expires && Date.parse(existing.lease_expires) > nowMs
       ) {
-        return { acquired: false, holder: existing.lease_holder, expiresAt: existing.lease_expires, version: existing.version };
+        // The holder string is the only credential of a lease, so a refused caller never learns it.
+        return { acquired: false, expiresAt: existing.lease_expires, version: existing.version };
       }
       const expires = new Date(nowMs + ttl).toISOString();
       if (existing) {
@@ -267,7 +293,8 @@ export class InstanceData {
           'INSERT INTO docs (path, parent, id, data, version, created_at, updated_at, updated_by, lease_holder, lease_expires) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)',
         ).run(docPath, parent, id, JSON.stringify(opts.data ?? {}), now, now, by, opts.holder, expires);
       }
-      return { acquired: true, holder: opts.holder, expiresAt: expires, version: this.row(db, docPath)!.version };
+      this.recordAuthor(db, docPath, by);
+      return { acquired: true, expiresAt: expires, version: this.row(db, docPath)!.version };
     });
     if (result.acquired) this.notify(instanceId, docPath, parent);
     return result;
@@ -328,6 +355,7 @@ export class InstanceData {
          ON CONFLICT(path) DO UPDATE SET data = excluded.data, version = docs.version + 1, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       );
       for (const [p, d] of checked) upsert.run(p, d.parent, d.id, d.json, now, now, by);
+      for (const p of checked.keys()) this.recordAuthor(db, p, by);
       if (this.quotaBytes > 0 && this.usage(instanceId) + this.extraUsage(instanceId) > this.quotaBytes) {
         throw new LagerError('quota_exceeded', 'This instance\'s storage is full.');
       }

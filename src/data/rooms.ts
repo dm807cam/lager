@@ -117,6 +117,14 @@ export class Rooms {
     return this.snapshot(this.byInstance.get(instanceId)?.get(room) ?? new Map());
   }
 
+  /** Whether `userId` is in any room of the instance right now. */
+  hasUser(instanceId: string, userId: string): boolean {
+    for (const members of this.byInstance.get(instanceId)?.values() ?? []) {
+      for (const m of members.values()) if (m.info.by === userId) return true;
+    }
+    return false;
+  }
+
   private members(instanceId: string, room: string): Map<string, Member> {
     return this.byInstance.get(instanceId)?.get(room) ?? new Map();
   }

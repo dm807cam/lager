@@ -235,6 +235,7 @@ export const es: Record<MessageKey, string> = {
   'instance.snapshots.title': 'Instantáneas',
   'instance.snapshots.none': 'Todavía no hay instantáneas.',
   'instance.snapshots.restore': 'Restaurar',
+  'instance.snapshots.ownerOnly': 'Solo el propietario puede restaurar una instantánea.',
   'instance.delete.title': 'Eliminar instancia',
   'instance.delete.text': 'Se eliminan la instancia y sus datos. Los datos van a la papelera del servidor.',
   'instance.delete.confirm': 'Para confirmar, escribe el nombre «{name}»',

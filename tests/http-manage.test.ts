@@ -72,6 +72,26 @@ describe('instance page', () => {
     const grantee = await page(uc, '/instances/notes');
     expect(grantee.text).not.toContain(en('instance.delete.title'));
     expect(grantee.text).toContain('u@x.y');
+    // A manager sees the snapshots but is not offered the restore they would be refused.
+    expect(grantee.text).toContain('manual-one');
+    expect(grantee.text).not.toContain('/ui/instances/notes/restore');
+    expect(grantee.text).toContain(en('instance.snapshots.ownerOnly'));
+    expect(res.text).toContain('/ui/instances/notes/restore');
+    expect(res.text).not.toContain(en('instance.snapshots.ownerOnly'));
+  });
+
+  it('only the owner restores a snapshot, not a manager', async () => {
+    const { p, u, pc, uc } = await setup();
+    h.core.access.setGrant(inst(), 'user', u.id, 'admin', p);
+    h.core.data.set(inst().id, `data/users/${p.id}/prefs`, { v: 'old' }, p.id);
+    const snap = h.core.data.snapshot(inst().id, 'keep-me')!;
+    h.core.data.set(inst().id, `data/users/${p.id}/prefs`, { v: 'new' }, p.id);
+    const refused = await post(uc, u, '/ui/instances/notes/restore', { snapshot: snap.id });
+    expect(refused.status).toBe(403);
+    expect(h.core.data.get(inst().id, `data/users/${p.id}/prefs`)!.data).toEqual({ v: 'new' });
+    expect(h.core.data.listSnapshots(inst().id).some((s) => s.label === 'pre-restore')).toBe(false);
+    expect((await post(pc, p, '/ui/instances/notes/restore', { snapshot: snap.id })).status).toBe(302);
+    expect(h.core.data.get(inst().id, `data/users/${p.id}/prefs`)!.data).toEqual({ v: 'old' });
   });
 
   it('activate, visibility and restore via form', async () => {

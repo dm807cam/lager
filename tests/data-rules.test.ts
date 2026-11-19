@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canRead, canWrite, type Viewer } from '../src/data/rules.js';
+import { canDelete, canRead, canWrite, type Viewer } from '../src/data/rules.js';
 
 const owner: Viewer = { userId: 'o', level: 'owner' };
 const ed: Viewer = { userId: 'e', level: 'interact' };
@@ -80,6 +80,27 @@ describe('rules', () => {
     expect(canRead(undefined, anon, 'data/users/e/x')).toBe(false);
     expect(canRead(undefined, ed, 'data/users')).toBe(false);
     expect(canRead(undefined, ed, 'data/users/v')).toBe(false);
+  });
+
+  it('a viewer reads their own private area but cannot write to it; a contributor can', () => {
+    expect(canRead(undefined, vw, 'data/users/v/prefs/p')).toBe(true);
+    expect(canWrite(undefined, vw, 'data/users/v/prefs/p')).toBe(false);
+    // rules cannot loosen it either
+    expect(canWrite([{ path: 'data', write: 'view' as const }], vw, 'data/users/v/prefs/p')).toBe(false);
+    expect(canWrite(undefined, ed, 'data/users/e/prefs/p')).toBe(true);
+    expect(canWrite(undefined, ed, 'data/users/v/prefs/p')).toBe(false);
+    expect(canRead(undefined, none, 'data/users/x/prefs/p')).toBe(false);
+  });
+
+  it('deleting is a write, except in one\'s own private area where a viewer may too', () => {
+    expect(canDelete(undefined, vw, 'data/users/v/prefs/p')).toBe(true);
+    expect(canDelete(undefined, vw, 'data/users/e/prefs/p')).toBe(false);
+    expect(canDelete(undefined, owner, 'data/users/v/prefs/p')).toBe(false);
+    expect(canDelete(undefined, none, 'data/users/x/prefs/p')).toBe(false);
+    expect(canDelete(undefined, anon, 'data/users/v/prefs/p')).toBe(false);
+    expect(canDelete(undefined, vw, 'tasks/t')).toBe(false);
+    expect(canDelete(undefined, ed, 'tasks/t')).toBe(true);
+    expect(canDelete([{ path: 'tasks', write: 'owner' as const }], ed, 'tasks/t')).toBe(false);
   });
 
   it('anonymous never writes', () => {
