@@ -65,6 +65,18 @@ Apps are single HTML files. Lager injects a small runtime, `window.lager`, into 
 
 ## Quick start
 
+### One command on a Raspberry Pi or any Linux server
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | sudo bash
+```
+
+The installer sets up Docker if needed, asks three short questions and starts Lager. The easiest choice is **Cloudflare**: you get https on your own domain, reachable from anywhere, without opening ports or handling certificates. When asked, open the link it shows on your phone or laptop and pick your domain. That is the only step outside the terminal.
+
+**Updating** is the same command again. It keeps your settings and data, takes a backup first and starts the newest version. Works on a fresh Raspberry Pi 3, 4, 5 or Zero 2 with the 64-bit Raspberry Pi OS, and on any 64-bit Linux server. Details: [One-command install](docs/installation.md#one-command-install).
+
+### By hand with Docker Compose
+
 You need Docker with Compose, a domain, and a reverse proxy that terminates TLS. Lager needs two host names: one for the platform (`lager.example.com`) and a wildcard for the apps (`*.apps.example.com`).
 
 ```sh
