@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import * as z from 'zod';
 import { hostUrl, instanceUrl } from '../config.js';
-import { DEPLOYS_PER_HOUR, type Core } from '../core.js';
+import type { Core } from '../core.js';
 import { assertDocData, parseDocPath } from '../data/paths.js';
 import type { QuerySpec } from '../data/query.js';
 import { canRead, canWrite, type Viewer } from '../data/rules.js';
@@ -153,12 +153,10 @@ export async function deployWithIcon(core: Core, user: User, input: {
   const declared = input.capabilities?.complete?.model;
   // Someone who may not deploy this app learns that from the deploy itself, not from a model check that cannot help them.
   if (declared !== undefined && (!prior || core.access.canDeploy(prior, user))) assertModelAllowed(core, user, declared);
-  // Counted only for someone the deploy is open to, so nobody can use up the budget of an app that is not theirs.
-  if ((!prior || core.access.canDeploy(prior, user)) && !core.deployLimiter.hit(input.slug)) {
-    throw new LagerError('conflict', `"${input.slug}" was deployed ${DEPLOYS_PER_HOUR} times within an hour, which is the limit per app. Wait a few minutes before the next deploy.`, 'deploy_rate');
-  }
   const result = core.apps.deploy({
     slug: input.slug, html: input.html, title: input.title, note: input.note, capabilities: input.capabilities, userId: user.id,
+    // Counted by `deploy` itself, only when it creates a version: a refused deploy costs nobody anything.
+    rateLimit: (key) => core.deployLimiter.hit(key),
     description: input.description, themeColor: input.themeColor,
   });
   let app = result.app;

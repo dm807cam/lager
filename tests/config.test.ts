@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { assertSlug, instanceUrl, isLoopbackHost, loadConfig } from '../src/config.js';
 import { LagerError } from '../src/errors.js';
 
@@ -104,7 +104,7 @@ describe('config', () => {
 
     it('LAGER_PUBLIC_URL: http or https, host and port only', () => {
       for (const v of ['lager.example.org', 'ftp://lager.example.org', 'https://lager.example.org/lager', 'https://lager.example.org/?a=1',
-        'https://lager.example.org/#top', 'https://user:pw@lager.example.org', 'https://', 'localhost:8080']) {
+        'https://lager.example.org/#top', 'https://user:pw@lager.example.org', 'https://', 'localhost:8080', 'https://lager.example.org/?', 'https://lager.example.org/#', 'https://lager.example.org?', 'https://lager.example.org#']) {
         expect(() => load({ LAGER_PUBLIC_URL: v }), v).toThrow(/^LAGER_PUBLIC_URL must /);
       }
       for (const v of ['https://lager.example.org', 'https://lager.example.org/', 'http://localhost:8080', 'HTTP://Lager.Example.org:9443', 'http://[::1]:8080', 'http://192.168.1.20:8080']) {
@@ -123,8 +123,8 @@ describe('config', () => {
 
     it('numbers: whole, written in digits and within their range', () => {
       const bad: Array<[string, string[]]> = [
-        ['LAGER_PORT', ['0', '65536', '80.5', '-1', '8080abc', '0x50', '1e3']],
-        ['LAGER_SNAPSHOT_KEEP', ['0', '1.5', '-3', 'many']],
+        ['LAGER_PORT', ['65536', '80.5', '-1', '8080abc', '0x50', '1e3']],
+        ['LAGER_SNAPSHOT_KEEP', ['1.5', '-3', 'many']],
         ['LAGER_INSTANCE_QUOTA_MB', ['0', '0.5', '50MB']],
         ['LAGER_TRASH_DAYS', ['-1', '2.5', 'never']],
         ['LAGER_AI_TIMEOUT_SECONDS', ['0', '4', '601', '90s', '1.5']],
@@ -134,15 +134,32 @@ describe('config', () => {
         .toMatchObject({ port: 1, snapshotKeep: 1, trashDays: 0, aiTimeoutSeconds: 5 });
       expect(load({ LAGER_PORT: '65535', LAGER_AI_TIMEOUT_SECONDS: ' 600 ' })).toMatchObject({ port: 65535, aiTimeoutSeconds: 600 });
       expect(load({})).toMatchObject({ port: 8080, snapshotKeep: 20, trashDays: 30, aiTimeoutSeconds: 90 });
+      // Port 0 lets the system choose a free port, as it always did.
+      expect(load({ LAGER_PORT: '0' }).port).toBe(0);
+    });
+
+    it('LAGER_SNAPSHOT_KEEP=0 from an existing installation still starts: one snapshot is kept, with a warning', () => {
+      const warned: string[] = [];
+      const warn = vi.spyOn(console, 'warn').mockImplementation((line: string) => { warned.push(line); });
+      try {
+        expect(load({ LAGER_SNAPSHOT_KEEP: '0' }).snapshotKeep).toBe(1);
+        expect(warned).toHaveLength(1);
+        expect(warned[0]).toMatch(/^WARNING: LAGER_SNAPSHOT_KEEP is 0/);
+        expect(warned[0]).not.toContain('\n');
+        load({ LAGER_SNAPSHOT_KEEP: '1' });
+        expect(warned).toHaveLength(1);
+      } finally {
+        warn.mockRestore();
+      }
     });
 
     it('LAGER_SMTP_URL: an smtp or smtps address, and the value is not printed', () => {
-      for (const v of ['mail.example.org', 'mail.example.org:587', 'https://mail.example.org', 'smtp://', 'smtp://user:p@ss/word@:587']) {
+      for (const v of ['mail.example.org', 'mail.example.org:587', 'https://mail.example.org', 'smtp://', 'smtp://user:p@ss/word@:587', 'smtp://us#er:p@ss@mail.example.org', 'smtp://user:p@ss#1@mail.example.org:587']) {
         const err = (() => { try { load({ LAGER_SMTP_URL: v }); return null; } catch (e) { return e as Error; } })();
         expect(err?.message, v).toMatch(/^LAGER_SMTP_URL must look like /);
         expect(err?.message, v).not.toContain('p@ss');
       }
-      for (const v of ['smtp://mail.example.org', 'smtps://user:p%40ss@smtp.example.com:465', 'smtp://localhost:1025']) expect(load({ LAGER_SMTP_URL: v }).smtpUrl).toBe(v);
+      for (const v of ['smtp://mail.example.org', 'smtps://user:p%40ss@smtp.example.com:465', 'smtp://localhost:1025', 'smtp://user:pw%231@mail.example.org:587', 'smtps://mail.example.org/?pool=true']) expect(load({ LAGER_SMTP_URL: v }).smtpUrl).toBe(v);
       expect(load({ LAGER_SMTP_URL: '  ' }).smtpUrl).toBeUndefined();
     });
 

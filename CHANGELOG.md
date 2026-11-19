@@ -4,6 +4,18 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Upgrading from a pre-release build
+
+An installation that ran a build from before the first release will notice these changes:
+
+- **First start needs an administrator:** while no account exists, Lager refuses to start unless both `LAGER_ADMIN_EMAIL` and `LAGER_ADMIN_PASSWORD` are set. Installations that already have an account are not affected.
+- **Stricter configuration:** `LAGER_PUBLIC_URL` must be an `http(s)` address without a path, `LAGER_APPS_DOMAIN` a bare host name, `LAGER_SMTP_URL` an `smtp(s)` address, and numbers must be whole numbers in their range. A value that is refused stops the start with one line that names the variable. `LAGER_SNAPSHOT_KEEP=0` keeps working as 1, with a warning.
+- **Deploy limit:** an app takes at most 60 new versions per hour, and one person starts at most 60 new apps per hour; further deploys are refused with `deploy_rate` (HTTP 409).
+- **Old versions are removed:** an app keeps its newest 100 deployed versions. The next deploy of an app with more deletes the surplus for good (not to the trash), except versions an instance still runs.
+- **Language model time limit:** a model call ends with the error `timeout` after 90 seconds instead of 180. `LAGER_AI_TIMEOUT_SECONDS` changes that; keep it below the response timeout of your proxy.
+- **Reserved names:** new apps and instances cannot be named `login`, `account`, `accounts`, `mail`, `smtp`, `ftp`, `assets`, `cdn`, `status`, `support` or `security`, nor like the platform's own host under the apps domain. Existing ones keep working.
+- **Title and note:** a new app title takes at most 100 characters and a version note at most 500, one line each.
+
 ## [0.1.0] - unreleased
 
 The first public release.

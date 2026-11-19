@@ -42,12 +42,15 @@ export interface Core {
   ai: AiModels;
   /** App icons rendered from the SVG the deploying assistant supplies. `await core.icons.ready()` before `set` or `setDefault`. */
   icons: AppIcons;
-  /** Deploys per app within an hour, REST and MCP together (see `deployWithIcon`). */
+  /** New versions per app (`app:<id>`) and new apps per person (`user:<id>`) within an hour, REST and MCP together (see `Apps.deploy`). */
   deployLimiter: RateLimiter;
   close(): void;
 }
 
-/** One app takes this many deploys an hour: plenty for an assistant that iterates, too few to fill the disk with versions quickly. */
+/**
+ * One app takes this many new versions an hour, and one person may start this many new apps an hour: plenty for an assistant that
+ * iterates, too few to fill the disk with versions quickly.
+ */
 export const DEPLOYS_PER_HOUR = 60;
 
 export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typeof fetch }): Core {

@@ -105,7 +105,8 @@ function parsePublicUrl(raw: string): URL {
     throw new Error(`LAGER_PUBLIC_URL must be a full address, ${example} (it is "${raw}")`);
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error(`LAGER_PUBLIC_URL must start with http:// or https://, ${example} (it is "${raw}")`);
-  if (url.pathname !== '/' || url.search || url.hash || url.username || url.password) {
+  // Comparing the whole address also catches what the parts hide: a bare "?" or "#" at the end.
+  if (url.href !== `${url.origin}/`) {
     throw new Error(`LAGER_PUBLIC_URL must be only the address of the platform, without a path, query or user name, ${example} (it is "${raw}")`);
   }
   return url;
@@ -130,9 +131,10 @@ function parseSmtpUrl(raw: string | undefined): string | undefined {
   // The value is not echoed: it usually contains the mail password.
   let url: URL | null = null;
   try { url = new URL(value); } catch { /* refused below */ }
-  // A path is what remains of a password with an unencoded "/" or "@"; the host would then be a piece of the password.
-  if (!url || (url.protocol !== 'smtp:' && url.protocol !== 'smtps:') || !url.hostname || url.pathname.length > 1) {
-    throw new Error(`${hint}; special characters in the user name and password must be percent-encoded ("@" becomes "%40")`);
+  // A path is what remains of a password with an unencoded "/"; the host would then be a piece of the password.
+  // The same goes for "#", which would cut the address off in the middle of the user name or password.
+  if (!url || (url.protocol !== 'smtp:' && url.protocol !== 'smtps:') || !url.hostname || url.pathname.length > 1 || value.includes('#')) {
+    throw new Error(`${hint}; special characters in the user name and password must be percent-encoded ("@" becomes "%40", "#" becomes "%23")`);
   }
   return value;
 }
@@ -181,9 +183,15 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const publicUrl = parsePublicUrl(required(env, 'LAGER_PUBLIC_URL'));
   const appsDomain = parseAppsDomain(required(env, 'LAGER_APPS_DOMAIN'));
   // Everything is checked before the data directory is touched, so a refused configuration leaves nothing behind.
-  const port = parseIntEnv(env, 'LAGER_PORT', 8080, 1, 65535);
+  // 0 lets the system pick a free port; the start line says which one.
+  const port = parseIntEnv(env, 'LAGER_PORT', 8080, 0, 65535);
   const quotaMb = parseIntEnv(env, 'LAGER_INSTANCE_QUOTA_MB', 50, 1);
-  const snapshotKeep = parseIntEnv(env, 'LAGER_SNAPSHOT_KEEP', 20, 1);
+  let snapshotKeep = parseIntEnv(env, 'LAGER_SNAPSHOT_KEEP', 20);
+  if (snapshotKeep === 0) {
+    // Earlier releases accepted 0 and kept one snapshot; an installation with that value keeps starting.
+    console.warn('WARNING: LAGER_SNAPSHOT_KEEP is 0, but one snapshot is always kept: Lager uses 1. Set 1 or more.');
+    snapshotKeep = 1;
+  }
   const trashDays = parseIntEnv(env, 'LAGER_TRASH_DAYS', 30);
   const aiTimeoutSeconds = parseIntEnv(env, 'LAGER_AI_TIMEOUT_SECONDS', 90, 5, 600);
   const accessLog = parseBoolEnv(env, 'LAGER_ACCESS_LOG');

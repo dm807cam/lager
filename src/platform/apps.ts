@@ -259,6 +259,11 @@ export class Apps {
     slug: string; html: string; title?: string; capabilities?: Capabilities; note?: string; userId: string;
     /** Left out on a redeploy = unchanged. */
     description?: string; themeColor?: string;
+    /**
+     * Asked once, at the moment a version is about to be created, with `app:<id>` for an app that exists and `user:<id>` for a
+     * new one; `false` refuses the deploy (`deploy_rate`). A deploy that is refused for any other reason never gets this far.
+     */
+    rateLimit?: (key: string) => boolean;
   }): DeployResult {
     assertSlugShape(input.slug);
     if (typeof input.html !== 'string' || input.html.trim() === '') {
@@ -276,8 +281,10 @@ export class Apps {
     if (user.disabled) throw new LagerError('forbidden', 'This account is disabled.');
     const description = input.description === undefined ? undefined : normalizeDescription(input.description);
     const themeColor = input.themeColor === undefined ? undefined : normalizeThemeColor(input.themeColor);
-    const title = input.title === undefined ? '' : normalizeLine(input.title, 'title', MAX_TITLE);
-    const note = input.note === undefined ? null : normalizeLine(input.note, 'note', MAX_NOTE) || null;
+    // A value that is already stored is taken as it is: only a new title or note is held to the limits, so a client that sends
+    // back what it read never fails on text from before the limits existed.
+    const line = (value: string | undefined, stored: string | null | undefined, field: string, max: number): string =>
+      value === undefined ? '' : value === stored ? value : normalizeLine(value, field, max);
     const capabilities = input.capabilities ?? {};
     const capabilitiesJson = canonicalJson(capabilities);
     const sha256 = crypto.createHash('sha256').update(input.html).digest('hex');
@@ -294,6 +301,7 @@ export class Apps {
         app = toApp(existing);
         const allowed = this.checks ? this.checks.canDeploy(app, user.id) : app.ownerId === user.id;
         if (!allowed) throw new LagerError('forbidden', `You are not allowed to deploy "${app.slug}".`);
+        const title = line(input.title, app.title, 'title', MAX_TITLE);
         if (title && title !== app.title) {
           this.db.prepare('UPDATE apps SET title = ? WHERE id = ?').run(title, app.id);
           app = { ...app, title };
@@ -304,6 +312,7 @@ export class Apps {
         }
       } else {
         this.assertSlugFree(input.slug);
+        const title = line(input.title, null, 'title', MAX_TITLE);
         if (this.db.prepare('SELECT 1 FROM instances WHERE slug = ?').get(input.slug)) {
           throw new LagerError('conflict', `Instance slug "${input.slug}" is already taken.`, 'slug_taken');
         }
@@ -328,6 +337,12 @@ export class Apps {
       if (latest && latest.sha256 === sha256 && canonicalJson(latest.capabilities) === capabilitiesJson) {
         version = latest;
       } else {
+        const note = line(input.note, latest?.note, 'note', MAX_NOTE) || null;
+        if (input.rateLimit && !input.rateLimit(createdApp ? `user:${user.id}` : `app:${app.id}`)) {
+          throw new LagerError('conflict', createdApp
+            ? 'You have deployed too many new apps within an hour. Wait a few minutes before the next one.'
+            : `"${app.slug}" has reached the limit of deploys per hour. Wait a few minutes before the next deploy.`, 'deploy_rate');
+        }
         version = {
           appId: app.id, number: this.allocateVersion(app.id), sha256, sizeBytes, instanceId: null,
           capabilities: JSON.parse(capabilitiesJson) as Capabilities, note,
@@ -364,8 +379,13 @@ export class Apps {
 
       return { app, version, instances: this.listInstances(app.id), warnings, pinned, createdApp, createdVersion };
     });
-    this.deleteVersionFiles(result.app.id, pruned);
     this.fireActivated(updated);
+    // The deploy is committed and announced; a file that cannot be removed now only wastes space and must not fail it.
+    try {
+      this.deleteVersionFiles(result.app.id, pruned);
+    } catch (e) {
+      console.error(`lager: could not delete the files of pruned versions of app ${result.app.id}:`, e);
+    }
     return result;
   }
 

@@ -26,7 +26,9 @@ const app = createHttpApp(core, [staticExtension, authExtension, adminExtension,
 // Express also calls this with the error when listening fails; the 'error' handler below reports that.
 const onListening = (err?: Error): void => {
   if (err) return;
-  console.log(`Lager listening on ${config.host ?? '*'}:${config.port}, platform at ${config.publicUrl.origin}`);
+  const address = server.address();
+  const port = address !== null && typeof address === 'object' ? address.port : config.port;
+  console.log(`Lager listening on ${config.host ?? '*'}:${port}, platform at ${config.publicUrl.origin}`);
   // Apps from before icons existed get their generated icon in the background; public routes serve a bundled one meanwhile.
   void backfillIcons(core);
 };

@@ -129,11 +129,11 @@ Lager is configured through environment variables only. The template is `.env.ex
 | `LAGER_APPS_DOMAIN` | Domain of the apps; instances run at `<slug>.<domain>`. A bare host name: no `https://`, no `*.`, no port, no `/` | required |
 | `LAGER_ADMIN_EMAIL`, `LAGER_ADMIN_PASSWORD` | First administrator; only created while no account exists. The password needs at least 10 characters, and the example value from `.env.example` is accepted only while `LAGER_PUBLIC_URL` points at this machine (`localhost`, `*.localhost`, `127.0.0.1`, `[::1]`); otherwise Lager does not start. On such an address the example value still logs a warning: change the password before others can reach the server | none |
 | `LAGER_DATA_DIR` | Data directory | `./data` (`/data` in the container) |
-| `LAGER_PORT` | Port of the server, 1 to 65535 | `8080` |
+| `LAGER_PORT` | Port of the server, 1 to 65535 (`0` lets the system pick a free port; the start line names it) | `8080` |
 | `LAGER_HOST` | Address the server binds to. Without Docker, set `127.0.0.1` when the reverse proxy runs on the same machine, so nobody reaches Lager around the proxy. Leave it empty in the container | every interface |
 | `LAGER_ACCESS_LOG` | `true` writes one line per request to the log (time, client address, method, host and path without the query string, status, duration) | `false` |
 | `LAGER_SECRET` | Key for sessions and for encrypting stored AI provider keys; otherwise generated and stored in `secret.key`. If set, use at least 32 random characters (for example `openssl rand -hex 32`): a first start with a shorter one is refused, and an existing installation only logs a warning at startup. Changing the secret signs everyone out and makes stored AI provider keys unreadable, so they have to be entered again | generated |
-| `LAGER_SNAPSHOT_KEEP` | Data snapshots kept per instance, 1 or more | `20` |
+| `LAGER_SNAPSHOT_KEEP` | Data snapshots kept per instance, 1 or more (`0` is read as 1, with a warning) | `20` |
 | `LAGER_TRASH_DAYS` | Days that deleted instances and apps stay in the trash (`0` = never clean up) | `30` |
 | `LAGER_DEFAULT_LOCALE` | Language of pages and mails when neither the account, the `lager_lang` cookie nor the browser's `Accept-Language` names a supported one: `en`, `de`, `fr`, `es` | `en` |
 | `LAGER_SMTP_URL` | SMTP access for outgoing mail, for example `smtps://user:password@smtp.example.com:465`; without a value no mail is sent. The scheme must be `smtp` or `smtps`, and special characters in the user name and password must be percent-encoded. A mail server that does not answer within 10 seconds counts as unreachable | none |

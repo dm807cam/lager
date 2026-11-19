@@ -143,7 +143,7 @@ A path the viewer may write but not read (a drop box, for example `{"path": "inb
 - HTML: at most 16 MiB.
 - `title`: at most 100 characters; `note`: at most 500; `description`: at most 200. Each is one line of plain text (line breaks become spaces); a longer one is refused.
 - Slugs: lowercase letters, digits and hyphens, at most 63 characters. New apps and instances cannot take names such as `www`, `api`, `admin`, `login`, `auth`, `account`, `mail`, `static`, `assets`, `cdn`, `status`, `support` or `security` (`Slug "…" is reserved`): pick a more specific name.
-- Deploys: at most 60 per app and hour, counted for `deploy_app` and the REST API together. When a deploy is refused for that reason, tell the user and wait instead of retrying in a loop; test changes with `check_app` rather than with extra deploys.
+- Deploys: at most 60 new versions per app and hour, and at most 60 new apps per person and hour, counted for `deploy_app` and the REST API together (a deploy with unchanged content creates no version and does not count). When a deploy is refused for that reason, tell the user and wait instead of retrying in a loop; test changes with `check_app` rather than with extra deploys.
 - Import: REST at most 20 MiB (a JSON array 5 MiB) and 100000 documents per call, one import per instance at a time; `import_data` at most 1000 documents. Export: `export_data` returns 200 documents by default, at most 1000, and may stop earlier (it also stops at about 8 MiB): when `truncated` is true there is more, so narrow `prefix` and ask again. Both follow the app's rules at your level; the owner is unrestricted.
 
 ## Versions and rollback

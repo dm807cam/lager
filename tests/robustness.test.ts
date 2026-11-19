@@ -84,6 +84,24 @@ describe('deploy parameters', () => {
     expect(core.apps.deploy({ slug: 'notes', html: PAGE + '<!-- 2 -->', title: '   ', note: '  ', userId: adminId })).toMatchObject({ app: { title: 'My notes' }, version: { number: 2, note: null } });
   });
 
+  it('a title or note from before the limits is accepted when a client sends it back unchanged', () => {
+    h = makeHarness();
+    const { core, adminId } = h;
+    const made = core.apps.deploy({ slug: 'notes', html: PAGE, title: 'Notes', note: 'first', userId: adminId });
+    const longTitle = 'T'.repeat(150);
+    const longNote = 'N'.repeat(600);
+    const db = openPlatformDb(core.config.dataDir);
+    db.prepare('UPDATE apps SET title = ? WHERE id = ?').run(longTitle, made.app.id);
+    db.prepare('UPDATE versions SET note = ? WHERE app_id = ?').run(longNote, made.app.id);
+    db.close();
+    const again = core.apps.deploy({ slug: 'notes', html: PAGE + '<!-- 2 -->', title: longTitle, note: longNote, userId: adminId });
+    expect(again).toMatchObject({ app: { title: longTitle }, version: { number: 2, note: longNote } });
+    // A different value is new and held to the limit; a short one replaces the old title.
+    expect(() => core.apps.deploy({ slug: 'notes', html: PAGE + '<!-- 3 -->', title: longTitle + '!', userId: adminId })).toThrow(/title must be at most 100/);
+    expect(() => core.apps.deploy({ slug: 'notes', html: PAGE + '<!-- 3 -->', note: longNote + '!', userId: adminId })).toThrow(/note must be at most 500/);
+    expect(core.apps.deploy({ slug: 'notes', html: PAGE + '<!-- 3 -->', title: 'Short', userId: adminId }).app.title).toBe('Short');
+  });
+
   it('the REST deploy refuses a title that is too long', async () => {
     h = makeHarness({ extensions: [apiExtension] });
     const token = h.core.tokens.create(h.adminId, 't').token;
@@ -219,32 +237,103 @@ describe('deployed versions', () => {
     expect(deploy(total + 1).version.number).toBe(total + 1);
   });
 
-  it('an app takes a limited number of deploys per hour, and only from people who may deploy it', async () => {
+  /** How many keys the limiter holds: a request that is refused must not leave one behind. */
+  const keys = (hh: Harness): number => (hh.core.deployLimiter as unknown as { hits: Map<string, number[]> }).hits.size;
+
+  it('an app takes a limited number of new versions per hour', async () => {
     h = makeHarness();
     const { core, adminId } = h;
     const admin = core.users.get(adminId)!;
+    const html = (n: number) => `${PAGE}<!-- ${n} -->`;
+    await deployWithIcon(core, admin, { slug: 'notes', html: html(0) });
+    const appId = core.apps.getApp('notes')!.id;
+    // The first deploy counted for the person (a new app), the following ones count for the app.
+    expect(core.deployLimiter.full(`app:${appId}`)).toBe(false);
+    for (let n = 1; n <= DEPLOYS_PER_HOUR; n++) await deployWithIcon(core, admin, { slug: 'notes', html: html(n) });
+    expect(core.deployLimiter.full(`app:${appId}`)).toBe(true);
+    await expect(deployWithIcon(core, admin, { slug: 'notes', html: html(999) })).rejects.toMatchObject({ code: 'conflict', reason: 'deploy_rate' });
+    expect(core.apps.listVersions(appId)).toHaveLength(DEPLOYS_PER_HOUR + 1);
+    // Sending the same content again creates no version and is not refused; another app has its own budget.
+    await deployWithIcon(core, admin, { slug: 'notes', html: html(DEPLOYS_PER_HOUR) });
+    await deployWithIcon(core, admin, { slug: 'other', html: PAGE });
+  });
+
+  it('one person starts a limited number of new apps per hour, and a refused one leaves nothing behind', async () => {
+    h = makeHarness();
+    const { core, adminId } = h;
+    const admin = core.users.get(adminId)!;
+    for (let i = 1; i < DEPLOYS_PER_HOUR; i++) core.deployLimiter.hit(`user:${adminId}`);
+    await deployWithIcon(core, admin, { slug: 'app-a', html: PAGE });
+    await expect(deployWithIcon(core, admin, { slug: 'app-b', html: PAGE })).rejects.toMatchObject({ code: 'conflict', reason: 'deploy_rate' });
+    expect(core.apps.getApp('app-b')).toBeNull();
+    expect(core.apps.getInstanceBySlug('app-b')).toBeNull();
+  });
+
+  it('a deploy that is refused costs nobody anything and leaves no trace in the limiter', async () => {
+    h = makeHarness();
+    const { core, adminId } = h;
+    const admin = core.users.get(adminId)!;
+    const plain = core.users.create({ email: 'u@x.y', name: 'U', password: 'pw-pw-pw-pw', role: 'user' });
     const other = core.users.create({ email: 'p@x.y', name: 'P', password: 'pw-pw-pw-pw', role: 'publisher' });
     await deployWithIcon(core, admin, { slug: 'notes', html: PAGE });
-    // Someone else's refused deploys do not use up the app's budget.
-    for (let i = 0; i < DEPLOYS_PER_HOUR + 1; i++) {
-      await expect(deployWithIcon(core, other, { slug: 'notes', html: PAGE })).rejects.toMatchObject({ code: 'forbidden' });
-    }
-    for (let i = 1; i < DEPLOYS_PER_HOUR; i++) await deployWithIcon(core, admin, { slug: 'notes', html: PAGE });
-    await expect(deployWithIcon(core, admin, { slug: 'notes', html: PAGE + '<!-- more -->' })).rejects.toMatchObject({ code: 'conflict', reason: 'deploy_rate' });
-    expect(core.apps.listVersions(core.apps.getApp('notes')!.id)).toHaveLength(1);
-    // The budget is per app.
-    await deployWithIcon(core, admin, { slug: 'other', html: PAGE });
+    const appId = core.apps.getApp('notes')!.id;
+    const before = keys(h);
+    const refused = async (user: typeof admin, input: { slug: string; html: string; title?: string; note?: string }, code: string) => {
+      for (let i = 0; i < DEPLOYS_PER_HOUR + 5; i++) await expect(deployWithIcon(core, user, input), JSON.stringify(input).slice(0, 80)).rejects.toMatchObject({ code });
+    };
+    // An account that may not deploy at all, against an existing app and against a name nobody has taken yet.
+    await refused(plain, { slug: 'notes', html: PAGE + '<!-- x -->' }, 'forbidden');
+    await refused(plain, { slug: 'future-app', html: PAGE }, 'forbidden');
+    // A publisher without a right to this app.
+    await refused(other, { slug: 'notes', html: PAGE + '<!-- x -->' }, 'forbidden');
+    // Deploys that are invalid: empty HTML, a malformed or reserved name, a title or note beyond the limits.
+    await refused(other, { slug: 'future-app', html: ' ' }, 'invalid_argument');
+    await refused(other, { slug: 'Not_A_Slug', html: PAGE }, 'invalid_argument');
+    await refused(other, { slug: 'login', html: PAGE }, 'invalid_argument');
+    await refused(other, { slug: 'future-app', html: PAGE, title: 'x'.repeat(101) }, 'invalid_argument');
+    await refused(admin, { slug: 'notes', html: PAGE + '<!-- x -->', note: 'x'.repeat(501) }, 'invalid_argument');
+    // Many refused deploys to names that differ: with one key each they would push the real budgets out of the limiter.
+    for (let i = 0; i < 300; i++) await expect(deployWithIcon(core, plain, { slug: `flood-${i}`, html: PAGE })).rejects.toMatchObject({ code: 'forbidden' });
+    expect(keys(h)).toBe(before);
+    expect(core.deployLimiter.full(`app:${appId}`)).toBe(false);
+    // The owner and the publisher deploy as if nothing had happened.
+    await deployWithIcon(core, admin, { slug: 'notes', html: PAGE + '<!-- 2 -->' });
+    await deployWithIcon(core, other, { slug: 'future-app', html: PAGE });
+    expect(keys(h)).toBe(before + 2);
   });
 
   it('the REST deploy is held to the same limit', async () => {
     h = makeHarness({ extensions: [apiExtension] });
     const token = h.core.tokens.create(h.adminId, 't').token;
-    const put = () => request(h!.app).put('/api/apps/notes').set('Host', h!.host).set('Authorization', `Bearer ${token}`).type('text/html').send(PAGE);
-    expect((await put()).status).toBe(200);
-    for (let i = 1; i < DEPLOYS_PER_HOUR; i++) h.core.deployLimiter.hit('notes');
-    const res = await put();
+    const put = (n: number) => request(h!.app).put('/api/apps/notes').set('Host', h!.host).set('Authorization', `Bearer ${token}`).type('text/html').send(`${PAGE}<!-- ${n} -->`);
+    const first = await put(1);
+    expect(first.status).toBe(200);
+    for (let i = 0; i < DEPLOYS_PER_HOUR; i++) h.core.deployLimiter.hit(`app:${h.core.apps.getApp('notes')!.id}`);
+    const res = await put(2);
     expect(res.status).toBe(409);
-    expect(res.body.error.message).toMatch(/60 times within an hour/);
+    expect(res.body.error.message).toMatch(/limit of deploys per hour/);
+  });
+
+  it('a pruned version whose files cannot be deleted does not fail the deploy or hold back the reload', () => {
+    h = makeHarness();
+    const { core, adminId } = h;
+    const deploy = (n: number) => core.apps.deploy({ slug: 'notes', html: `${PAGE}<!-- ${n} -->`, userId: adminId });
+    for (let n = 1; n <= MAX_DEPLOYED_VERSIONS; n++) deploy(n);
+    const activated: number[] = [];
+    core.apps.onActivated((inst) => { activated.push(inst.activeVersion); });
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const rm = fs.rmSync;
+    fs.rmSync = (() => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }); }) as typeof fs.rmSync;
+    let result;
+    try {
+      result = deploy(MAX_DEPLOYED_VERSIONS + 1);
+    } finally {
+      fs.rmSync = rm;
+    }
+    expect(result).toMatchObject({ createdVersion: true, version: { number: MAX_DEPLOYED_VERSIONS + 1 } });
+    expect(activated).toEqual([MAX_DEPLOYED_VERSIONS + 1]);
+    expect(core.apps.getVersion(result.app.id, 1)).toBeNull();
+    expect(String(logged.mock.calls[0]?.[0])).toMatch(/could not delete the files of pruned versions/);
   });
 });
 
