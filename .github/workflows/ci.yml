@@ -43,6 +43,47 @@ jobs:
       - name: Build
         run: npm run build
 
+  min-node:
+    name: Runs on Node 22.13
+    # package.json promises Node 22.13 for running Lager. The test tools themselves need newer Node (jsdom wants
+    # 22.22), so this job builds the server and checks that it starts and answers, instead of running the tests.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.13.0'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Start and answer
+        env:
+          LAGER_PUBLIC_URL: http://localhost:8080
+          LAGER_APPS_DOMAIN: apps.localhost
+          LAGER_ADMIN_EMAIL: admin@example.com
+          LAGER_ADMIN_PASSWORD: ci-password-123
+          LAGER_DATA_DIR: ${{ runner.temp }}/lager-data
+          LAGER_HOST: 127.0.0.1
+        run: |
+          node dist/server.js > server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS -H 'Host: localhost:8080' http://127.0.0.1:8080/healthz; then
+              curl -fsS -o /dev/null -H 'Host: localhost:8080' http://127.0.0.1:8080/login
+              echo; echo "Lager runs on $(node --version)."
+              exit 0
+            fi
+            sleep 1
+          done
+          cat server.log
+          exit 1
+
   docker:
     name: Docker image
     runs-on: ubuntu-latest
@@ -58,8 +99,8 @@ jobs:
           context: .
           load: true
           tags: lager:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=ci
+          cache-to: type=gha,mode=max,scope=ci
 
       - name: Smoke test
         run: |
@@ -73,6 +114,8 @@ jobs:
             if curl -fsS -H 'Host: localhost:8080' http://127.0.0.1:8080/healthz; then
               echo; echo "Lager is up."
               curl -fsS -o /dev/null -H 'Host: localhost:8080' http://127.0.0.1:8080/login
+              # The image is a copy of the program, so it must carry the license (AGPL section 4).
+              docker exec lager test -s /app/LICENSE
               exit 0
             fi
             sleep 1
@@ -87,8 +130,9 @@ jobs:
 
   dco:
     name: DCO sign-off
-    # Every commit in a pull request needs a Signed-off-by line (see CONTRIBUTING.md).
-    # The repository owner holds the copyright already and is exempt.
+    # Every commit needs a Signed-off-by line with its author's address (see CONTRIBUTING.md, "Signing off your work").
+    # Pull requests the repository owner opens are exempt: the owner answers for every commit they merge. Bot commits
+    # (Dependabot) are exempt as well.
     if: github.event_name == 'pull_request' && github.event.pull_request.author_association != 'OWNER'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -102,18 +146,22 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
         run: |
           missing=0
           for sha in $(git rev-list --no-merges "$BASE..$HEAD"); do
-            if ! git show -s --format=%B "$sha" | grep -qiE '^Signed-off-by: .+ <.+@.+>$'; then
-              echo "::error::Commit $(git show -s --format='%h %s' "$sha") has no Signed-off-by line."
+            author=$(git show -s --format='%ae' "$sha")
+            case "$author" in *'[bot]@users.noreply.github.com') continue ;; esac
+            # The sign-off must carry the commit author's own address.
+            if ! git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -qiF "<$author>"; then
+              echo "::error::Commit $(git show -s --format='%h %s' "$sha") has no Signed-off-by line for its author <$author>."
               missing=1
             fi
           done
           if [ "$missing" -ne 0 ]; then
             echo
-            echo "Sign off your commits with 'git rebase --signoff $(git rev-parse --short "$BASE")' and push again with --force-with-lease."
-            echo "Why we ask for it: https://github.com/${{ github.repository }}/blob/main/CONTRIBUTING.md#signing-off-your-work-dco"
+            echo "Sign off your commits: git fetch upstream && git rebase --signoff upstream/main, then git push --force-with-lease."
+            echo "Why we ask for it: https://github.com/$REPO/blob/main/CONTRIBUTING.md#signing-off-your-work-dco"
             exit 1
           fi
-          echo "Every commit is signed off."
+          echo "Every commit is signed off by its author."

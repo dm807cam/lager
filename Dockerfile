@@ -1,4 +1,5 @@
-FROM node:24-slim AS build
+# The build output is plain JavaScript, so the build stage runs on the builder's own platform (no emulation for tsc).
+FROM --platform=$BUILDPLATFORM node:24-slim AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -13,6 +14,7 @@ ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
+COPY LICENSE README.md ./
 ENV LAGER_DATA_DIR=/data LAGER_PORT=8080
 RUN chmod -R a+rX /app/dist && mkdir -p /data && chown node:node /data
 VOLUME /data

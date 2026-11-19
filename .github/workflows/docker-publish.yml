@@ -1,8 +1,9 @@
 name: Publish Docker image
 
-# Publishes ghcr.io/<owner>/lager for linux/amd64 and linux/arm64:
+# Publishes ghcr.io/<owner>/lager for linux/amd64 and linux/arm64, after the tests pass:
 #   push to main      -> :edge and :sha-<commit>
 #   tag v1.2.3        -> :1.2.3, :1.2, :1 and :latest
+#   tag v0.4.1        -> :0.4.1, :0.4 and :latest (no :0: in 0.x every minor release may break)
 on:
   push:
     branches: [main]
@@ -15,13 +16,32 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
+  test:
+    name: Test before publishing
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
   publish:
     name: Build and push
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v5
 
@@ -44,12 +64,12 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
             type=edge,branch=main
             type=sha
           labels: |
             org.opencontainers.image.title=Lager
-            org.opencontainers.image.description=Self-hosted server for Claude artifacts
+            org.opencontainers.image.description=Self-hosted server for the apps your AI builds
             org.opencontainers.image.licenses=AGPL-3.0-or-later
 
       - name: Build and push
@@ -61,7 +81,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=publish
+          cache-to: type=gha,mode=max,scope=publish
           provenance: true
           sbom: true
