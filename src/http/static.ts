@@ -20,9 +20,13 @@ export const staticUrls = (): { css: string; js: string } => ({ css: CSS.path, j
 
 /**
  * Serves the stylesheet and the script under their hashed paths; any other hash is a 404. Instance hosts load the
- * stylesheet from here for their error pages, so it may be used cross-origin.
+ * stylesheet from here for their error pages, so it may be used cross-origin. Also `/robots.txt`, which keeps crawlers out.
  */
 export const staticExtension: PlatformExtension = (router) => {
+  // The platform is a sign-in page and what lies behind it: nothing a search engine should list.
+  router.get('/robots.txt', (_req, res) => {
+    res.set('Cache-Control', 'public, max-age=86400').type('text/plain').send('User-agent: *\nDisallow: /\n');
+  });
   for (const file of [CSS, JS]) {
     router.get(file.path, (_req, res) => {
       res.set({

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { MAX_SLUG_LENGTH } from '../config.js';
 import { MAX_NAME as MAX_GROUP_NAME } from '../platform/groups.js';
 import { MAX_NAME as MAX_TOKEN_NAME } from '../platform/tokens.js';
@@ -13,6 +14,19 @@ export const esc = (s: string): string =>
  * sets one attribute, and cannot throw (storage may be blocked).
  */
 const THEME_SNIPPET = 'try{var t=localStorage.getItem("lager-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}';
+
+/**
+ * The content security policy of a platform page, carried by the page itself so that every page of the shell has it, whichever
+ * route sends it (`frame-ancestors` cannot be set this way and stays a response header). Scripts run only from the platform's
+ * own files or with this response's nonce, which the one inline script (the theme snippet) carries: markup that slips into a
+ * page cannot run. Inline styles stay allowed, the pages use them for colours and meters.
+ * Browsers apply `form-action` to the redirects that follow a form post as well, so it names every origin a form of the page
+ * can end on (`formAction`): the platform alone on the pages of the signed-in shell, the platform and the instance on the
+ * question before a sign-in to that instance. Pages whose forms end where the page cannot know (signing in returns to
+ * whichever instance or client sent the visitor, consenting goes to the connecting client) carry no `form-action`.
+ */
+const contentSecurityPolicy = (nonce: string, formAction: readonly string[] | null): string =>
+  `script-src 'self' 'nonce-${nonce}'; object-src 'none'; base-uri 'none'${formAction ? `; form-action ${["'self'", ...formAction].join(' ')}` : ''}`;
 
 export interface PageOpts {
   /** Where the language switcher sends the visitor back to (a local path); the start page when left out. */
@@ -34,6 +48,11 @@ export interface PageOpts {
   origin?: string;
   /** A larger icon above the content of a signed-out page (the sign-in page). */
   hero?: boolean;
+  /**
+   * Origins besides the platform's own that a form of this page may end on, redirects included (`https://notes.apps.example.com`).
+   * Given, the page allows exactly those; left out, a signed-in page allows only the platform and a signed-out page any target.
+   */
+  formTargets?: readonly string[];
 }
 
 /** Options for a page on an instance host: no language switcher (the platform's cookie is not sent there), styles from the platform host. */
@@ -102,10 +121,13 @@ export function page(locale: Locale, title: string, body: string, opts: PageOpts
       : `<a class="brand" href="${esc(origin || '/')}"><img src="${origin}/icon.webp" alt="" width="32" height="32"><span>Lager</span></a>`;
     content = `${skip}<header class="auth-top${opts.hero ? ' is-hero' : ''}">${brand}</header><main id="main" class="auth">${body}</main>${footer(locale, switcherPath)}`;
   }
+  // A fresh nonce for every page, so one that leaked from an earlier response is worth nothing.
+  const nonce = crypto.randomBytes(16).toString('base64');
   // Instance hosts get no script and no platform manifest: those belong to the platform host.
   const head = origin
     ? `<link rel="stylesheet" href="${origin}${css}"><link rel="icon" type="image/webp" href="${origin}/icon.webp">`
-    : `<script id="theme-init">${THEME_SNIPPET}</script><link rel="stylesheet" href="${css}">
+    : `<meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy(nonce, opts.formTargets ?? (opts.user ? [] : null))}">
+<script id="theme-init" nonce="${nonce}">${THEME_SNIPPET}</script><link rel="stylesheet" href="${css}">
 <link rel="icon" type="image/webp" href="/icon.webp">
 <link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-180.png"><script src="${js}" defer></script>`;
   return `<!doctype html>
@@ -118,9 +140,15 @@ ${head}</head>
 /** Signed-out content: a card, optionally with an icon above the heading; `inner` is trusted markup. */
 export const authCard = (inner: string): string => `<div class="auth-card">${inner}</div>`;
 
+/**
+ * The card of a message or error page. A signed-in viewer (`opts.user`) keeps the top bar and the navigation around it, so
+ * a wrong address or a refused action is not a dead end; the card then sits in the same narrow column as on signed-out pages.
+ */
+const messageCard = (inner: string, opts: PageOpts): string => (opts.user ? `<div class="auth">${authCard(inner)}</div>` : authCard(inner));
+
 /** Page with one heading and one line of text. */
 export const messagePage = (locale: Locale, title: string, text: string, extra = '', opts: PageOpts = {}, tone: 'neutral' | 'danger' | 'success' = 'neutral'): string =>
-  page(locale, title, authCard(`<div class="auth-icon${tone === 'neutral' ? '' : ` is-${tone}`}">${icon(tone === 'success' ? 'check' : 'alert')}</div><h1>${esc(title)}</h1><p>${esc(text)}</p>${extra}`), opts);
+  page(locale, title, messageCard(`<div class="auth-icon${tone === 'neutral' ? '' : ` is-${tone}`}">${icon(tone === 'success' ? 'check' : 'alert')}</div><h1>${esc(title)}</h1><p>${esc(text)}</p>${extra}`, opts), opts);
 
 /** Resend form shown wherever an unverified address needs a new confirmation link. */
 export const resendForm = (locale: Locale, email = ''): string => `<form method="post" action="/verify/resend" class="stack">
@@ -128,18 +156,24 @@ export const resendForm = (locale: Locale, email = ''): string => `<form method=
 <button type="submit" class="${btn('secondary')}">${esc(t(locale, 'auth.resend.button'))}</button>
 </form>`;
 
-export function loginPage(locale: Locale, returnPath: string, error?: string, opts: { registration?: 'open' | 'invite' | 'closed'; resendEmail?: string; notice?: string } = {}): string {
+/**
+ * `email` is what the visitor typed in an attempt that failed: it comes back in the field, so only the password is typed again
+ * (the password itself never comes back). The link to create an account shows only while anyone may register; with
+ * invitations only or registration closed it would lead a visitor without an invitation to a page that turns them away.
+ */
+export function loginPage(locale: Locale, returnPath: string, error?: string, opts: { registration?: 'open' | 'invite' | 'closed'; resendEmail?: string; notice?: string; email?: string } = {}): string {
+  const typed = opts.email ?? '';
   return page(locale, t(locale, 'login.title'), `<div class="auth-hero"><h1>${esc(t(locale, 'brand.tagline'))}</h1></div>
 <div class="auth-card"><h2>${esc(t(locale, 'login.title'))}</h2>
 ${opts.notice ? notice('success', opts.notice) : ''}${error ? notice('danger', error) : ''}
 <form method="post" action="/login" class="stack">
 <input type="hidden" name="return" value="${esc(returnPath)}">
-<div class="field"><label for="email">${esc(t(locale, 'common.email'))}</label><input id="email" name="email" type="email" autocomplete="username" required autofocus></div>
-<div class="field"><label for="password">${esc(t(locale, 'common.password'))}</label><input id="password" name="password" type="password" autocomplete="current-password" required></div>
+<div class="field"><label for="email">${esc(t(locale, 'common.email'))}</label><input id="email" name="email" type="email" autocomplete="username" required${typed ? ` value="${esc(typed)}"` : ' autofocus'}></div>
+<div class="field"><label for="password">${esc(t(locale, 'common.password'))}</label><input id="password" name="password" type="password" autocomplete="current-password" required${typed ? ' autofocus' : ''}></div>
 <button type="submit" class="${btn('primary')}">${esc(t(locale, 'login.submit'))}</button>
 </form>
 ${opts.resendEmail !== undefined ? resendForm(locale, opts.resendEmail) : ''}</div>
-<p class="auth-links"><a href="/forgot">${esc(t(locale, 'login.forgot'))}</a>${opts.registration === 'closed' ? '' : `<a href="/register">${esc(t(locale, 'login.register'))}</a>`}</p>
+<p class="auth-links"><a href="/forgot">${esc(t(locale, 'login.forgot'))}</a>${opts.registration === 'open' ? `<a href="/register">${esc(t(locale, 'login.register'))}</a>` : ''}</p>
 <p class="pitch">${esc(t(locale, 'brand.pitch'))}</p>`, { hero: true, returnPath: returnPath === '/' ? '/login' : `/login?return=${encodeURIComponent(returnPath)}` });
 }
 
@@ -159,7 +193,7 @@ export const sessionExpiredPage = (locale: Locale, back = '/', backLabel = t(loc
 export const backLink = (locale: Locale, href = '/', label = t(locale, 'common.backToOverview')): string => `<p class="auth-links"><a href="${esc(href)}">${esc(label)}</a></p>`;
 
 /** The administration area to anyone who is not an administrator. */
-export const forbiddenAdminPage = (locale: Locale): string => messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.admin'), backLink(locale), {}, 'danger');
+export const forbiddenAdminPage = (locale: Locale, opts: PageOpts = {}): string => messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.admin'), backLink(locale), opts, 'danger');
 
 /** Catalog texts that quote a limit; the numbers come from the constants the code enforces. */
 const LIMITS: Partial<Record<MessageKey, { max: number }>> = {
@@ -234,13 +268,13 @@ export const optionList = (options: ReadonlyArray<Option>, selected: string): st
 export const noticeHtml = (locale: Locale, flash: { ok?: MessageKey; error?: MessageKey }): string =>
   (flash.ok ? notice('success', noticeText(locale, flash.ok)) : '') + (flash.error ? notice('danger', noticeText(locale, flash.error)) : '');
 
-export const forbiddenInstancePage = (locale: Locale): string =>
-  messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.instance'), backLink(locale), {}, 'danger');
-export const forbiddenAppPage = (locale: Locale): string =>
-  messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.app'), backLink(locale), {}, 'danger');
+export const forbiddenInstancePage = (locale: Locale, opts: PageOpts = {}): string =>
+  messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.instance'), backLink(locale), opts, 'danger');
+export const forbiddenAppPage = (locale: Locale, opts: PageOpts = {}): string =>
+  messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.app'), backLink(locale), opts, 'danger');
 /** A page-level "does not exist" with a way back; `what` is a catalog key. */
-export const missingPage = (locale: Locale, what: MessageKey, back = backLink(locale)): string =>
-  messagePage(locale, t(locale, 'error.notFound.title'), noticeText(locale, what), back);
+export const missingPage = (locale: Locale, what: MessageKey, back = backLink(locale), opts: PageOpts = {}): string =>
+  messagePage(locale, t(locale, 'error.notFound.title'), noticeText(locale, what), back, opts);
 /** A form post that failed for a reason the viewer should read; `message` is a catalog key. */
-export const formErrorPage = (locale: Locale, message: MessageKey, back = backLink(locale)): string =>
-  page(locale, t(locale, 'error.failed.title'), authCard(`<div class="auth-icon is-danger">${icon('alert')}</div><h1>${esc(t(locale, 'error.failed.title'))}</h1>${notice('danger', noticeText(locale, message))}${back}`));
+export const formErrorPage = (locale: Locale, message: MessageKey, back = backLink(locale), opts: PageOpts = {}): string =>
+  page(locale, t(locale, 'error.failed.title'), messageCard(`<div class="auth-icon is-danger">${icon('alert')}</div><h1>${esc(t(locale, 'error.failed.title'))}</h1>${notice('danger', noticeText(locale, message))}${back}`, opts), opts);

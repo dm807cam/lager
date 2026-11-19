@@ -8,15 +8,21 @@ import { manageExtension } from './http/manage.js';
 import { staticExtension } from './http/static.js';
 import { createHttpApp } from './http/app.js';
 import { startTrashPurge } from './data/trash.js';
-import { applyProxyTimeouts, createShutdown, startupError } from './lifecycle.js';
+import { applyProxyTimeouts, closeDataDir, createShutdown, restrictNewFiles, startupError } from './lifecycle.js';
 import { backfillIcons } from './mcp/tools.js';
 import { mcpExtension } from './mcp/http.js';
+
+// Before the first file is written: the data directory holds every app's data, the password hashes and the secret.
+restrictNewFiles();
 
 let config: Config;
 let core: ReturnType<typeof createCore>;
 try {
   // Both refuse a configuration they cannot run with, in a message that names the variable.
   config = loadConfig(process.env);
+  if (closeDataDir(config.dataDir)) {
+    console.log(`Lager closed its data directory ${config.dataDir} to the other accounts on this machine (mode 700); it was readable by them before.`);
+  }
   core = createCore(config);
 } catch (e) {
   console.error(startupError(e));

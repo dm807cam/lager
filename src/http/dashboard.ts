@@ -5,7 +5,7 @@ import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import type { App, Instance } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
-import { requireUser, type PlatformExtension } from './app.js';
+import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { localeOf } from './locale.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { MAX_NAME } from '../platform/tokens.js';
@@ -166,6 +166,8 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
   const auth = requireUser(core);
   const noStore: RequestHandler = (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); };
   const userOf = (res: Response): User => res.locals.user as User;
+  /** Error pages keep the navigation: the viewer is signed in on every route here. */
+  const shellOf = (res: Response): ReturnType<typeof shellFor> => shellFor(core, res.req, userOf(res));
   const formBody = express.urlencoded({ extended: false, limit: '10kb' });
   const field = (req: Request, name: string): string => {
     const v = (req.body as Record<string, unknown> | undefined)?.[name];
@@ -178,11 +180,11 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
     (req, res) => {
       const user = userOf(res);
       if (!csrfValid(core, user, field(req, 'csrf'))) {
-        res.status(403).type('html').send(formErrorPage(localeOf(res), 'error.sessionExpired'));
+        res.status(403).type('html').send(formErrorPage(localeOf(res), 'error.sessionExpired', undefined, shellOf(res)));
         return;
       }
       if (!deploys(user)) {
-        res.status(403).type('html').send(formErrorPage(localeOf(res), 'dash.tokens.unavailable'));
+        res.status(403).type('html').send(formErrorPage(localeOf(res), 'dash.tokens.unavailable', undefined, shellOf(res)));
         return;
       }
       try {
@@ -190,7 +192,7 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
       } catch (e) {
         if (!(e instanceof LagerError)) throw e;
         const notice = e.code === 'not_found' ? 'dash.tokens.notFound' : e.reason === 'token_name_invalid' ? 'dash.tokens.nameInvalid' : 'validation.generic';
-        res.status(e.code === 'not_found' ? 404 : e.code === 'forbidden' ? 403 : 400).type('html').send(formErrorPage(localeOf(res), notice));
+        res.status(e.code === 'not_found' ? 404 : e.code === 'forbidden' ? 403 : 400).type('html').send(formErrorPage(localeOf(res), notice, undefined, shellOf(res)));
       }
     },
   ];

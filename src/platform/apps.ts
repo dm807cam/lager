@@ -72,6 +72,10 @@ const SELF_INSTANCES: SelfInstances[] = ['off', 'users'];
 /** Non-administrators may create this many instances per rolling window, deleted ones included (create-fill-delete loops fill the disk). */
 export const CREATIONS_PER_WINDOW = 10;
 const CREATION_WINDOW_MS = 24 * 3600_000;
+/** Of those, at most this many may be instances for other accounts: nobody chose to receive them. */
+export const CREATIONS_FOR_OTHERS_PER_WINDOW = 5;
+/** Marks the rows of `instance_creations` that count the instances an account created for others. */
+const forOthersKey = (userId: string): string => `for-others:${userId}`;
 
 interface AppRow {
   id: string; slug: string; title: string; owner_id: string; created_at: string; self_instances: SelfInstances;
@@ -231,15 +235,24 @@ export class Apps {
     this.db.prepare('DELETE FROM retired_slugs WHERE slug = ?').run(slug);
   }
 
-  /** Enforces and records the creation rate of a new instance for `owner`; platform administrators are exempt. */
-  private countCreation(owner: User): void {
-    if (owner.role === 'admin') return;
+  /**
+   * Enforces and records the creation rate of a new instance for `creator`; platform administrators are exempt. An instance
+   * for another account (`forOther`) also counts against the smaller budget for those.
+   */
+  private countCreation(creator: User, forOther = false): void {
+    if (creator.role === 'admin') return;
     const now = Date.now();
     const since = new Date(now - CREATION_WINDOW_MS).toISOString();
     this.db.prepare('DELETE FROM instance_creations WHERE created_at <= ?').run(since);
-    const recent = (this.db.prepare('SELECT COUNT(*) AS c FROM instance_creations WHERE user_id = ? AND created_at > ?').get(owner.id, since) as { c: number }).c;
-    if (recent >= CREATIONS_PER_WINDOW) throw new LagerError('conflict', 'You have created too many instances today. Try again tomorrow.', 'creation_rate');
-    this.db.prepare('INSERT INTO instance_creations (user_id, created_at) VALUES (?, ?)').run(owner.id, new Date(now).toISOString());
+    const recent = (key: string): number =>
+      (this.db.prepare('SELECT COUNT(*) AS c FROM instance_creations WHERE user_id = ? AND created_at > ?').get(key, since) as { c: number }).c;
+    if (recent(creator.id) >= CREATIONS_PER_WINDOW) throw new LagerError('conflict', 'You have created too many instances today. Try again tomorrow.', 'creation_rate');
+    if (forOther && recent(forOthersKey(creator.id)) >= CREATIONS_FOR_OTHERS_PER_WINDOW) {
+      throw new LagerError('conflict', 'You have created too many instances for other people today. Try again tomorrow, or ask an administrator.', 'creation_rate_others');
+    }
+    const insert = this.db.prepare('INSERT INTO instance_creations (user_id, created_at) VALUES (?, ?)');
+    insert.run(creator.id, new Date(now).toISOString());
+    if (forOther) insert.run(forOthersKey(creator.id), new Date(now).toISOString());
   }
 
   /** The next version number of the app. Numbers come from a counter and are never reused, also after saved versions were pruned. */
@@ -483,16 +496,24 @@ export class Apps {
       }
       const owner = this.users.get(input.ownerId);
       if (!owner) throw new LagerError('not_found', 'Owner not found.');
+      const creator = (input.createdBy !== undefined ? this.users.get(input.createdBy) : null) ?? owner;
+      // An administrator hands out instances as they see fit; anyone else gives away something the receiver never asked for.
+      const forOther = creator.id !== owner.id && creator.role !== 'admin';
       if (this.settings && owner.role !== 'admin') {
         const owned = (this.db.prepare('SELECT COUNT(*) AS c FROM instances WHERE owner_id = ?').get(owner.id) as { c: number }).c;
         if (owned >= this.settings.maxInstancesPerUser) throw new LagerError('conflict', 'Instance limit reached.', 'instance_limit');
+        // The limit is the owner's to use up. Others may fill it to half at most, so nobody can leave an account unable to create its own.
+        // The refusal does not say how many instances the account has: that is not the creator's to learn.
+        if (forOther && owned * 2 >= this.settings.maxInstancesPerUser) {
+          throw new LagerError('conflict', 'This account cannot take another instance from you right now. Ask its owner to create the instance, or ask an administrator.', 'owner_limit_half');
+        }
       }
       if (this.db.prepare('SELECT 1 FROM instances WHERE slug = ?').get(input.slug)) {
         throw new LagerError('conflict', `Instance slug "${input.slug}" is already taken.`, 'slug_taken');
       }
       this.claimSlug(input.slug, owner.id);
       // Whoever creates the instance spends their own budget, so nobody can use up another account's.
-      this.countCreation((input.createdBy !== undefined ? this.users.get(input.createdBy) : null) ?? owner);
+      this.countCreation(creator, forOther);
       // New instances start on the latest deployed version, never on another instance's self-published one.
       const latest = this.latestDeployedVersion(input.appId);
       if (!latest) throw new LagerError('not_found', 'App has no versions.');
@@ -755,20 +776,25 @@ export class Apps {
   deleteInstance(instanceId: string, userId: string): void {
     const { instance, saved } = this.transaction(() => {
       const inst = this.ownedInstance(instanceId, userId);
-      const numbers = (this.db.prepare('SELECT number FROM versions WHERE instance_id = ?').all(inst.id) as unknown as Array<{ number: number }>).map((r) => r.number);
-      this.db.prepare('DELETE FROM versions WHERE instance_id = ?').run(inst.id);
-      this.removeInstanceRows(inst);
-      return { instance: inst, saved: numbers };
+      return { instance: inst, saved: this.removeInstanceWithSaves(inst) };
     });
     this.afterDelete([instance], () => this.trashVersionFiles(instance.appId, saved));
+  }
+
+  /** Removes the rows of the instance and of the pages it saved itself; returns the numbers of those versions, whose files go to the trash. */
+  private removeInstanceWithSaves(instance: Instance): number[] {
+    const numbers = (this.db.prepare('SELECT number FROM versions WHERE instance_id = ?').all(instance.id) as unknown as Array<{ number: number }>).map((r) => r.number);
+    this.db.prepare('DELETE FROM versions WHERE instance_id = ?').run(instance.id);
+    this.removeInstanceRows(instance);
+    return numbers;
   }
 
   /**
    * The rows are gone for good at this point, so every clean-up step runs even when an earlier one fails (a trash directory
    * that cannot be written, say). Every failure is logged, and the first one is reported to the caller afterwards.
    */
-  private afterDelete(instances: Instance[], moveFiles: () => void): void {
-    const steps = [...instances.flatMap((i) => this.deleteHooks.map((hook) => () => hook(i))), moveFiles];
+  private afterDelete(instances: Instance[], ...moveFiles: Array<() => void>): void {
+    const steps = [...instances.flatMap((i) => this.deleteHooks.map((hook) => () => hook(i))), ...moveFiles];
     const failures: unknown[] = [];
     for (const step of steps) {
       try { step(); } catch (e) { failures.push(e); }
@@ -793,19 +819,80 @@ export class Apps {
       if (all.some((i) => i.ownerId !== userId)) {
         throw new LagerError('conflict', 'Other users have instances of this app. They must be deleted first.', 'other_users_instances');
       }
-      for (const i of all) this.removeInstanceRows(i);
-      this.db.prepare('DELETE FROM app_collaborators WHERE app_id = ?').run(a.id);
-      this.db.prepare('DELETE FROM versions WHERE app_id = ?').run(a.id);
-      this.db.prepare('DELETE FROM apps WHERE id = ?').run(a.id);
+      this.removeAppRows(a, all);
       return { app: a, instances: all };
     });
-    this.afterDelete(instances, () => {
-      const source = path.join(this.dataDir, 'apps', app.id);
-      if (!fs.existsSync(source)) return;
-      const trash = path.join(this.dataDir, 'trash');
-      fs.mkdirSync(trash, { recursive: true });
-      const stamp = new Date().toISOString().replace(/[-:.]/g, '');
-      fs.renameSync(source, path.join(trash, `app-${app.id}-${stamp}`));
+    this.afterDelete(instances, () => this.trashAppFiles(app));
+  }
+
+  /** Removes the rows of the app and of `instances`, which are all of its instances. */
+  private removeAppRows(app: App, instances: Instance[]): void {
+    for (const i of instances) this.removeInstanceRows(i);
+    this.db.prepare('DELETE FROM app_collaborators WHERE app_id = ?').run(app.id);
+    this.db.prepare('DELETE FROM versions WHERE app_id = ?').run(app.id);
+    this.db.prepare('DELETE FROM apps WHERE id = ?').run(app.id);
+  }
+
+  private trashAppFiles(app: App): void {
+    const source = path.join(this.dataDir, 'apps', app.id);
+    if (!fs.existsSync(source)) return;
+    const trash = path.join(this.dataDir, 'trash');
+    fs.mkdirSync(trash, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[-:.]/g, '');
+    fs.renameSync(source, path.join(trash, `app-${app.id}-${stamp}`));
+  }
+
+  /**
+   * Takes everything out of the hands of `userId`, an account that is about to be removed. With `transferTo` its apps and
+   * instances go to that account as they are. Without, they are deleted the way their owner would delete them: rows gone, files
+   * and data in the trash, the delete hooks run; that is refused while other people have instances of one of its apps, because
+   * those would lose their app. `heirId` (the acting administrator) inherits what must not become anybody's: the names of
+   * deleted instances stay reserved, now for them.
+   * `finish` runs inside the same transaction, after nothing here points at the account any more, and removes the account
+   * itself: either everything happens or nothing. Returned is what is left to do once that is committed: moving the files of
+   * what was deleted to the trash and running the delete hooks. It throws like `deleteApp` when a step fails, and by then
+   * the account is gone, so the caller decides how to report that.
+   */
+  releaseOwner(userId: string, plan: { transferTo?: string; heirId: string }, finish: () => void): () => void {
+    return this.transaction(() => {
+      const apps = this.listApps(userId);
+      const gone: Instance[] = [];
+      const files: Array<() => void> = [];
+      if (plan.transferTo !== undefined) {
+        const to = this.users.get(plan.transferTo);
+        if (!to || to.disabled || to.id === userId) throw new LagerError('invalid_argument', 'Apps and instances can only go to another active account.', 'transfer_target');
+        if (apps.length > 0 && to.role !== 'admin' && to.role !== 'publisher') {
+          throw new LagerError('invalid_argument', 'Only an administrator or a publisher can take over apps.', 'transfer_target_role');
+        }
+        this.db.prepare('UPDATE apps SET owner_id = ? WHERE owner_id = ?').run(to.id, userId);
+        this.db.prepare('UPDATE instances SET owner_id = ? WHERE owner_id = ?').run(to.id, userId);
+        // The new owner is in charge of all of it: a collaborator entry or a share to them would only shadow that.
+        this.db.prepare('DELETE FROM app_collaborators WHERE user_id = ? AND app_id IN (SELECT id FROM apps WHERE owner_id = ?)').run(to.id, to.id);
+        this.db.prepare("DELETE FROM grants WHERE principal_type = 'user' AND principal_id = ? AND instance_id IN (SELECT id FROM instances WHERE owner_id = ?)").run(to.id, to.id);
+      } else {
+        for (const app of apps) {
+          const all = this.listInstances(app.id);
+          if (all.some((i) => i.ownerId !== userId)) {
+            throw new LagerError('conflict', `Other users have instances of "${app.slug}". Transfer the app instead, or have those instances deleted first.`, 'other_users_instances');
+          }
+          this.removeAppRows(app, all);
+          gone.push(...all);
+          files.push(() => this.trashAppFiles(app));
+        }
+        // What is left are instances of other people's apps.
+        for (const inst of this.listInstancesOwnedBy(userId)) {
+          const saved = this.removeInstanceWithSaves(inst);
+          gone.push(inst);
+          files.push(() => this.trashVersionFiles(inst.appId, saved));
+        }
+      }
+      this.db.prepare('UPDATE retired_slugs SET owner_id = ? WHERE owner_id = ?').run(plan.transferTo ?? plan.heirId, userId);
+      // Versions the account deployed to apps of others (as a collaborator) or received with an app now name the app's owner.
+      this.db.prepare('UPDATE versions SET created_by = (SELECT owner_id FROM apps WHERE apps.id = versions.app_id) WHERE created_by = ?').run(userId);
+      this.db.prepare('DELETE FROM app_collaborators WHERE user_id = ?').run(userId);
+      this.db.prepare('DELETE FROM instance_creations WHERE user_id IN (?, ?)').run(userId, forOthersKey(userId));
+      finish();
+      return (): void => this.afterDelete(gone, ...files);
     });
   }
 }

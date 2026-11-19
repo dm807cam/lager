@@ -12,7 +12,18 @@ import { MemoryMailer } from '../src/platform/mail.js';
 import { MAX_HASHES_IN_FLIGHT, MAX_HASHES_WAITING, MAX_URGENT_HASHES_WAITING } from '../src/platform/users.js';
 import { LagerError } from '../src/errors.js';
 import { t } from '../src/i18n/index.js';
-import { makeHarness, type Harness } from './support/http.js';
+import { makeHarness, type Harness, withoutNonce } from './support/http.js';
+
+/**
+ * A sign-in page as it must be compared between two names: without the script nonce, and without the address the visitor typed,
+ * which comes back in the email field and nowhere else. The visitor supplied it, so it tells them nothing.
+ */
+function apartFromEmail(html: string, email: string): string {
+  const field = `name="email" type="email" autocomplete="username" required value="${email}"`;
+  expect(html.split(email)).toHaveLength(2);
+  expect(html).toContain(field);
+  return withoutNonce(html).replace(field, 'name="email" …');
+}
 
 let h: Harness | undefined;
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); h?.core.close(); h = undefined; });
@@ -136,7 +147,7 @@ describe('the pause of an account under attack', () => {
       await form(h, '/login', `5.${email.length}.8.1`, { email, password: 'nope' });
       check.mockClear();
       const res = await form(h, '/login', `5.${email.length}.8.2`, { email, password: 'nope again' });
-      outcome.push({ status: res.status, text: res.text, checked: check.mock.calls.length, paused: limiter.accountPaused(email) });
+      outcome.push({ status: res.status, text: apartFromEmail(res.text, email), checked: check.mock.calls.length, paused: limiter.accountPaused(email) });
     }
     expect(outcome[0]).toEqual(outcome[1]);
   }, 60_000);
@@ -149,7 +160,7 @@ describe('the pause of an account under attack', () => {
       const res = await form(h, '/login', '8.8.8.8', { email, password: 'admin-password-1' });
       expect(res.status).toBe(401);
       expect(res.text).toContain(t('en', 'login.invalid'));
-      results.push(res.text);
+      results.push(apartFromEmail(res.text, email));
     }
     expect(results[0]).toBe(results[1]);
   });
@@ -571,12 +582,12 @@ describe('what must get through while guesses flood the server', () => {
     // Not paused: the budget holds, for a real and for a made-up address.
     const refused = [await forgot('40.1.0.1', victim.email), await forgot('40.1.0.2', 'ghost@example.org')];
     expect(refused.map((r) => r.status)).toEqual([429, 429]);
-    expect(refused[0].text).toBe(refused[1].text);
+    expect(withoutNonce(refused[0].text)).toBe(withoutNonce(refused[1].text));
     // Both names are under attack and paused.
     for (const email of [victim.email, 'ghost@example.org']) for (let i = 0; i < 10; i++) loginLimiter(h.core).fail(`41.${email.length}.0.${i}`, email);
     const answered = [await forgot('40.1.0.3', victim.email), await forgot('40.1.0.4', 'ghost@example.org')];
     expect(answered.map((r) => r.status)).toEqual([200, 200]);
-    expect(answered[0].text).toBe(answered[1].text);
+    expect(withoutNonce(answered[0].text)).toBe(withoutNonce(answered[1].text));
     expect(mailer.sent.map((m) => m.to)).toEqual([victim.email]);
     // The limit per address stays: three an hour, the fourth request is answered and sends nothing.
     for (let i = 0; i < 3; i++) expect((await forgot(`40.2.0.${i}`, victim.email)).status).toBe(200);
