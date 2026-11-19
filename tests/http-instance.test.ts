@@ -450,6 +450,11 @@ describe('instance host', () => {
     const ada = h.core.users.create({ email: 'ada@x.y', name: 'Ada', password: 'pw-ada-12345', role: 'user' });
     h.core.access.setGrant(inst, 'user', ada.id, 'view', h.core.users.get(h.adminId)!);
     const cookie = await h.enter('workout', await h.login());
+    // Until Ada has agreed to share her address with this instance, the search shows her name only and does not match her address.
+    const before = await request(h.app).get('/__lager/users').query({ q: 'ada' }).set('Host', W).set('Cookie', cookie);
+    expect(before.body.profiles).toEqual([{ id: ada.id, name: 'Ada', email: null, isMe: false }]);
+    expect((await request(h.app).get('/__lager/users').query({ q: 'ada@x' }).set('Host', W).set('Cookie', cookie)).body.profiles).toEqual([]);
+    h.core.access.confirmSignIn(inst, ada, true);
     const res = await request(h.app).get('/__lager/users').query({ q: 'ada' }).set('Host', W).set('Cookie', cookie);
     expect(res.body.profiles).toEqual([{ id: ada.id, name: 'Ada', email: 'ada@x.y', isMe: false }]);
     const byAddress = await request(h.app).get('/__lager/users').query({ q: 'ada@x' }).set('Host', W).set('Cookie', cookie);

@@ -35,6 +35,7 @@ export const en = {
   'login.register': 'Create account',
   'login.verified': 'Email address confirmed. You can sign in now.',
   'login.tooMany': 'Too many failed attempts. Please wait a few minutes.',
+  'login.busy': 'The server is busy right now. Please try again in a moment.',
   'login.unverified': 'Please confirm your email address first.',
   'login.disabled': 'This account is disabled.',
   'login.invalid': 'Email or password is wrong.',

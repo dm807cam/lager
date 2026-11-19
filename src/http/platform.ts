@@ -58,7 +58,7 @@ interface AccountState {
 }
 
 /** An attempt that was counted as a failure before its password was checked; see `LoginLimiter.begin`. */
-export interface Attempt { ip: string; account: string; at: number; real: boolean }
+export interface Attempt { ip: string; account: string; at: number }
 
 /**
  * Failed login attempts within a sliding window, tracked per client IP, per account (e-mail) and per pair of both.
@@ -79,9 +79,11 @@ export class LoginLimiter {
   private byIp = new Map<string, number[]>();
   private byAccount = new Map<string, number[]>();
   private byPair = new Map<string, number[]>();
-  /** Accounts that exist, and names that were only guessed at. Kept apart so that a flood of made-up names cannot push out a real pause. */
-  private real = new Map<string, AccountState>();
-  private guessed = new Map<string, AccountState>();
+  /**
+   * One map for every name that was tried, whether an account of that name exists or not: anything that treated the two
+   * differently would let the limiter's answers tell them apart. When it is full, an entry that is not paused goes first.
+   */
+  private accounts = new Map<string, AccountState>();
   private static pair = (ip: string, account: string): string => `${account}\n${ip}`;
 
   private static recent(map: Map<string, number[]>, key: string): number[] {
@@ -111,17 +113,16 @@ export class LoginLimiter {
 
   /** True while the account takes no sign-in from a browser it does not know. */
   accountPaused(account: string): boolean {
-    return Date.now() < Math.max(this.real.get(account)?.until ?? 0, this.guessed.get(account)?.until ?? 0);
+    return Date.now() < (this.accounts.get(account)?.until ?? 0);
   }
 
   /** The password was right, or a new one was set: the account's pause and its count of failures end. */
   succeed(account: string): void {
-    this.real.delete(account);
-    this.guessed.delete(account);
+    this.accounts.delete(account);
   }
 
-  private failAccount(account: string, real: boolean, now: number): void {
-    const map = real ? this.real : this.guessed;
+  private failAccount(account: string, now: number): void {
+    const map = this.accounts;
     const quietFor = (e: AccountState): number => now - Math.max(e.last, e.until);
     for (const [key, e] of map) {
       if (quietFor(e) >= WINDOW_MS * ACCOUNT_PAUSES_MS.length) map.delete(key);
@@ -146,7 +147,8 @@ export class LoginLimiter {
       e.failures = 0;
     }
     map.delete(account);
-    // Full: an entry that is not paused goes first, the oldest one if all are.
+    // Full: an entry that is not paused goes first, the oldest one if all are. Pushing out a pause would take as many names paused
+    // at the same time as the map holds, each after ten checked passwords, within one pause: far more than the hash queue lets through.
     while (map.size >= MAX_TRACKED_KEYS) {
       let victim = map.keys().next().value as string;
       for (const [key, other] of map) if (now >= other.until) { victim = key; break; }
@@ -155,8 +157,8 @@ export class LoginLimiter {
     map.set(account, e);
   }
 
-  /** Counts one failure. `real` says whether an account of that name exists. */
-  fail(ip: string, account: string, real = false): Attempt {
+  /** Counts one failure. */
+  fail(ip: string, account: string): Attempt {
     LoginLimiter.sweep(this.byIp);
     LoginLimiter.sweep(this.byAccount);
     LoginLimiter.sweep(this.byPair);
@@ -165,8 +167,8 @@ export class LoginLimiter {
     this.byIp.set(ip, [...LoginLimiter.recent(this.byIp, ip), now]);
     this.byAccount.set(account, [...LoginLimiter.recent(this.byAccount, account), now]);
     this.byPair.set(pair, [...LoginLimiter.recent(this.byPair, pair), now]);
-    this.failAccount(account, real, now);
-    return { ip, account, at: now, real };
+    this.failAccount(account, now);
+    return { ip, account, at: now };
   }
 
   /**
@@ -174,10 +176,10 @@ export class LoginLimiter {
    * this browser right now; nothing is counted. Otherwise the attempt is counted as a failure at once and returned, to be given
    * to `release` if the password turns out right. `known` says that the browser carries the account's device cookie.
    */
-  begin(ip: string, account: string, opts: { real: boolean; known: boolean }): Attempt | 'blocked' | 'paused' {
+  begin(ip: string, account: string, known: boolean): Attempt | 'blocked' | 'paused' {
     if (this.blocked(ip, account)) return 'blocked';
-    if (!opts.known && this.accountPaused(account)) return 'paused';
-    return this.fail(ip, account, opts.real);
+    if (!known && this.accountPaused(account)) return 'paused';
+    return this.fail(ip, account);
   }
 
   /**
@@ -199,14 +201,22 @@ export class LoginLimiter {
       this.succeed(attempt.account);
       return;
     }
-    const e = (attempt.real ? this.real : this.guessed).get(attempt.account);
+    const e = this.accounts.get(attempt.account);
     if (e && e.failures > 0) e.failures -= 1;
   }
 }
 
+const limiters = new WeakMap<Core, LoginLimiter>();
+/** The sign-in limiter of this server; the password-reset form asks it whether an account is paused. */
+export function loginLimiter(core: Core): LoginLimiter {
+  let limiter = limiters.get(core);
+  if (!limiter) limiters.set(core, limiter = new LoginLimiter());
+  return limiter;
+}
+
 export function createPlatformRouter(core: Core, extensions: PlatformExtension[]): express.Router {
   const router = express.Router();
-  const limiter = new LoginLimiter();
+  const limiter = loginLimiter(core);
   const { config } = core;
   // A new password, also one set through a reset mail, ends the pause of the account: its owner always has that way in.
   core.users.onPasswordChanged((id) => {
@@ -323,18 +333,21 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
     };
     // Counted as a failure now, before the password is checked: of many attempts sent at once, only as many as the limits leave are looked at.
     const owner = core.users.getByEmail(account);
-    const attempt = limiter.begin(ip, account, { real: owner !== null, known: owner !== null && knownDevice(core, req, owner) });
+    const known = owner !== null && knownDevice(core, req, owner);
+    const attempt = limiter.begin(ip, account, known);
     if (attempt === 'blocked') { tooMany(); return; }
     // A paused account answers like a wrong password, whether it exists or not, and without the cost of checking one.
     let result: LoginResult | null = null;
     if (attempt !== 'paused' && typeof body.email === 'string' && typeof body.password === 'string') {
       try {
-        result = await core.users.checkLogin(body.email, body.password);
+        // A browser the account knows does not wait behind a flood of guesses.
+        result = await core.users.checkLogin(body.email, body.password, known);
       } catch (e) {
         if (!(e instanceof LagerError) || e.code !== 'rate_limited') throw e;
-        // Too many passwords are being checked at once: this one was not looked at, so it does not count either.
+        // Too many passwords are being checked at once: this one was not looked at, so it does not count either, and the
+        // answer says that the server is busy, not that the visitor failed.
         limiter.release(attempt, false);
-        tooMany();
+        res.status(429).type('html').send(loginPage(locale, ret, t(locale, 'login.busy'), { registration: core.settings.registration }));
         return;
       }
     }

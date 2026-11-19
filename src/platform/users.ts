@@ -36,28 +36,38 @@ export const MAX_HASHES_IN_FLIGHT = 2;
 export const MAX_HASHES_WAITING = 32;
 let hashing = 0;
 const waiting: Array<() => void> = [];
+/**
+ * Served before `waiting` and not capped: hashes whose number something else already bounds (a reset link, a session, an invitation
+ * or the registration cap, the device cookie of the account). A flood of guessed sign-ins fills `waiting`; it must not keep out the
+ * owner who sets a new password or signs in from a known browser.
+ */
+const urgent: Array<() => void> = [];
 
 const scryptAsync = promisify(crypto.scrypt) as (password: string, salt: Buffer, keylen: number, options: crypto.ScryptOptions) => Promise<Buffer>;
 
-/** scrypt off the event loop, at most `MAX_HASHES_IN_FLIGHT` at a time; with the queue full the caller is told to come back (`rate_limited`). */
-async function scrypt(password: string, salt: Buffer, keylen: number, options: crypto.ScryptOptions): Promise<Buffer> {
+/** scrypt off the event loop, at most `MAX_HASHES_IN_FLIGHT` at a time; with the queue full an ordinary caller is told to come back (`rate_limited`). */
+async function scrypt(password: string, salt: Buffer, keylen: number, options: crypto.ScryptOptions, priority = false): Promise<Buffer> {
   if (hashing < MAX_HASHES_IN_FLIGHT) hashing++;
+  else if (priority) await new Promise<void>((turn) => { urgent.push(turn); });
   else if (waiting.length >= MAX_HASHES_WAITING) throw new LagerError('rate_limited', 'Too many passwords are being checked at the moment. Please try again shortly.', 'busy');
   // Whoever finishes hands its slot to the next in line, so the count stays as it is.
   else await new Promise<void>((turn) => { waiting.push(turn); });
   try {
     return await scryptAsync(password, salt, keylen, options);
   } finally {
-    const next = waiting.shift();
+    const next = urgent.shift() ?? waiting.shift();
     if (next) next(); else hashing--;
   }
 }
 const encode = (salt: Buffer, hash: Buffer): string => `scrypt$${salt.toString('hex')}$${hash.toString('hex')}`;
 
-/** The stored form of a password. Hash before opening a transaction: nothing may be awaited inside one. */
+/**
+ * The stored form of a password. Hash before opening a transaction: nothing may be awaited inside one. Always in the priority
+ * lane: a password is set only by a reset link, a signed-in account or a registration, and each of those is limited elsewhere.
+ */
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.randomBytes(16);
-  return encode(salt, await scrypt(password, salt, KEY_LEN, SCRYPT));
+  return encode(salt, await scrypt(password, salt, KEY_LEN, SCRYPT, true));
 }
 
 /** Blocks the process for one hash: only where nothing is being served yet, as for the first administrator at startup. */
@@ -66,11 +76,11 @@ function hashPasswordSync(password: string): string {
   return encode(salt, crypto.scryptSync(password, salt, KEY_LEN, SCRYPT));
 }
 
-async function checkPassword(password: string, stored: string): Promise<boolean> {
+async function checkPassword(password: string, stored: string, priority = false): Promise<boolean> {
   const [scheme, saltHex, hashHex] = stored.split('$');
   if (scheme !== 'scrypt' || !saltHex || !hashHex) return false;
   const expected = Buffer.from(hashHex, 'hex');
-  const actual = await scrypt(password, Buffer.from(saltHex, 'hex'), expected.length, SCRYPT);
+  const actual = await scrypt(password, Buffer.from(saltHex, 'hex'), expected.length, SCRYPT, priority);
   return crypto.timingSafeEqual(actual, expected);
 }
 
@@ -116,14 +126,17 @@ export class Users {
     return { id, email, name: input.name, role: input.role, createdAt, verified, disabled: false, sessionEpoch: 0, locale };
   }
 
-  /** The password is always checked first, so the reason never leaks whether an account exists or is blocked. */
-  async checkLogin(email: string, password: string): Promise<LoginResult> {
+  /**
+   * The password is always checked first, so the reason never leaks whether an account exists or is blocked. `priority` puts the
+   * hash ahead of ordinary sign-ins: for a caller who already holds something of the account (its device cookie, a session, a link).
+   */
+  async checkLogin(email: string, password: string, priority = false): Promise<LoginResult> {
     const found = this.db.prepare('SELECT * FROM users WHERE email = ?').get(email.trim()) as UserRow | undefined;
     if (!found) {
-      await checkPassword(password, DUMMY_HASH);
+      await checkPassword(password, DUMMY_HASH, priority);
       return { ok: false, reason: 'invalid' };
     }
-    if (!(await checkPassword(password, found.password_hash))) return { ok: false, reason: 'invalid' };
+    if (!(await checkPassword(password, found.password_hash, priority))) return { ok: false, reason: 'invalid' };
     // Read again: the account may have been disabled, or its password replaced, while the hash was computed.
     const row = this.db.prepare('SELECT * FROM users WHERE id = ? AND password_hash = ?').get(found.id, found.password_hash) as UserRow | undefined;
     if (!row) return { ok: false, reason: 'invalid' };

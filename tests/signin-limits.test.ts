@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { MAX_REGISTRATIONS_PER_HOUR } from '../src/http/auth.js';
 import { addressKey } from '../src/http/client-address.js';
-import { LoginLimiter } from '../src/http/platform.js';
+import { LoginLimiter, loginLimiter } from '../src/http/platform.js';
 import { csrfToken, csrfValid } from '../src/http/session.js';
 import { MAX_ACCOUNT_MAILS_PER_HOUR, MAX_RESET_MAILS_PER_HOUR } from '../src/platform/accounts.js';
 import { MemoryMailer } from '../src/platform/mail.js';
@@ -64,7 +64,7 @@ describe('the pause of an account under attack', () => {
     vi.useFakeTimers();
     const l = new LoginLimiter();
     let n = 0;
-    const attempt = () => l.begin(`10.${n >> 8}.${n++ & 255}.1`, 'a@x.y', { real: true, known: false });
+    const attempt = () => l.begin(`10.${n >> 8}.${n++ & 255}.1`, 'a@x.y', false);
     for (const pause of [30_000, 60_000, 120_000, 300_000, 300_000, 300_000]) {
       // A fresh allowance: nine failures leave the account open, the tenth pauses it.
       for (let i = 0; i < 9; i++) expect(attempt()).toBeTypeOf('object');
@@ -77,7 +77,7 @@ describe('the pause of an account under attack', () => {
       for (let i = 0; i < 50; i++) expect(attempt()).toBe('paused');
       expect(l.accountPaused('a@x.y'), `still paused after ${pause - 1} ms`).toBe(true);
       // A browser the account knows is not paused, and its failures do not move the end either.
-      for (let i = 0; i < 12; i++) expect(l.begin('10.9.9.9', 'a@x.y', { real: true, known: true })).not.toBe('paused');
+      for (let i = 0; i < 12; i++) expect(l.begin('10.9.9.9', 'a@x.y', true)).not.toBe('paused');
       vi.advanceTimersByTime(1);
       expect(l.accountPaused('a@x.y'), `open again after ${pause} ms`).toBe(false);
     }
@@ -87,7 +87,7 @@ describe('the pause of an account under attack', () => {
     vi.useFakeTimers();
     const l = new LoginLimiter();
     let n = 0;
-    const fail = () => l.begin(`10.${n >> 8}.${n++ & 255}.1`, 'a@x.y', { real: true, known: false });
+    const fail = () => l.begin(`10.${n >> 8}.${n++ & 255}.1`, 'a@x.y', false);
     const pauseLength = (): number => {
       for (let i = 0; i < 10; i++) fail();
       let ms = 0;
@@ -117,16 +117,27 @@ describe('the pause of an account under attack', () => {
     expect(l.accountPaused('a@x.y')).toBe(false);
   });
 
-  it('a flood of made-up account names does not push out the pause of a real account', () => {
-    vi.useFakeTimers();
-    const l = new LoginLimiter();
-    for (let i = 0; i < 10; i++) l.begin(`10.0.0.${i}`, 'owner@x.y', { real: true, known: false });
-    for (let i = 0; i < 10; i++) l.begin(`10.0.1.${i}`, 'ghost@x.y', { real: false, known: false });
-    expect(l.accountPaused('owner@x.y')).toBe(true);
-    for (let i = 0; i < 10_050; i++) l.fail(`11.${i >> 16}.${(i >> 8) & 255}.${i & 255}`, `junk${i}@x.y`);
-    expect(l.accountPaused('owner@x.y')).toBe(true);
-    // Among the made-up names, those that are not paused went first.
-    expect(l.accountPaused('ghost@x.y')).toBe(true);
+  it('a flood of made-up names pushes out neither a pause nor the difference between a real account and a guessed name', async () => {
+    h = makeHarness({ trustProxy: 1 });
+    const limiter = loginLimiter(h.core);
+    const check = vi.spyOn(h.core.users, 'checkLogin');
+    const names = ['admin@x.y', 'nobody@x.y'];
+    // Nine failures on an account that exists and on a name that does not; a third name is paused outright.
+    for (const email of names) for (let i = 0; i < 9; i++) await form(h, '/login', `5.${email.length}.7.${i}`, { email, password: 'nope' });
+    for (let i = 0; i < 10; i++) limiter.fail(`6.0.0.${i}`, 'paused@x.y');
+    for (let i = 0; i < 10_001; i++) limiter.fail(`11.${i >> 16}.${(i >> 8) & 255}.${i & 255}`, `junk${i}@x.y`);
+    // The pause outlived the flood: entries that are not paused went first.
+    expect(limiter.accountPaused('paused@x.y')).toBe(true);
+    // One more failure on each, then an attempt with a password: whatever the flood did to the counts, it did the same to both
+    // names. Both are answered alike, and both passwords are looked at (or neither), so timing tells nothing either.
+    const outcome: Array<{ status: number; text: string; checked: number; paused: boolean }> = [];
+    for (const email of names) {
+      await form(h, '/login', `5.${email.length}.8.1`, { email, password: 'nope' });
+      check.mockClear();
+      const res = await form(h, '/login', `5.${email.length}.8.2`, { email, password: 'nope again' });
+      outcome.push({ status: res.status, text: res.text, checked: check.mock.calls.length, paused: limiter.accountPaused(email) });
+    }
+    expect(outcome[0]).toEqual(outcome[1]);
   }, 60_000);
 
   it('answers a paused account that does not exist exactly like one that does', async () => {
@@ -500,5 +511,71 @@ describe('registration does not tell a taken address from a free one', () => {
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
+  });
+});
+
+describe('what must get through while guesses flood the server', () => {
+  it('setting a password and a known browser go ahead of the queue of ordinary sign-ins', async () => {
+    const mailer = new MemoryMailer();
+    h = makeHarness({ trustProxy: 1, mailer });
+    const { users, accounts } = h.core;
+    const order: string[] = [];
+    // The ordinary lane is full: two hashes run, 32 wait.
+    const flood = Array.from({ length: MAX_HASHES_IN_FLIGHT + MAX_HASHES_WAITING }, (_, i) => users.checkLogin(`u${i}@x.y`, 'nope').then(() => { order.push('guess'); }));
+    await expect(users.checkLogin('admin@x.y', 'admin-password-1')).rejects.toMatchObject({ code: 'rate_limited' });
+    // The reset link (the documented way back in), a password change and a sign-in that is marked as known are still served,
+    // and before the guesses that were already waiting.
+    const link = new URL(accounts.createResetLink(h.adminId)).searchParams.get('token')!;
+    const urgent = [
+      accounts.resetPassword(link, 'a brand new password').then(() => { order.push('reset'); }),
+      users.checkLogin('admin@x.y', 'admin-password-1', true).then(() => { order.push('known'); }),
+      accounts.register({ name: 'N', email: 'n@x.y', password: PW, inviteToken: new URL((await accounts.createInvite({ role: 'user', createdBy: h.adminId })).url).searchParams.get('invite')! }).then(() => { order.push('register'); }),
+    ];
+    await Promise.all([...urgent, ...flood]);
+    expect(order.slice(0, 5).filter((o) => o !== 'guess').sort()).toEqual(['known', 'register', 'reset']);
+    expect(order.filter((o) => o === 'guess')).toHaveLength(MAX_HASHES_IN_FLIGHT + MAX_HASHES_WAITING);
+    expect((await users.checkLogin('admin@x.y', 'a brand new password')).ok).toBe(true);
+  });
+
+  it('the sign-in route asks for priority only with the device cookie of the account, and says "busy" rather than "failed"', async () => {
+    h = makeHarness({ trustProxy: 1 });
+    const first = await form(h, '/login', '1.1.1.1', { email: 'admin@x.y', password: 'admin-password-1' });
+    const device = ([] as string[]).concat(first.headers['set-cookie']).find((c) => c.startsWith('lager_device='))!.split(';')[0];
+    const other = h.core.users.create({ email: 'o@x.y', name: 'O', password: PW, role: 'user' });
+    const check = vi.spyOn(h.core.users, 'checkLogin');
+    await form(h, '/login', '1.1.1.2', { email: 'admin@x.y', password: 'admin-password-1' }).set('Cookie', device);
+    await form(h, '/login', '1.1.1.3', { email: 'admin@x.y', password: 'admin-password-1' });
+    await form(h, '/login', '1.1.1.4', { email: other.email, password: PW }).set('Cookie', device);
+    expect(check.mock.calls.map((c) => c[2])).toEqual([true, false, false]);
+    check.mockRejectedValue(new LagerError('rate_limited', 'busy', 'busy'));
+    const busy = await form(h, '/login', '1.1.1.5', { email: 'admin@x.y', password: 'admin-password-1' });
+    expect(busy.status).toBe(429);
+    expect(busy.text).toContain(t('en', 'login.busy'));
+    expect(busy.text).not.toContain(t('en', 'login.tooMany'));
+  });
+
+  it('a paused account still gets its reset mail when the hourly reset mails are spent, and the form answers alike for a name without an account', async () => {
+    const mailer = new MemoryMailer();
+    h = makeHarness({ trustProxy: 1, mailer });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const victim = h.core.users.create({ email: 'victim@example.org', name: 'V', password: PW, role: 'user' });
+    for (let i = 0; i < MAX_RESET_MAILS_PER_HOUR; i++) await h.core.accounts.requestPasswordReset('admin@x.y');
+    mailer.sent.length = 0;
+    const forgot = (ip: string, email: string) => form(h!, '/forgot', ip, { email });
+    // Not paused: the budget holds, for a real and for a made-up address.
+    const refused = [await forgot('40.1.0.1', victim.email), await forgot('40.1.0.2', 'ghost@example.org')];
+    expect(refused.map((r) => r.status)).toEqual([429, 429]);
+    expect(refused[0].text).toBe(refused[1].text);
+    // Both names are under attack and paused.
+    for (const email of [victim.email, 'ghost@example.org']) for (let i = 0; i < 10; i++) loginLimiter(h.core).fail(`41.${email.length}.0.${i}`, email);
+    const answered = [await forgot('40.1.0.3', victim.email), await forgot('40.1.0.4', 'ghost@example.org')];
+    expect(answered.map((r) => r.status)).toEqual([200, 200]);
+    expect(answered[0].text).toBe(answered[1].text);
+    expect(mailer.sent.map((m) => m.to)).toEqual([victim.email]);
+    // The limit per address stays: three an hour, the fourth request is answered and sends nothing.
+    for (let i = 0; i < 3; i++) expect((await forgot(`40.2.0.${i}`, victim.email)).status).toBe(200);
+    expect(mailer.sent).toHaveLength(3);
+    // Another account that is not paused is still held to the budget.
+    expect((await forgot('40.3.0.1', 'admin@x.y')).status).toBe(429);
   });
 });

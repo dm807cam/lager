@@ -93,10 +93,10 @@ export class Accounts {
    * Mail is written in the recipient's language: the account's stored one, else the one of the request that caused the mail,
    * else the configured default. Mail problems are logged, never surfaced: they must not reveal whether an address exists or undo the action.
    */
-  private async deliver(to: string, locale: Locale | null | undefined, url: string, kind: Kind): Promise<void> {
+  private async deliver(to: string, locale: Locale | null | undefined, url: string, kind: Kind, beyondBudget = false): Promise<void> {
     const lang = locale ?? this.config.defaultLocale;
     const keys = MAIL_KEYS[kind];
-    await this.send(to, t(lang, keys.subject), `${t(lang, keys.intro)}\n\n${url}\n\n${t(lang, keys.validity)}\n`, kind === 'invite' ? null : kind === 'reset' ? 'reset' : 'account');
+    await this.send(to, t(lang, keys.subject), `${t(lang, keys.intro)}\n\n${url}\n\n${t(lang, keys.validity)}\n`, kind === 'invite' || beyondBudget ? null : kind === 'reset' ? 'reset' : 'account');
   }
 
   /** A mail that counts against a budget is dropped once that budget is spent; callers that can tell the visitor check `mailBudgetSpent` first. */
@@ -201,7 +201,8 @@ export class Accounts {
     const row = this.find('verify', token);
     const user = row?.user_id ? this.users.get(row.user_id) : null;
     if (!row || !user) throw invalidToken();
-    const login = await this.users.checkLogin(user.email, typeof password === 'string' ? password : '');
+    // Ahead of ordinary sign-ins: the caller holds the link, and guesses at one link are limited.
+    const login = await this.users.checkLogin(user.email, typeof password === 'string' ? password : '', true);
     if (!login.ok && login.reason === 'invalid') throw new LagerError('forbidden', 'The password is wrong.', 'password_wrong');
     if ((!login.ok && login.reason === 'disabled') || !this.consume(row)) throw invalidToken();
     this.users.markVerified(user.id);
@@ -214,12 +215,13 @@ export class Accounts {
     if (user && !user.verified) this.background(this.sendVerification(user, locale));
   }
 
-  async requestPasswordReset(email: string, locale?: Locale): Promise<void> {
+  /** `beyondBudget` sends the mail even when this hour's reset mails are spent: for an account that is paused, whose owner has no other way in. */
+  async requestPasswordReset(email: string, locale?: Locale, beyondBudget = false): Promise<void> {
     const user = typeof email === 'string' ? this.users.getByEmail(email) : null;
     if (!user) return;
     const { token } = this.issue('reset', { userId: user.id });
     // Started but not awaited (see resendVerification); `deliver` catches send errors, so nothing is left unhandled.
-    this.background(this.deliver(user.email, user.locale ?? locale, this.link('/reset', 'token', token), 'reset'));
+    this.background(this.deliver(user.email, user.locale ?? locale, this.link('/reset', 'token', token), 'reset', beyondBudget));
   }
 
   createResetLink(userId: string): string {

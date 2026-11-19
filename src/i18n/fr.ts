@@ -37,6 +37,7 @@ export const fr: Record<MessageKey, string> = {
   'login.register': 'Créer un compte',
   'login.verified': 'Adresse e-mail confirmée. Vous pouvez maintenant vous connecter.',
   'login.tooMany': 'Trop de tentatives échouées. Veuillez patienter quelques minutes.',
+  'login.busy': 'Le serveur est occupé pour le moment. Veuillez réessayer dans un instant.',
   'login.unverified': "Veuillez d’abord confirmer votre adresse e-mail.",
   'login.disabled': 'Ce compte est désactivé.',
   'login.invalid': 'Adresse e-mail ou mot de passe incorrect.',

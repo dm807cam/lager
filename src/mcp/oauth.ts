@@ -23,8 +23,11 @@ const CODE_TTL_S = 10 * 60;
 const ACCESS_TTL_S = 60 * 60;
 const REFRESH_TTL_S = 30 * 24 * 3600;
 const CONSENT_TTL_S = 600;
-/** A registered client that holds no code and no token is forgotten after this long; a client in use renews its tokens well within it. */
-const CLIENT_IDLE_S = 30 * 24 * 3600;
+/**
+ * A registered client that holds no code and no token is forgotten this long after its last use. Three times the life of a refresh
+ * token: a client that comes back shortly after its last token lapsed must still find its registration.
+ */
+const CLIENT_IDLE_S = 90 * 24 * 3600;
 /** Longest client metadata (name, redirect addresses, …) kept for a registration, as JSON. Anyone may register a client. */
 export const MAX_CLIENT_METADATA_BYTES = 8 * 1024;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);

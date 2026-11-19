@@ -474,7 +474,7 @@ describe('OAuth hardening', () => {
     expect(approve.headers.location).toBeUndefined();
   });
 
-  it('registered clients that hold no code and no token are forgotten after 30 days; metadata is capped', async () => {
+  it('registered clients that hold no code and no token are forgotten after 90 days; metadata is capped', async () => {
     const h = setup();
     const { client_id: idle } = await register(h);
     const { client_id: fresh } = await register(h);
@@ -482,13 +482,13 @@ describe('OAuth hardening', () => {
     const db = new DatabaseSync(path.join(h.core.config.dataDir, 'platform.sqlite'));
     const age = db.prepare('UPDATE oauth_clients SET created_at = ? WHERE client_id = ?');
     const days = (n: number): string => new Date(Date.now() - n * 24 * 3600_000).toISOString();
-    age.run(days(31), idle);
-    age.run(days(29), fresh);
+    age.run(days(91), idle);
+    age.run(days(89), fresh);
     age.run(days(400), used);
     // Used once, long ago, and holding nothing any more: idleness counts from the last use, not from the registration.
     const { client_id: lapsed } = await register(h);
     const { client_id: recent } = await register(h);
-    db.prepare('UPDATE oauth_clients SET created_at = ?, last_used_at = ? WHERE client_id = ?').run(days(400), days(31), lapsed);
+    db.prepare('UPDATE oauth_clients SET created_at = ?, last_used_at = ? WHERE client_id = ?').run(days(400), days(91), lapsed);
     db.prepare('UPDATE oauth_clients SET created_at = ?, last_used_at = ? WHERE client_id = ?').run(days(400), days(2), recent);
     db.close();
     // The next registration sweeps.

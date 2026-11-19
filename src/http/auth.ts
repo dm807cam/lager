@@ -8,6 +8,7 @@ import { MAX_NAME_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, type User } 
 import { requireUser, type PlatformExtension } from './app.js';
 import { addressKey } from './client-address.js';
 import { requestLocale } from './locale.js';
+import { loginLimiter } from './platform.js';
 import { sameOriginGuard } from './origin.js';
 import { authCard, esc, field, messagePage, page, resendForm, sessionExpiredPage } from './pages.js';
 import { avatar, btn, icon, notice as noticeBox, signedIn } from './ui.js';
@@ -259,9 +260,12 @@ export const authExtension: PlatformExtension = (router, core) => {
 
   router.post('/forgot', ...publicForm, async (req, res) => {
     const locale = localeOf(req);
-    if (!forgotIp.hit(ipOf(req)) || core.accounts.mailBudgetSpent('reset')) { tooMany(req, res); return; }
+    // A paused account (a name that is paused, whether an account of that name exists or not) gets its reset mail even when this
+    // hour's reset mails are spent: the mail is the owner's way back in, and whoever attacks the account may be draining the budget too.
+    const paused = loginLimiter(core).accountPaused(emailKey(req));
+    if (!forgotIp.hit(ipOf(req)) || (!paused && core.accounts.mailBudgetSpent('reset'))) { tooMany(req, res); return; }
     // Over the per-address budget the request is skipped without any visible difference.
-    if (forgotEmail.hit(emailKey(req))) await core.accounts.requestPasswordReset(field(req, 'email', 254), locale);
+    if (forgotEmail.hit(emailKey(req))) await core.accounts.requestPasswordReset(field(req, 'email', 254), locale, paused);
     html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.forgot.sent'), toLogin(locale)));
   });
 
@@ -343,7 +347,7 @@ export const authExtension: PlatformExtension = (router, core) => {
       html(res, 429, accountPage(core, locale, user, { error: t(locale, 'account.tooMany') }));
       return;
     }
-    if (!(await core.users.checkLogin(user.email, secret(req, 'current'))).ok) {
+    if (!(await core.users.checkLogin(user.email, secret(req, 'current'), true)).ok) {
       html(res, 400, accountPage(core, locale, user, { error: t(locale, 'account.password.wrong') }));
       return;
     }

@@ -256,7 +256,8 @@ export function createInstanceRouter(core: Core): express.Router {
       }
       const found = hasScope(ctx, 'profile') ? core.access.usersWithAccess(ctx.instance, req.query.q, MAX_SEARCH_RESULTS, emailAllowed(ctx)) : [];
       res.set('Cache-Control', 'no-store').json({
-        profiles: found.map((u) => ({ id: u.id, name: u.name, email: emailAllowed(ctx) ? u.email : null, isMe: u.id === ctx.user?.id })),
+        // As for single profiles: no address of someone who has not agreed to share it with this instance.
+        profiles: found.map((u) => ({ id: u.id, name: u.name, email: emailAllowed(ctx) && core.access.signInConfirmed(ctx.instance, u, true) ? u.email : null, isMe: u.id === ctx.user?.id })),
       });
       return;
     }
