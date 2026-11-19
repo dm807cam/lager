@@ -3,6 +3,5 @@ dist
 data
 .env
 .git
-.superpowers
 docs
 tests

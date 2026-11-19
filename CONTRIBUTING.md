@@ -150,7 +150,7 @@ src/
 tests/                 Vitest suites (unit, HTTP and end-to-end)
 examples/              Example apps, each with a test
 skill/lager/           The Lager skill for Claude
-docs/                  User documentation, plus design notes in docs/superpowers/
+docs/                  User documentation, plus architecture decision records in docs/adr/
 ```
 
 ## Tests and checks
@@ -221,7 +221,7 @@ Example apps show new users what Lager can do, and they are a good way to contri
 
 The user documentation lives in [`docs/`](docs/README.md), and the README gives the overview. If your change alters behaviour, a limit, a configuration variable or an API, update the matching page in the same pull request. Write short, direct sentences, show a working example where it helps, and state limits and defaults precisely.
 
-Design documents for larger features go to `docs/superpowers/specs/`, implementation plans to `docs/superpowers/plans/`. For a substantial feature, a short design document in the pull request or the issue makes the review much easier.
+Decisions that are hard to reverse, such as a new building block, a change to the security model or a new dependency, get an [architecture decision record](docs/adr/README.md) in `docs/adr/`, in the same pull request. For a substantial feature, a short description of the design in the issue makes the review much easier.
 
 ## Commit messages
 

@@ -27,5 +27,5 @@ The [README](../README.md) gives the overview and the quick start. These pages c
 | Page | What it covers |
 | --- | --- |
 | [Contributing](../CONTRIBUTING.md) | Development setup, tests, conventions, how a pull request gets merged |
-| [Design notes](superpowers/) | Design documents and implementation plans for larger features |
+| [Architecture decisions](adr/README.md) | Why Lager is built the way it is: the decisions behind it and their consequences |
 | [Security policy](../SECURITY.md) | How to report a vulnerability |
