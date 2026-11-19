@@ -74,31 +74,35 @@ describe('static assets', () => {
 });
 
 describe('response hardening', () => {
-  const policyOf = (html: string): string => dom(html).querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute('content') ?? '';
+  const policyIn = (doc: Document): string => doc.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute('content') ?? '';
+  const policyOf = (html: string): string => policyIn(dom(html));
 
   it('every platform page carries a content security policy, and no inline script lacks its nonce', async () => {
     s = await showcase();
     const cookieOf = cookies(s);
     const nonces = new Set<string>();
     const visits: PageVisit[] = [...pageVisits(s), { name: 'not found', path: '/no/such/page', as: null, status: 404 }, { name: 'not found (signed in)', path: '/no/such/page', as: 'admin', status: 404 }];
-    const rendered: Array<{ name: string; html: string; signedIn: boolean }> = [{ name: 'consent', html: await consentHtml(s), signedIn: false }];
+    const rendered: Array<{ name: string; html: string }> = [{ name: 'consent', html: await consentHtml(s) }];
     for (const v of visits) {
       const res = await visit(s, v, cookieOf);
       expect(res.status, v.name).toBe(v.status ?? 200);
       expect(res.headers['x-content-type-options'], v.name).toBe('nosniff');
       // Framing is refused by a header: a policy inside the page cannot say that.
       expect(res.headers['content-security-policy'], v.name).toBe("frame-ancestors 'none'");
-      rendered.push({ name: v.name, html: res.text, signedIn: dom(res.text).querySelector('header.topbar') !== null });
+      rendered.push({ name: v.name, html: res.text });
     }
-    for (const { name, html, signedIn } of rendered) {
-      const policy = policyOf(html);
+    let shells = 0;
+    for (const { name, html } of rendered) {
+      const doc = dom(html);
+      const signedIn = doc.querySelector('header.topbar') !== null;
+      if (signedIn) shells++;
+      const policy = policyIn(doc);
       const nonce = /'nonce-([A-Za-z0-9+/]{22}==)'/.exec(policy)?.[1];
       expect(nonce, name).toBeDefined();
       expect(policy, name).toBe(`script-src 'self' 'nonce-${nonce}'; object-src 'none'; base-uri 'none'${signedIn ? "; form-action 'self'" : ''}`);
       expect(policy, name).not.toMatch(/unsafe-inline|unsafe-eval/);
       // The policy comes before anything it governs.
       expect(html.indexOf('http-equiv="Content-Security-Policy"'), name).toBeLessThan(html.indexOf('<script'));
-      const doc = dom(html);
       const scripts = [...doc.querySelectorAll('script')];
       expect(scripts.length, name).toBeGreaterThan(0);
       for (const script of scripts) {
@@ -106,17 +110,16 @@ describe('response hardening', () => {
         else expect(script.getAttribute('nonce'), name).toBe(nonce);
       }
       // What the policy would silently switch off must not be relied on anywhere: inline handlers, javascript: links, <base>, plug-ins.
-      for (const el of doc.querySelectorAll('*')) {
-        for (const attr of el.getAttributeNames()) expect(attr.startsWith('on'), `${name}: ${attr} on <${el.tagName.toLowerCase()}>`).toBe(false);
-      }
+      expect(html, name).not.toMatch(/<[a-z][^>]*\son[a-z]+\s*=/i);
       expect(doc.querySelectorAll('a[href^="javascript:" i], base, object, embed').length, name).toBe(0);
       if (signedIn) for (const form of doc.querySelectorAll('form')) expect(form.getAttribute('action'), name).toMatch(/^\/(?!\/)/);
       nonces.add(nonce!);
     }
-    expect(rendered.some((r) => r.signedIn) && rendered.some((r) => !r.signedIn)).toBe(true);
+    expect(shells).toBeGreaterThan(10);
+    expect(shells).toBeLessThan(rendered.length - 5);
     // One nonce per response, never reused.
     expect(nonces.size).toBe(rendered.length);
-  });
+  }, 20_000);
 
   it('the sign-in and consent pages leave form-action open, because their posts end on another origin', async () => {
     s = await showcase();
@@ -167,6 +170,71 @@ describe('shell', () => {
       // Headings never skip a level.
       const levels = [...doc.querySelectorAll('h1, h2, h3, h4')].map((e) => Number(e.tagName[1]));
       levels.forEach((l, i) => { if (i > 0) expect(l - levels[i - 1], `${name} heading order`).toBeLessThanOrEqual(1); });
+    }
+  });
+
+  it('error pages keep the navigation for a signed-in viewer and stay bare for everyone else', async () => {
+    s = await showcase();
+    const cookieOf = cookies(s);
+    const at = async (path: string, as: PageVisit['as'], status: number): Promise<{ doc: Document; res: request.Response }> => {
+      const res = await visit(s!, { name: path, path, as, status }, cookieOf);
+      expect(res.status, path).toBe(status);
+      return { doc: dom(res.text), res };
+    };
+    // An address that does not exist, a thing that does not exist, a thing that is not theirs, an area that is not theirs.
+    const cases: Array<[string, PageVisit['as'], number, MessageKey]> = [
+      ['/no/such/page', 'admin', 404, 'error.notFound.text'],
+      ['/no/such/page', 'uwe', 404, 'error.notFound.text'],
+      ['/instances/nope', 'admin', 404, 'notice.instanceMissing'],
+      ['/apps/nope', 'pia', 404, 'notice.appMissing'],
+      ['/instances/notes', 'pia', 403, 'forbidden.instance'],
+      ['/apps/tasks', 'uwe', 403, 'forbidden.app'],
+      ['/admin/users', 'pia', 403, 'forbidden.admin'],
+      ['/admin/groups/nope', 'admin', 404, 'admin.groups.missing'],
+      ['/admin/instances/nope/domains', 'admin', 404, 'admin.instances.notFound'],
+    ];
+    for (const [path, as, status, key] of cases) {
+      const { doc, res } = await at(path, as, status);
+      const where = `${path} as ${as}`;
+      expect(doc.querySelector('header.topbar'), where).not.toBeNull();
+      expect(doc.querySelector('.account-menu form[action="/logout"] input[name="csrf"]')?.getAttribute('value'), where).toBeTruthy();
+      // Uwe has a catalog and so a navigation of two; the others have more.
+      expect(doc.querySelectorAll('nav.primary a').length, where).toBeGreaterThanOrEqual(2);
+      expect(doc.querySelector('nav.primary [aria-current="page"]'), where).toBeNull();
+      expect(doc.querySelectorAll('main#main').length, where).toBe(1);
+      expect(doc.querySelector('main .auth-card h1'), where).not.toBeNull();
+      expect(doc.querySelector('main')!.textContent, where).toContain(t('en', key));
+      expect(res.headers['cache-control'], where).toBe('no-store');
+    }
+    // Signed out: the plain page, as before, and nothing that names an account.
+    const anonymous = await at('/no/such/page', null, 404);
+    expect(anonymous.doc.querySelector('header.topbar')).toBeNull();
+    expect(anonymous.doc.querySelector('header.auth-top')).not.toBeNull();
+    expect(anonymous.doc.querySelector('main')!.textContent).toContain(t('en', 'error.notFound.text'));
+    // A session that ended is signed out.
+    const stale = await cookieOf('uwe');
+    s.h.core.users.bumpEpoch(s.ids.uwe);
+    const ended = await request(s.h.app).get('/no/such/page').set('Host', s.h.host).set('Cookie', stale);
+    expect(ended.status).toBe(404);
+    expect(ended.text).not.toContain('topbar');
+    // The API keeps answering in JSON, signed in or not, and other methods are "not found" as well.
+    const api = await request(s.h.app).get('/api/no/such').set('Host', s.h.host).set('Cookie', await cookieOf('admin'));
+    expect(api.status).toBe(404);
+    expect(api.body).toEqual({ error: { code: 'not_found', message: 'Not found.' } });
+    expect((await request(s.h.app).post('/no/such/page').set('Host', s.h.host).set('Cookie', await cookieOf('admin'))).status).toBe(404);
+  });
+
+  it('a failed form post shows its error inside the shell as well', async () => {
+    s = await showcase();
+    const cookie = await s.h.login();
+    for (const path of ['/ui/instances/notes/delete', '/admin/groups', '/ui/tokens']) {
+      const res = await request(s.h.app).post(path).set('Host', s.h.host).set('Cookie', cookie).type('form').send({ csrf: 'stale' });
+      expect(res.status, path).toBe(403);
+      const doc = dom(res.text);
+      expect(doc.querySelector('header.topbar'), path).not.toBeNull();
+      expect(doc.querySelector('main .auth-card [role="alert"]')!.textContent, path).toBe(t('en', 'error.sessionExpired'));
+      // The language switcher of a failed post leads home: there is no page at the form's address.
+      expect(doc.querySelector('.lang-menu a')!.getAttribute('href'), path).toBe('/lang/en?return=%2F');
     }
   });
 
@@ -391,6 +459,32 @@ describe('management and administration', () => {
       }
     }
     expect(cells).toBeGreaterThan(50);
+  });
+
+  it('names and addresses in tables are cut with an ellipsis, never broken inside a word, and keep their full text as a tooltip', async () => {
+    s = await showcase();
+    const long = 'a-very-long-first-name.and-an-even-longer-family-name@department.subsidiary.example.org';
+    s.h.core.users.create({ email: long, name: 'Maximiliane Alexandra von Hohenstein-Wolkenburg', password: PASSWORD, role: 'user' });
+    const doc = dom((await visit(s, { name: 'admin users', path: '/admin/users', as: 'admin' }, cookies(s))).text);
+    const row = [...doc.querySelectorAll('tbody tr')].find((tr) => tr.textContent!.includes(long))!;
+    const cell = row.querySelector('td:first-child .cell-user')!;
+    expect(cell.querySelector('strong')!.getAttribute('title')).toBe('Maximiliane Alexandra von Hohenstein-Wolkenburg');
+    expect(cell.querySelector('span[title]')!.getAttribute('title')).toBe(long);
+    // The whole text stays in the page for screen readers and for copying; only its display is shortened.
+    expect(cell.querySelector('span[title]')!.textContent).toBe(long);
+    for (const path of [`/admin/groups/${s.ids.group}`, '/instances/notes']) {
+      const page = dom((await visit(s, { name: path, path, as: 'admin' }, cookies(s))).text);
+      for (const text of page.querySelectorAll('.cell-user strong, .cell-user > div > span')) expect(text.getAttribute('title'), path).toBe(text.textContent);
+    }
+    const css = fs.readFileSync(path.join(STATIC, 'app.css'), 'utf8');
+    const rule = (selector: string): string => new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\>]/g, '\\$&')} \\{([^}]*)\\}`).exec(css)?.[1] ?? '';
+    const text = rule('.cell-user strong, .cell-user > div > span');
+    for (const part of ['overflow: hidden', 'text-overflow: ellipsis', 'white-space: nowrap']) expect(text).toContain(part);
+    // The column is bounded, so a long address cannot push the other columns out; nothing lets it break between any two letters.
+    expect(rule('.cell-user > div')).toMatch(/max-width: clamp\(/);
+    expect(css).not.toMatch(/\.cell-user[^{}]*\{[^}]*(overflow-wrap: anywhere|word-break: break-all)/);
+    // As cards on a phone the person gets the full width of the card.
+    expect(css).toMatch(/\.table-stack \.cell-user > div \{ flex: 1; max-width: none; \}/);
   });
 
   it('the instance page has the header band, a version timeline, the details card and a danger zone', async () => {

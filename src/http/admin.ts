@@ -11,10 +11,10 @@ import { AiError, DEFAULT_GROUP, DEFAULT_HOURLY_LIMIT, HOURLY_LIMIT_MAX, MAX_MOD
 import type { OwnedPlan } from '../platform/account-removal.js';
 import type { Instance } from '../platform/apps.js';
 import type { Role, User } from '../platform/users.js';
-import { requireUser, type PlatformExtension } from './app.js';
+import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, sizeText, visibilityLabel, type Option } from './pages.js';
 import { domainsBody } from './manage.js';
-import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, named, notice, signedIn, visibilityIcon } from './ui.js';
+import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid } from './session.js';
 
 const ROLES: readonly Role[] = ['admin', 'publisher', 'user'];
@@ -57,7 +57,7 @@ function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): strin
     const state = u.disabled ? 'disabled' : u.verified ? 'active' : 'unverified';
     const status = t(locale, u.disabled ? 'common.disabled' : u.verified ? 'common.active' : 'common.unverified');
     return [
-      `<div class="cell-user">${avatar(u, 'sm')}<div><strong>${esc(u.name)}</strong><span>${esc(u.email)}</span></div></div>`,
+      personCell(u),
       `<form method="post" action="${base}/role" class="inline-form">${hiddenField('csrf', csrf)}<select name="role" aria-label="${esc(t(locale, 'admin.users.roleOf', { email: u.email }))}">${roleOptions(locale, u.role)}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
       `<form method="post" action="${base}/ai-group" class="inline-form">${hiddenField('csrf', csrf)}<select name="group" aria-label="${esc(t(locale, 'admin.users.aiGroupOf', { email: u.email }))}">${optionList(aiGroups, core.ai.groupIdOf(u.id))}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
       badge(status, { tone: STATUS_TONES[state], dot: true }),
@@ -129,7 +129,7 @@ function groupsSection(core: Core, locale: Locale, admin: User, msg?: Msg): stri
   const csrf = csrfToken(core, admin);
   const groups = core.groups.list();
   const rows = groups.map((g) => [
-    `<div class="cell-user"><span class="tile tile-xs" aria-hidden="true">${icon('users', 'i-sm')}</span><div><a href="/admin/groups/${encodeURIComponent(g.id)}"><strong>${esc(g.name)}</strong></a></div></div>`,
+    `<div class="cell-user"><span class="tile tile-xs" aria-hidden="true">${icon('users', 'i-sm')}</span><div><a href="/admin/groups/${encodeURIComponent(g.id)}"><strong title="${esc(g.name)}">${esc(g.name)}</strong></a></div></div>`,
     `<span class="num">${g.memberCount}</span>`,
   ]);
   const body = `${groups.length ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.groups.members')], rows) : emptyState(t(locale, 'admin.groups.none'), 'users')}
@@ -145,7 +145,7 @@ function groupPage(core: Core, locale: Locale, admin: User, groupId: string, msg
   const base = `/admin/groups/${encodeURIComponent(group.id)}`;
   const members = core.groups.members(group.id);
   const rows = members.map((m) => [
-    `<div class="cell-user">${avatar(m, 'sm')}<div><strong>${esc(m.name)}</strong><span>${esc(m.email)}</span></div></div>`,
+    personCell(m),
     form(`${base}/members/${encodeURIComponent(m.id)}/remove`, csrf, '', `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true),
   ]);
   const body = `${form(`${base}/rename`, csrf, field('group-name', t(locale, 'common.name'), `<input id="group-name" name="name" required maxlength="${MAX_NAME}" value="${esc(group.name)}" autocomplete="off">`), esc(t(locale, 'common.rename')), 'secondary', 'form-row')}
@@ -341,7 +341,7 @@ export function requireAdmin(core: Core): RequestHandler {
   return (req, res, next) => {
     auth(req, res, () => {
       if ((res.locals.user as User).role !== 'admin') {
-        res.status(403).type('html').send(forbiddenAdminPage(requestLocale(core, req, res.locals.user as User)));
+        res.status(403).type('html').send(forbiddenAdminPage(requestLocale(core, req, res.locals.user as User), shellFor(core, req, res.locals.user as User)));
         return;
       }
       next();
@@ -372,7 +372,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     async (req, res, next) => {
       const user = adminOf(res);
       if (!csrfValid(core, user, field(req, 'csrf', 2000))) {
-        send(res, 403, formErrorPage(localeOf(res), 'error.sessionExpired', backLink(localeOf(res), '/admin', t(localeOf(res), 'admin.back'))));
+        send(res, 403, formErrorPage(localeOf(res), 'error.sessionExpired', backLink(localeOf(res), '/admin', t(localeOf(res), 'admin.back')), shellFor(core, req, user)));
         return;
       }
       try {
@@ -383,12 +383,15 @@ export const adminExtension: PlatformExtension = (router, core) => {
     },
   ];
   /** Domain error in an action: render `view` again with a message in the viewer's language, status from the error code. */
+  /** "Does not exist" inside the administration shell; `back` is where the link below the message leads. */
+  const missing = (req: Request, res: Response, what: MessageKey, href: string, label: MessageKey): string =>
+    missingPage(localeOf(res), what, backLink(localeOf(res), href, t(localeOf(res), label)), shellFor(core, req, adminOf(res)));
   const failWith = (res: Response, e: unknown, view: (msg: Msg) => string | null, messages: Partial<Record<string, MessageKey>> = {}): void => {
     if (!(e instanceof LagerError)) throw e;
     const status = e.code === 'not_found' ? 404 : e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400;
     const locale = localeOf(res);
     const error = noticeText(locale, messages[e.code] ?? 'validation.generic');
-    send(res, status, view({ error }) ?? missingPage(locale, 'error.notFound.text', backLink(locale, '/admin', t(locale, 'admin.back'))));
+    send(res, status, view({ error }) ?? missing(res.req, res, 'error.notFound.text', '/admin', 'admin.back'));
   };
 
   const showUsers = (res: Response): void => send(res, 200, usersSection(core, localeOf(res), adminOf(res)));
@@ -398,7 +401,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
   router.get('/admin/groups', noStore, admin, (_req, res) => { send(res, 200, groupsSection(core, localeOf(res), adminOf(res))); });
   router.get('/admin/groups/:id', noStore, admin, (req, res) => {
     const html = groupPage(core, localeOf(res), adminOf(res), param(req, 'id'));
-    if (html === null) send(res, 404, missingPage(localeOf(res), 'admin.groups.missing', backLink(localeOf(res), '/admin/groups', t(localeOf(res), 'admin.groups.all'))));
+    if (html === null) send(res, 404, missing(req, res, 'admin.groups.missing', '/admin/groups', 'admin.groups.all'));
     else send(res, 200, html);
   });
   router.get('/admin/settings', noStore, admin, (_req, res) => { send(res, 200, settingsSection(core, localeOf(res), adminOf(res))); });
@@ -406,7 +409,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
   for (const [kind, view] of [['providers', aiProviderPage], ['models', aiModelPage], ['groups', aiGroupPage]] as const) {
     router.get(`/admin/ai/${kind}/:id`, noStore, admin, (req, res) => {
       const html = view(core, localeOf(res), adminOf(res), param(req, 'id'));
-      if (html === null) send(res, 404, missingPage(localeOf(res), 'admin.ai.notFound', backLink(localeOf(res), '/admin/ai', t(localeOf(res), 'admin.ai.all'))));
+      if (html === null) send(res, 404, missing(req, res, 'admin.ai.notFound', '/admin/ai', 'admin.ai.all'));
       else send(res, 200, html);
     });
   }
@@ -420,7 +423,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
   const showDomains = (res: Response, inst: Instance, status = 200, msg?: Msg): void => send(res, status, domainsPage(core, localeOf(res), adminOf(res), inst, msg));
   router.get('/admin/instances/:slug/domains', noStore, admin, (req, res) => {
     const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
-    if (!inst) send(res, 404, missingPage(localeOf(res), 'admin.instances.notFound', backLink(localeOf(res), '/admin/apps', t(localeOf(res), 'admin.section.apps'))));
+    if (!inst) send(res, 404, missing(req, res, 'admin.instances.notFound', '/admin/apps', 'admin.section.apps'));
     else showDomains(res, inst);
   });
   for (const [route, change] of [['', 'add'], ['/remove', 'remove']] as const) {
@@ -433,7 +436,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
         if (!(e instanceof LagerError)) throw e;
         const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
         const key = (e.reason !== undefined ? DOMAIN_NOTICES[e.reason] : undefined) ?? (e.code === 'not_found' ? 'admin.instances.notFound' : 'validation.generic');
-        if (!inst) send(res, 404, missingPage(localeOf(res), 'admin.instances.notFound', backLink(localeOf(res), '/admin/apps', t(localeOf(res), 'admin.section.apps'))));
+        if (!inst) send(res, 404, missing(req, res, 'admin.instances.notFound', '/admin/apps', 'admin.section.apps'));
         else showDomains(res, inst, e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400, { error: noticeText(localeOf(res), key) });
       }
     }));

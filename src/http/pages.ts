@@ -133,9 +133,15 @@ ${head}</head>
 /** Signed-out content: a card, optionally with an icon above the heading; `inner` is trusted markup. */
 export const authCard = (inner: string): string => `<div class="auth-card">${inner}</div>`;
 
+/**
+ * The card of a message or error page. A signed-in viewer (`opts.user`) keeps the top bar and the navigation around it, so
+ * a wrong address or a refused action is not a dead end; the card then sits in the same narrow column as on signed-out pages.
+ */
+const messageCard = (inner: string, opts: PageOpts): string => (opts.user ? `<div class="auth">${authCard(inner)}</div>` : authCard(inner));
+
 /** Page with one heading and one line of text. */
 export const messagePage = (locale: Locale, title: string, text: string, extra = '', opts: PageOpts = {}, tone: 'neutral' | 'danger' | 'success' = 'neutral'): string =>
-  page(locale, title, authCard(`<div class="auth-icon${tone === 'neutral' ? '' : ` is-${tone}`}">${icon(tone === 'success' ? 'check' : 'alert')}</div><h1>${esc(title)}</h1><p>${esc(text)}</p>${extra}`), opts);
+  page(locale, title, messageCard(`<div class="auth-icon${tone === 'neutral' ? '' : ` is-${tone}`}">${icon(tone === 'success' ? 'check' : 'alert')}</div><h1>${esc(title)}</h1><p>${esc(text)}</p>${extra}`, opts), opts);
 
 /** Resend form shown wherever an unverified address needs a new confirmation link. */
 export const resendForm = (locale: Locale, email = ''): string => `<form method="post" action="/verify/resend" class="stack">
@@ -174,7 +180,7 @@ export const sessionExpiredPage = (locale: Locale, back = '/', backLabel = t(loc
 export const backLink = (locale: Locale, href = '/', label = t(locale, 'common.backToOverview')): string => `<p class="auth-links"><a href="${esc(href)}">${esc(label)}</a></p>`;
 
 /** The administration area to anyone who is not an administrator. */
-export const forbiddenAdminPage = (locale: Locale): string => messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.admin'), backLink(locale), {}, 'danger');
+export const forbiddenAdminPage = (locale: Locale, opts: PageOpts = {}): string => messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.admin'), backLink(locale), opts, 'danger');
 
 /** Catalog texts that quote a limit; the numbers come from the constants the code enforces. */
 const LIMITS: Partial<Record<MessageKey, { max: number }>> = {
@@ -249,13 +255,13 @@ export const optionList = (options: ReadonlyArray<Option>, selected: string): st
 export const noticeHtml = (locale: Locale, flash: { ok?: MessageKey; error?: MessageKey }): string =>
   (flash.ok ? notice('success', noticeText(locale, flash.ok)) : '') + (flash.error ? notice('danger', noticeText(locale, flash.error)) : '');
 
-export const forbiddenInstancePage = (locale: Locale): string =>
-  messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.instance'), backLink(locale), {}, 'danger');
-export const forbiddenAppPage = (locale: Locale): string =>
-  messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.app'), backLink(locale), {}, 'danger');
+export const forbiddenInstancePage = (locale: Locale, opts: PageOpts = {}): string =>
+  messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.instance'), backLink(locale), opts, 'danger');
+export const forbiddenAppPage = (locale: Locale, opts: PageOpts = {}): string =>
+  messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.app'), backLink(locale), opts, 'danger');
 /** A page-level "does not exist" with a way back; `what` is a catalog key. */
-export const missingPage = (locale: Locale, what: MessageKey, back = backLink(locale)): string =>
-  messagePage(locale, t(locale, 'error.notFound.title'), noticeText(locale, what), back);
+export const missingPage = (locale: Locale, what: MessageKey, back = backLink(locale), opts: PageOpts = {}): string =>
+  messagePage(locale, t(locale, 'error.notFound.title'), noticeText(locale, what), back, opts);
 /** A form post that failed for a reason the viewer should read; `message` is a catalog key. */
-export const formErrorPage = (locale: Locale, message: MessageKey, back = backLink(locale)): string =>
-  page(locale, t(locale, 'error.failed.title'), authCard(`<div class="auth-icon is-danger">${icon('alert')}</div><h1>${esc(t(locale, 'error.failed.title'))}</h1>${notice('danger', noticeText(locale, message))}${back}`));
+export const formErrorPage = (locale: Locale, message: MessageKey, back = backLink(locale), opts: PageOpts = {}): string =>
+  page(locale, t(locale, 'error.failed.title'), messageCard(`<div class="auth-icon is-danger">${icon('alert')}</div><h1>${esc(t(locale, 'error.failed.title'))}</h1>${notice('danger', noticeText(locale, message))}${back}`, opts), opts);
