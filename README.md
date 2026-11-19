@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://lager.im">Website</a> •
   <a href="#quick-start">Quick start</a> •
   <a href="docs/README.md">Documentation</a> •
   <a href="CONTRIBUTING.md">Contributing</a> •

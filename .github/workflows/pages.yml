@@ -1,6 +1,7 @@
 name: Website
 
-# Publishes website/ to GitHub Pages. Pull requests only package the site, so a broken page shows up before the merge;
+# Publishes website/ to GitHub Pages, served at https://lager.im (the custom domain is set in Settings → Pages;
+# website/CNAME records it). Pull requests only package the site, so a broken page shows up before the merge;
 # pushes to main also deploy it. Pages must use "GitHub Actions" as its source (Settings → Pages).
 
 on:
