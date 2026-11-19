@@ -12,7 +12,7 @@ import { sameOriginGuard } from './origin.js';
 import { authCard, esc, field, messagePage, page, resendForm, sessionExpiredPage } from './pages.js';
 import { avatar, btn, icon, notice as noticeBox, signedIn } from './ui.js';
 import { RateLimiter } from './ratelimit.js';
-import { csrfToken, csrfValid, issueSession } from './session.js';
+import { csrfToken, csrfValid, issueSession, markDevice } from './session.js';
 
 const HOUR_MS = 3600_000;
 /**
@@ -177,19 +177,26 @@ export const authExtension: PlatformExtension = (router, core) => {
     const again = (status: number, error: string): void => html(res, status, registerForm(locale, values, token, bound, error));
     // A registration that ends in "check your mail": an open one, or one through an invitation that names no address.
     const mailed = core.mailer.enabled && !bound;
-    if ((!token && registrations.full('all')) || (mailed && core.accounts.mailBudgetSpent)) { tooMany(req, res); return; }
     const sent = (): void => html(res, 200, notice(locale, t(locale, 'auth.register.sent.title'), t(locale, 'auth.register.sent.text'), toLogin(locale)));
     if (secret(req, 'password').length < MIN_PASSWORD_LENGTH) { again(400, t(locale, 'auth.password.short', { min: MIN_PASSWORD_LENGTH })); return; }
+    if (mailed && core.accounts.mailBudgetSpent('account')) { tooMany(req, res); return; }
+    // The place in this hour's registrations is taken before the password is hashed, and given back if nothing comes of it:
+    // of many requests sent at once, no more than the cap get through.
+    const counted = !token;
+    if (counted && !registrations.hit('all')) { tooMany(req, res); return; }
     try {
       const { user, needsVerification } = await core.accounts.register({
         name: values.name, email: values.email, password: secret(req, 'password'), inviteToken: token || undefined, locale,
       });
-      if (!token) registrations.hit('all');
       if (needsVerification) { sent(); return; }
       issueSession(core, res, user);
+      markDevice(core, res, user);
       res.redirect('/');
     } catch (e) {
+      // A taken address keeps its place where it is answered like a new one: otherwise the cap would tell the two apart.
+      if (counted && !(e instanceof LagerError && e.reason === 'email_taken' && mailed)) registrations.release('all');
       if (!(e instanceof LagerError)) throw e;
+      if (e.code === 'rate_limited') { tooMany(req, res); return; }
       // Where a new account would be told to check its mail, a taken address gets the same answer, and its owner a mail instead:
       // the form does not say which addresses have an account. Without mail there is no other way to tell the visitor.
       if (e.reason === 'email_taken' && mailed) {
@@ -217,23 +224,31 @@ export const authExtension: PlatformExtension = (router, core) => {
     const token = field(req, 'token', MAX_TOKEN);
     const keys = [`ip:${ipOf(req)}`, `link:${hashSecret(token)}`];
     if (keys.some((k) => verifyTries.full(k))) { tooMany(req, res); return; }
+    // Counted before the password is checked, so guesses sent at once cannot all slip under the limit; taken back unless it was wrong.
+    for (const k of keys) verifyTries.hit(k);
+    const uncount = (): void => { for (const k of keys) verifyTries.release(k); };
+    let user: User;
     try {
-      await core.accounts.verifyEmail(token, secret(req, 'password'));
+      user = await core.accounts.verifyEmail(token, secret(req, 'password'));
     } catch (e) {
-      if (!(e instanceof LagerError)) throw e;
-      if (e.reason !== 'password_wrong') { html(res, 400, invalidLinkPage(locale)); return; }
       // Only a wrong password counts, as at sign-in: confirming many accounts from one address is not guessing.
-      for (const k of keys) verifyTries.hit(k);
+      if (!(e instanceof LagerError && e.reason === 'password_wrong')) uncount();
+      if (!(e instanceof LagerError)) throw e;
+      if (e.code === 'rate_limited') { tooMany(req, res); return; }
+      if (e.reason !== 'password_wrong') { html(res, 400, invalidLinkPage(locale)); return; }
       html(res, 400, verifyForm(locale, token, t(locale, 'auth.verify.wrong')));
       return;
     }
-    // No session is issued here: signing in stays the one place that does, with its own limits.
+    uncount();
+    // No session is issued here: signing in stays the one place that does, with its own limits. The browser that held both the
+    // link and the password is remembered, so a pause of the account does not keep it out.
+    markDevice(core, res, user);
     res.redirect('/login?verified=1');
   });
 
   router.post('/verify/resend', ...publicForm, async (req, res) => {
     const locale = localeOf(req);
-    if (!resendIp.hit(ipOf(req)) || core.accounts.mailBudgetSpent) { tooMany(req, res); return; }
+    if (!resendIp.hit(ipOf(req)) || core.accounts.mailBudgetSpent('account')) { tooMany(req, res); return; }
     if (resendEmail.hit(emailKey(req))) await core.accounts.resendVerification(field(req, 'email', 254), locale);
     html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.resend.sent.text'), toLogin(locale)));
   });
@@ -244,7 +259,7 @@ export const authExtension: PlatformExtension = (router, core) => {
 
   router.post('/forgot', ...publicForm, async (req, res) => {
     const locale = localeOf(req);
-    if (!forgotIp.hit(ipOf(req)) || core.accounts.mailBudgetSpent) { tooMany(req, res); return; }
+    if (!forgotIp.hit(ipOf(req)) || core.accounts.mailBudgetSpent('reset')) { tooMany(req, res); return; }
     // Over the per-address budget the request is skipped without any visible difference.
     if (forgotEmail.hit(emailKey(req))) await core.accounts.requestPasswordReset(field(req, 'email', 254), locale);
     html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.forgot.sent'), toLogin(locale)));
@@ -260,10 +275,14 @@ export const authExtension: PlatformExtension = (router, core) => {
     const token = field(req, 'token', MAX_TOKEN);
     const password = secret(req, 'password');
     try {
-      await core.accounts.resetPassword(token, password);
+      const user = await core.accounts.resetPassword(token, password);
+      // Whoever set the password through the link from the mailbox is the owner: this browser is known from now on, so an attack
+      // on the account that goes on does not pause it here again.
+      markDevice(core, res, user);
       html(res, 200, notice(locale, t(locale, 'auth.reset.done.title'), t(locale, 'auth.reset.done'), toLogin(locale)));
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
+      if (e.code === 'rate_limited') { tooMany(req, res); return; }
       // The token is judged before the password, so any other complaint is about the password and keeps the form.
       html(res, 400, e.reason === 'link_invalid' ? invalidLinkPage(locale) : resetForm(locale, token, reasonText(locale, e)));
     }
@@ -282,7 +301,13 @@ export const authExtension: PlatformExtension = (router, core) => {
         html(res, 403, sessionExpiredPage(locale, '/account', t(locale, 'account.back')));
         return;
       }
-      await run(req, res, user, locale);
+      try {
+        await run(req, res, user, locale);
+      } catch (e) {
+        // Too many passwords are being checked at once.
+        if (!(e instanceof LagerError) || e.code !== 'rate_limited') throw e;
+        html(res, 429, accountPage(core, locale, user, { error: t(locale, 'account.tooMany') }));
+      }
     },
   ];
 
@@ -334,6 +359,7 @@ export const authExtension: PlatformExtension = (router, core) => {
     // setPassword moved the epoch on, ending every other session; this browser gets a fresh one.
     const fresh = core.users.get(user.id)!;
     issueSession(core, res, fresh);
+    markDevice(core, res, fresh);
     html(res, 200, accountPage(core, locale, fresh, { ok: t(locale, 'account.password.changed') }));
   }));
 };

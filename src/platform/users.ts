@@ -28,8 +28,30 @@ interface UserRow {
 const SCRYPT = { N: 16384, r: 8, p: 1 };
 const KEY_LEN = 64;
 
-// scrypt runs on the thread pool: one sign-in must not hold up every other request for the time a hash takes.
-const scrypt = promisify(crypto.scrypt) as (password: string, salt: Buffer, keylen: number, options: crypto.ScryptOptions) => Promise<Buffer>;
+/**
+ * Password hashes computed at the same time, and how many more may wait their turn. scrypt runs on the thread pool, which file and
+ * DNS work share (four threads by default): a burst of sign-ins must leave half of it free, and must not queue without end.
+ */
+export const MAX_HASHES_IN_FLIGHT = 2;
+export const MAX_HASHES_WAITING = 32;
+let hashing = 0;
+const waiting: Array<() => void> = [];
+
+const scryptAsync = promisify(crypto.scrypt) as (password: string, salt: Buffer, keylen: number, options: crypto.ScryptOptions) => Promise<Buffer>;
+
+/** scrypt off the event loop, at most `MAX_HASHES_IN_FLIGHT` at a time; with the queue full the caller is told to come back (`rate_limited`). */
+async function scrypt(password: string, salt: Buffer, keylen: number, options: crypto.ScryptOptions): Promise<Buffer> {
+  if (hashing < MAX_HASHES_IN_FLIGHT) hashing++;
+  else if (waiting.length >= MAX_HASHES_WAITING) throw new LagerError('rate_limited', 'Too many passwords are being checked at the moment. Please try again shortly.', 'busy');
+  // Whoever finishes hands its slot to the next in line, so the count stays as it is.
+  else await new Promise<void>((turn) => { waiting.push(turn); });
+  try {
+    return await scryptAsync(password, salt, keylen, options);
+  } finally {
+    const next = waiting.shift();
+    if (next) next(); else hashing--;
+  }
+}
 const encode = (salt: Buffer, hash: Buffer): string => `scrypt$${salt.toString('hex')}$${hash.toString('hex')}`;
 
 /** The stored form of a password. Hash before opening a transaction: nothing may be awaited inside one. */
@@ -172,7 +194,8 @@ export class Users {
   }
 
   /** Replaces the password and invalidates existing sessions. */
-  async setPassword(id: string, password: string): Promise<void> {
+  /** `passwordHash` is what `hashPassword` returned for `password`, for a caller that must hash before it commits to anything. */
+  async setPassword(id: string, password: string, passwordHash?: string): Promise<void> {
     if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
       throw new LagerError('invalid_argument', `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`, 'password_short');
     }
@@ -180,13 +203,22 @@ export class Users {
       throw new LagerError('invalid_argument', `Password must be at most ${MAX_PASSWORD_LENGTH} characters.`, 'password_long');
     }
     this.require(id);
-    const hash = await hashPassword(password);
+    const hash = passwordHash ?? await hashPassword(password);
     this.db.prepare('UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?').run(hash, id);
     for (const hook of this.passwordHooks) hook(id);
   }
 
   markVerified(id: string): void {
     this.db.prepare('UPDATE users SET verified_at = COALESCE(verified_at, ?) WHERE id = ?').run(new Date().toISOString(), id);
+  }
+
+  /**
+   * A short digest of the stored password hash: it changes with the password and with nothing else. The device cookie carries it,
+   * so a browser that knew an older password stops counting as known, while a sign-out changes nothing.
+   */
+  passwordMark(id: string): string | null {
+    const row = this.db.prepare('SELECT password_hash FROM users WHERE id = ?').get(id) as { password_hash: string } | undefined;
+    return row ? crypto.createHash('sha256').update(row.password_hash).digest('base64url').slice(0, 16) : null;
   }
 
   /** Invalidates all sessions of the user. */

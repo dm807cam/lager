@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import type { Core } from '../core.js';
 import { isMessageKey, type MessageKey } from '../i18n/index.js';
 import type { User } from '../platform/users.js';
-import { clearPlantedSession, readCookie, sessionCookieName, sessionCookiePlanted, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
+import { clearPlantedSession, deviceCookieName, readCookie, sessionCookieName, sessionCookiePlanted, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
 import { signToken, verifyToken } from './tokens.js';
 
 /** True while `ep` is the account's current session epoch and the account is usable. Tokens without a numeric `ep` never match. */
@@ -33,6 +33,24 @@ export function sessionUser(core: Core, req: Request): User | null {
 /** Sets the platform session cookie for `user` at the account's current epoch. */
 export function issueSession(core: Core, res: Response, user: User): void {
   setCookie(res, core.config, sessionCookieName(core.config), signToken({ uid: user.id, ep: user.sessionEpoch }, core.config.secret, THIRTY_DAYS_SECONDS));
+}
+
+const DEVICE_TTL_SECONDS = 365 * 24 * 3600;
+
+/**
+ * Marks this browser as one that has just proved control of the account: by signing in, by setting a password through a reset link,
+ * by confirming the address with the password, or by changing the password. The pause of an account under attack does not apply
+ * to such a browser (see `LoginLimiter`). The cookie signs nobody in, and it stops counting when the password changes.
+ */
+export function markDevice(core: Core, res: Response, user: User): void {
+  setCookie(res, core.config, deviceCookieName(core.config),
+    signToken({ uid: user.id, k: 'dev', p: core.users.passwordMark(user.id) }, core.config.secret, DEVICE_TTL_SECONDS), DEVICE_TTL_SECONDS);
+}
+
+/** True when the browser carries the device cookie of this account, made under its current password. */
+export function knownDevice(core: Core, req: Request, user: User): boolean {
+  const d = verifyToken<{ uid?: unknown; k?: unknown; p?: unknown }>(readCookie(req, deviceCookieName(core.config)), core.config.secret);
+  return d !== null && d.k === 'dev' && d.uid === user.id && typeof d.p === 'string' && d.p === core.users.passwordMark(user.id);
 }
 
 const CSRF_TTL_SECONDS = 12 * 3600;

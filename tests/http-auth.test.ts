@@ -76,7 +76,8 @@ describe('registration and verification', () => {
     const verify = await s.post('/verify', { token, password: PASSWORD });
     expect(verify.status).toBe(302);
     expect(verify.headers.location).toBe('/login?verified=1');
-    expect(([] as string[]).concat(verify.headers['set-cookie'] ?? [])).toEqual([]);
+    // No session; only the cookie that remembers this browser for the account.
+    expect(([] as string[]).concat(verify.headers['set-cookie'] ?? []).map((c) => c.split('=')[0])).toEqual(['lager_device']);
     expect(h!.core.users.getByEmail('ann@example.org')!.verified).toBe(true);
     expect((await s.get('/login?verified=1')).text).toContain(t('en', 'login.verified'));
     const cookie = await h!.login('ann@example.org', PASSWORD);

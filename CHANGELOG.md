@@ -15,6 +15,12 @@ An installation that ran a build from before the first release will notice these
 - **Language model time limit:** a model call ends with the error `timeout` after 90 seconds instead of 180. `LAGER_AI_TIMEOUT_SECONDS` changes that; keep it below the response timeout of your proxy.
 - **Reserved names:** new apps and instances cannot be named `login`, `account`, `accounts`, `mail`, `smtp`, `ftp`, `assets`, `cdn`, `status`, `support` or `security`, nor like the platform's own host under the apps domain. Existing ones keep working.
 - **Title and note:** a new app title takes at most 100 characters and a version note at most 500, one line each.
+- **Question before the first sign-in to an app:** whoever opens an instance they neither own nor maintain is asked once whether to continue, and told that the app will see their name (and their email address, if it asks for it). People an instance was shared with are asked too. Sessions on instances that exist already keep working.
+- **Accounts pause under attack:** after 10 failed sign-ins in a row an account refuses sign-ins from browsers it does not know for 30 seconds, then for up to 5 minutes. Browsers that signed in before are not affected, and "Forgot your password?" ends a pause. See [Limits on signing in and registering](docs/users-and-sharing.md#limits-on-signing-in-and-registering).
+- **Hourly limits for the whole server:** 30 self-registrations, 60 confirmation mails and 60 password-reset mails per hour. With mail configured, registering an address that already has an account answers "check your mail" and mails the owner instead of naming the address.
+- **OAuth redirect addresses:** a connecting assistant may register only `https://` addresses, `http://` on this computer, schemes in reverse-domain form with three parts (`com.example.app:`) and `cursor:`. Clients registered with another scheme keep their row but new ones are refused.
+- **Unused OAuth clients are removed:** a registered client that holds no sign-in and was last used more than 30 days ago is deleted; the assistant registers again when you next connect.
+- **Database:** the platform database is migrated to schema version 2 at the first start (a new table and a new column; nothing is removed). An older build cannot open it afterwards.
 
 ## [0.1.0] - unreleased
 

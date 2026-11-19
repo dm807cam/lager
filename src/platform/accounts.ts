@@ -28,6 +28,10 @@ const MAIL_KEYS: Record<Kind, { subject: MessageKey; intro: MessageKey; validity
  * operator's mail account. Invitations are an administrator's own act and do not count.
  */
 export const MAX_ACCOUNT_MAILS_PER_HOUR = 60;
+/** Password-reset mails have an hourly budget of their own: registering must not be a way to use up the mails that let an owner back in. */
+export const MAX_RESET_MAILS_PER_HOUR = 60;
+type Budget = 'account' | 'reset';
+const BUDGETS: Record<Budget, number> = { account: MAX_ACCOUNT_MAILS_PER_HOUR, reset: MAX_RESET_MAILS_PER_HOUR };
 const ROLES: readonly Role[] = ['admin', 'publisher', 'user'];
 const EMAIL_RE = /^[^@\s]+@[^@\s]+$/;
 
@@ -48,7 +52,7 @@ const toInvite = (r: TokenRow): InviteInfo => ({
 
 /** Registration, e-mail verification, password reset and invitations. One-time tokens are stored as SHA-256 only. */
 export class Accounts {
-  private mailTimes: number[] = [];
+  private mailTimes: Record<Budget, number[]> = { account: [], reset: [] };
 
   constructor(
     private db: DatabaseSync, private users: Users, private settings: Settings,
@@ -92,13 +96,13 @@ export class Accounts {
   private async deliver(to: string, locale: Locale | null | undefined, url: string, kind: Kind): Promise<void> {
     const lang = locale ?? this.config.defaultLocale;
     const keys = MAIL_KEYS[kind];
-    await this.send(to, t(lang, keys.subject), `${t(lang, keys.intro)}\n\n${url}\n\n${t(lang, keys.validity)}\n`, kind !== 'invite');
+    await this.send(to, t(lang, keys.subject), `${t(lang, keys.intro)}\n\n${url}\n\n${t(lang, keys.validity)}\n`, kind === 'invite' ? null : kind === 'reset' ? 'reset' : 'account');
   }
 
-  /** A `counted` mail is dropped once the hourly budget is spent; callers that can tell the visitor check `mailBudgetSpent` first. */
-  private async send(to: string, subject: string, text: string, counted: boolean): Promise<void> {
-    if (counted && !this.mailBudget(true)) {
-      console.warn(`Mail to ${to} was not sent: more than ${MAX_ACCOUNT_MAILS_PER_HOUR} account mails in an hour.`);
+  /** A mail that counts against a budget is dropped once that budget is spent; callers that can tell the visitor check `mailBudgetSpent` first. */
+  private async send(to: string, subject: string, text: string, budget: Budget | null): Promise<void> {
+    if (budget && !this.mailBudget(budget, true)) {
+      console.warn(`Mail to ${to} was not sent: more than ${BUDGETS[budget]} ${budget} mails in an hour.`);
       return;
     }
     try {
@@ -108,16 +112,21 @@ export class Accounts {
     }
   }
 
-  private mailBudget(spend: boolean): boolean {
+  private mailBudget(budget: Budget, spend: boolean): boolean {
     const cutoff = Date.now() - HOUR_MS;
-    this.mailTimes = this.mailTimes.filter((sent) => sent > cutoff);
-    if (this.mailTimes.length >= MAX_ACCOUNT_MAILS_PER_HOUR) return false;
-    if (spend) this.mailTimes.push(Date.now());
+    const times = this.mailTimes[budget] = this.mailTimes[budget].filter((sent) => sent > cutoff);
+    if (times.length >= BUDGETS[budget]) return false;
+    if (spend) times.push(Date.now());
     return true;
   }
 
-  /** True while the server has sent its `MAX_ACCOUNT_MAILS_PER_HOUR`: a flow that needs a mail should not start. */
-  get mailBudgetSpent(): boolean { return !this.mailBudget(false); }
+  /** True while the server has sent this hour's mails of that kind: a flow that needs one should not start. */
+  mailBudgetSpent(budget: Budget): boolean { return !this.mailBudget(budget, false); }
+
+  /** For mail that is started and not awaited: whatever goes wrong is logged, never left as an unhandled rejection that ends the process. */
+  private background(mail: Promise<void>): void {
+    mail.catch((e: unknown) => { console.error('Could not send mail:', e); });
+  }
 
   private async sendVerification(user: User, requestLocale?: Locale): Promise<void> {
     const { token } = this.issue('verify', { userId: user.id });
@@ -160,7 +169,7 @@ export class Accounts {
       throw e;
     }
     // Started but not awaited, like the notice to an address that is taken: how long the mail server takes says nothing to the visitor.
-    if (!verified) void this.sendVerification(user, input.locale);
+    if (!verified) this.background(this.sendVerification(user, input.locale));
     return { user, needsVerification: !verified };
   }
 
@@ -174,7 +183,7 @@ export class Accounts {
     const lang = user.locale ?? requestLocale ?? this.config.defaultLocale;
     const { origin } = this.config.publicUrl;
     const text = `${t(lang, 'mail.exists.intro')}\n\n${origin}/login\n\n${t(lang, 'mail.exists.reset')}\n\n${origin}/forgot\n\n${t(lang, 'mail.exists.ignore')}\n`;
-    void this.send(user.email, t(lang, 'mail.exists.subject'), text, true);
+    this.background(this.send(user.email, t(lang, 'mail.exists.subject'), text, 'account'));
   }
 
   /** True while the token is an unused, unexpired verification link; consumes nothing. */
@@ -202,7 +211,7 @@ export class Accounts {
   async resendVerification(email: string, locale?: Locale): Promise<void> {
     const user = typeof email === 'string' ? this.users.getByEmail(email) : null;
     // Delivery is started but not awaited, so response time does not reveal whether the address exists.
-    if (user && !user.verified) void this.sendVerification(user, locale);
+    if (user && !user.verified) this.background(this.sendVerification(user, locale));
   }
 
   async requestPasswordReset(email: string, locale?: Locale): Promise<void> {
@@ -210,7 +219,7 @@ export class Accounts {
     if (!user) return;
     const { token } = this.issue('reset', { userId: user.id });
     // Started but not awaited (see resendVerification); `deliver` catches send errors, so nothing is left unhandled.
-    void this.deliver(user.email, user.locale ?? locale, this.link('/reset', 'token', token), 'reset');
+    this.background(this.deliver(user.email, user.locale ?? locale, this.link('/reset', 'token', token), 'reset'));
   }
 
   createResetLink(userId: string): string {
@@ -222,8 +231,10 @@ export class Accounts {
     const row = this.find('reset', token);
     if (!row?.user_id || !this.users.get(row.user_id)) throw invalidToken();
     assertPassword(password);
+    // Hashed before the link is used up: if the server is too busy to hash, the link still works afterwards.
+    const passwordHash = await hashPassword(password);
     if (!this.consume(row)) throw invalidToken();
-    await this.users.setPassword(row.user_id, password);
+    await this.users.setPassword(row.user_id, password, passwordHash);
     this.deleteResetLinks(row.user_id);
     this.users.markVerified(row.user_id);
     return this.users.get(row.user_id)!;

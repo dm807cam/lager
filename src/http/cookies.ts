@@ -43,8 +43,9 @@ export function sessionCookiePlanted(req: Request, config: Config): boolean {
 export function clearPlantedSession(res: Response, config: Config): void {
   const name = sessionCookieName(config);
   clearCookie(res, config, name);
+  // A single label (`io`, `lan`) is no domain a cookie can be set for. A cookie planted with another Path cannot be cleared from here.
   const labels = config.publicUrl.hostname.split('.');
-  for (let i = 0; i < labels.length; i++) res.clearCookie(name, { path: '/', domain: labels.slice(i).join('.') });
+  for (let i = 0; i + 2 <= labels.length; i++) res.clearCookie(name, { path: '/', domain: labels.slice(i).join('.') });
 }
 
 /** Said once at startup when the public URL is plain http on a name other machines use (the installer's "this network only" mode). */
