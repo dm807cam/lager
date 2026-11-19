@@ -102,7 +102,7 @@ Everything is stored in the named Docker volume `lager-data`. If you prefer a di
 mkdir -p data && sudo chown 1000:1000 data
 ```
 
-On first start the first administrator is created from `LAGER_ADMIN_EMAIL` and `LAGER_ADMIN_PASSWORD`. The password needs at least 10 characters; with a shorter one, or with the example value on an address other machines can reach, Lager stops with a message and creates no account. Then open `LAGER_PUBLIC_URL` in a browser and sign in. Further accounts are created through invitations or registration (see [Users and sharing](users-and-sharing.md#accounts-and-roles)).
+On first start the first administrator is created from `LAGER_ADMIN_EMAIL` and `LAGER_ADMIN_PASSWORD`. The password needs at least 10 characters; with a shorter one, or with the example value on an address other machines can reach, Lager stops with a message and creates no account. While no account exists, Lager also refuses to start if either of the two variables is missing, because nobody could ever sign in. Then open `LAGER_PUBLIC_URL` in a browser and sign in. Further accounts are created through invitations or registration (see [Users and sharing](users-and-sharing.md#accounts-and-roles)).
 
 ## Published images
 
@@ -125,20 +125,21 @@ Lager is configured through environment variables only. The template is `.env.ex
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
-| `LAGER_PUBLIC_URL` | Public address of the platform (login, dashboard, API, MCP) | required |
-| `LAGER_APPS_DOMAIN` | Domain of the apps; instances run at `<slug>.<domain>` | required |
+| `LAGER_PUBLIC_URL` | Public address of the platform (login, dashboard, API, MCP): `http://` or `https://`, host and optionally a port, without a path, query or user name | required |
+| `LAGER_APPS_DOMAIN` | Domain of the apps; instances run at `<slug>.<domain>`. A bare host name: no `https://`, no `*.`, no port, no `/` | required |
 | `LAGER_ADMIN_EMAIL`, `LAGER_ADMIN_PASSWORD` | First administrator; only created while no account exists. The password needs at least 10 characters, and the example value from `.env.example` is accepted only while `LAGER_PUBLIC_URL` points at this machine (`localhost`, `*.localhost`, `127.0.0.1`, `[::1]`); otherwise Lager does not start. On such an address the example value still logs a warning: change the password before others can reach the server | none |
 | `LAGER_DATA_DIR` | Data directory | `./data` (`/data` in the container) |
-| `LAGER_PORT` | Port of the server | `8080` |
+| `LAGER_PORT` | Port of the server, 1 to 65535 | `8080` |
 | `LAGER_HOST` | Address the server binds to. Without Docker, set `127.0.0.1` when the reverse proxy runs on the same machine, so nobody reaches Lager around the proxy. Leave it empty in the container | every interface |
 | `LAGER_ACCESS_LOG` | `true` writes one line per request to the log (time, client address, method, host and path without the query string, status, duration) | `false` |
 | `LAGER_SECRET` | Key for sessions and for encrypting stored AI provider keys; otherwise generated and stored in `secret.key`. If set, use at least 32 random characters (for example `openssl rand -hex 32`): a first start with a shorter one is refused, and an existing installation only logs a warning at startup. Changing the secret signs everyone out and makes stored AI provider keys unreadable, so they have to be entered again | generated |
-| `LAGER_SNAPSHOT_KEEP` | Data snapshots kept per instance | `20` |
+| `LAGER_SNAPSHOT_KEEP` | Data snapshots kept per instance, 1 or more | `20` |
 | `LAGER_TRASH_DAYS` | Days that deleted instances and apps stay in the trash (`0` = never clean up) | `30` |
 | `LAGER_DEFAULT_LOCALE` | Language of pages and mails when neither the account, the `lager_lang` cookie nor the browser's `Accept-Language` names a supported one: `en`, `de`, `fr`, `es` | `en` |
-| `LAGER_SMTP_URL` | SMTP access for outgoing mail, for example `smtps://user:password@smtp.example.com:465`; without a value no mail is sent | none |
+| `LAGER_SMTP_URL` | SMTP access for outgoing mail, for example `smtps://user:password@smtp.example.com:465`; without a value no mail is sent. The scheme must be `smtp` or `smtps`, and special characters in the user name and password must be percent-encoded. A mail server that does not answer within 10 seconds counts as unreachable | none |
 | `LAGER_MAIL_FROM` | Sender of the mails | `Lager <no-reply@<host of LAGER_PUBLIC_URL>>` |
 | `LAGER_INSTANCE_QUOTA_MB` | Size of an instance's data in MiB, integer from 1 | `50` |
+| `LAGER_AI_TIMEOUT_SECONDS` | Seconds a language model may take to answer an app (`lager.complete`), 5 to 600; after that the app gets the error `timeout`. Keep it below the time your proxy waits for a response: Cloudflare cuts off after about 100 seconds | `90` |
 | `LAGER_TRUST_PROXY` | Number of proxy hops in front of Lager whose `X-Forwarded-*` headers are trusted: `false`/`0` none, `true` = 1, or a number (see [Reverse proxy requirements](#reverse-proxy-requirements)) | `true` (1) |
 
 The installer adds one setting of its own to `.env`, [`LAGER_BIND`](#answering-ahead-of-time). The server does not read it.
@@ -173,7 +174,8 @@ Lager speaks plain HTTP on one port and expects a reverse proxy with TLS in fron
 | Set `X-Forwarded-For` | Lager takes the client address from it, for the limit on sign-in attempts, the limits for anonymous visitors and the access log. Without it, all visitors share the proxy's address | not set |
 | Allow request bodies of 24 MiB | The largest body Lager accepts is 24 MiB: a deploy sent as JSON through the REST API or MCP (the HTML itself may be 16 MiB). Uploads (`assets`) are at most 20 MiB and imports at most 20 MiB | 1 MiB (`client_max_body_size`): larger deploys and uploads fail with 413 |
 | Wait at least 30 seconds for the next bytes of a response | Live updates (`/__lager/db/events`, `/__lager/room/events`) are Server-Sent Events that stay open. Lager writes a ping every 25 seconds, so the connection is never silent for longer | 60 s (`proxy_read_timeout`): enough |
-| Wait longer than a model call can take | `lager.complete` (`/__lager/complete`) answers only when the language model has answered, which can take up to 180 seconds. Keep the proxy's read timeout above that | 60 s: long model calls end with 504 |
+| Wait longer than a model call can take | `lager.complete` (`/__lager/complete`) answers only when the language model has answered, which can take up to 90 seconds (`LAGER_AI_TIMEOUT_SECONDS`). Keep the proxy's read timeout above that, so a slow answer ends as Lager's own `timeout` error and not as the proxy's 504 | 60 s: long model calls end with 504 |
+| Keep idle connections to Lager for less than 65 seconds | Lager closes a connection that has been idle for 65 seconds. A proxy that reuses connections for longer can send a request into one that is just closing and answer 502 | 60 s (`keepalive_timeout` of an `upstream` block): fine |
 | Do not buffer the event streams | Buffered events arrive late or only when the connection closes | buffering is on, but Lager sends `X-Accel-Buffering: no` with these responses, which nginx obeys: nothing to configure |
 
 If a header set in one `location` seems to get lost in nginx: `proxy_set_header` lines are inherited from the level above only when a `location` has none of its own. A `location` that sets a single header therefore has to repeat `Host` and the `X-Forwarded-*` headers.
@@ -234,7 +236,7 @@ In Nginx Proxy Manager you create two proxy hosts:
 
 Nginx Proxy Manager passes `Host` on, sets `X-Forwarded-Proto` and `X-Forwarded-For`, and allows large request bodies, so deploys, uploads and live updates work without further settings. Live updates need no `location` block of their own: Lager sends `X-Accel-Buffering: no` with its event streams (`/__lager/db/events`, `/__lager/room/events`), which turns nginx's buffering off for exactly these responses, and its ping every 25 seconds keeps them open. Do not add a `location` block with `proxy_set_header` for them on the "Advanced" tab: such a block loses the `Host` header that Nginx Proxy Manager sets, Lager answers 404, and live updates stop.
 
-One setting is worth adding if apps use `lager.complete`. nginx waits 60 seconds for an answer, and a language model can take up to 180 seconds. On the "Advanced" tab of the proxy host `*.apps.example.com`, enter this single line:
+One setting is worth adding if apps use `lager.complete`. nginx waits 60 seconds for an answer, and a language model can take up to 90 seconds (more if you raise `LAGER_AI_TIMEOUT_SECONDS`; the timeout in the line below must stay above it). On the "Advanced" tab of the proxy host `*.apps.example.com`, enter this single line:
 
 ```nginx
 proxy_read_timeout 200s;
