@@ -537,6 +537,10 @@ describe('what must get through while guesses flood the server', () => {
     h = makeHarness({ trustProxy: 1, mailer });
     const { users, accounts } = h.core;
     const order: string[] = [];
+    // The order in which hashes START is what the queue decides; they finish on parallel threads in whatever order those like.
+    const hashes = vi.spyOn(crypto, 'scrypt');
+    // Made before the flood starts: everything that asks for priority must be queued in the same tick, or a waiting guess takes a free slot first.
+    const invite = new URL((await accounts.createInvite({ role: 'user', createdBy: h.adminId })).url).searchParams.get('invite')!;
     // The ordinary lane is full: two hashes run, 32 wait.
     const flood = Array.from({ length: MAX_HASHES_IN_FLIGHT + MAX_HASHES_WAITING }, (_, i) => users.checkLogin(`u${i}@x.y`, 'nope').then(() => { order.push('guess'); }));
     await expect(users.checkLogin('admin@x.y', 'admin-password-1')).rejects.toMatchObject({ code: 'rate_limited' });
@@ -546,10 +550,14 @@ describe('what must get through while guesses flood the server', () => {
     const urgent = [
       accounts.resetPassword(link, 'a brand new password').then(() => { order.push('reset'); }),
       users.checkLogin('admin@x.y', 'admin-password-1', true).then(() => { order.push('known'); }),
-      accounts.register({ name: 'N', email: 'n@x.y', password: PW, inviteToken: new URL((await accounts.createInvite({ role: 'user', createdBy: h.adminId })).url).searchParams.get('invite')! }).then(() => { order.push('register'); }),
+      accounts.register({ name: 'N', email: 'n@x.y', password: PW, inviteToken: invite }).then(() => { order.push('register'); }),
     ];
     await Promise.all([...urgent, ...flood]);
-    expect(order.slice(0, 5).filter((o) => o !== 'guess').sort()).toEqual(['known', 'register', 'reset']);
+    const started = hashes.mock.calls.map((c) => String(c[0]));
+    // Two guesses were already running; the next three hashes to start are the three that asked for priority, ahead of 32 waiting guesses.
+    expect(started.slice(0, 2)).toEqual(['nope', 'nope']);
+    expect(started.slice(2, 5).sort()).toEqual(['a brand new password', 'admin-password-1', PW].sort());
+    expect(order.filter((o) => o !== 'guess').sort()).toEqual(['known', 'register', 'reset']);
     expect(order.filter((o) => o === 'guess')).toHaveLength(MAX_HASHES_IN_FLIGHT + MAX_HASHES_WAITING);
     expect((await users.checkLogin('admin@x.y', 'a brand new password')).ok).toBe(true);
   });
