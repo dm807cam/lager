@@ -281,6 +281,14 @@ export const apiExtension: PlatformExtension = (router, core) => {
     res.json(instanceJson(core, core.apps.setAutoUpdate(inst.id, on, user.id)));
   });
 
+  router.post('/api/instances/:slug/badge', noStore, auth, express.json({ limit: '10kb' }), (req, res) => {
+    const user = userOf(res);
+    const on = bodyObject(req).on;
+    if (typeof on !== 'boolean') throw new LagerError('invalid_argument', 'on must be true or false.');
+    const inst = managedInstance(core, user, req.params.slug as string);
+    res.json(instanceJson(core, core.apps.setShowBadge(inst.id, on, user.id)));
+  });
+
   router.get('/api/instances/:slug/grants', noStore, auth, (req, res) => {
     res.json(grantsJson(core, managedInstance(core, userOf(res), req.params.slug as string)));
   });

@@ -172,6 +172,9 @@ ${fact(t(locale, 'instance.visibility.title'), form(`${base}/visibility`, csrf,
 ${fact(t(locale, 'instance.autoUpdate.title'), form(`${base}/auto-update`, csrf,
     `${hiddenField('on', '0')}<label class="check"><input type="checkbox" class="switch" name="on" value="1"${inst.autoUpdate ? ' checked' : ''}><span><strong>${esc(t(locale, 'instance.autoUpdate.label'))}</strong><span class="hint">${esc(t(locale, 'instance.autoUpdate.hint'))}</span></span></label>`,
     esc(t(locale, 'common.save')), 'secondary', 'stack', true))}
+${core.settings.madeWithBadge ? fact(t(locale, 'instance.badge.title'), form(`${base}/badge`, csrf,
+    `${hiddenField('on', '0')}<label class="check"><input type="checkbox" class="switch" name="on" value="1"${inst.showBadge ? ' checked' : ''}><span><strong>${esc(t(locale, 'instance.badge.label'))}</strong><span class="hint">${esc(t(locale, 'instance.badge.hint'))}</span></span></label>`,
+    esc(t(locale, 'common.save')), 'secondary', 'stack', true)) : ''}
 ${fact(t(locale, 'instance.storage'), storage)}</dl></section>`;
   const versions = `<section class="card"><div class="card-title"><h2>${esc(t(locale, 'instance.version'))}</h2>${badge(t(locale, 'instance.activeVersion', { number: inst.activeVersion }), { tone: 'success', dot: true })}</div>
 ${versionsList(core, locale, user, app, base, csrf, inst.activeVersion, inst.id)}</section>`;
@@ -338,6 +341,13 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const raw = (req.body as Record<string, unknown> | undefined)?.on;
     const on = Array.isArray(raw) ? raw.includes('1') : raw === '1';
     core.apps.setAutoUpdate(managed(user, param(req, 'slug')).id, on, user.id);
+  }));
+
+  router.post('/ui/instances/:slug/badge', ...action(instBack, (req, user) => {
+    // The form sends a hidden "0" and, when ticked, a "1" as well.
+    const raw = (req.body as Record<string, unknown> | undefined)?.on;
+    const on = Array.isArray(raw) ? raw.includes('1') : raw === '1';
+    core.apps.setShowBadge(managed(user, param(req, 'slug')).id, on, user.id);
   }));
 
   router.post('/ui/instances/:slug/visibility', ...action(instBack, (req, user) => {

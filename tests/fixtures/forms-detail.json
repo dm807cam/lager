@@ -250,6 +250,31 @@
       ]
     },
     {
+      "action": "/ui/instances/notes/badge",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "on",
+          "type": "checkbox",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "on",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        }
+      ]
+    },
+    {
       "action": "/ui/instances/notes/delete",
       "method": "post",
       "fields": [
@@ -502,6 +527,31 @@
     },
     {
       "action": "/ui/instances/tasks/auto-update",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "on",
+          "type": "checkbox",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "on",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/tasks/badge",
       "method": "post",
       "fields": [
         {
@@ -1272,6 +1322,19 @@
           "maxlength": null
         },
         {
+          "name": "madeWithBadge",
+          "type": "checkbox",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "madeWithBadge",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        },
+        {
           "name": "maxInstances",
           "type": "number",
           "required": true,
@@ -1723,6 +1786,31 @@
     },
     {
       "action": "/ui/instances/notes/auto-update",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "on",
+          "type": "checkbox",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "on",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/badge",
       "method": "post",
       "fields": [
         {
