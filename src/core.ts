@@ -3,6 +3,7 @@ import { InstanceAssets } from './data/assets.js';
 import { Hub } from './data/hub.js';
 import { RateLimiter } from './http/ratelimit.js';
 import { Rooms } from './data/rooms.js';
+import { PrivatePurge } from './data/private-purge.js';
 import { InstanceData, PRIVATE_PURGE_LIMIT } from './data/store.js';
 import { OAuthStore } from './mcp/oauth.js';
 import { AccountRemoval } from './platform/account-removal.js';
@@ -36,6 +37,8 @@ export interface Core {
   accounts: Accounts;
   /** Deleting an account for good, with what it owns handed on or deleted. */
   removal: AccountRemoval;
+  /** Removes the private areas of deleted accounts from other people's instances, in the background. */
+  privatePurge: PrivatePurge;
   groups: Groups;
   /** Custom hostnames that answer for an instance. */
   domains: Domains;
@@ -133,24 +136,16 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   apps.onActivated((inst) => { hub.publish(inst.id, { type: 'reload', version: inst.activeVersion }); });
   const removal = new AccountRemoval(db, users, apps);
   // The private area of a deleted account in other people's instances is closed to everyone else, yet counts against their
-  // quota: it goes with the account. Every instance is looked at, since any that was open to the account may hold one.
-  removal.onRemoved((userId) => {
-    let failed: unknown;
-    for (const instance of apps.listAllInstances()) {
-      try {
-        if (data.purgePrivateArea(instance.id, userId) >= PRIVATE_PURGE_LIMIT) {
-          console.warn(`lager: the private area of the deleted account ${userId} in instance ${instance.slug} is larger than ${PRIVATE_PURGE_LIMIT} documents; the rest stays.`);
-        }
-      } catch (e) {
-        failed ??= e;
-      }
-    }
-    if (failed !== undefined) throw failed;
-  });
+  // quota: it goes with the account. Every instance is looked at, since any that was open to the account may hold one; that
+  // takes a while with many instances, so it happens after the administrator has the answer (see `PrivatePurge`).
+  const privatePurge = new PrivatePurge((instanceId, userId) => data.purgePrivateArea(instanceId, userId), PRIVATE_PURGE_LIMIT);
+  removal.onRemoved((userId) => { privatePurge.start(userId, apps.listAllInstances().map((instance) => instance.id)); });
   return {
     config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, accounts, groups, domains, access,
-    icons, ai, removal, deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000),
+    icons, ai, removal, privatePurge, deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000),
     close() {
+      // First: a pass that is under way must not open a database again after they were closed.
+      privatePurge.stop();
       icons.close();
       assets.close();
       data.close();
