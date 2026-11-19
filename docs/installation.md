@@ -10,7 +10,7 @@ For a Raspberry Pi or any 64-bit Linux server, one command installs, configures 
 curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | sudo bash
 ```
 
-**Run it again to update.** The second run asks nothing. It takes a backup of the running server, pulls the image this installation uses (by default `:latest`, the newest release; see [Published images](#published-images)) and restarts Lager, keeping settings and data. If the backup fails, the installer shows the error and stops before it changes anything; `LAGER_SKIP_BACKUP=1` updates without a backup. If Lager is not running at that moment, no backup can be taken and the installer says so. The script lives in the repository as [`install.sh`](../install.sh); read it before you pipe it into a shell.
+**Run it again to update.** The second run asks nothing. It takes a backup of the running server, pulls the image this installation uses (by default `:latest`, the newest release; see [Published images](#published-images)) and restarts Lager, keeping settings and data. If the backup fails, the installer shows the error and stops before it downloads or restarts anything, so Lager keeps running as it was; `LAGER_SKIP_BACKUP=1` updates without a backup. If Lager is not running at that moment, no backup can be taken and the installer says so. The script lives in the repository as [`install.sh`](../install.sh); read it before you pipe it into a shell.
 
 ### What it does
 
