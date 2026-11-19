@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lager – your AI builds the app, Lager keeps it</title>
+<meta name="description" content="Lager is a small open-source server for the apps your AI builds. Each app gets its own address, its own data and a link you can share. Self-hosted, runs on a Raspberry Pi.">
+<meta name="theme-color" content="#1f2a5c">
+<meta property="og:title" content="Lager – your AI builds the app, Lager keeps it">
+<meta property="og:description" content="A small open-source server for the apps your AI builds: their own address, their own data, a link you can share.">
+<meta property="og:image" content="assets/hero.webp">
+<link rel="icon" href="assets/icon-192.png">
+<link rel="apple-touch-icon" href="assets/icon-192.png">
+<style>
+  :root {
+    color-scheme: light dark;
+    --canvas: #f6f4f0; --surface: #ffffff; --surface-2: #efede8;
+    --ink: #0e1020; --ink-2: #4a4f66; --ink-3: #6b7088;
+    --line: #e4e1da; --navy: #1f2a5c; --navy-2: #2c3a7a;
+    --accent: #f58220; --accent-hover: #e6741a; --accent-ink: #1c1200; --accent-soft: #fdf1e4;
+    --code-bg: #141729; --code-ink: #e8ebf5; --code-dim: #8a90ad;
+    --shadow: 0 20px 60px rgb(15 18 40 / .14), 0 2px 6px rgb(15 18 40 / .06);
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --max: 1080px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --canvas: #0b0d18; --surface: #141729; --surface-2: #1b1f36;
+      --ink: #eef0fa; --ink-2: #b3b8d0; --ink-3: #8a90ad;
+      --line: #272c47; --accent: #ff9a3d; --accent-hover: #ffab5c; --accent-soft: rgb(255 154 61 / .12);
+      --code-bg: #070912; --shadow: 0 20px 60px rgb(0 0 0 / .45);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--canvas); color: var(--ink); font: 400 1.05rem/1.6 var(--font); -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  img { max-width: 100%; height: auto; display: block; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+
+  /* header */
+  header { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--canvas) 85%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid transparent; }
+  header .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.1rem; text-decoration: none; }
+  .brand img { width: 32px; height: 32px; border-radius: 8px; }
+  nav { display: flex; align-items: center; gap: 6px; }
+  nav a { text-decoration: none; color: var(--ink-2); font-weight: 500; font-size: .95rem; padding: 8px 12px; border-radius: 999px; }
+  nav a:hover { color: var(--ink); background: var(--surface-2); }
+  nav a.gh { color: var(--ink); border: 1px solid var(--line); background: var(--surface); }
+  @media (max-width: 560px) { nav a.hide-sm { display: none; } }
+
+  /* hero */
+  .hero { text-align: center; padding-top: 72px; padding-bottom: 40px; }
+  .hero-icon { width: 104px; height: 104px; margin: 0 auto 28px; border-radius: 24px; box-shadow: var(--shadow); }
+  .eyebrow { display: inline-block; font-size: .85rem; font-weight: 600; color: var(--ink-2); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px; margin-bottom: 22px; }
+  h1 { font-size: clamp(2.4rem, 6.5vw, 4.4rem); line-height: 1.04; letter-spacing: -.035em; margin: 0 auto 20px; font-weight: 800; text-wrap: balance; }
+  h1 em { font-style: normal; color: var(--accent); }
+  .lede { font-size: clamp(1.08rem, 2.2vw, 1.25rem); color: var(--ink-2); max-width: 38rem; margin: 0 auto 32px; }
+
+  .cmd { display: flex; align-items: center; gap: 12px; max-width: 46rem; margin: 0 auto 18px; background: var(--code-bg); color: var(--code-ink); border-radius: 14px; padding: 14px 14px 14px 20px; text-align: left; box-shadow: var(--shadow); }
+  .cmd code { flex: 1; min-width: 0; font: 500 .9rem/1.5 var(--mono); overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+  .cmd code::-webkit-scrollbar { display: none; }
+  .cmd code .p { color: var(--accent); user-select: none; }
+  .copy { flex: none; font: 600 .85rem var(--font); color: var(--code-ink); background: rgb(255 255 255 / .08); border: 1px solid rgb(255 255 255 / .14); border-radius: 9px; padding: 7px 12px; cursor: pointer; }
+  .copy:hover { background: rgb(255 255 255 / .14); }
+  .hint { font-size: .9rem; color: var(--ink-3); margin: 0 0 30px; }
+  .actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; text-decoration: none; border-radius: 12px; padding: 12px 20px; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); }
+  .btn.primary:hover { background: var(--accent-hover); }
+  .btn.ghost { background: var(--surface); border: 1px solid var(--line); }
+  .btn.ghost:hover { background: var(--surface-2); }
+
+  .shot { margin: 56px auto 0; width: 100%; max-width: 1000px; border-radius: 22px; overflow: hidden; box-shadow: var(--shadow); }
+
+  /* sections */
+  section { padding: 88px 0 0; }
+  h2 { font-size: clamp(1.8rem, 4vw, 2.6rem); letter-spacing: -.025em; line-height: 1.1; margin: 0 0 14px; font-weight: 800; }
+  .sub { color: var(--ink-2); max-width: 40rem; margin: 0 0 40px; font-size: 1.1rem; }
+
+  /* how it works */
+  .how { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+  @media (max-width: 860px) { .how { grid-template-columns: 1fr; } }
+  ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 26px; counter-reset: s; }
+  ol.steps li { display: grid; grid-template-columns: 40px 1fr; gap: 16px; counter-increment: s; }
+  ol.steps li::before { content: counter(s); display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--navy); color: #fff; font-weight: 700; }
+  ol.steps h3 { margin: 6px 0 4px; font-size: 1.12rem; }
+  ol.steps p { margin: 0; color: var(--ink-2); }
+
+  .chat { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 22px; box-shadow: var(--shadow); display: grid; gap: 14px; font-size: .98rem; }
+  .msg { max-width: 88%; padding: 12px 16px; border-radius: 18px; }
+  .msg.me { justify-self: end; background: var(--navy); color: #fff; border-bottom-right-radius: 6px; }
+  .msg.ai { background: var(--surface-2); border-bottom-left-radius: 6px; }
+  .tool { font: 500 .82rem var(--mono); color: var(--ink-3); display: flex; align-items: center; gap: 8px; }
+  .tool::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #2fa36b; }
+  .msg a { color: var(--accent); font-weight: 600; text-decoration: none; white-space: nowrap; }
+
+  /* features */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 24px; }
+  .card .ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); margin-bottom: 14px; }
+  .card .ic svg { width: 22px; height: 22px; }
+  .card h3 { margin: 0 0 6px; font-size: 1.08rem; }
+  .card p { margin: 0; color: var(--ink-2); font-size: .98rem; }
+
+  /* ideas */
+  .ideas { display: flex; flex-wrap: wrap; gap: 10px; }
+  .ideas span { background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 8px 16px; font-weight: 500; color: var(--ink-2); }
+
+  /* install */
+  .install { background: var(--navy); color: #fff; border-radius: 28px; padding: clamp(32px, 6vw, 64px); margin-top: 88px; position: relative; overflow: hidden; }
+  .install::after { content: ""; position: absolute; right: -120px; top: -120px; width: 360px; height: 360px; border-radius: 50%; background: radial-gradient(circle, rgb(245 130 32 / .35), transparent 70%); pointer-events: none; }
+  .install h2 { color: #fff; }
+  .install .sub { color: rgb(255 255 255 / .78); }
+  .install .cmd { margin: 0 0 18px; max-width: none; box-shadow: none; background: rgb(0 0 0 / .28); }
+  .install ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; color: rgb(255 255 255 / .85); }
+  .install li::before { content: "✓"; color: var(--accent); font-weight: 700; margin-right: 10px; }
+  .install .more { margin-top: 24px; }
+  .install .more a { color: #fff; font-weight: 600; }
+
+  footer { padding: 72px 0 48px; color: var(--ink-3); font-size: .92rem; }
+  footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px 32px; border-top: 1px solid var(--line); padding-top: 28px; }
+  footer nav a { padding: 0; color: var(--ink-3); }
+  footer nav { gap: 20px; flex-wrap: wrap; }
+  footer p { margin: 0; }
+  footer .small { flex-basis: 100%; font-size: .82rem; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="assets/icon-192.png" alt="" width="32" height="32">Lager</a>
+    <nav aria-label="Main">
+      <a class="hide-sm" href="#how">How it works</a>
+      <a class="hide-sm" href="https://github.com/dm807cam/lager/blob/main/docs/README.md">Docs</a>
+      <a class="gh" href="https://github.com/dm807cam/lager">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="wrap hero">
+    <img class="hero-icon" src="assets/icon-512.webp" alt="The Lager icon: a shelf with smiling boxes" width="104" height="104">
+    <span class="eyebrow">Open source · Self-hosted</span>
+    <h1>Your AI builds the app.<br> <em>Lager keeps it.</em></h1>
+    <p class="lede">Ask Claude, ChatGPT or any other assistant for a small app. Lager puts it on your own server, with its own address, its own data and a link you can share.</p>
+    <div class="cmd">
+      <code id="install-cmd"><span class="p">$ </span>curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | sudo bash</code>
+      <button class="copy" type="button" data-copy="install-cmd">Copy</button>
+    </div>
+    <p class="hint">Linux server or Raspberry Pi. Run it again to update.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/dm807cam/lager#quick-start">Get started</a>
+      <a class="btn ghost" href="https://github.com/dm807cam/lager">View on GitHub</a>
+    </div>
+    <img class="shot" src="assets/hero.webp" width="1920" height="1080" alt="The Lager dashboard in a browser with four apps (Groceries, Pin board, Notes, Habits), next to a phone with the shared Groceries list open">
+  </div>
+
+  <section id="how">
+    <div class="wrap how">
+      <div>
+        <h2>From a sentence to a link</h2>
+        <p class="sub">An app from a chat usually stays in the chat. With Lager it gets a home.</p>
+        <ol class="steps">
+          <li><div><h3>Connect once</h3><p>Add your Lager address to your assistant as a connector. You sign in, and that's it.</p></div></li>
+          <li><div><h3>Ask for an app</h3><p>Describe what you need. Your assistant writes it and puts it on Lager.</p></div></li>
+          <li><div><h3>Open the link</h3><p>It works in any browser and on the home screen of your phone. Share it with whoever needs it.</p></div></li>
+        </ol>
+      </div>
+      <div class="chat" aria-label="Example conversation">
+        <div class="msg me">Build a shared groceries list for my family and put it on Lager.</div>
+        <div class="tool">deploy_app · groceries · v1</div>
+        <div class="msg ai">Done. Your list is live at <a href="#how">groceries.apps.example.com</a>. Everyone you share it with sees the same list, and changes show up right away.</div>
+        <div class="msg me">Can you add a "who's buying" field?</div>
+        <div class="tool">deploy_app · groceries · v2</div>
+        <div class="msg ai">Added. Version 2 is live, and the list kept everything that was on it.</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Small, but it has what apps need</h2>
+      <p class="sub">The things that usually stand between a chat and a real app.</p>
+      <div class="grid">
+        <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></div>
+          <h3>Data that stays</h3><p>Every app has its own database with live updates and file uploads, so it keeps its state across devices and people.</p></div>
+        <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg></div>
+          <h3>Versions you can undo</h3><p>Every deploy is numbered. Lager takes a snapshot of the data before it switches, so you can always go back.</p></div>
+        <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.4 3.4-5.5 6.5-5.5s5.7 2.1 6.5 5.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.5c2.4.2 4 1.9 4.6 4.5"/></svg></div>
+          <h3>Share with anyone</h3><p>Everyone in one shared copy, or a copy each. The people you share with need a browser, not an AI subscription.</p></div>
+        <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v4M16 3v4M6 7h12v4a6 6 0 0 1-12 0z"/><path d="M12 17v4"/></svg></div>
+          <h3>Any assistant</h3><p>Claude, ChatGPT, Cursor, VS Code, Gemini CLI: anything that speaks MCP can build and deploy, and the apps run the same.</p></div>
+        <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></div>
+          <h3>Your model, your limits</h3><p>Apps can ask a language model you connect, from Anthropic and OpenAI to a local Ollama. You decide who uses which, and how often.</p></div>
+        <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
+          <h3>Small and yours</h3><p>One Node.js process, SQLite and a folder. No telemetry, no other services. Happy on a Raspberry Pi.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Ideas for your Lager</h2>
+      <p class="sub">Small things that are useful because they are yours and everyone can reach them.</p>
+      <div class="ideas">
+        <span>🛒 A groceries list the family shares</span>
+        <span>📅 A booking sheet for the club</span>
+        <span>🪴 When did I water the plants?</span>
+        <span>📌 A pin board for the flat</span>
+        <span>✅ A habit tracker</span>
+        <span>🍲 The family recipe box</span>
+        <span>🧾 Who owes whom after the trip</span>
+        <span>📚 A reading list with notes</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap">
+    <div class="install" id="install">
+      <h2>Five minutes on a Raspberry Pi</h2>
+      <p class="sub">One command sets up Docker if needed, asks three short questions and starts Lager.</p>
+      <div class="cmd">
+        <code id="install-cmd-2"><span class="p">$ </span>curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | sudo bash</code>
+        <button class="copy" type="button" data-copy="install-cmd-2">Copy</button>
+      </div>
+      <ul>
+        <li>https on your own domain through Cloudflare, without opening ports</li>
+        <li>Running it again updates Lager and takes a backup first</li>
+        <li>Raspberry Pi 3, 4, 5 and Zero 2, and any 64-bit Linux server</li>
+      </ul>
+      <p class="more">Prefer Docker Compose or your own reverse proxy? <a href="https://github.com/dm807cam/lager/blob/main/docs/installation.md">Read the installation guide</a>.</p>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><strong>Lager</strong> is German for storeroom. Free software under the AGPL.</p>
+    <nav aria-label="Footer">
+      <a href="https://github.com/dm807cam/lager">GitHub</a>
+      <a href="https://github.com/dm807cam/lager/blob/main/docs/README.md">Docs</a>
+      <a href="https://github.com/dm807cam/lager/blob/main/CONTRIBUTING.md">Contributing</a>
+      <a href="https://github.com/dm807cam/lager/discussions">Discussions</a>
+    </nav>
+    <p class="small">Lager is an independent project and is not affiliated with or endorsed by Anthropic or OpenAI. Claude and ChatGPT are trademarks of their owners.</p>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll('[data-copy]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var code = document.getElementById(button.getAttribute('data-copy'));
+      var text = code.textContent.replace(/^\$\s*/, '');
+      var done = function () { button.textContent = 'Copied'; setTimeout(function () { button.textContent = 'Copy'; }, 1600); };
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () {});
+    });
+  });
+</script>
+</body>
+</html>
