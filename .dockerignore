@@ -3,5 +3,9 @@ dist
 data
 .env
 .git
+.github
+.claude
+.superpowers
 docs
 tests
+website
