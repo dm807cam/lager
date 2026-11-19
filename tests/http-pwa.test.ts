@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { backfillIcons, deployWithIcon } from '../src/mcp/tools.js';
+import { iconToken } from '../src/http/tokens.js';
 import { makeHarness, type Harness } from './support/http.js';
 
 let h: Harness | undefined;
@@ -21,6 +22,12 @@ async function setup(opts: { title?: string; html?: string; themeColor?: string;
   h.core.apps.setVisibility(h.core.apps.getInstanceBySlug('todo')!.id, opts.visibility ?? 'public', h.adminId);
   return h;
 }
+
+/** The icon token of the instance `slug` at its app's current icon version. */
+const tokenOf = (h: Harness, slug = 'todo'): string => {
+  const inst = h.core.apps.getInstanceBySlug(slug)!;
+  return iconToken(inst.id, h.core.apps.getApp(inst.appId)!.iconVersion, h.core.config.secret);
+};
 
 /** The instance cookie of the owner (the administrator of the harness). */
 const ownerCookie = async (h: Harness): Promise<string> => h.enter('todo', await h.login());
@@ -44,7 +51,8 @@ describe('instance manifest and icons', () => {
     expect(res.headers['content-type']).toMatch(/^application\/manifest\+json/);
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     expect(res.headers['cross-origin-resource-policy']).toBe('cross-origin');
-    const v = h.core.apps.getApp('todo')!.iconVersion;
+    // The icon addresses of an instance that is not public carry the token that opens them without a cookie.
+    const v = `${h.core.apps.getApp('todo')!.iconVersion}&t=${tokenOf(h)}`;
     expect(res.body).toEqual({
       name: 'Todo list for the whole family', short_name: 'Todo list fo', description: 'A shared list.',
       start_url: '/', scope: '/', display: 'standalone', background_color: '#336699', theme_color: '#336699',
@@ -229,14 +237,81 @@ describe('an instance that is not public keeps its name and icon from people wit
     const v = h.core.apps.getApp('todo')!.iconVersion;
     const manifest = await request(h.app).get('/__lager/manifest.webmanifest').set('Host', HOST).set('Cookie', cookie);
     expect(manifest.body).toMatchObject({ name: 'Todo list for the whole family', description: 'A shared list.', theme_color: '#336699' });
-    expect(manifest.headers['cache-control']).toBe('no-cache');
+    expect(manifest.headers['cache-control']).toBe('private, no-cache');
+    expect(manifest.headers.vary).toMatch(/Cookie/i);
     for (const [url, size] of ICONS) {
-      const icon = await get(h, HOST, `${url}?v=${v}`).set('Cookie', cookie);
-      expect(pngSize(icon.body as Buffer), url).toEqual({ w: size, h: size });
-      expect((icon.body as Buffer).equals(fallback(size)), url).toBe(false);
-      expect(icon.headers['cache-control'], url).toBe('private, max-age=31536000, immutable');
-      expect(icon.headers.vary, url).toMatch(/Cookie/i);
+      // With the current version, an old one or none: the real icon never goes into a shared cache and is always asked for again.
+      for (const query of [`?v=${v}`, '?v=0', '']) {
+        const icon = await get(h, HOST, url + query).set('Cookie', cookie);
+        expect(pngSize(icon.body as Buffer), url).toEqual({ w: size, h: size });
+        expect((icon.body as Buffer).equals(fallback(size)), url).toBe(false);
+        expect(icon.headers['cache-control'], url + query).toBe('private, no-cache');
+        expect(icon.headers.vary, url).toMatch(/Cookie/i);
+      }
     }
+  });
+
+  it('the icon addresses given to a viewer with access open the icon without a cookie, as a phone\'s installer fetches them', async () => {
+    const h = await setup({ visibility: 'private' });
+    const cookie = await ownerCookie(h);
+    const token = tokenOf(h);
+    const manifest = await request(h.app).get('/__lager/manifest.webmanifest').set('Host', HOST).set('Cookie', cookie);
+    const page = (await request(h.app).get('/').set('Host', HOST).set('Cookie', cookie)).text;
+    const links = [...page.matchAll(/<link rel="(?:apple-touch-icon|icon)"[^>]* href="([^"]+)"/g)].map((m) => m[1].replace(/&amp;/g, '&'));
+    expect(links).toHaveLength(2);
+    const addresses = [...(manifest.body.icons as Array<{ src: string }>).map((i) => i.src), ...links];
+    expect(addresses).toHaveLength(5);
+    for (const url of addresses) {
+      expect(url).toContain(`&t=${token}`);
+      const icon = await get(h, HOST, url);
+      const size = pngSize(icon.body as Buffer).w as 180 | 192 | 512;
+      expect((icon.body as Buffer).equals(fallback(size)), url).toBe(false);
+      expect(icon.headers['cache-control'], url).toBe('private, no-cache');
+    }
+    // The fixed addresses phones try on their own take the token too.
+    for (const url of ['/apple-touch-icon.png', '/favicon.ico']) {
+      expect(((await get(h, HOST, `${url}?t=${token}`)).body as Buffer).equals(fallback(url === '/favicon.ico' ? 64 : 180)), url).toBe(false);
+    }
+    // The token opens the icon and nothing else: the manifest without a cookie stays generic, the page stays closed.
+    expect((await request(h.app).get(`/__lager/manifest.webmanifest?t=${token}`).set('Host', HOST)).body).toEqual(GENERIC);
+    expect((await request(h.app).get(`/?t=${token}`).set('Host', HOST)).status).toBe(302);
+    expect((await request(h.app).get(`/__lager/session?t=${token}`).set('Host', HOST)).status).toBe(401);
+  });
+
+  it('a wrong token, the token of another instance or of an earlier icon version gets the bundled icon', async () => {
+    const h = await setup({ visibility: 'private' });
+    const user = h.core.users.get(h.adminId)!;
+    const app = h.core.apps.getApp('todo')!;
+    const other = h.core.apps.createInstance({ appId: app.id, slug: 'todo-two', ownerId: h.adminId });
+    const good = tokenOf(h);
+    const placeholder = async (host: string, t: string | string[]): Promise<boolean> => {
+      const icon = await get(h, host, '/__lager/icon-192.png').query({ v: String(h.core.apps.getApp('todo')!.iconVersion), t });
+      expect(icon.status).toBe(200);
+      if ((icon.body as Buffer).equals(fallback(192))) expect(icon.headers['cache-control']).toBe('no-cache');
+      return (icon.body as Buffer).equals(fallback(192));
+    };
+    expect(await placeholder(HOST, good)).toBe(false);
+    for (const bad of ['', 'x', good.slice(0, -1), `${good}x`, good.toUpperCase(), [good, good], iconToken(other.id, app.iconVersion, 'another-secret')]) {
+      expect(await placeholder(HOST, bad), JSON.stringify(bad)).toBe(true);
+    }
+    // One instance's token is not another's, although both show the same app.
+    expect(tokenOf(h, 'todo-two')).not.toBe(good);
+    expect(await placeholder('todo-two.apps.localhost:8080', good)).toBe(true);
+    expect(await placeholder('todo-two.apps.localhost:8080', tokenOf(h, 'todo-two'))).toBe(false);
+    // A new icon is a new version: addresses handed out before stop opening it, the new ones do.
+    await deployWithIcon(h.core, user, { slug: 'todo', html: PAGE, iconSvg: ICON.replace('#336699', '#993366'), themeColor: '#993366' });
+    expect(h.core.apps.getApp('todo')!.iconVersion).toBeGreaterThan(app.iconVersion);
+    expect(tokenOf(h)).not.toBe(good);
+    expect(await placeholder(HOST, good)).toBe(true);
+    expect(await placeholder(HOST, tokenOf(h))).toBe(false);
+  });
+
+  it('the page of a public instance carries no token: its icons are everyone\'s', async () => {
+    const h = await setup({ visibility: 'public' });
+    const page = (await request(h.app).get('/').set('Host', HOST)).text;
+    expect(page).toContain('rel="apple-touch-icon"');
+    expect(page).not.toMatch(/[?&;]t=/);
+    expect(JSON.stringify((await request(h.app).get('/__lager/manifest.webmanifest').set('Host', HOST)).body)).not.toMatch(/[?&]t=/);
   });
 
   it('a public instance is unchanged: everyone gets name and icon, cacheable by anyone', async () => {

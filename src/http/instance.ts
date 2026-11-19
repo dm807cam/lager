@@ -24,7 +24,7 @@ import { requestLocale } from './locale.js';
 import { t as tr } from '../i18n/index.js';
 import { badCodePage, disabledPage, forbiddenPage, instanceHostPage, notFoundPage } from './pages.js';
 import { epochValid } from './session.js';
-import { signToken, verifyToken } from './tokens.js';
+import { iconToken, signToken, verifyToken } from './tokens.js';
 
 const RUNTIME_FILE = new URL('../runtime/runtime.js', import.meta.url);
 const BADGE_FILE = new URL('../runtime/badge.js', import.meta.url);
@@ -188,7 +188,11 @@ export function createInstanceRouter(core: Core): express.Router {
       badge = { label: tr(locale, 'badge.label'), linkLabel: tr(locale, 'badge.link'), close: tr(locale, 'badge.close'), href: PROJECT_URL };
     }
     const html = injectRuntime(core.apps.readVersionHtml(ctx.instance.appId, ctx.instance.activeVersion),
-      app ? { title: app.title, themeColor: app.themeColor, iconVersion: app.iconVersion } : undefined, badge);
+      app ? {
+        title: app.title, themeColor: app.themeColor, iconVersion: app.iconVersion,
+        // Phones fetch the home-screen icon on their own, often without cookies: the page hands them what opens it.
+        ...(ctx.instance.visibility === 'public' ? {} : { iconToken: iconToken(ctx.instance.id, app.iconVersion, config.secret) }),
+      } : undefined, badge);
     res.set({
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
