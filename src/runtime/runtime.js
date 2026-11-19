@@ -16,6 +16,8 @@
   var COMPLETE_URL = '/__lager/complete';
   var RETRY_MIN_MS = 1000;
   var RETRY_MAX_MS = 30000;
+  // A listener reloads at most this often: changes arriving sooner are answered by one reload at the end of the interval.
+  var MIN_REFRESH_MS = 250;
   var MAX_PROFILE_IDS = 100;
   var MAX_SEARCH_HITS = 8;
   var SEARCH_URL = '/__lager/users?q=';
@@ -96,7 +98,13 @@
     }).then(
       function (res) {
         return res.json().catch(function () { return null; }).then(function (json) {
-          if (json && json.error) throw mapError(json.error);
+          if (json && json.error) {
+            var mapped = mapError(json.error);
+            // Too many requests: the server says how long to wait. Kept off the enumerable fields, apps see {code, message}.
+            var wait = res.status === 429 && res.headers && typeof res.headers.get === 'function' ? Number(res.headers.get('Retry-After')) : NaN;
+            if (wait > 0) Object.defineProperty(mapped, 'retryAfterMs', { value: Math.min(wait * 1000, RETRY_MAX_MS) });
+            throw mapped;
+          }
           if (!res.ok || !json) throw { code: 'unavailable', message: 'Unexpected response (' + res.status + ').' };
           return json;
         });
@@ -256,6 +264,8 @@
     var lastKey = null;
     var retryTimer = null;
     var retryDelay = RETRY_MIN_MS;
+    // No reload starts before this time: the minimum interval after the last one, or what the server asked for.
+    var notBefore = 0;
     var listener = { matches: matches, refresh: refresh };
 
     function stop() {
@@ -278,6 +288,13 @@
       if (!active) return;
       if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
       if (running) { dirty = true; return; }
+      var now = Date.now();
+      if (now < notBefore) {
+        // Too soon: one reload when the wait is over answers every change that arrives until then.
+        retryTimer = setTimeout(function () { retryTimer = null; refresh(); }, notBefore - now);
+        return;
+      }
+      notBefore = now + MIN_REFRESH_MS;
       running = true;
       dirty = false;
       load().then(
@@ -296,8 +313,11 @@
           running = false;
           if (!active) return;
           if (e && e.code === 'unavailable') {
-            // Transient: keep the listener and retry with a bounded backoff (an event or reconnect retries sooner).
-            retryTimer = setTimeout(function () { retryTimer = null; refresh(); }, retryDelay);
+            // Transient: keep the listener and retry with a bounded backoff (an event or reconnect retries sooner,
+            // but never before the time a rate-limited answer asked to wait).
+            var wait = Math.max(retryDelay, e.retryAfterMs || 0);
+            if (e.retryAfterMs) notBefore = Math.max(notBefore, Date.now() + e.retryAfterMs);
+            retryTimer = setTimeout(function () { retryTimer = null; refresh(); }, wait);
             retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
           } else {
             fail(e);
