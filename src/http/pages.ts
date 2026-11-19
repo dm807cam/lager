@@ -20,11 +20,13 @@ const THEME_SNIPPET = 'try{var t=localStorage.getItem("lager-theme");if(t==="lig
  * route sends it (`frame-ancestors` cannot be set this way and stays a response header). Scripts run only from the platform's
  * own files or with this response's nonce, which the one inline script (the theme snippet) carries: markup that slips into a
  * page cannot run. Inline styles stay allowed, the pages use them for colours and meters.
- * `form-action` is set on signed-in pages only. Browsers apply it to the redirects that follow a form post as well, and the
- * signed-out forms end on other origins by design: signing in returns to an instance host, consenting to the connecting client.
+ * Browsers apply `form-action` to the redirects that follow a form post as well, so it names every origin a form of the page
+ * can end on (`formAction`): the platform alone on the pages of the signed-in shell, the platform and the instance on the
+ * question before a sign-in to that instance. Pages whose forms end where the page cannot know (signing in returns to
+ * whichever instance or client sent the visitor, consenting goes to the connecting client) carry no `form-action`.
  */
-const contentSecurityPolicy = (nonce: string, signedIn: boolean): string =>
-  `script-src 'self' 'nonce-${nonce}'; object-src 'none'; base-uri 'none'${signedIn ? "; form-action 'self'" : ''}`;
+const contentSecurityPolicy = (nonce: string, formAction: readonly string[] | null): string =>
+  `script-src 'self' 'nonce-${nonce}'; object-src 'none'; base-uri 'none'${formAction ? `; form-action ${["'self'", ...formAction].join(' ')}` : ''}`;
 
 export interface PageOpts {
   /** Where the language switcher sends the visitor back to (a local path); the start page when left out. */
@@ -46,6 +48,11 @@ export interface PageOpts {
   origin?: string;
   /** A larger icon above the content of a signed-out page (the sign-in page). */
   hero?: boolean;
+  /**
+   * Origins besides the platform's own that a form of this page may end on, redirects included (`https://notes.apps.example.com`).
+   * Given, the page allows exactly those; left out, a signed-in page allows only the platform and a signed-out page any target.
+   */
+  formTargets?: readonly string[];
 }
 
 /** Options for a page on an instance host: no language switcher (the platform's cookie is not sent there), styles from the platform host. */
@@ -119,7 +126,7 @@ export function page(locale: Locale, title: string, body: string, opts: PageOpts
   // Instance hosts get no script and no platform manifest: those belong to the platform host.
   const head = origin
     ? `<link rel="stylesheet" href="${origin}${css}"><link rel="icon" type="image/webp" href="${origin}/icon.webp">`
-    : `<meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy(nonce, opts.user !== undefined)}">
+    : `<meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy(nonce, opts.formTargets ?? (opts.user ? [] : null))}">
 <script id="theme-init" nonce="${nonce}">${THEME_SNIPPET}</script><link rel="stylesheet" href="${css}">
 <link rel="icon" type="image/webp" href="/icon.webp">
 <link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-180.png"><script src="${js}" defer></script>`;
