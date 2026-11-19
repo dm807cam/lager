@@ -321,6 +321,18 @@ describe('mcp endpoint', () => {
     expect(doc.json.doc.data).toEqual({ v: 1 });
     const bad = await call(client, 'restore_snapshot', { instance: 'todo', snapshot: '../../x' });
     expect(bad.isError).toBe(true);
+
+    // A manager lists snapshots but cannot restore: that would roll back data the rules keep from them.
+    const adm = r.h.core.users.create({ email: 'adm@x.y', name: 'adm', password: 'pw-adm-12345', role: 'user' });
+    r.h.core.access.setGrant(r.h.core.apps.getInstanceBySlug('todo')!, 'user', adm.id, 'admin', r.h.core.users.get(r.h.adminId)!);
+    const manager = await connect(r, r.h.core.tokens.create(adm.id, 'mcp').token);
+    await call(client, 'db_write', { instance: 'todo', ops: [{ op: 'set', path: 'tasks/t1', data: { v: 3 } }] });
+    const listed = await call(manager, 'list_snapshots', { instance: 'todo' });
+    expect(listed.isError).toBe(false);
+    const refused = await call(manager, 'restore_snapshot', { instance: 'todo', snapshot: listed.json.snapshots[0].id });
+    expect(refused.isError).toBe(true);
+    expect(refused.json.error.code).toBe('forbidden');
+    expect(r.h.core.data.get(r.h.core.apps.getInstanceBySlug('todo')!.id, 'tasks/t1')!.data).toEqual({ v: 3 });
   });
 
   it('tools on a foreign app are forbidden', async () => {

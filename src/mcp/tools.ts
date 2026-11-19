@@ -782,10 +782,12 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }, ({ instance }) => run(() => ({ snapshots: core.data.listSnapshots(managedInstance(core, user, instance).id) })));
 
   server.registerTool('restore_snapshot', { ...toolMeta('restore_snapshot'),
-    description: 'Restore instance data from a snapshot. The current data is saved as a snapshot first.',
+    description: 'Restore instance data from a snapshot (owner of the instance only: it rolls back all data, including what the app\'s rules keep from managers). The current data is saved as a snapshot first.',
     inputSchema: { instance: slugArg, snapshot: z.string().describe('Snapshot id from list_snapshots') },
   }, ({ instance, snapshot }) => run(() => {
-    core.data.restore(managedInstance(core, user, instance).id, snapshot);
+    const inst = managedInstance(core, user, instance);
+    if (!core.access.canRestoreInstance(inst, user)) throw new LagerError('forbidden', `Only the owner of instance "${instance}" may restore a snapshot.`);
+    core.data.restore(inst.id, snapshot);
     return { restored: snapshot };
   }));
 

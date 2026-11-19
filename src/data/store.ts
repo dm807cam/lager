@@ -41,6 +41,7 @@ const SCHEMA = `
     lease_expires TEXT
   );
   CREATE INDEX IF NOT EXISTS docs_parent ON docs(parent);
+  CREATE INDEX IF NOT EXISTS docs_updated_by ON docs(updated_by);
 `;
 
 const toDoc = (r: DocRow): Doc => ({
@@ -211,6 +212,12 @@ export class InstanceData {
     return this.write(instanceId, docPath, data, by, true);
   }
 
+  /** Whether `userId` is the last author of at least one document of the instance. */
+  hasAuthor(instanceId: string, userId: string): boolean {
+    const db = this.open(instanceId, false);
+    return db !== null && db.prepare('SELECT 1 FROM docs WHERE updated_by = ? LIMIT 1').get(userId) !== undefined;
+  }
+
   delete(instanceId: string, docPath: string): boolean {
     const { parent } = parseDocPath(docPath);
     const db = this.open(instanceId, false);
@@ -253,7 +260,8 @@ export class InstanceData {
         existing?.lease_holder && existing.lease_holder !== opts.holder &&
         existing.lease_expires && Date.parse(existing.lease_expires) > nowMs
       ) {
-        return { acquired: false, holder: existing.lease_holder, expiresAt: existing.lease_expires, version: existing.version };
+        // The holder string is the only credential of a lease, so a refused caller never learns it.
+        return { acquired: false, expiresAt: existing.lease_expires, version: existing.version };
       }
       const expires = new Date(nowMs + ttl).toISOString();
       if (existing) {

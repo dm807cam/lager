@@ -7,10 +7,14 @@ const RANK: Record<string, number> = { none: 0, view: 1, interact: 2, admin: 3, 
 const DEFAULT_READ = 'view';
 const DEFAULT_WRITE = 'interact';
 
-/** `data/users/<id>/...` belongs to that user alone; rules cannot loosen this. */
-function privateAreaAllows(viewer: Viewer, segs: string[]): boolean | null {
+/**
+ * `data/users/<id>/...` belongs to that user alone; rules cannot loosen this. Reading it takes any level, writing takes
+ * `interact` like every other write: a viewer must not be able to fill the instance's storage with data nobody else can see or delete.
+ */
+function privateAreaAllows(viewer: Viewer, segs: string[], kind: 'read' | 'write'): boolean | null {
   if (segs[0] !== 'data' || segs[1] !== 'users') return null;
-  return segs.length >= 3 && viewer.userId !== null && viewer.userId === segs[2] && viewer.level !== 'none';
+  if (segs.length < 3 || viewer.userId === null || viewer.userId !== segs[2]) return false;
+  return RANK[viewer.level] >= RANK[kind === 'read' ? DEFAULT_READ : DEFAULT_WRITE];
 }
 
 function ruleMatches(rule: DbRule, segs: string[], viewer: Viewer): number {
@@ -26,7 +30,7 @@ function ruleMatches(rule: DbRule, segs: string[], viewer: Viewer): number {
 
 function check(rules: DbRule[] | undefined, viewer: Viewer, path: string, kind: 'read' | 'write'): boolean {
   const segs = path.split('/');
-  const priv = privateAreaAllows(viewer, segs);
+  const priv = privateAreaAllows(viewer, segs, kind);
   if (priv !== null) return priv;
   if (kind === 'write' && viewer.userId === null) return false;
 

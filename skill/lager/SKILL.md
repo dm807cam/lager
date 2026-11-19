@@ -46,7 +46,7 @@ Lager injects `window.lager` into every page before the page's own scripts run, 
 - `db.collection(path)` returns a collection reference (odd number of segments, `tasks` or `lists/l1/items`); `db.doc(path)` a document reference (even number, `tasks/t1`). Both are synchronous and throw a `TypeError` for an invalid path.
 - Collection reference: `.doc(id?)` (synchronous; without `id` a new random id), `.add(data)` resolves the new document reference, and the query methods below.
 - Query (chainable, synchronous): `.where(field, op, value)` with `op` one of `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not-in`, `array-contains`, `array-contains-any` (`field` may be a dotted path such as `"author.id"`), `.orderBy(field, "asc" | "desc")`, `.limit(n)`. Then `.get()` resolves a query snapshot, or `.onSnapshot(next, error?)` listens.
-- Document reference: `.id`, `.path`, `.get()` resolves a document snapshot, `.set(data)` replaces the document, `.update(data)` merges deeply into it (creating it if needed), `.delete()` removes it (not its sub-collections), `.collection(name)`, `.onSnapshot(next, error?)`, `.acquire({holder, ttlMs?, data?})` takes a lease (default 30 s, at most 300 s) and resolves `{acquired, version, expiresAt}`.
+- Document reference: `.id`, `.path`, `.get()` resolves a document snapshot, `.set(data)` replaces the document, `.update(data)` merges deeply into it (creating it if needed; both resolve nothing, so a viewer who may write but not read a path learns nothing about what is stored there), `.delete()` removes it (not its sub-collections), `.collection(name)`, `.onSnapshot(next, error?)`, `.acquire({holder, ttlMs?, data?})` takes a lease (default 30 s, at most 300 s) and resolves `{acquired, version, expiresAt}`.
 - Document snapshot: `.id`, `.exists`, `.data()` (the stored object, frozen; `undefined` when the document does not exist).
 - Query snapshot: `.docs` (document snapshots), `.size`, `.empty`, `.docChanges()` (`[{type: "added" | "modified" | "removed", doc, oldIndex, newIndex}]`).
 - `onSnapshot` calls `next` once right away with the current state and again after every change, including changes by other viewers, and returns a function that stops listening. It retries network and server failures by itself; any other error goes to `error` once and ends the listener. `get`, `set`, `update`, `delete`, `add` and `acquire` reject with an object `{code, message}`, where `code` is `not_granted` (the viewer's level does not allow it), `quota_exceeded`, `invalid_argument` or `unavailable` (network or server; retry later).
@@ -130,7 +130,7 @@ Example sign-off – everyone signs off only for themselves, and even the owner 
 ]}}
 ```
 
-`data/users/<id>/…` always belongs to user `<id>` alone – reading and writing, not even for the owner, and rules cannot loosen that. Private settings and drafts live there.
+`data/users/<id>/…` always belongs to user `<id>` alone – reading and writing, not even for the owner, and rules cannot loosen that. Private settings and drafts live there. The user reads it from `view` and writes it from `interact`, like any other data: a viewer cannot store anything, there either.
 
 ## Limits
 
@@ -149,7 +149,7 @@ Every deploy with changed content or changed capabilities creates the next versi
 - `get_version {app, version?}` returns the complete HTML of a version (default: the latest deployed one) together with its capabilities and the app's title; `get_version {instance}` returns the version active on that instance, which may be one the page saved itself (`savedByInstance`). Use it whenever you continue work on an existing app: never rebuild an app from memory or from its description. If `get_app` shows an instance whose `activeVersion` is not `latestVersion` (pinned, rolled back or saved by the page itself), ask the user which code to build on before you deploy: a deploy moves every instance that follows deploys to the new version. Redeploy the edited HTML with the same `capabilities` (or deliberately changed ones), because a deploy without `capabilities` declares none. From a shell, `GET /api/apps/<slug>/versions/<n>` with the bearer token saves the HTML to a file instead.
 - `activate_version {instance, version}` activates any existing version – backwards and forwards.
 - `set_auto_update {instance, on}` switches whether the instance follows new deploys; switching it on moves the instance to the latest deployed version at once.
-- Before every version change Lager automatically takes a snapshot of the instance's data. `list_snapshots {instance}` shows them, `restore_snapshot {instance, snapshot}` restores one (the current state is saved first).
+- Before every version change Lager automatically takes a snapshot of the instance's data. `list_snapshots {instance}` shows them, `restore_snapshot {instance, snapshot}` restores one (the current state is saved first); only the owner of the instance may restore, because it rolls back all data, also what the rules keep from managers.
 
 Data belongs to the instance, never to the version: new code must cope with the existing data. Change data formats in a backward-compatible way (read missing fields with default values).
 
@@ -186,7 +186,7 @@ The first deploy creates the default instance with the slug of the app (visibili
 
 **The same instance – shared data** (poll, family list, team board):
 - `share_instance {instance, email? | group?, level}` gives an account (email) or a group (name) access or changes the level; exactly one of `email` and `group`. `unshare_instance {instance, email? | group?}` takes the access back, `list_shares {instance}` shows shares, `visibility` and `usersLevel`.
-- Levels: `view` (viewer: look), `interact` (contributor: also write data, as far as the app's rules allow), `admin` (manager: additionally manage shares, versions, visibility and data). `owner` cannot be granted; the owner also creates and deletes the instance.
+- Levels: `view` (viewer: look), `interact` (contributor: also write data, as far as the app's rules allow), `admin` (manager: additionally manage shares, versions, visibility and data). `owner` cannot be granted; the owner also creates and deletes the instance and restores snapshots.
 - `set_visibility {instance, visibility}`: `private` (only the owner and people it is shared with), `users` (all signed-in users) or `public` (no sign-in).
 - The account must exist. Whoever has none must be invited by the administrator; tell the user that instead of inventing a share.
 
@@ -198,7 +198,7 @@ The first deploy creates the default instance with the slug of the app (visibili
 
 An instance's storage is limited (default 50 MB). When it is full, writes are rejected with the error code `quota_exceeded`; then delete data or tell the user. `db_write` runs the operations one after another; if one fails midway, the error message says how many were applied before.
 
-`user.search(q)` in the app (person picker, `@` mention) finds the owner and the people the instance is shared with, and needs `user: {scopes: ["profile"]}`; at most 8 results, `[]` without the scope or without a sign-in. Store only the `id`, never the name; email addresses come only with the additional scope `"email"`.
+`user.search(q)` in the app (person picker, `@` mention) finds the owner and the people the instance is shared with, and needs `user: {scopes: ["profile"]}`; at most 8 results, `[]` without the scope or without a sign-in. Store only the `id`, never the name; email addresses come only with the additional scope `"email"`. `user.profiles(ids)` resolves an id only for people this instance knows: the viewer, the owner, the people it is shared with, whoever last wrote one of its documents and whoever is in one of its rooms right now. Every other id stays unknown, like one that does not exist.
 
 ## Pre-filling data
 
@@ -221,7 +221,7 @@ An app from elsewhere (a claude.ai artifact, an HTML file the user has, an app o
 2. **Check.** `check_app {html, capabilities?}` (or `POST /api/check`) names `used` (namespaces reached through `lager.use("…")`), `unsupported` (namespaces Lager does not offer, which return `null`), `undeclared` (used but not declared) and `warnings` (browser storage, APIs of other hosts, `lager.complete`). It is best effort: it finds only calls with a string literal as the name, so read the code yourself as well.
 3. **Convert.** Apps written for claude.ai call `window.claude` and `window.storage`, which do not exist on Lager:
    - `window.claude.use(…)` and `window.claude.complete(…)` (also written `claude.use(…)` and `claude.complete(…)`) become `lager.use(…)` and `lager.complete(…)`; the arguments stay the same. The one exception: `claude.use("artifact")` and `claude.use("self")`, the namespace that lets a page save itself, become `lager.use("page")`, declared as `{"page": {}}`.
-   - `window.storage.get/set/delete/list(key, shared)` becomes documents in `lager.use("db")`: shared values in a collection everyone reads (for example `kv`), personal values under `data/users/<user id>/…`, which only that user can read and write. Storage keys are free text, so do not use them as document ids directly (see the path rules under "Limits"): derive an id from them and store the key itself as a field, for example `{key, value}`. `list(prefix)` becomes a query over that collection.
+   - `window.storage.get/set/delete/list(key, shared)` becomes documents in `lager.use("db")`: shared values in a collection everyone reads (for example `kv`), personal values under `data/users/<user id>/…`, which only that user can read and write (writing takes the level `interact`). Storage keys are free text, so do not use them as document ids directly (see the path rules under "Limits"): derive an id from them and store the key itself as a field, for example `{key, value}`. `list(prefix)` becomes a query over that collection.
    - `localStorage`, `sessionStorage` and `indexedDB` become `lager.use("db")` as well.
    - For everything `unsupported` names: check for `null` and hide the feature or replace it. Tell the user which features are lost.
 4. **Declare.** Enter every namespace used in `capabilities` (`db`, `user`, `assets`, `room`, `page`, `downloads`, and `complete` for `lager.complete`; `permissions` needs nothing), with rules and scopes. Check again with `check_app` until `undeclared`, `unsupported` and the conversion warnings are gone.

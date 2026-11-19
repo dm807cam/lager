@@ -37,10 +37,10 @@ The levels on an instance:
 
 | Level | May |
 | --- | --- |
-| Viewer (`view`) | Open the app and read data |
+| Viewer (`view`) | Open the app and read data; a viewer stores nothing, not in their private area (`data/users/<id>/…`) either |
 | Contributor (`interact`) | additionally write data, as far as the app's rules allow |
-| Manager (`admin`) | additionally manage grants, visibility, versions and snapshots |
-| Owner (`owner`) | everything, and delete the instance; cannot be granted |
+| Manager (`admin`) | additionally manage grants, visibility and versions, and see the snapshots |
+| Owner (`owner`) | everything, and restore a snapshot or delete the instance; cannot be granted |
 
 With several routes to the same instance (direct grant, group, visibility "all signed-in users"), the highest level applies. For "all signed-in users" the owner chooses whether these accounts are viewers or contributors (default: contributors). Without app rules, everyone from viewer level reads and everyone from contributor level writes; public visitors can never write.
 

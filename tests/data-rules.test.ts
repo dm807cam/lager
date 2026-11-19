@@ -82,6 +82,16 @@ describe('rules', () => {
     expect(canRead(undefined, ed, 'data/users/v')).toBe(false);
   });
 
+  it('a viewer reads their own private area but cannot write to it; a contributor can', () => {
+    expect(canRead(undefined, vw, 'data/users/v/prefs/p')).toBe(true);
+    expect(canWrite(undefined, vw, 'data/users/v/prefs/p')).toBe(false);
+    // rules cannot loosen it either
+    expect(canWrite([{ path: 'data', write: 'view' as const }], vw, 'data/users/v/prefs/p')).toBe(false);
+    expect(canWrite(undefined, ed, 'data/users/e/prefs/p')).toBe(true);
+    expect(canWrite(undefined, ed, 'data/users/v/prefs/p')).toBe(false);
+    expect(canRead(undefined, none, 'data/users/x/prefs/p')).toBe(false);
+  });
+
   it('anonymous never writes', () => {
     expect(canWrite([{ path: 'open', write: 'view' }], anon, 'open/x')).toBe(false);
     expect(canWrite([{ path: 'open', write: 'view' }], vw, 'open/x')).toBe(true);

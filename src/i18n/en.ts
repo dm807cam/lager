@@ -230,6 +230,7 @@ export const en = {
   'instance.snapshots.title': 'Snapshots',
   'instance.snapshots.none': 'No snapshots yet.',
   'instance.snapshots.restore': 'Restore',
+  'instance.snapshots.ownerOnly': 'Only the owner can restore a snapshot.',
   'instance.delete.title': 'Delete instance',
   'instance.delete.text': "The instance and its data are removed. The data goes to the server's trash.",
   'instance.delete.confirm': 'To confirm, enter the name “{name}”',

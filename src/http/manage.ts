@@ -156,8 +156,9 @@ function instancePage(core: Core, locale: Locale, user: User, inst: Instance, fl
 ${notice('warning', t(locale, 'instance.disabledNotice'))}<div class="main-col">${del}</div>`, flash, here);
   }
   const snapshots = core.data.listSnapshots(inst.id);
+  const mayRestore = core.access.canRestoreInstance(inst, user);
   const snapRows = snapshots.map((s) => [`<span class="mono">${esc(s.label)}</span>`, dateText(locale, s.createdAt), sizeText(locale, s.sizeBytes),
-    form(`${base}/restore`, csrf, hiddenField('snapshot', s.id), esc(t(locale, 'instance.snapshots.restore')), 'secondary', '', true)]);
+    mayRestore ? form(`${base}/restore`, csrf, hiddenField('snapshot', s.id), esc(t(locale, 'instance.snapshots.restore')), 'secondary', '', true) : '']);
   const level = inst.visibility === 'users'
     ? field('users-level', t(locale, 'instance.usersLevel'), `<select id="users-level" name="users_level">${optionList(levelOptions(locale, USERS_LEVELS), inst.usersLevel)}</select>`) : '';
   const quota = core.config.instanceQuotaBytes;
@@ -183,7 +184,7 @@ ${versionsList(core, locale, user, app, base, csrf, inst.activeVersion, inst.id)
 <div class="btn-row"><a class="${btn('secondary', true)}" href="/instances/${encodeURIComponent(inst.slug)}/export">${icon('download')}${esc(t(locale, 'instance.data.export'))}</a></div>
 <p class="hint gap-top">${esc(t(locale, 'instance.data.hint', { slug: inst.slug }))}</p>
 <div class="subsection"><h3>${esc(t(locale, 'instance.snapshots.title'))}</h3>${snapshots.length
-    ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'common.date'), t(locale, 'common.size'), ''], snapRows)
+    ? `${dataTable(locale, [t(locale, 'common.name'), t(locale, 'common.date'), t(locale, 'common.size'), ''], snapRows)}${mayRestore ? '' : `<p class="hint gap-top">${esc(t(locale, 'instance.snapshots.ownerOnly'))}</p>`}`
     : emptyState(t(locale, 'instance.snapshots.none'), 'download')}</div></section>`;
   const domains = core.domains.canManage(user, core.access.canManageInstance(inst, user)) ? card(t(locale, 'instance.domains.title'), domainsBody(core, locale, inst, `${base}/domains`, csrf)) : '';
   return shell(core, locale, user, title, `${hero(app, app.title, `<a class="url" href="${esc(url)}">${esc(url)}</a>`, [visibility, badge(`v${inst.activeVersion}`)],
@@ -379,7 +380,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
   }));
 
   router.post('/ui/instances/:slug/restore', ...action(instBack, (req, user) => {
-    core.data.restore(managed(user, param(req, 'slug')).id, field(req, 'snapshot'));
+    const inst = managed(user, param(req, 'slug'));
+    // A restore also rolls back what the app's rules keep from a manager (other people's private areas, owner-only paths).
+    if (!core.access.canRestoreInstance(inst, user)) throw new LagerError('forbidden', 'Only the owner may do this.');
+    core.data.restore(inst.id, field(req, 'snapshot'));
   }));
 
   router.post('/ui/instances/:slug/grants', ...action(instBack, (req, user) => {

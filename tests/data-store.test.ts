@@ -110,6 +110,14 @@ describe('InstanceData', () => {
     expect(fs.existsSync(path.join(dir, 'instances', 'i2', 'data.sqlite'))).toBe(true);
   });
 
+  it('a where or orderBy that is not a list is an invalid argument, not a crash', () => {
+    store.set('i1', 'tasks/a', { n: 1 }, null);
+    for (const spec of [{ where: {} }, { where: 5 }, { where: 'n' }, { orderBy: {} }, { orderBy: 'n' }, { where: [{}] }, { orderBy: [{}] }]) {
+      expect(code(() => store.query('i1', 'tasks', spec as never)), JSON.stringify(spec)).toBe('invalid_argument');
+      expect(code(() => store.query('nothing-yet', 'tasks', spec as never)), JSON.stringify(spec)).toBe('invalid_argument');
+    }
+  });
+
   it('acquire grants, refuses, expires', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
@@ -117,7 +125,8 @@ describe('InstanceData', () => {
     expect(a.acquired).toBe(true);
     expect(store.get('i1', 'locks/l1')!.data).toEqual({ owner: 'A' });
     const b = store.acquire('i1', 'locks/l1', { holder: 'B', ttlMs: 1000 }, null);
-    expect(b).toMatchObject({ acquired: false, holder: 'A' });
+    // The holder string is the lease's only credential: a refused caller must not learn it.
+    expect(b).toEqual({ acquired: false, expiresAt: '2026-01-01T00:00:01.000Z', version: 1 });
     expect(store.acquire('i1', 'locks/l1', { holder: 'A', ttlMs: 1000 }, null).acquired).toBe(true);
     vi.setSystemTime(new Date('2026-01-01T00:00:02Z'));
     const c = store.acquire('i1', 'locks/l1', { holder: 'B', ttlMs: 1000, data: { extra: 1 } }, null);

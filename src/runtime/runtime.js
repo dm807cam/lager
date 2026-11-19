@@ -329,7 +329,7 @@
         return dbCall({ op: 'acquire', path: path, options: options }).then(function (r) {
           var out = {};
           ['acquired', 'version', 'expiresAt', 'holder'].forEach(function (k) { if (r[k] !== undefined) out[k] = r[k]; });
-          if (!out.acquired) delete out.holder; // the holder of a busy lease is never revealed
+          if (!out.acquired) delete out.holder; // the server never names the holder of a busy lease; older servers did
           return out;
         });
       },
@@ -441,7 +441,7 @@
           if (!found) return;
           ids.forEach(function (i) {
             var entry = Object.prototype.hasOwnProperty.call(found, i) && found[i] && typeof found[i].id === 'string' ? found[i] : null;
-            // Unknown ids are cached as misses: an id the server does not know does not become known later.
+            // Unknown ids are cached as misses until the page reloads: the server only names people this instance knows.
             cache.set(i, entry ? toProfile(entry) : null);
           });
         })

@@ -219,6 +219,102 @@ describe('instance host', () => {
     expect(probe.body.docs.map((d: { path: string }) => d.path)).toEqual(['config/z-mine']);
   });
 
+  it('a write answers with the stored document only to someone who may read it', async () => {
+    const { h, inst } = setup({ caps: { db: { rules: [{ path: 'votes', read: 'admin', write: 'interact' }] } } });
+    const admin = h.core.users.get(h.adminId)!;
+    const mk = (name: string) => {
+      const u = h.core.users.create({ email: `${name}@x.y`, name, password: `${name}-password-1`, role: 'user' });
+      h.core.access.setGrant(inst, 'user', u.id, 'interact', admin);
+      return u;
+    };
+    const ada = mk('ada');
+    const bob = mk('bob');
+    h.core.data.set(inst.id, `votes/${bob.id}`, { choice: 'secret' }, bob.id);
+    const adaInst = await h.enter('workout', await h.login('ada@x.y', 'ada-password-1'));
+    // An empty update merges into Bob's vote; the merged document must not come back.
+    const probe = await db(h, W, adaInst, { op: 'update', path: `votes/${bob.id}`, data: {} });
+    expect(probe.status).toBe(200);
+    expect(probe.body).toEqual({ doc: null });
+    expect(JSON.stringify(probe.body)).not.toContain('secret');
+    expect((await db(h, W, adaInst, { op: 'set', path: `votes/${ada.id}`, data: { choice: 'mine' } })).body).toEqual({ doc: null });
+    expect((await db(h, W, adaInst, { op: 'add', path: 'votes', data: { choice: 'more' } })).body).toEqual({ doc: null });
+    // The writes happened all the same.
+    expect(h.core.data.get(inst.id, `votes/${ada.id}`)!.data).toEqual({ choice: 'mine' });
+    expect(h.core.data.query(inst.id, 'votes')).toHaveLength(3);
+    // Whoever may read gets the document as before.
+    const ownerInst = await h.enter('workout', await h.login());
+    expect((await db(h, W, ownerInst, { op: 'update', path: `votes/${bob.id}`, data: {} })).body.doc.data).toEqual({ choice: 'secret' });
+    expect((await db(h, W, adaInst, { op: 'update', path: 'tasks/t', data: { n: 1 } })).body.doc.data).toEqual({ n: 1 });
+  });
+
+  it('a viewer cannot store anything in their private area', async () => {
+    const { h, inst } = setup();
+    const vera = h.core.users.create({ email: 'vera@x.y', name: 'Vera', password: 'vera-password-1', role: 'user' });
+    h.core.access.setGrant(inst, 'user', vera.id, 'view', h.core.users.get(h.adminId)!);
+    const cookie = await h.enter('workout', await h.login('vera@x.y', 'vera-password-1'));
+    const own = `data/users/${vera.id}/prefs`;
+    for (const body of [{ op: 'set', path: own, data: { a: 1 } }, { op: 'update', path: own, data: { a: 1 } },
+      { op: 'add', path: `data/users/${vera.id}`, data: { a: 1 } }, { op: 'acquire', path: own, options: { holder: 'h' } }]) {
+      expect((await db(h, W, cookie, body)).status, body.op).toBe(403);
+    }
+    expect(h.core.data.hasData(inst.id)).toBe(false);
+    h.core.data.set(inst.id, own, { theme: 'dark' }, vera.id);
+    expect((await db(h, W, cookie, { op: 'get', path: own })).body.doc.data).toEqual({ theme: 'dark' });
+    h.core.access.setGrant(inst, 'user', vera.id, 'interact', h.core.users.get(h.adminId)!);
+    expect((await db(h, W, cookie, { op: 'set', path: own, data: { a: 1 } })).status).toBe(200);
+  });
+
+  it('a busy lease does not name its holder, and a malformed query is a 400', async () => {
+    const { h } = setup();
+    const inst = await h.enter('workout', await h.login());
+    expect((await db(h, W, inst, { op: 'acquire', path: 'locks/x', options: { holder: 'first-tab-secret' } })).body.acquired).toBe(true);
+    const busy = await db(h, W, inst, { op: 'acquire', path: 'locks/x', options: { holder: 'second' } });
+    expect(busy.body.acquired).toBe(false);
+    expect(busy.body.holder).toBeUndefined();
+    expect(JSON.stringify(busy.body)).not.toContain('first-tab-secret');
+    for (const query of [{ where: {} }, { orderBy: {} }, { where: 'x' }]) {
+      const res = await db(h, W, inst, { op: 'query', path: 'tasks', query });
+      expect(res.status, JSON.stringify(query)).toBe(400);
+      expect(res.body.error.code).toBe('invalid_argument');
+    }
+  });
+
+  it('users endpoint names only people the instance knows', async () => {
+    const { h, inst } = setup({ caps: { user: { scopes: ['email'] } }, visibility: 'users' });
+    const admin = h.core.users.get(h.adminId)!;
+    const mk = (name: string) => h.core.users.create({ email: `${name}@x.y`, name, password: `${name}-password-1`, role: 'user' });
+    const [granted, viaGroup, author, inRoom, stranger, me] = ['granted', 'viagroup', 'author', 'inroom', 'stranger', 'me'].map(mk);
+    h.core.access.setGrant(inst, 'user', granted.id, 'view', admin);
+    const team = h.core.groups.create('team');
+    h.core.groups.addMember(team.id, viaGroup.id);
+    h.core.access.setGrant(inst, 'group', team.id, 'view', admin);
+    h.core.data.set(inst.id, 'tasks/t1', { n: 1 }, author.id);
+    const peer = h.core.rooms.connect(inst.id, '', { by: inRoom.id, guest: false }, () => {});
+    // The stranger wrote to another instance only.
+    h.core.data.set(h.core.apps.getInstanceBySlug('other')!.id, 'tasks/t1', { n: 1 }, stranger.id);
+
+    const cookie = await h.enter('workout', await h.login('me@x.y', 'me-password-1'));
+    const ask = async (ids: string[]) => (await request(h.app).get('/__lager/users').query({ ids: ids.join(',') }).set('Host', W).set('Cookie', cookie)).body.profiles;
+    const everyone = [h.adminId, granted.id, viaGroup.id, author.id, inRoom.id, stranger.id, me.id, 'nope'];
+    const first = await ask(everyone);
+    expect(Object.keys(first).sort()).toEqual([h.adminId, granted.id, viaGroup.id, author.id, inRoom.id, me.id].sort());
+    expect(first[me.id]).toEqual({ id: me.id, name: 'me', email: 'me@x.y', isMe: true });
+    expect(JSON.stringify(first)).not.toContain('stranger');
+
+    // Leaving the room, losing the grant and a deleted document end it; writing here starts it.
+    peer.leave();
+    h.core.access.removeGrant(inst, 'user', granted.id, admin);
+    h.core.data.delete(inst.id, 'tasks/t1');
+    h.core.data.set(inst.id, 'tasks/t2', { n: 2 }, stranger.id);
+    expect(Object.keys(await ask(everyone)).sort()).toEqual([h.adminId, viaGroup.id, stranger.id, me.id].sort());
+
+    // An anonymous visitor of a public instance gets the same people, without addresses.
+    h.core.apps.setVisibility(inst.id, 'public', h.adminId);
+    const anon = (await request(h.app).get('/__lager/users').query({ ids: everyone.join(',') }).set('Host', W)).body.profiles;
+    expect(Object.keys(anon).sort()).toEqual([h.adminId, viaGroup.id, stranger.id].sort());
+    expect(anon[stranger.id].email).toBeNull();
+  });
+
   it('users endpoint hides email without scope and caps ids', async () => {
     const { h } = setup({ caps: { user: {} } });
     const inst = await h.enter('workout', await h.login());
