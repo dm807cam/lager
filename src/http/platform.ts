@@ -206,6 +206,37 @@ export class LoginLimiter {
   }
 }
 
+/** After this many failed sign-ins in a row that carried an account's device cookie, the cookie no longer buys a place ahead of the queue. */
+export const MAX_KNOWN_FAILURES = 3;
+
+/**
+ * Who may check a password ahead of the queue of ordinary sign-ins (see `Users.checkLogin`): a browser that carries the device
+ * cookie of the account. Anyone holds such a cookie for their own account, and could send wrong passwords with it from many
+ * addresses to keep the fast lane busy and the ordinary one waiting. So an account has one such check at a time, and after
+ * `MAX_KNOWN_FAILURES` wrong passwords in a row from known browsers none until a right one. Whoever is not let ahead is not
+ * refused: the password is checked in the ordinary lane. Keyed by account id; only accounts that exist get an entry.
+ */
+export class PriorityLane {
+  private checking = new Set<string>();
+  private failures = new Map<string, number>();
+
+  /** True if this sign-in may go ahead of the queue; the caller then reports the outcome with `done`. */
+  enter(accountId: string): boolean {
+    if (this.checking.has(accountId) || (this.failures.get(accountId) ?? 0) >= MAX_KNOWN_FAILURES) return false;
+    this.checking.add(accountId);
+    return true;
+  }
+
+  /** The check that `enter` let ahead is over, whatever came of it. */
+  leave(accountId: string): void { this.checking.delete(accountId); }
+
+  /** A sign-in that carried the account's device cookie had the wrong password. */
+  failed(accountId: string): void { this.failures.set(accountId, (this.failures.get(accountId) ?? 0) + 1); }
+
+  /** The password was right, or a new one was set. */
+  succeeded(accountId: string): void { this.failures.delete(accountId); }
+}
+
 const limiters = new WeakMap<Core, LoginLimiter>();
 /** The sign-in limiter of this server; the password-reset form asks it whether an account is paused. */
 export function loginLimiter(core: Core): LoginLimiter {
@@ -217,9 +248,11 @@ export function loginLimiter(core: Core): LoginLimiter {
 export function createPlatformRouter(core: Core, extensions: PlatformExtension[]): express.Router {
   const router = express.Router();
   const limiter = loginLimiter(core);
+  const lane = new PriorityLane();
   const { config } = core;
   // A new password, also one set through a reset mail, ends the pause of the account: its owner always has that way in.
   core.users.onPasswordChanged((id) => {
+    lane.succeeded(id);
     const user = core.users.get(id);
     if (user) limiter.succeed(user.email.trim().toLowerCase());
   });
@@ -346,9 +379,10 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
     // A paused account answers like a wrong password, whether it exists or not, and without the cost of checking one.
     let result: LoginResult | null = null;
     if (attempt !== 'paused' && typeof body.email === 'string' && typeof body.password === 'string') {
+      // A browser the account knows does not wait behind a flood of guesses: one check at a time, and not after a run of wrong passwords.
+      const ahead = known && lane.enter(owner.id);
       try {
-        // A browser the account knows does not wait behind a flood of guesses.
-        result = await core.users.checkLogin(body.email, body.password, known);
+        result = await core.users.checkLogin(body.email, body.password, ahead);
       } catch (e) {
         if (!(e instanceof LagerError) || e.code !== 'rate_limited') throw e;
         // Too many passwords are being checked at once: this one was not looked at, so it does not count either, and the
@@ -356,7 +390,12 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
         limiter.release(attempt, false);
         res.status(429).type('html').send(loginPage(locale, ret, t(locale, 'login.busy'), { registration: core.settings.registration, email }));
         return;
+      } finally {
+        if (ahead) lane.leave(owner.id);
       }
+      // Unverified and disabled are only reported after a correct password.
+      if (owner && (result.ok || result.reason !== 'invalid')) lane.succeeded(owner.id);
+      else if (known) lane.failed(owner.id);
     }
     if (result === null || !result.ok) {
       const reason = result?.reason ?? 'invalid';
