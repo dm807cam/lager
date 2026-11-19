@@ -43,7 +43,8 @@ export class AccountRemoval {
    *
    * Once that is committed the account is gone, whatever happens next. What follows works on files (moving deleted apps and
    * instances to the trash, the delete hooks, the `onRemoved` hooks) and can fail on its own: every step runs, failures are
-   * logged, and `cleanedUp` tells the caller whether all of it went through.
+   * logged, and `cleanedUp` tells the caller whether all of it went through. A hook may only start its work (the pass over every
+   * instance's private area runs in the background and reports in the log); `cleanedUp` then says that it was started.
    */
   remove(userId: string, by: User, plan: OwnedPlan): { cleanedUp: boolean } {
     const user = this.removable(userId, by);

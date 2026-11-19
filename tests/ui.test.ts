@@ -487,6 +487,33 @@ describe('management and administration', () => {
     expect(css).toMatch(/\.table-stack \.cell-user > div \{ flex: 1; max-width: none; \}/);
   });
 
+  it('only the users table is "dense": between 641 and 1100 px it stacks by the same rules as every table does on a phone', async () => {
+    s = await showcase();
+    const all = await pages(s);
+    const dense = all.filter((p) => dom(p.html).querySelector('table.table-dense')).map((p) => p.name);
+    expect(dense).toEqual(['admin users']);
+    const users = dom(all.find((p) => p.name === 'admin users')!.html).querySelectorAll('table');
+    expect([...users].map((table) => table.className)).toEqual(['table-stack table-dense']);
+    // Every other table of the interface is there to compare with, and none of them carries the class.
+    expect(all.filter((p) => dom(p.html).querySelector('table.table-stack')).length).toBeGreaterThan(5);
+    const css = fs.readFileSync(path.join(STATIC, 'app.css'), 'utf8');
+    /** The body of the one media block with this query that starts with the rule for the table head. */
+    const block = (query: string, cls: string): string => {
+      const start = `@media ${query} {\n  .${cls} thead {`;
+      expect(css.split(start), query).toHaveLength(2);
+      const from = css.indexOf(start) + `@media ${query} {\n`.length;
+      return css.slice(from, css.indexOf('\n}\n', from));
+    };
+    const phone = block('(max-width: 640px)', 'table-stack');
+    const wide = block('(min-width: 641px) and (max-width: 1100px)', 'table-dense');
+    expect(phone.split('\n').length).toBeGreaterThan(15);
+    // The two blocks are one rule set under two names: a change to one that misses the other fails here.
+    expect(wide).toBe(phone.replaceAll('.table-stack', '.table-dense'));
+    expect(wide).not.toContain('.table-stack');
+    // Nothing else styles the class: outside its block it would also apply on a phone or on a wide screen.
+    expect(css.split('.table-dense').length - 1).toBe(wide.split('.table-dense').length - 1);
+  });
+
   it('the instance page has the header band, a version timeline, the details card and a danger zone', async () => {
     s = await showcase();
     const doc = dom((await visit(s, { name: 'instance', path: '/instances/notes', as: 'admin' }, cookies(s))).text);

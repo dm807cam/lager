@@ -244,6 +244,29 @@ describe('Accounts', () => {
     await expect(accounts.resetPassword(token, 'yet-another-password')).rejects.toEqual(expect.objectContaining({ code: 'invalid_argument' }));
   });
 
+  it('a reset whose password cannot be set leaves the link usable and the account as it was', async () => {
+    const u = users.create({ email: 'ann@x.y', name: 'Ann', password: 'old-password', role: 'user', verified: false });
+    const token = tokenIn(accounts.createResetLink(u.id), 'token');
+    const other = tokenIn(accounts.createResetLink(u.id), 'token');
+    let broken = true;
+    // What runs when a password is replaced (dropping the account's credentials) fails once, after the new hash was written.
+    users.onPasswordChanged((id) => { accounts.deleteResetLinks(id); if (broken) throw new Error('disk full'); });
+    await expect(accounts.resetPassword(token, 'brand-new-password')).rejects.toThrow('disk full');
+    // Nothing of it happened: the old password, the session epoch, the unconfirmed address and the other pending link are as before.
+    expect((await users.checkLogin('ann@x.y', 'old-password'))).toEqual({ ok: false, reason: 'unverified' });
+    expect((await users.checkLogin('ann@x.y', 'brand-new-password'))).toEqual({ ok: false, reason: 'invalid' });
+    expect(users.get(u.id)).toMatchObject({ sessionEpoch: 0, verified: false });
+    expect(db.prepare("SELECT COUNT(*) AS c FROM account_tokens WHERE kind = 'reset' AND used_at IS NULL").get()).toEqual({ c: 2 });
+    // The database is not left inside a transaction.
+    expect(db.isTransaction).toBe(false);
+    broken = false;
+    expect((await accounts.resetPassword(token, 'brand-new-password')).verified).toBe(true);
+    expect((await users.verifyPassword('ann@x.y', 'brand-new-password'))?.id).toBe(u.id);
+    // Used once, and the other link of the account went with the password.
+    await expect(accounts.resetPassword(token, 'yet-another-password')).rejects.toMatchObject({ reason: 'link_invalid' });
+    await expect(accounts.resetPassword(other, 'yet-another-password')).rejects.toMatchObject({ reason: 'link_invalid' });
+  });
+
   it('reset and resend do not reveal unknown addresses', async () => {
     await expect(accounts.requestPasswordReset('nobody@x.y')).resolves.toBeUndefined();
     await expect(accounts.resendVerification('nobody@x.y')).resolves.toBeUndefined();

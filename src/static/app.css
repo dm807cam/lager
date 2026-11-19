@@ -402,6 +402,27 @@ td.actions .btn-row { justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
   .table-stack td.actions .btn-row { justify-content: flex-start; flex-wrap: wrap; }
   .table-stack .inline-form select { flex: 1 1 8rem; min-width: 0; }
 }
+/* A table whose rows hold forms (the users list) needs more room than a card gives below about 1100 px: there it turns into
+   the same stacked rows, instead of scrolling sideways or squeezing a date into four lines. Same rules as above. */
+@media (min-width: 641px) and (max-width: 1100px) {
+  .table-dense thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .table-dense, .table-dense tbody, .table-dense tr, .table-dense td { display: block; width: 100%; }
+  .table-dense tr { padding: var(--s3) var(--s5); border-bottom: 1px solid var(--line); }
+  .table-dense tbody tr:last-child { border-bottom: 0; }
+  .table-dense td { display: grid; grid-template-columns: minmax(0, 7rem) minmax(0, 1fr); gap: var(--s3); align-items: center; padding: 6px 0; border: 0; }
+  .table-dense td::before { content: attr(data-label); color: var(--ink-3); font-size: 0.8rem; font-weight: 600; }
+  .table-dense td > * { justify-self: start; max-width: 100%; }
+  .table-dense td[data-label=""], .table-dense td:first-child { display: block; }
+  .table-dense td[data-label=""]::before, .table-dense td:first-child::before { content: none; }
+  .table-dense td:first-child { padding-bottom: var(--s2); font-weight: 600; }
+  /* In a card the person has the whole row: the text runs to the card's edge before it is cut. */
+  .table-dense .cell-user > div { flex: 1; max-width: none; }
+  .table-dense td:first-child, .table-dense td:last-child { padding-left: 0; padding-right: 0; }
+  .table-dense .inline-form { flex-wrap: wrap; }
+  .table-dense td.actions { text-align: left; white-space: normal; padding-top: var(--s2); }
+  .table-dense td.actions .btn-row { justify-content: flex-start; flex-wrap: wrap; }
+  .table-dense .inline-form select { flex: 1 1 8rem; min-width: 0; }
+}
 
 /* --- meter --- */
 .meter { height: 6px; margin-top: 8px; border-radius: var(--r-pill); background: var(--surface-2); overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }

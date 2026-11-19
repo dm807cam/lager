@@ -306,7 +306,7 @@ export const es: Record<MessageKey, string> = {
   'admin.users.delete.trash': 'Eliminarlas: las aplicaciones y las instancias van a la papelera del servidor',
   'admin.users.delete.confirm': 'Para confirmar, escribe el correo electrónico «{email}»',
   'admin.users.delete.submit': 'Eliminar la cuenta definitivamente',
-  'admin.users.delete.done': 'Se ha eliminado la cuenta {email}.',
+  'admin.users.delete.done': 'Se ha eliminado la cuenta {email}. Sus datos privados en las instancias de otras personas se están eliminando en segundo plano.',
   'admin.users.delete.cleanupFailed': 'La cuenta {email} se ha eliminado, pero no se han podido limpiar sus archivos. Consulta el registro del servidor.',
   'admin.users.delete.self': 'No puedes eliminar tu propia cuenta.',
   'admin.users.delete.active': 'Desactiva primero la cuenta. Solo se puede eliminar una cuenta desactivada.',
