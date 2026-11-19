@@ -79,7 +79,9 @@ Then run `/mcp auth lager` in Gemini CLI and sign in.
 
 ## Other assistants
 
-Any MCP client with Streamable HTTP transport works. If it supports OAuth with dynamic client registration, give it the address and sign in. Otherwise configure the address with the header `Authorization: Bearer lgr_...`. Desktop apps may use their own redirect scheme for the sign-in (for example `cursor://…`); Lager accepts such schemes for native apps.
+Any MCP client with Streamable HTTP transport works. If it supports OAuth with dynamic client registration, give it the address and sign in. Otherwise configure the address with the header `Authorization: Bearer lgr_...`. After the sign-in, Lager sends the browser back only to an address of one of these kinds: `https://…`; `http://` on this computer (`localhost`, `127.0.0.1`, `[::1]`, any port), which command-line tools and editors use; a desktop app's own scheme in reverse-domain form, that is with a dot (`com.example.app:/callback`); and `cursor://…`, the scheme of Cursor's desktop app. A client that registers any other scheme is refused, because such a link would open whatever program the operating system has registered for it.
+
+Lager forgets a registered client that has held no sign-in for 30 days; assistants register again by themselves the next time you connect. A registration may carry at most 8 KiB of client metadata.
 
 ## What every assistant gets
 

@@ -23,6 +23,10 @@ const CODE_TTL_S = 10 * 60;
 const ACCESS_TTL_S = 60 * 60;
 const REFRESH_TTL_S = 30 * 24 * 3600;
 const CONSENT_TTL_S = 600;
+/** A registered client that holds no code and no token is forgotten after this long; a client in use renews its tokens well within it. */
+const CLIENT_IDLE_S = 30 * 24 * 3600;
+/** Longest client metadata (name, redirect addresses, …) kept for a registration, as JSON. Anyone may register a client. */
+export const MAX_CLIENT_METADATA_BYTES = 8 * 1024;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 interface ClientRow {
@@ -41,12 +45,15 @@ const randomSecret = (): string => crypto.randomBytes(32).toString('base64url');
 const isoIn = (seconds: number): string => new Date(Date.now() + seconds * 1000).toISOString();
 const expired = (iso: string): boolean => iso <= new Date().toISOString();
 
-/** Schemes that open something other than a native app: never a redirect target, whatever the client claims. */
-const UNSAFE_SCHEMES = new Set(['javascript:', 'data:', 'vbscript:', 'file:', 'blob:', 'about:', 'filesystem:', 'ftp:', 'ws:', 'wss:', 'chrome:', 'mailto:', 'tel:', 'sms:']);
+/** A private-use scheme in reverse-domain form (RFC 8252 §7.1), such as `com.example.app:`: at least one dot. */
+const REVERSE_DOMAIN_SCHEME = /^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+:$/;
+/** Schemes without a dot that a client named in docs/connecting-ai.md signs in with: Cursor's desktop app. */
+const KNOWN_APP_SCHEMES = new Set(['cursor:']);
 
 /**
- * https anywhere, http only on the loopback interface, and the private-use URI schemes of native apps
- * (RFC 8252 §7.1, for example `cursor://…` or `com.example.app:/callback`), which PKCE protects.
+ * https anywhere, http only on the loopback interface, and the private-use URI schemes of native apps, which PKCE protects.
+ * Anyone can register a client, and the browser is sent to its redirect address: any other scheme (`ms-settings:`, `tel:`, `file:`…)
+ * would let a link that starts on this server open whatever the operating system has registered for it.
  */
 function redirectUriAllowed(uri: string): boolean {
   let u: URL;
@@ -54,7 +61,7 @@ function redirectUriAllowed(uri: string): boolean {
   if (u.hash) return false;
   if (u.protocol === 'https:') return true;
   if (u.protocol === 'http:') return LOOPBACK.has(u.hostname);
-  return /^[a-z][a-z0-9+.-]*:$/.test(u.protocol) && !UNSAFE_SCHEMES.has(u.protocol) && !u.username && !u.password;
+  return (REVERSE_DOMAIN_SCHEME.test(u.protocol) || KNOWN_APP_SCHEMES.has(u.protocol)) && !u.username && !u.password;
 }
 
 /**
@@ -76,9 +83,13 @@ export class OAuthStore {
 
   registerClient(client: OAuthClientInformationFull): OAuthClientInformationFull {
     if (!client.redirect_uris.length || !client.redirect_uris.every(redirectUriAllowed)) {
-      throw new InvalidClientMetadataError('redirect_uris must use https, http on localhost, or a private-use scheme of a native app.');
+      throw new InvalidClientMetadataError('redirect_uris must use https, http on localhost, or a private-use scheme of a native app in reverse-domain form (com.example.app:/callback).');
     }
     const { client_id, client_secret, client_secret_expires_at, client_id_issued_at, ...metadata } = client;
+    if (Buffer.byteLength(JSON.stringify(metadata)) > MAX_CLIENT_METADATA_BYTES) {
+      throw new InvalidClientMetadataError(`Client metadata must not exceed ${MAX_CLIENT_METADATA_BYTES} bytes.`);
+    }
+    this.purge();
     this.db
       .prepare('INSERT INTO oauth_clients (client_id, secret_hash, secret_expires_at, metadata, issued_at, created_at) VALUES (?, ?, ?, ?, ?, ?)')
       .run(client_id, client_secret ? hashSecret(client_secret) : null, client_secret_expires_at ?? null,
@@ -206,6 +217,10 @@ export class OAuthStore {
     const now = new Date().toISOString();
     this.db.prepare('DELETE FROM oauth_tokens WHERE expires_at <= ?').run(now);
     this.db.prepare('DELETE FROM oauth_codes WHERE expires_at <= ?').run(now);
+    // Registering needs no account, so clients nobody finished connecting, or stopped using, must not pile up.
+    this.db.prepare(`DELETE FROM oauth_clients WHERE created_at <= ?
+      AND client_id NOT IN (SELECT client_id FROM oauth_tokens) AND client_id NOT IN (SELECT client_id FROM oauth_codes)`)
+      .run(new Date(Date.now() - CLIENT_IDLE_S * 1000).toISOString());
   }
 }
 
@@ -228,6 +243,30 @@ function requestFields(clientId: string, params: AuthorizationParams): Record<st
     ...(params.state !== undefined ? { state: params.state } : {}),
     ...(scope ? { scope } : {}),
     ...(params.resource ? { resource: params.resource.href } : {}),
+  };
+}
+
+/** A redirect Lager itself decided on: to the sign-in page, or to the client once the person has answered the consent page. */
+function sendOn(res: Response, url: string): void {
+  res.locals.oauthRedirect = url;
+  res.redirect(302, url);
+}
+
+/**
+ * Runs before the SDK's `/authorize` handler. That handler answers a faulty request (a wrong `response_type`, a missing challenge,
+ * a foreign `resource`) by redirecting the browser to the client's registered address, before anyone signed in or saw the consent
+ * page. Anyone can register a client, so that would turn a link on this server into a redirect to wherever its author likes.
+ * Here every redirect the handler makes on its own becomes an error page; only those of `sendOn` leave.
+ */
+export function authorizeGuard(core: Core): RequestHandler {
+  return (req, res, next) => {
+    const redirect = res.redirect.bind(res) as (status: number, url: string) => void;
+    res.redirect = ((...args: [string] | [number, string]): void => {
+      const url = args[args.length - 1] as string;
+      if (res.locals.oauthRedirect === url) redirect(302, url);
+      else res.status(400).type('html').send(consentInvalidPage(requestLocale(core, req, sessionUser(core, req))));
+    }) as Response['redirect'];
+    next();
   };
 }
 
@@ -258,7 +297,7 @@ export class LagerOAuthProvider implements OAuthServerProvider {
     const user = sessionUser(this.core, req);
     if (!user) {
       const back = req.method === 'GET' ? req.originalUrl : `/authorize?${new URLSearchParams(fields).toString()}`;
-      res.redirect(`/login?return=${encodeURIComponent(back)}`);
+      sendOn(res, `/login?return=${encodeURIComponent(back)}`);
       return;
     }
     this.checkResource(params.resource);
@@ -289,7 +328,7 @@ export class LagerOAuthProvider implements OAuthServerProvider {
       target.searchParams.set('error', 'access_denied');
     }
     if (params.state !== undefined) target.searchParams.set('state', params.state);
-    res.redirect(302, target.href);
+    sendOn(res, target.href);
   }
 
   async challengeForAuthorizationCode(): Promise<string> {

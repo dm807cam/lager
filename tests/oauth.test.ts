@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { apiExtension } from '../src/http/api.js';
 import { mcpExtension } from '../src/mcp/http.js';
+import { MAX_CLIENT_METADATA_BYTES } from '../src/mcp/oauth.js';
 import { makeHarness, type Harness } from './support/http.js';
 import { t } from '../src/i18n/index.js';
 
@@ -360,5 +361,97 @@ describe('oauth', () => {
     expect(page.text).toContain('<strong>chatgpt.com:/connector_platform_oauth_redirect</strong>');
     expect(page.text).toContain('the app on this device');
     expect(page.text).not.toContain('you will be sent on to');
+  });
+});
+
+describe('OAuth hardening', () => {
+  it('redirect addresses come from an allowlist: https, http on loopback, reverse-domain schemes and the documented clients', async () => {
+    const h = setup();
+    const tryRegister = (uri: string) => request(h.app).post('/register').set('Host', h.host).send({ redirect_uris: [uri], token_endpoint_auth_method: 'none' });
+    // Schemes the operating system hands to whatever registered them, and web schemes that are not https.
+    for (const uri of ['ms-settings:display', 'tel:+4930123456', 'mailto:a@b.c', 'myapp://callback', 'vscode://vendor.ext/cb', 'zoommtg://zoom.us/join',
+      'steam://run/1', 'http://example.com/cb', 'http://localhost.evil.example/cb', 'ws://localhost:1/cb', 'com.example.app://user:pw@host/cb', '.app:/cb', 'app.:/cb']) {
+      expect((await tryRegister(uri)).status, uri).toBe(400);
+    }
+    for (const uri of ['https://claude.ai/api/mcp/auth_callback', 'http://localhost:33418/callback', 'http://127.0.0.1:5000/cb', 'http://[::1]:5000/cb',
+      'com.example.app:/oauth2redirect', 'chatgpt.com:/connector_platform_oauth_redirect', 'cursor://anysphere.cursor-mcp/oauth/callback']) {
+      expect((await tryRegister(uri)).status, uri).toBe(201);
+    }
+  });
+
+  it('a faulty authorization request ends on an error page of the platform, never on the client address', async () => {
+    const h = setup();
+    const client = await register(h, { redirect_uris: ['https://evil.example/landing'] });
+    const { challenge } = pkce();
+    const cookie = await h.login();
+    const query = (extra: Record<string, string>, drop: string[] = []): string => {
+      const q = new URLSearchParams(authorizeQuery(client.client_id, challenge, { redirect_uri: 'https://evil.example/landing', ...extra }));
+      for (const key of drop) q.delete(key);
+      return q.toString();
+    };
+    const faulty = [query({ response_type: 'token' }), query({}, ['code_challenge']), query({ code_challenge_method: 'plain' }),
+      query({ resource: 'not a url' }), query({ resource: 'https://other.example/mcp' })];
+    for (const q of faulty) {
+      for (const who of [undefined, cookie]) {
+        const get = request(h.app).get(`/authorize?${q}`).set('Host', h.host);
+        const res = await (who ? get.set('Cookie', who) : get);
+        // A foreign resource is only looked at once somebody is signed in; before that the request leads to the sign-in page.
+        if (!who && q.includes('other.example')) {
+          expect(res.headers.location.startsWith('/login?return=')).toBe(true);
+          continue;
+        }
+        expect(res.status, q).toBe(400);
+        expect(res.headers.location, q).toBeUndefined();
+        expect(res.headers['content-type']).toContain('text/html');
+        expect(res.text).toContain(t('en', 'consent.invalid.text'));
+        expect(res.text).not.toContain('evil.example');
+      }
+      // The same request posted from another site's form is answered the same way.
+      const posted = await request(h.app).post('/authorize').set('Host', h.host).set('Cookie', cookie).type('form').send(Object.fromEntries(new URLSearchParams(q)));
+      expect(posted.status, q).toBe(400);
+      expect(posted.headers.location, q).toBeUndefined();
+    }
+    // A sound request still leads to the sign-in page, and after the consent page the answer goes to the client as the standard says.
+    const good = query({});
+    const anonymous = await request(h.app).get(`/authorize?${good}`).set('Host', h.host);
+    expect(anonymous.headers.location).toBe(`/login?return=${encodeURIComponent(`/authorize?${good}`)}`);
+    const consent = await request(h.app).get(`/authorize?${good}`).set('Host', h.host).set('Cookie', cookie);
+    expect(consent.status).toBe(200);
+    for (const [decision, param] of [['deny', 'error'], ['approve', 'code']] as const) {
+      const answered = await request(h.app).post('/authorize').set('Host', h.host).set('Cookie', cookie).type('form').send({ ...hiddenFields(consent.text), decision });
+      expect(answered.status).toBe(302);
+      const loc = new URL(answered.headers.location);
+      expect(loc.origin + loc.pathname).toBe('https://evil.example/landing');
+      expect(loc.searchParams.has(param)).toBe(true);
+      expect(loc.searchParams.get('state')).toBe('st-1');
+    }
+  });
+
+  it('registered clients that hold no code and no token are forgotten after 30 days; metadata is capped', async () => {
+    const h = setup();
+    const { client_id: idle } = await register(h);
+    const { client_id: fresh } = await register(h);
+    const { client_id: used, tokens } = await fullFlow(h);
+    const db = new DatabaseSync(path.join(h.core.config.dataDir, 'platform.sqlite'));
+    const age = db.prepare('UPDATE oauth_clients SET created_at = ? WHERE client_id = ?');
+    const days = (n: number): string => new Date(Date.now() - n * 24 * 3600_000).toISOString();
+    age.run(days(31), idle);
+    age.run(days(29), fresh);
+    age.run(days(400), used);
+    db.close();
+    // The next registration sweeps.
+    await register(h);
+    expect(h.core.oauth.getClient(idle)).toBeUndefined();
+    expect(h.core.oauth.getClient(fresh)).toBeDefined();
+    expect(h.core.oauth.getClient(used)).toBeDefined();
+    expect((await initialize(h, tokens.access_token)).status).toBe(200);
+
+    const big = await request(h.app).post('/register').set('Host', h.host)
+      .send({ redirect_uris: [REDIRECT], client_name: 'x'.repeat(MAX_CLIENT_METADATA_BYTES), token_endpoint_auth_method: 'none' });
+    expect(big.status).toBe(400);
+    expect(big.body.error).toBe('invalid_client_metadata');
+    const many = await request(h.app).post('/register').set('Host', h.host)
+      .send({ redirect_uris: Array.from({ length: 400 }, (_, i) => `https://example.com/callback/${i}`), token_endpoint_auth_method: 'none' });
+    expect(many.status).toBe(400);
   });
 });
