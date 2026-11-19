@@ -276,6 +276,7 @@ export const en = {
   'admin.users.notFound': 'User not found.',
   'admin.users.lastAdmin': 'The last active administrator cannot be demoted or disabled.',
   'admin.invites.email': 'Email (optional)',
+  'admin.invites.unbound': 'An invitation with an email address signs the new account in right away. Without an address, the person first confirms their own address through a link we send them.',
   'admin.invites.role': 'Role',
   'admin.invites.create': 'Create invitation',
   'admin.invites.validUntil': 'Valid until',

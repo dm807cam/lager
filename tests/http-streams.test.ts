@@ -96,15 +96,22 @@ describe('db event stream limits', () => {
 });
 
 describe('language switch', () => {
-  it('does not store the language of a signed-in account on a cross-site or same-site request, but sets the cookie', async () => {
+  it('changes nothing on a cross-site or same-site request: neither the cookie nor the account, but still redirects', async () => {
     h = makeHarness();
     const cookie = await h.login();
-    const cross = await request(h.app).get('/lang/de').set('Host', h.host).set('Cookie', cookie).set('Sec-Fetch-Site', 'cross-site');
-    expect(cross.headers['set-cookie'].join(';')).toMatch(/lager_lang=de/);
-    expect(h.core.users.get(h.adminId)!.locale).not.toBe('de');
-    // An instance is same-site with the platform, and its code is not the account's owner either.
-    await request(h.app).get('/lang/de').set('Host', h.host).set('Cookie', cookie).set('Sec-Fetch-Site', 'same-site');
-    expect(h.core.users.get(h.adminId)!.locale).not.toBe('de');
+    // An instance is same-site with the platform, and its code is no more the visitor than another site is.
+    for (const site of ['cross-site', 'same-site']) {
+      for (const jar of [cookie, '']) {
+        const res = await request(h.app).get('/lang/de?return=%2Fpublish').set('Host', h.host).set('Cookie', jar).set('Sec-Fetch-Site', site);
+        expect(res.status, site).toBe(302);
+        expect(res.headers.location, site).toBe('/publish');
+        expect(res.headers['set-cookie'], site).toBeUndefined();
+      }
+      expect(h.core.users.get(h.adminId)!.locale, site).not.toBe('de');
+    }
+    // The switcher's own links are same-origin navigations, signed in or not.
+    const own = await request(h.app).get('/lang/de').set('Host', h.host).set('Sec-Fetch-Site', 'same-origin');
+    expect(own.headers['set-cookie'].join(';')).toMatch(/lager_lang=de/);
     // A typed address or a bookmark ("none") and a browser that sends no header at all still switch.
     await request(h.app).get('/lang/fr').set('Host', h.host).set('Cookie', cookie).set('Sec-Fetch-Site', 'none');
     expect(h.core.users.get(h.adminId)!.locale).toBe('fr');

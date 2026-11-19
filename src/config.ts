@@ -16,6 +16,8 @@ export interface Config {
   adminEmail?: string;
   adminPassword?: string;
   secret: string;
+  /** True when LAGER_SECRET came from the environment and is shorter than MIN_SECRET_LENGTH; `createCore` decides what that means. */
+  weakSecret?: boolean;
   snapshotKeep: number;
   /** Express `trust proxy` setting: number of trusted proxy hops, or false for none. */
   trustProxy: number | false;
@@ -104,22 +106,16 @@ export const ADMIN_PASSWORD_PLACEHOLDERS: readonly string[] = ['change-me-please
 /** Shortest LAGER_SECRET accepted from the environment; the generated one has 64 characters. */
 export const MIN_SECRET_LENGTH = 32;
 
-/** True for host names that only ever reach this machine: localhost, *.localhost and the loopback addresses. */
+/**
+ * True for a public URL host that names this machine itself: localhost, *.localhost and the loopback addresses, with or without the
+ * trailing dot of a fully qualified name. It says where visitors are sent, not who can connect: the port may still be published
+ * on every interface (the Docker quick start does that).
+ */
 export function isLoopbackHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
+  const h = hostname.toLowerCase().replace(/\.$/, '');
   return h === 'localhost' || h.endsWith('.localhost') || h === '[::1]' || /^127(\.\d{1,3}){3}$/.test(h);
 }
 
-/** The secret signs sessions and derives the key that encrypts AI provider keys, so a short one from the environment is refused. */
-function envSecret(env: NodeJS.ProcessEnv): string | undefined {
-  const v = env.LAGER_SECRET?.trim();
-  if (!v) return undefined;
-  if (v.length < MIN_SECRET_LENGTH) {
-    throw new Error(`LAGER_SECRET must be at least ${MIN_SECRET_LENGTH} characters long (for example the output of "openssl rand -hex 32"). `
-      + 'Leave it empty to let Lager generate a secret and keep it in the data directory.');
-  }
-  return v;
-}
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const publicUrl = new URL(required(env, 'LAGER_PUBLIC_URL'));
@@ -128,6 +124,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   fs.mkdirSync(dataDir, { recursive: true });
   const quotaMb = parseIntEnv(env, 'LAGER_INSTANCE_QUOTA_MB', 50);
   if (quotaMb < 1) throw new Error('LAGER_INSTANCE_QUOTA_MB must be a positive integer');
+  const envSecret = env.LAGER_SECRET?.trim() || undefined;
   return {
     dataDir,
     port: parseIntEnv(env, 'LAGER_PORT', 8080),
@@ -137,7 +134,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     appsDomain,
     adminEmail: env.LAGER_ADMIN_EMAIL?.trim() || undefined,
     adminPassword: env.LAGER_ADMIN_PASSWORD || undefined,
-    secret: envSecret(env) ?? loadSecret(dataDir),
+    secret: envSecret ?? loadSecret(dataDir),
+    weakSecret: envSecret !== undefined && envSecret.length < MIN_SECRET_LENGTH,
     snapshotKeep: parseIntEnv(env, 'LAGER_SNAPSHOT_KEEP', 20),
     trustProxy: parseTrustProxy(env.LAGER_TRUST_PROXY),
     smtpUrl: env.LAGER_SMTP_URL?.trim() || undefined,

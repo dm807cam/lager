@@ -46,7 +46,7 @@ export const fr: Record<MessageKey, string> = {
   'validation.generic': "La saisie n’est pas valide.",
 
   'auth.password.short': 'Le mot de passe doit comporter au moins {min} caractères.',
-  'auth.password.long': 'Le mot de passe peut comporter au maximum {limit} caractères.',
+  'auth.password.long': 'Le mot de passe ne peut pas dépasser {limit} caractères.',
   'auth.password.hint': 'Au moins {min} caractères.',
   'auth.link.invalid.title': 'Lien non valide',
   'auth.link.invalid': "Le lien n’est pas valide ou a expiré.",
@@ -278,6 +278,7 @@ export const fr: Record<MessageKey, string> = {
   'admin.users.notFound': 'Utilisateur introuvable.',
   'admin.users.lastAdmin': "Le dernier administrateur actif ne peut pas être rétrogradé ni désactivé.",
   'admin.invites.email': 'E-mail (facultatif)',
+  'admin.invites.unbound': "Avec une adresse e-mail, le nouveau compte est connecté dès l’inscription. Sans adresse, la personne confirme d’abord la sienne grâce à un lien que nous lui envoyons.",
   'admin.invites.role': 'Rôle',
   'admin.invites.create': "Créer l’invitation",
   'admin.invites.validUntil': "Valable jusqu’au",

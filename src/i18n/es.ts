@@ -278,6 +278,7 @@ export const es: Record<MessageKey, string> = {
   'admin.users.notFound': 'Usuario no encontrado.',
   'admin.users.lastAdmin': 'No se puede degradar ni desactivar al último administrador activo.',
   'admin.invites.email': 'Correo electrónico (opcional)',
+  'admin.invites.unbound': 'Con un correo electrónico, la nueva cuenta inicia sesión nada más registrarse. Sin él, la persona confirma primero su propio correo mediante un enlace que le enviamos.',
   'admin.invites.role': 'Rol',
   'admin.invites.create': 'Crear invitación',
   'admin.invites.validUntil': 'Válida hasta',

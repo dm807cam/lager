@@ -106,6 +106,14 @@ describe('Accounts', () => {
     expect(accounts.resetPassword(reset, PW).id).toBe(r.user.id);
   });
 
+  it('a reset link confirms the address of an account that never did', async () => {
+    const r = await accounts.register({ name: 'Ann', email: 'ann@x.y', password: PW });
+    await accounts.requestPasswordReset('ann@x.y');
+    accounts.resetPassword(tokenIn(mailer.sent[1].text, 'token'), 'a brand new password');
+    expect(users.get(r.user.id)?.verified).toBe(true);
+    expect(users.checkLogin('ann@x.y', 'a brand new password').ok).toBe(true);
+  });
+
   it('expired tokens fail', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));

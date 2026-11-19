@@ -3,6 +3,7 @@ import type { Request, RequestHandler, Response } from 'express';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import { isLocale, LOCALE_NAMES, LOCALES, t, type Locale, type MessageKey } from '../i18n/index.js';
+import { hashSecret } from '../platform/tokens.js';
 import { MAX_NAME_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, type User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
 import { requestLocale } from './locale.js';
@@ -65,13 +66,14 @@ ${field('password', t(locale, 'auth.reset.label'), `<input id="password" name="p
 <button type="submit" class="${btn('primary')}">${esc(t(locale, 'auth.reset.submit'))}</button>
 </form>`), { switcher: false });
 
-const verifyForm = (locale: Locale, token: string, error?: string): string => page(locale, t(locale, 'auth.verify.title'), authCard(`<div class="auth-icon is-success">${icon('check')}</div><h1>${esc(t(locale, 'auth.verify.title'))}</h1>
+/** Setting a new password through a reset link confirms the address too, so the way out of a forgotten password is offered here. */
+const verifyForm = (locale: Locale, token: string, error?: string): string => page(locale, t(locale, 'auth.verify.title'), `${authCard(`<div class="auth-icon is-success">${icon('check')}</div><h1>${esc(t(locale, 'auth.verify.title'))}</h1>
 ${errorLine(error)}
 <form method="post" action="/verify" class="stack">
 <input type="hidden" name="token" value="${esc(token)}">
 ${field('password', t(locale, 'common.password'), '<input id="password" name="password" type="password" autocomplete="current-password" required autofocus>', t(locale, 'auth.verify.hint'))}
 <button type="submit" class="${btn('primary')}">${esc(t(locale, 'auth.verify.submit'))}</button>
-</form>`), { switcher: false });
+</form>`)}<p class="auth-links"><a href="/forgot">${esc(t(locale, 'login.forgot'))}</a></p>`, { switcher: false });
 
 const invalidLinkPage = (locale: Locale): string => notice(locale, t(locale, 'auth.link.invalid.title'), t(locale, 'auth.link.invalid'), resendForm(locale));
 
@@ -106,7 +108,7 @@ export const authExtension: PlatformExtension = (router, core) => {
   const resendEmail = new RateLimiter(3, HOUR_MS);
   // Guessing the current password through the account page needs a session already, but is still capped.
   const passwordTries = new RateLimiter(10, 15 * 60_000);
-  // The confirmation form checks a password as well.
+  // Wrong passwords on the confirmation form, counted per client address and per link, so changing address does not buy more guesses at one link.
   const verifyTries = new RateLimiter(10, 15 * 60_000);
 
   const field = (req: Request, name: string, max = MAX_FIELD): string => {
@@ -195,12 +197,16 @@ export const authExtension: PlatformExtension = (router, core) => {
   router.post('/verify', ...publicForm, (req, res) => {
     const locale = localeOf(req);
     const token = field(req, 'token', MAX_TOKEN);
-    if (!verifyTries.hit(ipOf(req))) { tooMany(req, res); return; }
+    const keys = [`ip:${ipOf(req)}`, `link:${hashSecret(token)}`];
+    if (keys.some((k) => verifyTries.full(k))) { tooMany(req, res); return; }
     try {
       core.accounts.verifyEmail(token, secret(req, 'password'));
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
-      html(res, 400, e.reason === 'password_wrong' ? verifyForm(locale, token, t(locale, 'auth.verify.wrong')) : invalidLinkPage(locale));
+      if (e.reason !== 'password_wrong') { html(res, 400, invalidLinkPage(locale)); return; }
+      // Only a wrong password counts, as at sign-in: confirming many accounts from one address is not guessing.
+      for (const k of keys) verifyTries.hit(k);
+      html(res, 400, verifyForm(locale, token, t(locale, 'auth.verify.wrong')));
       return;
     }
     // No session is issued here: signing in stays the one place that does, with its own limits.

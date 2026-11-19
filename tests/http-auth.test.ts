@@ -62,6 +62,8 @@ describe('registration and verification', () => {
     expect(h!.core.users.getByEmail('ann@example.org')!.verified).toBe(false);
     expect((await s.get(link)).status).toBe(200);
     expect(shown.text).toContain('name="password"');
+    // A reset confirms the address as well, so the form offers the way out of a forgotten password.
+    expect(shown.text).toContain(`<a href="/forgot">${t('en', 'login.forgot')}</a>`);
     // The link alone confirms nothing, and a wrong password leaves it usable.
     for (const body of [{ token }, { token, password: 'not the password' }]) {
       const refused = await s.post('/verify', body);
@@ -199,13 +201,36 @@ describe('registration and verification', () => {
     expect((await s.post('/login', { email: 'ann@example.org', password: long })).status).toBe(302);
   });
 
-  it('password guesses on the confirmation form are limited per client address', async () => {
-    const s = setup();
-    await s.register();
-    const token = new URL(s.linkOf(), 'http://x').searchParams.get('token')!;
-    for (let i = 0; i < 10; i++) expect((await s.post('/verify', { token, password: `guess number ${i}` })).status).toBe(400);
-    expect((await s.post('/verify', { token, password: PASSWORD })).status).toBe(429);
-    expect(h!.core.users.getByEmail('ann@example.org')!.verified).toBe(false);
+  it('wrong passwords on the confirmation form are limited per client address and per link; confirmations are not', async () => {
+    const mailer = new MemoryMailer();
+    h = makeHarness({ mailer, trustProxy: 1 });
+    h.core.settings.setRegistration('open');
+    const post = (path: string, body: Record<string, string>, ip: string) =>
+      request(h!.app).post(path).set('Host', h!.host).set('X-Forwarded-For', ip).type('form').send(body);
+    const register = async (email: string, ip: string): Promise<string> => {
+      await post('/register', { name: 'Ann', email, password: PASSWORD }, ip);
+      return new URL(/https?:\/\/\S+/.exec(mailer.sent.at(-1)!.text)![0]).searchParams.get('token')!;
+    };
+    // Eleven people behind one address confirm their accounts: nobody guessed, nobody is stopped.
+    for (let i = 0; i < 11; i++) {
+      const token = await register(`ok${i}@example.org`, `10.0.0.${i}`);
+      expect((await post('/verify', { token, password: PASSWORD }, '7.7.7.7')).status, String(i)).toBe(302);
+    }
+    // Ten wrong passwords from one address stop that address, also for another link and the right password...
+    const first = await register('first@example.org', '10.1.0.1');
+    const second = await register('second@example.org', '10.1.0.2');
+    for (let i = 0; i < 10; i++) expect((await post('/verify', { token: first, password: `guess number ${i}` }, '8.8.8.8')).status).toBe(400);
+    expect((await post('/verify', { token: second, password: PASSWORD }, '8.8.8.8')).status).toBe(429);
+    // ...and the link they were aimed at stays shut from any other address, while another link is untouched.
+    expect((await post('/verify', { token: first, password: PASSWORD }, '9.9.9.9')).status).toBe(429);
+    expect(h.core.users.getByEmail('first@example.org')!.verified).toBe(false);
+    expect((await post('/verify', { token: second, password: PASSWORD }, '9.9.9.9')).status).toBe(302);
+    // Guesses spread over many addresses are bounded by the link.
+    const third = await register('third@example.org', '10.1.0.3');
+    for (let i = 0; i < 10; i++) expect((await post('/verify', { token: third, password: `guess number ${i}` }, `10.2.0.${i}`)).status).toBe(400);
+    expect((await post('/verify', { token: third, password: PASSWORD }, '10.2.0.99')).status).toBe(429);
+    // An invalid link is not a password guess and counts against nobody.
+    for (let i = 0; i < 12; i++) expect((await post('/verify', { token: 'nope', password: 'x' }, '6.6.6.6')).status).toBe(400);
   });
 
   it('invite bound to an e-mail pre-fills and enforces it', async () => {

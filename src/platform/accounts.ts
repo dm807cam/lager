@@ -43,15 +43,10 @@ const toInvite = (r: TokenRow): InviteInfo => ({
 
 /** Registration, e-mail verification, password reset and invitations. One-time tokens are stored as SHA-256 only. */
 export class Accounts {
-  private resetHooks: Array<(userId: string) => void> = [];
-
   constructor(
     private db: DatabaseSync, private users: Users, private settings: Settings,
     private mailer: Mailer, private config: Config,
   ) {}
-
-  /** Runs after a password was set through a reset link (recovery), as opposed to a change by the signed-in owner. */
-  onPasswordReset(hook: (userId: string) => void): void { this.resetHooks.push(hook); }
 
   private link(path: string, param: string, token: string): string {
     return `${this.config.publicUrl.origin}${path}?${param}=${token}`;
@@ -189,7 +184,6 @@ export class Accounts {
     this.users.setPassword(row.user_id, password);
     this.deleteResetLinks(row.user_id);
     this.users.markVerified(row.user_id);
-    for (const hook of this.resetHooks) hook(row.user_id);
     return this.users.get(row.user_id)!;
   }
 
