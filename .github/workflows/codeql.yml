@@ -1,0 +1,47 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze JavaScript and TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      # Code scanning is free for public repositories; private ones need GitHub Advanced Security. Scheduled runs carry
+      # no repository in their event, so the visibility is asked from the API instead of read from the event.
+      - name: Check repository visibility
+        id: visibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "private=$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" >> "$GITHUB_OUTPUT"
+
+      - if: steps.visibility.outputs.private == 'false'
+        uses: actions/checkout@v5
+
+      - if: steps.visibility.outputs.private == 'false'
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+
+      - if: steps.visibility.outputs.private == 'false'
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:javascript-typescript
+
+      - if: steps.visibility.outputs.private != 'false'
+        run: echo "The repository is private; CodeQL runs once it is public."

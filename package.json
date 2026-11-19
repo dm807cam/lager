@@ -1,0 +1,45 @@
+{
+  "name": "lager",
+  "version": "0.1.0",
+  "description": "Self-hosted server for the apps your AI builds: every app gets its own subdomain, versions with rollback and durable data.",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dm807cam/lager.git"
+  },
+  "homepage": "https://github.com/dm807cam/lager#readme",
+  "bugs": {
+    "url": "https://github.com/dm807cam/lager/issues"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc && node -e \"const fs=require('fs');fs.mkdirSync('dist/runtime',{recursive:true});if(fs.existsSync('src/runtime/runtime.js'))fs.copyFileSync('src/runtime/runtime.js','dist/runtime/runtime.js');if(fs.existsSync('src/guide.md'))fs.copyFileSync('src/guide.md','dist/guide.md');fs.cpSync('assets','dist/assets',{recursive:true});fs.cpSync('src/static','dist/static',{recursive:true})\"",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "backup": "node dist/backup.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@resvg/resvg-wasm": "^2.6.2",
+    "express": "^5.3.0",
+    "nodemailer": "^10.5.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.6",
+    "@types/nodemailer": "^8.0.2",
+    "@types/supertest": "^7.2.1",
+    "jsdom": "^31.0.0",
+    "supertest": "^7.3.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

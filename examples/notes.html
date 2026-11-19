@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notes</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; }
+  form { display: flex; gap: .5rem; }
+  input { flex: 1; padding: .5rem; }
+  ul { list-style: none; padding: 0; }
+  li { display: flex; justify-content: space-between; gap: .5rem; padding: .5rem 0; border-bottom: 1px solid #8884; }
+  .muted { opacity: .7; font-size: .9rem; }
+</style>
+</head>
+<body>
+<h1>Notes</h1>
+<p id="who" class="muted"></p>
+<p id="nodb" class="muted" hidden>No storage available: notes are not saved.</p>
+<form id="add"><input id="text" placeholder="New note" required><button>Add</button></form>
+<ul id="notes"></ul>
+<script>
+(async () => {
+  const db = await lager.use("db");
+  const user = await lager.use("user");
+  // Every member of the user namespace is an async function.
+  const name = user ? await user.name() : "";
+  if (name) document.getElementById("who").textContent = "Signed in as " + name;
+  const list = document.getElementById("notes");
+
+  function render(docs) {
+    list.replaceChildren(...docs.map((d) => {
+      const li = document.createElement("li");
+      const span = document.createElement("span");
+      span.textContent = d.data().text;
+      const del = document.createElement("button");
+      del.textContent = "Delete";
+      del.onclick = () => db.doc("notes/" + d.id).delete();
+      li.append(span, del);
+      return li;
+    }));
+  }
+
+  if (!db) {
+    // Without a database the page still loads, but nothing can be saved.
+    document.getElementById("nodb").hidden = false;
+    document.getElementById("add").hidden = true;
+    return;
+  }
+  db.collection("notes").orderBy("createdAt").onSnapshot((snap) => render(snap.docs));
+  document.getElementById("add").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = document.getElementById("text");
+    await db.collection("notes").add({ text: input.value, createdAt: Date.now() });
+    input.value = "";
+  });
+})();
+</script>
+</body>
+</html>

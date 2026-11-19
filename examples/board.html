@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pin board</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #faf9f6; --card: #ffffff; --text: #1f1f1f; --muted: #6a6a6a; --line: #d9d6cf; --accent: #1f5fbf; --accent-text: #ffffff; --danger: #a3261f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #17181a; --card: #222427; --text: #ececec; --muted: #9a9ea3; --line: #3a3d41; --accent: #6ea2f2; --accent-text: #10141a; --danger: #f08b84; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 1rem; background: var(--bg); color: var(--text); font: 16px/1.4 system-ui, sans-serif; }
+  main { max-width: 40rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  .muted { color: var(--muted); font-size: .9rem; margin: .25rem 0; }
+  form { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+  input[type="text"] { flex: 1 1 12rem; min-width: 0; padding: .5rem; font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: .4rem; }
+  input[type="file"] { flex: 1 1 100%; min-width: 0; font: inherit; color: var(--muted); }
+  button { padding: .5rem .9rem; font: inherit; color: var(--accent-text); background: var(--accent); border: 0; border-radius: .4rem; cursor: pointer; }
+  button.plain { color: var(--text); background: transparent; border: 1px solid var(--line); }
+  button.danger { color: var(--danger); background: transparent; border: 1px solid var(--line); }
+  button:disabled { opacity: .6; cursor: default; }
+  #cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; padding: 0; margin: 0; list-style: none; }
+  @media (min-width: 36rem) { #cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .card { display: flex; flex-direction: column; gap: .5rem; padding: .75rem; background: var(--card); border: 1px solid var(--line); border-radius: .5rem; }
+  .card img { display: block; max-width: 100%; height: auto; border-radius: .3rem; }
+  .card p { margin: 0; overflow-wrap: anywhere; }
+  #status { min-height: 1.4em; }
+  #status.error { color: var(--danger); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Pin board</h1>
+  <p id="who" class="muted"></p>
+  <p id="here" class="muted" hidden></p>
+  <p id="nodb" class="muted" hidden>No storage available: the board cannot show or save anything.</p>
+  <form id="add">
+    <input id="text" type="text" placeholder="New card" maxlength="500" required>
+    <button id="pin">Pin it</button>
+    <input id="file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+  </form>
+  <p id="status" class="muted" role="status"></p>
+  <ul id="cards"></ul>
+  <p><button id="export" class="plain" hidden>Save cards as JSON</button></p>
+</main>
+<script>
+(async () => {
+  const $ = (id) => document.getElementById(id);
+  const status = (text, isError) => { $("status").textContent = text; $("status").className = isError ? "muted error" : "muted"; };
+  const describe = (e) => (e && (e.message || e.code)) || "Unknown error";
+
+  // use() resolves null for a namespace the instance does not offer; every member of an offered one is async.
+  const db = await lager.use("db");
+  const user = await lager.use("user");
+  const assets = await lager.use("assets");
+  const room = await lager.use("room");
+  const downloads = await lager.use("downloads");
+
+  const name = user ? await user.name() : "";
+  if (name) $("who").textContent = "Signed in as " + name;
+
+  if (!db) {
+    $("nodb").hidden = false;
+    $("add").hidden = true;
+    return;
+  }
+  if (assets) $("file").hidden = false;
+
+  // Only paths the upload endpoint hands out are used as image sources.
+  const isBlobUrl = (u) => typeof u === "string" && /^\/_blob\/[0-9a-f]{32}$/.test(u);
+
+  function render(docs) {
+    $("cards").replaceChildren(...docs.map((d) => {
+      const data = d.data();
+      const li = document.createElement("li");
+      li.className = "card";
+      if (isBlobUrl(data.image)) {
+        const img = document.createElement("img");
+        img.src = data.image;
+        img.alt = "";
+        img.loading = "lazy";
+        li.append(img);
+      }
+      const p = document.createElement("p");
+      p.textContent = data.text || "";
+      const del = document.createElement("button");
+      del.className = "danger";
+      del.textContent = "Remove";
+      del.onclick = async () => {
+        try {
+          await db.doc("cards/" + d.id).delete();
+          // The file belongs to the card; only editors may delete uploads, so a refusal is not an error here.
+          if (assets && isBlobUrl(data.image)) await assets.delete(data.image).catch(() => {});
+        } catch (e) { status("Could not remove the card: " + describe(e), true); }
+      };
+      li.append(p, del);
+      return li;
+    }));
+  }
+  db.collection("cards").orderBy("createdAt").onSnapshot((snap) => render(snap.docs));
+
+  $("add").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = $("text").value.trim();
+    if (!text) return;
+    $("pin").disabled = true;
+    status("");
+    try {
+      const card = { text, createdAt: Date.now() };
+      const file = assets ? $("file").files[0] : undefined;
+      if (file) card.image = (await assets.upload(file)).url;
+      await db.collection("cards").add(card);
+      $("text").value = "";
+      $("file").value = "";
+    } catch (err) {
+      status("Could not pin the card: " + describe(err), true);
+    } finally {
+      $("pin").disabled = false;
+    }
+  });
+
+  if (downloads) {
+    $("export").hidden = false;
+    $("export").onclick = async () => {
+      try {
+        const snap = await db.collection("cards").orderBy("createdAt").get();
+        const cards = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const result = await downloads.save({ filename: "pin-board.json", data: JSON.stringify(cards, null, 2) });
+        status(result.status === "saved" ? "Saved." : "");
+      } catch (err) {
+        // The viewer may decline the confirmation; that is not a failure worth shouting about.
+        status(err && err.code === "declined" ? "" : "Could not save the file: " + describe(err), !(err && err.code === "declined"));
+      }
+    };
+  }
+
+  if (room) {
+    // Presence in the unnamed room: everyone who has the board open right now, nothing is stored.
+    const here = $("here");
+    try {
+      await room.presence({ name: name || "Guest" });
+      room.onPeers((change) => {
+        const names = change.peers.map((p) => (p.presence.name || "Guest") + (p.isMe ? " (you)" : ""));
+        here.hidden = names.length === 0;
+        here.textContent = "Here now: " + names.join(", ");
+      });
+    } catch (err) {
+      status("The presence list is not available: " + describe(err), true);
+    }
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+# Data, backup and operations
+
+Moving data in and out, the trash, backups and logs.
+
+## Export, import and moving
+
+**Exporting data:** The instance page in the dashboard has a link to export the data as NDJSON. `GET /api/instances/<slug>/export` with a bearer token returns the same, as does the MCP tool `export_data`, which returns 200 documents by default (at most 1000, and about 8 MiB) and may stop early: its answer carries `truncated`, and when that is true you narrow the `prefix` and ask again. The REST export and the dashboard link are complete. The file contains one line `{"path": …, "data": …}` per document, plus the exporting account's own private area (`data/users/<id>/…`) but not the private areas of others. The account must manage the instance (owner or manager). The owner exports everything except other users' private areas; a manager gets only the documents that the app's rules let them read. Lager exports only the database as documents: uploads, snapshots, grants and domains are not included.
+
+**Importing data:** `POST /api/instances/<slug>/import` with `Content-Type: application/x-ndjson` (one line per document, ideally the export file) or a JSON array of `{path, data}`; at most 20 MiB (a JSON array at most 5 MiB) and 100000 documents per call, and only one import runs at a time per instance (a second one is refused with HTTP 409). Document paths are limited to 1000 bytes. A manager can only write paths that the app's rules let them write; the owner is not restricted. The MCP tool `import_data` takes at most 1000 documents per call. An import replaces documents with the same path and deletes no others. Lager takes no snapshot before an import; back up existing data beforehand with an export if needed. You can import into the same instance or another one, also one of a different app, and so move data between servers. You create the second instance with `POST /api/apps/<slug>/instances` or `create_instance`.
+
+```sh
+curl -H "Authorization: Bearer $LAGER_TOKEN" https://lager.example.com/api/instances/board/export > board.ndjson
+curl -X POST -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: application/x-ndjson" \
+  --data-binary @board.ndjson https://lager.example.com/api/instances/board-2/import
+```
+
+**Downloading the HTML of a version:** The version list of an app has an HTML link per version; over REST it is `GET /api/apps/<slug>/versions/<n>`, and the MCP tool `get_version` returns the same HTML together with the version's capabilities and the app's title, so that an assistant can continue developing an app in a new conversation. The file arrives as an attachment (`text/plain`, with `X-Content-Type-Options: nosniff`) and is never rendered on the platform. Everyone who may read the app (owner and collaborators) can download deployed versions; self-saved versions only the managers of the instance that saved them.
+
+**Moving an app from elsewhere with your assistant:** Give your assistant the source of the app (for example a claude.ai artifact) and let it, with the Lager connector connected, follow the section "Moving existing apps" of the guide (`get_guide`). It checks the HTML with `check_app` (used, unsupported and undeclared building blocks, browser storage, APIs of other hosts such as `window.claude` and `window.storage`), converts them to `window.lager`, declares the building blocks, deploys, transfers data with `import_data` and spot-checks the result.
+
+**What cannot be moved automatically:**
+
+- Data that lives only in the user's browser (`localStorage`, `sessionStorage`, `indexedDB`): the old app must save it once as a file, which you then import.
+- Functions of the old host that Lager does not offer: the feature is dropped or must be replaced. A language model call becomes `lager.complete` and works when the app declares `complete` and a model is connected.
+- Uploaded files: they must be uploaded again through the app, and the references to them change.
+- Private areas of other users, grants, domains, snapshots and earlier versions from another platform.
+
+## Deleting and trash
+
+When the owner deletes an instance or an app in the dashboard, Lager removes it from the platform but only moves the files to `<data directory>/trash` (`/data/trash` in the container): the data of an instance, including its uploads, as `<instance id>-<timestamp>`, and the versions of an app as `app-<app id>-<timestamp>`. Lager offers no restore for this; recovering is possible only by copying the files back. At startup and every 24 hours afterwards, Lager removes entries older than `LAGER_TRASH_DAYS` days (default 30; `0` turns the cleanup off, and you then empty the directory by hand). The age is taken from the timestamp in the name. Per run Lager writes one line to the log. An app can be deleted only while no instances of other accounts exist for it. Instances that an administrator has disabled can still be deleted by their owner.
+
+## Backup
+
+Everything lives in the data directory (with Docker Compose the volume `lager-data`, with a bind mount `./data`): the platform database, all versions, the data, uploads and snapshots of the instances, and `secret.key`. To back up, stop the service and copy the volume or directory. With the volume (Compose project name `lager`, otherwise `<directory name>_lager-data`; `docker volume ls` shows it):
+
+```sh
+docker compose stop
+docker run --rm -v lager_lager-data:/data -v "$PWD":/backup alpine tar czf /backup/lager-backup-$(date +%F).tgz -C /data .
+docker compose start
+```
+
+With a bind mount, stop the service as well and then `cp -a data data-backup-$(date +%F)`. Do not copy the directory while Lager runs: the databases are SQLite files in WAL mode, and a copy taken during a write can be unreadable.
+
+**Without stopping Lager:** `node dist/backup.js <target directory>` (or `npm run backup -- <target directory>`) writes a consistent copy of the data directory while the server keeps running. It reads `LAGER_DATA_DIR`, copies every database with SQLite's own snapshot mechanism and the other files as they are, and leaves the trash out. The target must be a new or empty directory outside the data directory. In the container, mount a directory for it:
+
+```sh
+docker compose run --rm -v "$PWD/backup":/backup lager node dist/backup.js /backup/$(date +%F)
+```
+
+An upload or a version that arrives while the backup runs may be missing from it; run it at a quiet time or accept that the last seconds are not included. The command exits with a non-zero status on failure, so it fits into a cron job or a systemd timer.
+
+To restore, stop Lager and copy the contents back (or unpack the archive into an empty volume). Keep `secret.key` (or `LAGER_SECRET`), otherwise all sessions become invalid.
+
+## Logs and crashes
+
+Lager writes to standard output and standard error: one line at start, one per trash cleanup, every server error with its stack, and mail that could not be sent. With Docker, `docker compose logs -f lager` shows them; under systemd, `journalctl --user -u lager -f`. Set `LAGER_ACCESS_LOG=true` for one line per request if your proxy does not keep an access log.
+
+If a bug escapes every handler, Lager logs it with a timestamp, closes its databases and exits with status 1, so the supervisor restarts it (`restart: unless-stopped` in the Compose file; `Restart=on-failure` in a systemd unit). A port that is already taken ends the start with a clear message instead of a stack trace.

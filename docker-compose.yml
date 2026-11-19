@@ -1,0 +1,12 @@
+services:
+  lager:
+    build: .
+    env_file: .env
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - "lager-data:/data"
+    restart: unless-stopped
+
+volumes:
+  lager-data:

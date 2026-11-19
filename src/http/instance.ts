@@ -1,0 +1,368 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import express from 'express';
+import type { Request, Response } from 'express';
+import type { Core } from '../core.js';
+import { canRead, canWrite, type Level, type Viewer } from '../data/rules.js';
+import type { HubEvent } from '../data/hub.js';
+import { LagerError } from '../errors.js';
+import type { Capabilities, DbRule, Instance } from '../platform/apps.js';
+import type { User } from '../platform/users.js';
+import { clearCookie, instanceCookieName, NONCE_RE, nonceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
+import { safeReturnPath, sendError, sendNotFound } from './errors.js';
+import { injectRuntime } from './inject.js';
+import { mountPageRoutes } from './instance-page.js';
+import { mountPwaRoutes } from './instance-pwa.js';
+import { mountAssetRoutes } from './instance-assets.js';
+import { mountRoomRoutes, STREAM_LIMITS } from './instance-room.js';
+import { mountCompleteRoutes } from './instance-complete.js';
+import { assertOwnOrigin } from './origin.js';
+import { StreamLimiter } from './stream-limit.js';
+import { requestLocale } from './locale.js';
+import { badCodePage, disabledPage, forbiddenPage, instanceHostPage, notFoundPage } from './pages.js';
+import { epochValid } from './session.js';
+import { signToken, verifyToken } from './tokens.js';
+
+const RUNTIME_FILE = new URL('../runtime/runtime.js', import.meta.url);
+const MAX_PROFILE_IDS = 100;
+const MAX_SEARCH_RESULTS = 20;
+const MAX_SEARCH_QUERY = 100;
+const PING_MS = 25_000;
+/** A reader that falls this far behind is dropped rather than buffered without bound. */
+const MAX_BUFFERED_BYTES = 1024 * 1024;
+/** How long a started sign-in may take before its nonce lapses. */
+const NONCE_SECONDS = 600;
+const RANK: Record<Level, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
+
+function instanceUser(core: Core, req: Request, instance: Instance): User | null {
+  const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown; ep?: unknown }>(readCookie(req, instanceCookieName(core.config)), core.config.secret);
+  if (!t || t.k !== 'inst' || t.iid !== instance.id || typeof t.uid !== 'string') return null;
+  const user = core.users.get(t.uid);
+  return epochValid(user, t.ep) ? user : null;
+}
+
+function activeCapabilities(core: Core, instance: Instance): Capabilities {
+  return core.apps.listVersions(instance.appId).find((v) => v.number === instance.activeVersion)?.capabilities ?? {};
+}
+
+/** `customHost` is the custom domain the visitor came in on; the platform sends the code back to exactly that host. */
+function loginUrl(core: Core, instance: Instance, customHost?: string, nonce?: string): string {
+  const host = customHost ? `&host=${encodeURIComponent(customHost)}` : '';
+  const n = nonce ? `&n=${nonce}` : '';
+  return `${core.config.publicUrl.origin}/auth/instance?slug=${encodeURIComponent(instance.slug)}${host}&return=%2F${n}`;
+}
+
+/**
+ * The sign-in nonce of this browser on this instance host, created on first use. The platform puts it into the code it issues
+ * and the callback compares it with the cookie, so a code minted in one browser cannot sign another browser in.
+ */
+function signInNonce(core: Core, req: Request, res: Response): string {
+  const name = nonceCookieName(core.config);
+  const existing = readCookie(req, name);
+  if (existing && NONCE_RE.test(existing)) return existing;
+  const nonce = crypto.randomBytes(18).toString('base64url');
+  setCookie(res, core.config, name, nonce, NONCE_SECONDS);
+  return nonce;
+}
+
+function newDocId(): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let id = '';
+  for (const b of crypto.randomBytes(20)) id += alphabet[b % alphabet.length];
+  return id;
+}
+
+export interface Ctx { instance: Instance; user: User | null; viewer: Viewer; caps: Capabilities; rules: DbRule[] | undefined }
+
+function context(core: Core, req: Request, instance: Instance): Ctx {
+  const user = instanceUser(core, req, instance);
+  const caps = activeCapabilities(core, instance);
+  return {
+    instance, user, caps, rules: caps.db?.rules,
+    viewer: { userId: user?.id ?? null, level: core.access.levelFor(instance, user) },
+  };
+}
+
+/** Throws unless the viewer has at least `view` access. */
+export function requireAccess(ctx: Ctx): void {
+  if (ctx.viewer.level !== 'none') return;
+  if (ctx.user) throw new LagerError('forbidden', 'No access to this instance.');
+  throw new LagerError('unauthenticated', 'Sign in required.');
+}
+
+export function createInstanceRouter(core: Core): express.Router {
+  const router = express.Router();
+  const { config } = core;
+  // Instance hosts do not receive the platform's language cookie, so their pages offer no switcher; their styles come from the platform host.
+  const NO_SWITCHER = instanceHostPage(config);
+  // Consumed handshake code ids with their expiry (epoch seconds); codes are single-use.
+  const usedCodes = new Map<string, number>();
+  const runtime = fs.readFileSync(RUNTIME_FILE);
+  const runtimeEtag = `"${crypto.createHash('sha256').update(runtime).digest('base64url').slice(0, 27)}"`;
+
+  const ctxOf = (res: Response): Ctx => res.locals.ctx as Ctx;
+  const hasScope = (ctx: Ctx, scope: string): boolean => Array.isArray(ctx.caps.user?.scopes) && ctx.caps.user.scopes.includes(scope);
+  const emailAllowed = (ctx: Ctx): boolean => hasScope(ctx, 'email');
+
+  mountPwaRoutes(router, core);
+
+  router.use((req, res, next) => {
+    const instance = core.apps.getInstanceBySlug(res.locals.slug as string);
+    if (!instance) {
+      res.status(404).type('html').send(notFoundPage(requestLocale(core, req, null), NO_SWITCHER));
+      return;
+    }
+    if (instance.disabled) {
+      if (req.path.startsWith('/__lager/')) sendError(res, new LagerError('forbidden', 'This instance has been disabled.'));
+      else res.status(403).type('html').send(disabledPage(requestLocale(core, req, instanceUser(core, req, instance)), NO_SWITCHER));
+      return;
+    }
+    res.locals.ctx = context(core, req, instance);
+    next();
+  });
+
+  router.get('/__lager/callback', (req, res) => {
+    const { instance } = ctxOf(res);
+    const locale = requestLocale(core, req, null);
+    const t = verifyToken<{ uid?: unknown; iid?: unknown; k?: unknown; jti?: unknown; ep?: unknown; h?: unknown; n?: unknown; exp: number }>(
+      typeof req.query.code === 'string' ? req.query.code : undefined, config.secret);
+    const user = t && typeof t.uid === 'string' ? core.users.get(t.uid) : null;
+    // The code names the host it was issued for and is only good there: a code for the custom domain is not valid on the default host.
+    const host = req.hostname.toLowerCase().replace(/\.$/, '');
+    const nonce = readCookie(req, nonceCookieName(config));
+    const sameBrowser = typeof nonce === 'string' && NONCE_RE.test(nonce) && typeof t?.n === 'string'
+      && nonce.length === t.n.length && crypto.timingSafeEqual(Buffer.from(nonce), Buffer.from(t.n));
+    if (!t || t.k !== 'code' || t.iid !== instance.id || t.h !== host || typeof t.jti !== 'string' || !sameBrowser || !epochValid(user, t.ep)) {
+      res.status(400).type('html').send(badCodePage(locale, NO_SWITCHER));
+      return;
+    }
+    const now = Math.floor(Date.now() / 1000);
+    for (const [id, exp] of usedCodes) if (exp <= now) usedCodes.delete(id);
+    if (usedCodes.has(t.jti)) {
+      res.status(400).type('html').send(badCodePage(locale, NO_SWITCHER));
+      return;
+    }
+    usedCodes.set(t.jti, t.exp);
+    setCookie(res, config, instanceCookieName(config), signToken({ uid: user.id, iid: instance.id, k: 'inst', ep: user.sessionEpoch }, config.secret, THIRTY_DAYS_SECONDS));
+    clearCookie(res, config, nonceCookieName(config));
+    res.redirect(safeReturnPath(req.query.return));
+  });
+
+  router.get(['/', '/index.html'], (req, res) => {
+    const ctx = ctxOf(res);
+    if (ctx.viewer.level === 'none') {
+      if (ctx.user) {
+        res.status(403).type('html').send(forbiddenPage(requestLocale(core, req, ctx.user), NO_SWITCHER));
+      } else {
+        res.redirect(loginUrl(core, ctx.instance, res.locals.customHost as string | undefined, signInNonce(core, req, res)));
+      }
+      return;
+    }
+    const app = core.apps.getApp(ctx.instance.appId);
+    const html = injectRuntime(core.apps.readVersionHtml(ctx.instance.appId, ctx.instance.activeVersion),
+      app ? { title: app.title, themeColor: app.themeColor, iconVersion: app.iconVersion } : undefined);
+    res.set({
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'same-origin',
+      // Other instances are same-site and would get this instance's cookie inside a frame: only the instance may frame itself.
+      'Content-Security-Policy': "frame-ancestors 'self'",
+      'X-Frame-Options': 'SAMEORIGIN',
+    }).send(html);
+  });
+
+  router.get('/__lager/runtime.js', (req, res) => {
+    res.set({ 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', ETag: runtimeEtag });
+    if (req.headers['if-none-match'] === runtimeEtag) {
+      res.status(304).end();
+      return;
+    }
+    res.send(runtime);
+  });
+
+  router.get('/__lager/session', (req, res) => {
+    const ctx = ctxOf(res);
+    // Only a browser that is not signed in here can start a sign-in, so only it gets a nonce.
+    const url = loginUrl(core, ctx.instance, res.locals.customHost as string | undefined, ctx.user ? undefined : signInNonce(core, req, res));
+    if (ctx.viewer.level === 'none') {
+      sendError(res, new LagerError('unauthenticated', 'Sign in required.'), { loginUrl: url });
+      return;
+    }
+    const level = ctx.viewer.level;
+    res.set('Cache-Control', 'no-store').json({
+      viewer: {
+        id: ctx.user?.id ?? null,
+        name: ctx.user?.name ?? '',
+        email: ctx.user && emailAllowed(ctx) ? ctx.user.email : null,
+        level,
+        isOwner: level === 'owner',
+        canEdit: level === 'admin' || level === 'owner',
+        // The viewer's stored language, else what their browser asks for; the runtime words its dialogs with it.
+        locale: requestLocale(core, req, ctx.user),
+      },
+      instance: {
+        id: ctx.instance.id, slug: ctx.instance.slug,
+        appSlug: core.apps.getApp(ctx.instance.appId)?.slug ?? null, version: ctx.instance.activeVersion,
+      },
+      capabilities: ctx.caps,
+      loginUrl: url,
+    });
+  });
+
+  router.get('/__lager/users', (req, res) => {
+    const ctx = ctxOf(res);
+    requireAccess(ctx);
+    if (req.query.q !== undefined) {
+      // Search among the people who can open this instance; only for signed-in viewers and apps that declared the profile scope.
+      if (!ctx.user) throw new LagerError('unauthenticated', 'Sign in required.');
+      if (typeof req.query.q !== 'string' || req.query.q.length > MAX_SEARCH_QUERY) {
+        throw new LagerError('invalid_argument', `q must be a string of at most ${MAX_SEARCH_QUERY} characters.`);
+      }
+      const found = hasScope(ctx, 'profile') ? core.access.usersWithAccess(ctx.instance, req.query.q, MAX_SEARCH_RESULTS, emailAllowed(ctx)) : [];
+      res.set('Cache-Control', 'no-store').json({
+        profiles: found.map((u) => ({ id: u.id, name: u.name, email: emailAllowed(ctx) ? u.email : null, isMe: u.id === ctx.user?.id })),
+      });
+      return;
+    }
+    const raw = typeof req.query.ids === 'string' ? req.query.ids : '';
+    const ids = [...new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))];
+    if (ids.length > MAX_PROFILE_IDS) throw new LagerError('invalid_argument', `At most ${MAX_PROFILE_IDS} ids are allowed.`);
+    const profiles: Record<string, { id: string; name: string; email: string | null; isMe: boolean }> = {};
+    // Profiles belong to the `user` capability: an app that did not declare it resolves nobody, and an anonymous visitor never gets an address.
+    const declared = typeof ctx.caps.user === 'object' && ctx.caps.user !== null;
+    const withEmail = emailAllowed(ctx) && ctx.user !== null;
+    for (const id of declared ? ids : []) {
+      const u = core.users.get(id);
+      if (u) profiles[id] = { id: u.id, name: u.name, email: withEmail ? u.email : null, isMe: u.id === ctx.user?.id };
+    }
+    res.set('Cache-Control', 'no-store').json({ profiles });
+  });
+
+  router.post('/__lager/db', express.json({ limit: '512kb' }), (req, res) => {
+    if (req.get('X-Lager-Request') !== '1') throw new LagerError('forbidden', 'Missing X-Lager-Request header.');
+    const ctx = ctxOf(res);
+    requireAccess(ctx);
+    const body: unknown = req.body;
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new LagerError('invalid_argument', 'Request body must be a JSON object.');
+    const { op, path, data, query, options } = body as Record<string, unknown>;
+    if (typeof op !== 'string') throw new LagerError('invalid_argument', 'op is required.');
+    if (typeof path !== 'string' || path === '') throw new LagerError('invalid_argument', 'path must be a non-empty string.');
+    const id = ctx.instance.id;
+    const by = ctx.viewer.userId;
+    const deny = (): never => { throw new LagerError('forbidden', 'Not allowed.'); };
+    const obj = (v: unknown, what: string): Record<string, unknown> => {
+      if (v === null || typeof v !== 'object' || Array.isArray(v)) throw new LagerError('invalid_argument', `${what} must be an object.`);
+      return v as Record<string, unknown>;
+    };
+    res.set('Cache-Control', 'no-store');
+    switch (op) {
+      case 'get':
+        // A document the viewer may not read behaves like a missing one.
+        if (!canRead(ctx.rules, ctx.viewer, path)) { res.json({ doc: null }); return; }
+        res.json({ doc: core.data.get(id, path) });
+        return;
+      case 'query': {
+        if (!canRead(ctx.rules, ctx.viewer, path)) { res.json({ docs: [] }); return; }
+        const spec = query === undefined ? {} : obj(query, 'query');
+        // A rule on a document path does not apply to its collection, so filter per document.
+        const docs = core.data.query(id, path, spec, (p) => canRead(ctx.rules, ctx.viewer, p));
+        res.json({ docs });
+        return;
+      }
+      case 'set':
+      case 'update':
+        if (!canWrite(ctx.rules, ctx.viewer, path)) deny();
+        res.json({ doc: core.data[op](id, path, obj(data, 'data'), by) });
+        return;
+      case 'delete':
+        if (!canWrite(ctx.rules, ctx.viewer, path)) deny();
+        core.data.delete(id, path);
+        res.json({ ok: true });
+        return;
+      case 'add': {
+        const docPath = `${path}/${newDocId()}`;
+        if (!canWrite(ctx.rules, ctx.viewer, docPath)) deny();
+        res.json({ doc: core.data.set(id, docPath, obj(data, 'data'), by) });
+        return;
+      }
+      case 'acquire': {
+        if (!canWrite(ctx.rules, ctx.viewer, path)) deny();
+        const o = obj(options, 'options');
+        res.json(core.data.acquire(id, path, {
+          holder: o.holder as string, ttlMs: o.ttlMs as number | undefined, data: o.data as Record<string, unknown> | undefined,
+        }, by));
+        return;
+      }
+      default:
+        throw new LagerError('invalid_argument', `Unknown op "${op}".`);
+    }
+  });
+
+  const dbStreams = new StreamLimiter(STREAM_LIMITS);
+
+  router.get('/__lager/db/events', (req, res) => {
+    assertOwnOrigin(req);
+    const first = ctxOf(res);
+    requireAccess(first);
+    const userId = first.viewer.userId;
+    const viewer = dbStreams.admit(first.instance.id, userId ?? `ip:${req.ip ?? ''}`, userId === null, '');
+    if (!viewer) {
+      res.status(429).set('Retry-After', '5').json({ error: { code: 'rate_limited', message: 'Too many open connections.' } });
+      return;
+    }
+    res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders();
+    res.write('retry: 3000\n\n');
+    const epoch = first.user?.sessionEpoch;
+    let ping: NodeJS.Timeout | undefined;
+    let unsubscribe: (() => void) | undefined;
+    let ended = false;
+    const send = (event: string, payload?: unknown): void => {
+      if (ended) return;
+      res.write(`event: ${event}\n${payload === undefined ? '' : `data: ${JSON.stringify(payload)}\n`}\n`);
+      // A client that stopped reading is cut off; its EventSource reconnects and catches up.
+      if (res.writableLength > MAX_BUFFERED_BYTES) stop();
+    };
+    const stop = (): void => {
+      if (ended) return;
+      ended = true;
+      clearInterval(ping);
+      unsubscribe?.();
+      dbStreams.release(first.instance.id, viewer, '');
+      res.end();
+    };
+    /** The instance while this stream's session still has access to it, else null. Re-resolved on every event and every ping. */
+    const current = (): { inst: Instance; level: Level } | null => {
+      const inst = core.apps.getInstance(first.instance.id);
+      const viewer = userId === null ? null : core.users.get(userId);
+      // The stream belongs to the session it was opened with: logout, password change or disabling ends it.
+      if (userId !== null && (!viewer || viewer.disabled || viewer.sessionEpoch !== epoch)) return null;
+      const level = inst ? core.access.levelFor(inst, viewer) : 'none';
+      return inst && RANK[level] >= RANK.view ? { inst, level } : null;
+    };
+    unsubscribe = core.hub.subscribe(first.instance.id, (e: HubEvent) => {
+      const now = current();
+      if (!now) { stop(); return; }
+      if (e.type === 'reset') { send('reset'); return; }
+      if (e.type === 'reload') { send('reload', { version: e.version }); return; }
+      const rules = activeCapabilities(core, now.inst).db?.rules;
+      if (canRead(rules, { userId, level: now.level }, e.path)) send('change', { path: e.path, parent: e.parent });
+    });
+    // An idle stream has no events to notice a revoked session or grant, so the ping checks too.
+    ping = setInterval(() => {
+      if (!current()) { stop(); return; }
+      res.write(': ping\n\n');
+      if (res.writableLength > MAX_BUFFERED_BYTES) stop();
+    }, PING_MS);
+    req.on('close', stop);
+  });
+
+  mountAssetRoutes(router, core, ctxOf, requireAccess);
+  mountRoomRoutes(router, core, ctxOf, requireAccess, activeCapabilities);
+  mountPageRoutes(router, core, ctxOf, requireAccess);
+  mountCompleteRoutes(router, core, ctxOf, requireAccess);
+
+  router.use((req, res) => { sendNotFound(core, req, res); });
+  return router;
+}
