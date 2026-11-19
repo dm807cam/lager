@@ -16,7 +16,7 @@ class QuietEventSource {
   close(): void {}
 }
 
-afterEach(() => { delete g.claude; delete g.storage; document.body.innerHTML = ''; });
+afterEach(() => { delete g.lager; document.body.innerHTML = ''; });
 
 describe('examples/notes.html with the real runtime', () => {
   it('shows the viewer name, not a function', async () => {

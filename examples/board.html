@@ -56,11 +56,11 @@
   const describe = (e) => (e && (e.message || e.code)) || "Unknown error";
 
   // use() resolves null for a namespace the instance does not offer; every member of an offered one is async.
-  const db = await claude.use("db");
-  const user = await claude.use("user");
-  const assets = await claude.use("assets");
-  const room = await claude.use("room");
-  const downloads = await claude.use("downloads");
+  const db = await lager.use("db");
+  const user = await lager.use("user");
+  const assets = await lager.use("assets");
+  const room = await lager.use("room");
+  const downloads = await lager.use("downloads");
 
   const name = user ? await user.name() : "";
   if (name) $("who").textContent = "Signed in as " + name;

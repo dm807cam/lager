@@ -88,7 +88,7 @@ function appsSection(core: Core, locale: Locale, apps: App[]): string {
   return section('apps', t(locale, 'dash.apps'), apps.length ? `<div class="grid">${cards}</div>` : emptyState(t(locale, 'dash.noApps')), { count: apps.length || undefined });
 }
 
-/** The three steps from connecting Claude to a running app; the first carries the connector address for those who deploy. */
+/** The three steps from connecting an AI assistant to a running app; the first carries the connector address for those who deploy. */
 function steps(locale: Locale, connector: string | null, cls = ''): string {
   return `<ol class="steps${cls ? ` ${cls}` : ''}">
 <li><strong>${esc(t(locale, 'dash.connect'))}</strong><span>${esc(t(locale, 'home.step.connect'))}</span>${connector && cls ? copyField(locale, connector) : ''}</li>
@@ -140,7 +140,7 @@ ${noticeHtml(locale, flash)}
 ${ownSection(core, locale, user, own)}${sharedSection(core, locale, user, shared)}${catalogSection(core, locale, csrf, catalog)}`, opts);
 }
 
-/** Everything about publishing: the apps the viewer deploys, the connector for Claude and the API tokens. */
+/** Everything about publishing: the apps the viewer deploys, the MCP connector and the API tokens. */
 function publishPage(core: Core, locale: Locale, user: User, newToken?: { name: string; token: string }): string {
   const csrf = csrfToken(core, user);
   const created = newToken ? callout(locale, t(locale, 'dash.tokens.created', { name: newToken.name }), newToken.token, t(locale, 'dash.tokens.copyNow')) : '';

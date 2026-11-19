@@ -406,7 +406,7 @@ td.actions .btn-row { justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
 .empty-hero + .section { margin-top: var(--s8); }
 .empty-hero .hint-line { margin-top: var(--s5); color: var(--ink-2); }
 
-/* --- steps (Connect Claude) --- */
+/* --- steps (connect your AI) --- */
 .steps { list-style: none; margin: 0; padding: 0; counter-reset: step; display: grid; gap: var(--s3); }
 .steps > li { counter-increment: step; position: relative; display: flex; flex-direction: column; gap: 4px; padding-left: 44px; min-width: 0; }
 .steps > li::before {

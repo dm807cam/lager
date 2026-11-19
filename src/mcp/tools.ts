@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import * as z from 'zod';
 import { hostUrl, instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
@@ -10,7 +10,7 @@ import { canRead, canWrite, type Viewer } from '../data/rules.js';
 import { LagerError } from '../errors.js';
 import type { GrantLevel } from '../platform/access.js';
 import { normalizeDescription, normalizeThemeColor, type App, type Capabilities, type DbRule, type DeployResult, type Instance, type Version, type Visibility } from '../platform/apps.js';
-import { checkArtifact, type ArtifactCheck } from '../platform/check.js';
+import { checkApp, type AppCheck } from '../platform/check.js';
 import type { User } from '../platform/users.js';
 
 const GUIDE = fs.readFileSync(new URL('../guide.md', import.meta.url), 'utf8');
@@ -277,13 +277,13 @@ export function versionSource(core: Core, user: User, input: { app?: string; ver
   };
 }
 
-/** The artifact check for a signed-in publisher or administrator. */
-export function runArtifactCheck(user: User, html: unknown, capabilities: unknown): ArtifactCheck {
+/** The app check for a signed-in publisher or administrator. */
+export function runAppCheck(user: User, html: unknown, capabilities: unknown): AppCheck {
   if (user.disabled || (user.role !== 'admin' && user.role !== 'publisher')) {
-    throw new LagerError('forbidden', 'Only administrators and publishers can check artifacts.');
+    throw new LagerError('forbidden', 'Only administrators and publishers can check apps.');
   }
   if (typeof html !== 'string') throw new LagerError('invalid_argument', 'html must be a string.');
-  return checkArtifact(html, checkCapabilities(capabilities ?? undefined));
+  return checkApp(html, checkCapabilities(capabilities ?? undefined));
 }
 
 // ---- sharing (REST and MCP) -------------------------------------------------
@@ -393,9 +393,9 @@ export function checkCapabilities(value: unknown): Capabilities | undefined {
       for (const [topic, level] of Object.entries(topics as Record<string, unknown>)) if (level !== 'interact') bad(`room.topics.${topic} must be "interact".`);
     }
   }
-  for (const name of ['artifact', 'self']) {
-    const publish = caps[name] === undefined ? undefined : (caps[name] as Record<string, unknown>).publish;
-    if (publish !== undefined && typeof publish !== 'boolean') bad(`${name}.publish must be true or false.`);
+  if (caps.page !== undefined) {
+    const publish = (caps.page as Record<string, unknown>).publish;
+    if (publish !== undefined && typeof publish !== 'boolean') bad('page.publish must be true or false.');
   }
   return caps as Capabilities;
 }
@@ -451,20 +451,76 @@ export function transferAccess(core: Core, user: User, inst: Instance): { readab
 
 const slugArg = z.string().describe('Slug (lowercase letters, digits, hyphens)');
 const visibilityArg = z.enum(['private', 'users', 'public']);
-const capabilitiesArg = z.record(z.string(), z.unknown())
-  .describe('Capabilities of this version, e.g. {"db":{},"user":{}}; db.rules: [{path, read?, write?}]');
+/**
+ * A JSON object with any keys. Written as an object with `additionalProperties` rather than a record, whose
+ * `propertyNames` keyword some MCP clients and model providers reject in tool schemas.
+ */
+const jsonObject = (): z.ZodObject<{}, z.core.$catchall<z.ZodUnknown>> => z.object({}).catchall(z.unknown());
+
+const capabilitiesArg = z.object({
+  db: jsonObject().optional().describe('Document database (lager.use("db")). Optional {"rules": [{path, read?, write?}]}'),
+  user: jsonObject().optional().describe('Viewer and people (lager.use("user")). Optional {"scopes": ["email", "profile"]}'),
+  assets: jsonObject().optional().describe('File uploads (lager.use("assets")). Optional {"upload": "interact"}'),
+  room: jsonObject().optional().describe('Realtime rooms with presence (lager.use("room")). Optional {"topics": {"<topic>": "interact"}}'),
+  page: jsonObject().optional().describe('The page saves itself (lager.use("page")). {"publish": false} disables saving'),
+  downloads: jsonObject().optional().describe('Offer files to save (lager.use("downloads"))'),
+  complete: jsonObject().optional().describe('Language model calls through lager.complete()'),
+}).catchall(z.unknown())
+  .describe('Every runtime capability the HTML uses, e.g. {"db":{},"user":{}}. A capability that is not declared is null at runtime.');
 
 const iconSvgArg = z.string().describe('The app icon as SVG: square viewBox="0 0 512 512", a filled background covering the whole square, one bold simple motif, shapes and paths only (no text, images, scripts or external references), under 64 KiB');
 const descriptionArg = z.string().describe('One plain sentence (at most 200 characters) saying what the app does');
 const themeColorArg = z.string().describe('Hex colour such as #1f2a5c that matches the icon background; used for the phone status bar and splash screen');
 
+type ToolName =
+  | 'deploy_app' | 'set_app_icon' | 'list_apps' | 'get_app' | 'get_version' | 'activate_version' | 'create_instance'
+  | 'set_auto_update' | 'set_visibility' | 'share_instance' | 'unshare_instance' | 'list_shares' | 'add_domain'
+  | 'remove_domain' | 'db_read' | 'db_write' | 'import_data' | 'export_data' | 'check_app' | 'list_snapshots'
+  | 'restore_snapshot' | 'get_guide';
+
+/**
+ * Display titles and behaviour hints (MCP tool annotations). Clients use them to label tools and to decide which
+ * calls need the user's confirmation; ChatGPT, for example, asks before every tool that is not marked read-only.
+ * Every tool acts only on this Lager server (openWorldHint false).
+ */
+const TOOL_META: Record<ToolName, { title: string; annotations: ToolAnnotations }> = {
+  deploy_app: { title: 'Deploy app', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
+  set_app_icon: { title: 'Change app icon', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
+  list_apps: { title: 'List apps', annotations: { readOnlyHint: true } },
+  get_app: { title: 'Show app', annotations: { readOnlyHint: true } },
+  get_version: { title: 'Get app source', annotations: { readOnlyHint: true } },
+  activate_version: { title: 'Activate version', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
+  create_instance: { title: 'Create instance', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false } },
+  set_auto_update: { title: 'Set automatic updates', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
+  // Visibility and grants can withdraw access or expose data to everyone: not additive, so destructive.
+  set_visibility: { title: 'Set visibility', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
+  share_instance: { title: 'Share instance', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
+  unshare_instance: { title: 'Withdraw access', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
+  list_shares: { title: 'List shares', annotations: { readOnlyHint: true } },
+  add_domain: { title: 'Add custom domain', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
+  remove_domain: { title: 'Remove custom domain', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
+  db_read: { title: 'Read app data', annotations: { readOnlyHint: true } },
+  db_write: { title: 'Write app data', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false } },
+  import_data: { title: 'Import app data', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true } },
+  export_data: { title: 'Export app data', annotations: { readOnlyHint: true } },
+  check_app: { title: 'Check app HTML', annotations: { readOnlyHint: true } },
+  list_snapshots: { title: 'List snapshots', annotations: { readOnlyHint: true } },
+  restore_snapshot: { title: 'Restore snapshot', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false } },
+  get_guide: { title: 'Read the Lager guide', annotations: { readOnlyHint: true } },
+};
+
+const toolMeta = (name: ToolName): { title: string; annotations: ToolAnnotations } => {
+  const { title, annotations } = TOOL_META[name];
+  return { title, annotations: { title, openWorldHint: false, ...annotations } };
+};
+
 export function buildMcpServer(core: Core, user: User): McpServer {
   const server = new McpServer({ name: 'lager', version: '0.1.0' }, { instructions: INSTRUCTIONS });
 
-  server.registerTool('deploy_app', {
-    description: 'Deploy an artifact (one HTML file) as a new version of the app. Creates the app and its default instance on first deploy. Pass icon_svg, description and theme_color when you create an app. Returns the instance URLs, the icon URL and lint warnings.',
+  server.registerTool('deploy_app', { ...toolMeta('deploy_app'),
+    description: 'Deploy an app (one self-contained HTML file) as a new version. Creates the app and its default instance on first deploy. Call get_guide once before your first deploy in a conversation: apps keep their data through the window.lager runtime it describes, never through localStorage. Pass capabilities for every runtime feature the HTML uses, and icon_svg, description and theme_color when you create an app. Returns the instance URLs, the icon URL and warnings to tell the user.',
     inputSchema: {
-      slug: slugArg, html: z.string().describe('Complete HTML of the artifact'), title: z.string().optional(),
+      slug: slugArg, html: z.string().describe('Complete HTML of the app'), title: z.string().optional(),
       capabilities: capabilitiesArg.optional(), note: z.string().optional().describe('Short version note'),
       icon_svg: iconSvgArg.optional(), description: descriptionArg.optional(), theme_color: themeColorArg.optional(),
     },
@@ -472,24 +528,24 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     slug, html, title, note, capabilities: checkCapabilities(capabilities), iconSvg: icon_svg, description, themeColor: theme_color,
   })));
 
-  server.registerTool('set_app_icon', {
+  server.registerTool('set_app_icon', { ...toolMeta('set_app_icon'),
     description: 'Change the icon, the description or the theme colour of one of your apps (owner or collaborator) without deploying. Give at least one field. An icon that is refused is an error and nothing changes. Icon rules are in the guide.',
     inputSchema: { app: slugArg, icon_svg: iconSvgArg.optional(), description: descriptionArg.optional(), theme_color: themeColorArg.optional() },
   }, ({ app, icon_svg, description, theme_color }) => runAsync(() => updateAppLook(core, user, appBySlug(core, app), {
     iconSvg: icon_svg, description, themeColor: theme_color,
   })));
 
-  server.registerTool('list_apps', {
+  server.registerTool('list_apps', { ...toolMeta('list_apps'),
     description: 'List your apps (owned or collaborating) with their instances.',
     inputSchema: {},
   }, () => run(() => ({ apps: core.access.appsOf(user).map((a) => appSummary(core, user, a)) })));
 
-  server.registerTool('get_app', {
+  server.registerTool('get_app', { ...toolMeta('get_app'),
     description: 'Show one of your apps (owned or collaborating) with instances and all versions.',
     inputSchema: { slug: slugArg },
   }, ({ slug }) => run(() => appDetail(core, user, readableApp(core, user, slug))));
 
-  server.registerTool('get_version', {
+  server.registerTool('get_version', { ...toolMeta('get_version'),
     description: 'Get the source of an app so you can continue developing it, e.g. in a new conversation: the complete HTML of a version plus its title and capabilities. Give app (with version, default the latest deployed one) or instance (the version active there, possibly one the page saved itself). Returns two text blocks: first JSON {app, title, version, createdAt, note, sizeBytes, capabilities, savedByInstance}, then the raw HTML. Edit that HTML and redeploy it with deploy_app, passing the same capabilities (or deliberately changed ones): a deploy without capabilities declares none.',
     inputSchema: {
       app: slugArg.optional(), version: z.number().int().positive().optional().describe('Version number from get_app; default: the latest deployed version'),
@@ -504,12 +560,12 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     }
   });
 
-  server.registerTool('activate_version', {
+  server.registerTool('activate_version', { ...toolMeta('activate_version'),
     description: 'Activate any existing version on an instance (roll back or forward). A snapshot of the instance data is taken first.',
     inputSchema: { instance: slugArg, version: z.number().int().positive() },
   }, ({ instance, version }) => run(() => instanceJson(core, core.apps.activate(managedInstance(core, user, instance).id, version, user.id))));
 
-  server.registerTool('create_instance', {
+  server.registerTool('create_instance', { ...toolMeta('create_instance'),
     description: 'Create another instance of an app with its own subdomain and its own data.',
     inputSchema: {
       app: slugArg, slug: slugArg.describe('Slug of the new instance (globally unique)'), visibility: visibilityArg.optional(),
@@ -517,17 +573,17 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     },
   }, ({ app, slug, visibility, owner_email }) => run(() => instanceJson(core, createInstanceFor(core, user, { app, slug, ownerEmail: owner_email, visibility }))));
 
-  server.registerTool('set_auto_update', {
+  server.registerTool('set_auto_update', { ...toolMeta('set_auto_update'),
     description: 'Set whether an instance follows new deploys. Switching it on moves the instance to the latest deployed version right away; switching it off pins the instance to its current version.',
     inputSchema: { instance: slugArg, on: z.boolean() },
   }, ({ instance, on }) => run(() => instanceJson(core, core.apps.setAutoUpdate(managedInstance(core, user, instance).id, on, user.id))));
 
-  server.registerTool('set_visibility', {
+  server.registerTool('set_visibility', { ...toolMeta('set_visibility'),
     description: 'Set who can open an instance: private (the owner and those it is shared with), users (all signed-in users), public (anyone).',
     inputSchema: { instance: slugArg, visibility: visibilityArg },
   }, ({ instance, visibility }) => run(() => instanceJson(core, core.apps.setVisibility(managedInstance(core, user, instance).id, visibility, user.id))));
 
-  server.registerTool('share_instance', {
+  server.registerTool('share_instance', { ...toolMeta('share_instance'),
     description: 'Give an account (email) or a group (name) access to an instance, or change their level: view (look), interact (also write data per the app\'s rules) or admin (also manage sharing, versions and data). Exactly one of email or group is required. Returns the shares.',
     inputSchema: { instance: slugArg, email: z.string().optional(), group: z.string().optional(), level: z.enum(GRANT_LEVELS) },
   }, ({ instance, email, group, level }) => run(() => {
@@ -537,7 +593,7 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     return sharesJson(core, inst);
   }));
 
-  server.registerTool('unshare_instance', {
+  server.registerTool('unshare_instance', { ...toolMeta('unshare_instance'),
     description: 'Withdraw the access of an account (email) or a group (name) from an instance. Exactly one of email or group is required. Returns the remaining shares.',
     inputSchema: { instance: slugArg, email: z.string().optional(), group: z.string().optional() },
   }, ({ instance, email, group }) => run(() => {
@@ -547,22 +603,22 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     return sharesJson(core, inst);
   }));
 
-  server.registerTool('list_shares', {
+  server.registerTool('list_shares', { ...toolMeta('list_shares'),
     description: 'Who has access to an instance: the grants (accounts and groups with their level), the visibility and the level given to all signed-in users.',
     inputSchema: { instance: slugArg },
   }, ({ instance }) => run(() => sharesJson(core, managedInstance(core, user, instance))));
 
-  server.registerTool('add_domain', {
+  server.registerTool('add_domain', { ...toolMeta('add_domain'),
     description: 'Let an instance also answer on your own domain (a hostname such as notes.example.com). Allowed for administrators, and for publishers who manage the instance when the administrator enabled it. DNS, proxy entry and certificate for the domain are set up outside Lager; Lager does not check who owns the domain. Returns the instance with its domains.',
     inputSchema: { instance: slugArg, host: z.string().describe('Hostname without scheme, port or path') },
   }, ({ instance, host }) => run(() => instanceJson(core, addDomainTo(core, user, instance, host))));
 
-  server.registerTool('remove_domain', {
+  server.registerTool('remove_domain', { ...toolMeta('remove_domain'),
     description: 'Detach a custom domain from an instance. Returns the instance with its remaining domains.',
     inputSchema: { instance: slugArg, host: z.string() },
   }, ({ instance, host }) => run(() => instanceJson(core, removeDomainFrom(core, user, instance, host))));
 
-  server.registerTool('db_read', {
+  server.registerTool('db_read', { ...toolMeta('db_read'),
     description: 'Read instance data. A document path (even number of segments, e.g. tasks/t1) returns {doc}; a collection path (odd, e.g. tasks) returns {docs}.',
     inputSchema: {
       instance: slugArg, path: z.string(),
@@ -580,13 +636,13 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     return { docs: core.data.query(inst.id, path, spec, (p) => canRead(rules, viewer, p)) };
   }));
 
-  server.registerTool('db_write', {
+  server.registerTool('db_write', { ...toolMeta('db_write'),
     description: `Write instance data, e.g. to seed it after a deploy. Up to ${MAX_DB_OPS} operations, applied in order: set (replace), update (deep merge), delete.`,
     inputSchema: {
       instance: slugArg,
       ops: z.array(z.object({
         op: z.enum(['set', 'update', 'delete']), path: z.string().describe('Document path, e.g. tasks/t1'),
-        data: z.record(z.string(), z.unknown()).optional(),
+        data: jsonObject().optional(),
       })).min(1).max(MAX_DB_OPS),
     },
   }, ({ instance, ops }) => run(() => {
@@ -616,11 +672,11 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     return { applied };
   }));
 
-  server.registerTool('import_data', {
-    description: `Write many documents at once, e.g. to move the data of an existing artifact here: up to ${MAX_IMPORT_DOCS_MCP} {path, data} documents, all validated first and written in one transaction (existing documents are replaced). You are held to the same rules as db_write; other users' private areas cannot be written. Returns {imported}.`,
+  server.registerTool('import_data', { ...toolMeta('import_data'),
+    description: `Write many documents at once, e.g. to move the data of an existing app here: up to ${MAX_IMPORT_DOCS_MCP} {path, data} documents, all validated first and written in one transaction (existing documents are replaced). You are held to the same rules as db_write; other users' private areas cannot be written. Returns {imported}.`,
     inputSchema: {
       instance: slugArg,
-      docs: z.array(z.object({ path: z.string().describe('Document path, e.g. tasks/t1'), data: z.record(z.string(), z.unknown()) })).min(1).max(MAX_IMPORT_DOCS_MCP),
+      docs: z.array(z.object({ path: z.string().describe('Document path, e.g. tasks/t1'), data: jsonObject() })).min(1).max(MAX_IMPORT_DOCS_MCP),
     },
   }, ({ instance, docs }) => run(() => {
     const inst = managedInstance(core, user, instance);
@@ -632,7 +688,7 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     return core.data.importDocs(inst.id, docs, user.id, { allowPrivateOf: user.id });
   }));
 
-  server.registerTool('export_data', {
+  server.registerTool('export_data', { ...toolMeta('export_data'),
     description: `Read documents of an instance ordered by path, optionally only below a path prefix (the document itself and everything beneath it). At most limit documents (default ${EXPORT_DEFAULT_LIMIT}, max ${MAX_IMPORT_DOCS_MCP}); truncated says there is more, so narrow the prefix. Documents you may not read (rules, other users' private areas) are left out. Returns {docs: [{path, data}], truncated}.`,
     inputSchema: { instance: slugArg, prefix: z.string().optional(), limit: z.number().int().min(1).max(MAX_IMPORT_DOCS_MCP).optional() },
   }, ({ instance, prefix, limit }) => run(() => {
@@ -652,17 +708,17 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     return { docs, truncated };
   }));
 
-  server.registerTool('check_artifact', {
-    description: 'Check the HTML of an existing artifact before deploying it: which runtime capabilities it uses via claude.use("…"), which of them Lager cannot provide (claude.use returns null), which are missing from the capabilities declaration, and warnings (browser storage, claude.complete). Returns {used, unsupported, undeclared, warnings}.',
+  server.registerTool('check_app', { ...toolMeta('check_app'),
+    description: 'Check the HTML of an app before deploying it, especially one written for another host such as claude.ai: which runtime capabilities it uses via lager.use("…"), which of them Lager cannot provide (lager.use returns null), which are missing from the capabilities declaration, and warnings (browser storage, APIs of other hosts such as window.claude or window.storage that must be converted, lager.complete). Returns {used, unsupported, undeclared, warnings}.',
     inputSchema: { html: z.string(), capabilities: capabilitiesArg.optional() },
-  }, ({ html, capabilities }) => run(() => runArtifactCheck(user, html, capabilities)));
+  }, ({ html, capabilities }) => run(() => runAppCheck(user, html, capabilities)));
 
-  server.registerTool('list_snapshots', {
+  server.registerTool('list_snapshots', { ...toolMeta('list_snapshots'),
     description: 'List the data snapshots of an instance, newest first.',
     inputSchema: { instance: slugArg },
   }, ({ instance }) => run(() => ({ snapshots: core.data.listSnapshots(managedInstance(core, user, instance).id) })));
 
-  server.registerTool('restore_snapshot', {
+  server.registerTool('restore_snapshot', { ...toolMeta('restore_snapshot'),
     description: 'Restore instance data from a snapshot. The current data is saved as a snapshot first.',
     inputSchema: { instance: slugArg, snapshot: z.string().describe('Snapshot id from list_snapshots') },
   }, ({ instance, snapshot }) => run(() => {
@@ -670,8 +726,8 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     return { restored: snapshot };
   }));
 
-  server.registerTool('get_guide', {
-    description: 'The full guide for building and deploying artifacts on Lager.',
+  server.registerTool('get_guide', { ...toolMeta('get_guide'),
+    description: 'Read this first, before you build, change or move an app: how Lager apps are written (the window.lager runtime API for data, users, files, realtime and language-model calls), how to declare capabilities, icons, sharing, versions and limits.',
     inputSchema: {},
   }, () => result({ guide: GUIDE }));
 

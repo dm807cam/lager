@@ -1,6 +1,16 @@
 {
   "name": "lager",
   "version": "0.1.0",
+  "description": "Self-hosted server for the apps your AI builds: every app gets its own subdomain, versions with rollback and durable data.",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dm807cam/lager.git"
+  },
+  "homepage": "https://github.com/dm807cam/lager#readme",
+  "bugs": {
+    "url": "https://github.com/dm807cam/lager/issues"
+  },
   "private": true,
   "type": "module",
   "engines": {

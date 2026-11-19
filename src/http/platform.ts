@@ -164,7 +164,7 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
     }));
   });
 
-  // Artifact code on an instance origin is same-site and could post this form to sign a visitor into another account.
+  // App code on an instance origin is same-site and could post this form to sign a visitor into another account.
   router.post('/login', loginHeaders, sameOriginGuard(core), express.urlencoded({ extended: false, limit: '10kb' }), (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const ret = safeReturnPath(body.return);

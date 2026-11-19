@@ -1,6 +1,5 @@
-/* Lager browser runtime: provides window.claude.use("db" | "user" | "assets" | "room" | "artifact" | "self" | "downloads" | "permissions"),
-   window.claude.complete and window.storage
-   on top of the /__lager/* endpoints. Plain ES2020, no dependencies. */
+/* Lager browser runtime: provides window.lager.use("db" | "user" | "assets" | "room" | "page" | "downloads" | "permissions")
+   and window.lager.complete on top of the /__lager/* endpoints. Plain ES2020, no dependencies. */
 (function () {
   'use strict';
 
@@ -614,7 +613,8 @@
   var ROOM_MAX_BYTES = 4096;
   var PRESENCE_MAX_BYTES = 2048;
   var ROOM_MAX_DEPTH = 8;
-  var ROOM_MAX_JOINED = 16;
+  // The server admits 8 streams per viewer and instance; the lobby takes one, so a page can join 7 named rooms.
+  var ROOM_MAX_JOINED = 7;
   var PRESENCE_FLUSH_MS = 50;
   var PRESENCE_RETRY_MS = 1000;
   var FIRST_CONNECT_WAIT_MS = 5000;
@@ -1051,15 +1051,12 @@
     return Object.freeze({
       emit: v.emit, on: v.on, presence: v.presence, peers: v.peers, onPeers: v.onPeers,
       connected: v.connected, onConnection: v.onConnection, join: join,
-      // Lager has no conversation with Claude beside the page.
-      sendToClaudeSession: function () { return Promise.reject(roomError('claude_unavailable', 'Sending to Claude is not available on this Lager server.')); },
-      canSendToClaudeSession: function () { return Promise.resolve('off'); },
     });
   }
 
-  // ------------------------------------------------------------------ artifact, self, downloads
+  // ------------------------------------------------------------------ page, downloads
 
-  var ARTIFACT_URL = '/__lager/artifact';
+  var PAGE_URL = '/__lager/page';
   var DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024;
   var DOWNLOAD_NAME_MAX_BYTES = 240;
   var DOWNLOAD_ALLOWED = ['gif', 'png', 'jpg', 'jpeg', 'webp', 'mp4', 'webm', 'mov', 'txt', 'json', 'md',
@@ -1072,7 +1069,7 @@
   var loadedVersion = null;
   var reloaded = false;
   var streamOpen = false;
-  var artifactNamespace = null;
+  var pageNamespace = null;
 
   /**
    * location.reload() and window.confirm() go through here so a test (or an embedding page) can observe them:
@@ -1091,8 +1088,8 @@
     return !!(caps && caps[name] && typeof caps[name] === 'object');
   }
 
-  function artifactAvailable(session) {
-    return declaredObject(session, 'artifact') || declaredObject(session, 'self');
+  function pageAvailable(session) {
+    return declaredObject(session, 'page');
   }
 
   function doReload() {
@@ -1128,11 +1125,11 @@
   }
 
   /**
-   * Every view of an instance whose active version declares `artifact`/`self` follows its saves, whether or not the page
+   * Every view of an instance whose active version declares `page` follows its saves, whether or not the page
    * uses the capability: the event stream stays open and a `reload` event with another version reloads the page.
    */
   function watchReloads(session) {
-    if (keepSourceOpen || !artifactAvailable(session)) return;
+    if (keepSourceOpen || !pageAvailable(session)) return;
     var instance = session && session.instance;
     loadedVersion = instance && isFinite(Number(instance.version)) ? Number(instance.version) : null;
     keepSourceOpen = true;
@@ -1140,9 +1137,9 @@
     if (streamOpen) catchUp(); else openSource();
   }
 
-  function artifactError(code, message) { return { code: code, message: message }; }
+  function pageError(code, message) { return { code: code, message: message }; }
 
-  function artifactFailure(res, json) {
+  function pageFailure(res, json) {
     var error = json && json.error;
     var message = error && typeof error.message === 'string' ? error.message : 'Request failed (' + res.status + ').';
     var raw = error && typeof error.code === 'string' ? error.code : '';
@@ -1155,29 +1152,22 @@
     else if (res.status === 429) code = 'rate_limited';
     else if (res.status === 400 && raw === 'invalid_content') code = 'invalid_content';
     else code = 'upstream_error';
-    return artifactError(code, message);
+    return pageError(code, message);
   }
 
-  function buildArtifact(session) {
-    if (artifactNamespace) return artifactNamespace;
+  function buildPage(session) {
+    if (pageNamespace) return pageNamespace;
     var level = levelOf(session);
     var editor = level === 'admin' || level === 'owner';
-    var saveOff = ['artifact', 'self'].some(function (n) {
-      return declaredObject(session, n) && session.capabilities[n].publish === false;
-    });
+    var saveOff = session.capabilities.page.publish === false;
     watchReloads(session);
-
-    function unsupported(code, what) {
-      return function () { return Promise.reject(artifactError(code, what + ' is not available on this Lager server.')); };
-    }
 
     function publish(arg) {
       return Promise.resolve().then(function () {
-        if (arg !== null && typeof arg === 'object') throw artifactError('capability_disabled', 'Publishing several files is not available on this Lager server.');
-        if (saveOff) throw artifactError('not_granted', 'This page may not save itself.');
-        if (!editor) throw artifactError('not_writer', 'This view cannot save the page.');
-        if (typeof arg !== 'string' || !DOCTYPE_RE.test(arg)) throw artifactError('invalid_content', 'publish expects a complete html document starting with <!doctype html>.');
-        return fetch(ARTIFACT_URL, {
+        if (saveOff) throw pageError('not_granted', 'This page may not save itself.');
+        if (!editor) throw pageError('not_writer', 'This view cannot save the page.');
+        if (typeof arg !== 'string' || !DOCTYPE_RE.test(arg)) throw pageError('invalid_content', 'publish expects a complete html document starting with <!doctype html>.');
+        return fetch(PAGE_URL, {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json', 'X-Lager-Request': '1' },
@@ -1186,29 +1176,24 @@
           function (res) {
             return res.json().catch(function () { return null; }).then(function (json) {
               if (!res.ok) {
-                var failure = artifactFailure(res, json);
+                var failure = pageFailure(res, json);
                 // Somebody else saved first: this view is stale, show the winning version.
                 if (failure.code === 'conflict') doReload();
                 throw failure;
               }
-              if (!json || typeof json.version !== 'string') throw artifactError('upstream_error', 'Unexpected response (' + res.status + ').');
+              if (!json || typeof json.version !== 'string') throw pageError('upstream_error', 'Unexpected response (' + res.status + ').');
               // Normally the reload event does this; without an open stream nobody would tell this view.
               if (!streamOpen) doReload();
               return Object.freeze({ version: json.version });
             });
           },
-          function (e) { throw artifactError('upstream_error', e && e.message ? String(e.message) : 'Network error.'); }
+          function (e) { throw pageError('upstream_error', e && e.message ? String(e.message) : 'Network error.'); }
         );
       });
     }
 
-    artifactNamespace = Object.freeze({
-      publish: publish,
-      edit: unsupported('capability_removed', 'edit'),
-      sync: unsupported('capability_removed', 'sync'),
-      metadata: unsupported('capability_removed', 'metadata'),
-    });
-    return artifactNamespace;
+    pageNamespace = Object.freeze({ publish: publish });
+    return pageNamespace;
   }
 
   function downloadError(code, message) { return { code: code, message: message }; }
@@ -1265,11 +1250,6 @@
         if (!request || typeof request !== 'object' || typeof request.filename !== 'string' || request.filename.length > 512) {
           throw downloadError('bad_request', 'save expects {filename, data}.');
         }
-        // Lager issues no export requests, so any token a page names is unknown.
-        if (request.request !== undefined && request.request !== null) {
-          if (typeof request.request !== 'string') throw downloadError('bad_request', 'request must be a string.');
-          throw downloadError('request_unknown', 'No export request with this token is open.');
-        }
         var name = downloadName(request.filename);
         if (name === '') throw downloadError('bad_request', 'The filename is empty.');
         if (new Blob([name]).size > DOWNLOAD_NAME_MAX_BYTES) throw downloadError('bad_request', 'The filename is longer than 240 bytes.');
@@ -1304,8 +1284,7 @@
     if (levelOf(session)) states.db = 'granted';
     if (assetsAllowed(session)) states.assets = 'granted';
     if (roomAvailable(session)) states.room = 'granted';
-    if (declaredObject(session, 'artifact')) states.artifact = 'granted';
-    if (declaredObject(session, 'self')) states.self = 'granted';
+    if (pageAvailable(session)) states.page = 'granted';
     if (declaredObject(session, 'downloads')) states.downloads = 'granted';
     var one = function (name) { return typeof name === 'string' && Object.prototype.hasOwnProperty.call(states, name) ? states[name] : 'unavailable'; };
     var all = function () { var o = {}; Object.keys(states).sort().forEach(function (k) { o[k] = states[k]; }); return o; };
@@ -1317,7 +1296,6 @@
         names.forEach(function (n) { o[n] = one(n); });
         return Promise.resolve(o);
       },
-      manage: function () { return Promise.resolve(undefined); },
     });
   }
 
@@ -1331,7 +1309,7 @@
       if (name === 'user') return buildUser(session);
       if (name === 'assets') return assetsAllowed(session) ? buildAssets() : null;
       if (name === 'room') return roomAvailable(session) ? buildRoom(session) : null;
-      if (name === 'artifact' || name === 'self') return artifactAvailable(session) ? buildArtifact(session) : null;
+      if (name === 'page') return pageAvailable(session) ? buildPage(session) : null;
       if (name === 'downloads') return declaredObject(session, 'downloads') ? buildDownloads(session) : null;
       if (name === 'permissions') return buildPermissions(session);
       return null;
@@ -1351,88 +1329,10 @@
     return memo.get(name);
   }
 
-  // ------------------------------------------------------------------ window.storage
-
-  function storageError(e) {
-    return e instanceof Error ? e : new Error(e && e.message ? String(e.message) : 'Storage request failed.');
-  }
-
-  function checkKey(key) {
-    if (typeof key !== 'string' || key === '') throw new Error('Key must be a non-empty string.');
-    // The key becomes one path segment in its encoded form, and the server allows at most 200 bytes per segment.
-    var encoded;
-    try { encoded = encodeURIComponent(key); } catch (e) { throw new Error('Invalid key'); }
-    if (encoded.length > 200) throw new Error('Key too long');
-  }
-
-  /** Resolves the base collection path for a storage call, or throws. */
-  function storageBase(shared) {
-    return getSession().then(function (session) {
-      if (shared) {
-        if (!levelOf(session)) throw new Error('Storage is not available.');
-        return 'kv';
-      }
-      var id = viewerId(session);
-      if (!id) throw new Error('Not signed in');
-      return 'data/users/' + id + '/storage/kv';
-    });
-  }
-
-  function withBase(shared, fn) {
-    return storageBase(shared).then(fn).catch(function (e) { throw storageError(e); });
-  }
-
-  var storage = Object.freeze({
-    set: function (key, value, shared) {
-      shared = !!shared;
-      return Promise.resolve().then(function () {
-        checkKey(key);
-        if (typeof value !== 'string') throw new Error('Value must be a string.');
-        return withBase(shared, function (base) {
-          return makeDocRef(base + '/' + encodeURIComponent(key)).set({ key: key, value: value });
-        });
-      }).then(function () { return { key: key, value: value, shared: shared }; });
-    },
-    get: function (key, shared) {
-      shared = !!shared;
-      return Promise.resolve().then(function () {
-        checkKey(key);
-        return withBase(shared, function (base) { return makeDocRef(base + '/' + encodeURIComponent(key)).get(); });
-      }).then(function (snap) {
-        var data = snap.exists ? snap.data() : null;
-        if (!data || typeof data.value !== 'string') throw new Error('Key not found: ' + key);
-        return { key: key, value: data.value, shared: shared };
-      });
-    },
-    delete: function (key, shared) {
-      shared = !!shared;
-      return Promise.resolve().then(function () {
-        checkKey(key);
-        return withBase(shared, function (base) { return makeDocRef(base + '/' + encodeURIComponent(key)).delete(); });
-      }).then(function () { return { key: key, deleted: true, shared: shared }; });
-    },
-    list: function (prefix, shared) {
-      shared = !!shared;
-      prefix = prefix === undefined ? '' : prefix;
-      return Promise.resolve().then(function () {
-        if (typeof prefix !== 'string') throw new Error('Prefix must be a string.');
-        return withBase(shared, function (base) { return makeQuery(base, {}).get(); });
-      }).then(function (snap) {
-        var keys = [];
-        snap.docs.forEach(function (d) {
-          var data = d.data();
-          if (data && typeof data.key === 'string' && data.key.indexOf(prefix) === 0) keys.push(data.key);
-        });
-        keys.sort();
-        return { keys: keys, prefix: prefix, shared: shared };
-      });
-    },
-  });
-
   // ------------------------------------------------------------------ export
 
-  // Pages whose version declares `artifact`/`self` follow saves of any view, so the session is read once the page has settled.
-  // It is shared with the first `claude.use()`; pages that declare neither open no event stream.
+  // Pages whose version declares `page` follow saves of any view, so the session is read once the page has settled.
+  // It is shared with the first `lager.use()`; pages that do not declare it open no event stream.
   setTimeout(function () { getSession().then(watchReloads).catch(function () { /* no session, no watching */ }); }, 0);
 
   // ------------------------------------------------------------------ complete
@@ -1445,7 +1345,7 @@
 
   /**
    * Asks the language model the server's administrator set up. `prompt` is a string or a list of `{role, content}`
-   * messages; `options` may carry `system`, `maxTokens` and `full`. Resolves the answer text, like claude.ai's claude.complete; with
+   * messages; `options` may carry `system`, `maxTokens` and `full`. Resolves the answer text; with
    * `full: true` it resolves `{text, model, stopReason, truncated}` instead, so an app can tell a cut-off answer from a bad one.
    */
   function complete(prompt, options) {
@@ -1476,9 +1376,8 @@
     });
   }
 
-  window.claude = Object.freeze({
+  window.lager = Object.freeze({
     use: use,
     complete: complete,
   });
-  window.storage = storage;
 })();

@@ -5,6 +5,8 @@ const MAX_SEGMENT_BYTES = 200;
 const MAX_PATH_BYTES = 1000;
 const MAX_DOC_BYTES = 256 * 1024;
 const MAX_DEPTH = 32;
+/** The characters a path segment may use; the browser runtime enforces the same set, so every stored path stays addressable. */
+const SEGMENT_RE = /^[A-Za-z0-9_\-.~:@+]+$/;
 
 function segments(path: unknown): string[] {
   if (typeof path !== 'string' || path === '') throw new LagerError('invalid_argument', 'Path must be a non-empty string.');
@@ -13,6 +15,8 @@ function segments(path: unknown): string[] {
   if (segs.length > MAX_SEGMENTS) throw new LagerError('invalid_argument', `Path has more than ${MAX_SEGMENTS} segments.`);
   for (const s of segs) {
     if (s === '') throw new LagerError('invalid_argument', 'Path must not contain empty segments.');
+    if (s === '.' || s === '..') throw new LagerError('invalid_argument', 'Path segments must not be "." or "..".');
+    if (!SEGMENT_RE.test(s)) throw new LagerError('invalid_argument', `Path segment "${s}" uses characters other than letters, digits and _ - . ~ : @ +.`);
     if (Buffer.byteLength(s) > MAX_SEGMENT_BYTES) {
       throw new LagerError('invalid_argument', `Path segments are limited to ${MAX_SEGMENT_BYTES} bytes.`);
     }

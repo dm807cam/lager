@@ -63,7 +63,7 @@ describe('home page', () => {
     const { u } = scenario(h);
     const res = await get(h, await loginAs(h, u));
     expect(res.status).toBe(200);
-    // Nothing of their own, nothing shared, no catalog: the empty home with the tagline, and no steps (they cannot connect Claude).
+    // Nothing of their own, nothing shared, no catalog: the empty home with the tagline, and no steps (they cannot connect an AI assistant).
     expect(res.text).toContain(en('brand.tagline'));
     expect(res.text).toContain(en('dash.noInstances'));
     expect(res.text).toContain(en('home.empty.user'));

@@ -347,3 +347,15 @@ describe('InstanceData export and import', () => {
     expect(store.get('d1', 'a/1')?.data).toEqual({ n: 2 });
   });
 });
+
+describe('path rules shared with the browser runtime', () => {
+  it('refuses segments the runtime could not address', async () => {
+    const { parseDocPath, assertCollectionPath } = await import('../src/data/paths.js');
+    for (const bad of ['notes/Mein Eintrag', 'notes/ä', 'notes/a%20b', 'notes/..', 'notes/.', 'a b', 'notes/x#y']) {
+      expect(() => (bad.split('/').length % 2 === 0 ? parseDocPath(bad) : assertCollectionPath(bad)), bad).toThrow(LagerError);
+    }
+    for (const good of ['notes/a-b_c.d~e:f@g+h', 'data/users/3f2a/settings/main/x', 'notes/2026-11-19T10:00']) {
+      expect(() => parseDocPath(good), good).not.toThrow();
+    }
+  });
+});

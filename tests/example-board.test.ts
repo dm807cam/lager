@@ -53,7 +53,7 @@ const until = async (check: () => boolean): Promise<void> => {
 };
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
-afterEach(() => { delete g.claude; delete g.storage; document.body.innerHTML = ''; });
+afterEach(() => { delete g.lager; document.body.innerHTML = ''; });
 
 describe('examples/board.html with the real runtime', () => {
   it('uses no external resources and no browser storage', () => {

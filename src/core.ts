@@ -37,9 +37,9 @@ export interface Core {
   domains: Domains;
   /** Every authorization decision on apps and instances. */
   access: Access;
-  /** The language model apps reach through `window.claude.complete` (bring your own model). */
+  /** The language model apps reach through `window.lager.complete` (bring your own model). */
   ai: AiModels;
-  /** App icons rendered from the SVG Claude supplies. `await core.icons.ready()` before `set` or `setDefault`. */
+  /** App icons rendered from the SVG the deploying assistant supplies. `await core.icons.ready()` before `set` or `setDefault`. */
   icons: AppIcons;
   close(): void;
 }

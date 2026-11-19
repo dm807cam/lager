@@ -1,0 +1,29 @@
+name: 🌍 Translation
+description: Add a new language or report a problem with an existing translation.
+labels: ["i18n"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping to bring Lager to more people! Adding a language takes one catalog file and two small registrations, see [Translations](https://github.com/dm807cam/lager/blob/main/CONTRIBUTING.md#translations).
+  - type: input
+    id: language
+    attributes:
+      label: Language
+      placeholder: Italian (it)
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is this about?
+      options:
+        - I want to add this language
+        - A text in an existing translation is wrong or reads badly
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: For a wrong text, name the page, the current text and your suggestion.

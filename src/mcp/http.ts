@@ -24,13 +24,18 @@ const methodNotAllowed: RequestHandler = (_req, res) => {
 export const mcpExtension: PlatformExtension = (router, core) => {
   const { config } = core;
   const origin = config.publicUrl.origin;
-  const challenge = `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"`;
+  // The protected resource is the MCP endpoint itself (RFC 9728, MCP authorization spec), so clients that
+  // compare the resource with the URL they connect to find an exact match.
+  const resourceUrl = new URL('/mcp', origin);
+  const metadataUrl = `${origin}/.well-known/oauth-protected-resource/mcp`;
+  const challenge = `Bearer resource_metadata="${metadataUrl}"`;
 
   let auth: RequestHandler | null = null;
   try {
     auth = mcpAuthRouter({
       provider: new LagerOAuthProvider(core),
       issuerUrl: new URL(origin),
+      resourceServerUrl: resourceUrl,
       resourceName: 'Lager',
       authorizationOptions: { rateLimit: RATE_LIMIT },
       tokenOptions: { rateLimit: RATE_LIMIT },
