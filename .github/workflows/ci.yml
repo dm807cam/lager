@@ -43,6 +43,17 @@ jobs:
       - name: Build
         run: npm run build
 
+  installer:
+    name: Installer script
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      # ShellCheck is preinstalled on GitHub's Ubuntu runners. The behaviour is tested in tests/install-script.test.ts.
+      - name: ShellCheck
+        run: shellcheck install.sh
+
   min-node:
     name: Runs on Node 22.13
     # package.json promises Node 22.13 for running Lager. The test tools themselves need newer Node (jsdom wants
