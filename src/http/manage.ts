@@ -3,7 +3,7 @@ import type { Request, RequestHandler, Response } from 'express';
 import { hostUrl, instanceUrl, MAX_SLUG_LENGTH } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
-import { countSnapshotAction } from './snapshot-limit.js';
+import { withSnapshotBudget } from './snapshot-limit.js';
 import { formatSize, t, type Locale, type MessageKey } from '../i18n/index.js';
 import { localeOf } from './locale.js';
 import type { App, Instance, SelfInstances, UsersLevel, Version, Visibility } from '../platform/apps.js';
@@ -358,16 +358,17 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const version = Number(field(req, 'version'));
     if (!Number.isInteger(version)) throw new LagerError('invalid_argument', 'Invalid version.');
     const inst = managed(user, param(req, 'slug'));
-    // Re-activating the active version changes nothing and takes no snapshot, so it costs no budget.
-    if (version !== inst.activeVersion) countSnapshotAction(core, inst.id);
-    core.apps.activate(inst.id, version, user.id);
+    withSnapshotBudget(core, inst.id, () => core.apps.activate(inst.id, version, user.id));
   }));
 
   router.post('/ui/instances/:slug/auto-update', ...action(instBack, (req, user) => {
     // The form sends a hidden "0" and, when ticked, a "1" as well.
     const raw = (req.body as Record<string, unknown> | undefined)?.on;
     const on = Array.isArray(raw) ? raw.includes('1') : raw === '1';
-    core.apps.setAutoUpdate(managed(user, param(req, 'slug')).id, on, user.id);
+    const inst = managed(user, param(req, 'slug'));
+    // Switching it on can move the instance to the latest version, which takes a snapshot like a manual activation.
+    if (on) withSnapshotBudget(core, inst.id, () => core.apps.setAutoUpdate(inst.id, on, user.id));
+    else core.apps.setAutoUpdate(inst.id, on, user.id);
   }));
 
   router.post('/ui/instances/:slug/badge', ...action(instBack, (req, user) => {
@@ -390,8 +391,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const inst = managed(user, param(req, 'slug'));
     // A restore also rolls back what the app's rules keep from a manager (other people's private areas, owner-only paths).
     if (!core.access.canRestoreInstance(inst, user)) throw new LagerError('forbidden', 'Only the owner may do this.');
-    countSnapshotAction(core, inst.id);
-    core.data.restore(inst.id, field(req, 'snapshot'));
+    withSnapshotBudget(core, inst.id, () => core.data.restore(inst.id, field(req, 'snapshot')));
   }));
 
   router.post('/ui/instances/:slug/grants', ...action(instBack, (req, user) => {

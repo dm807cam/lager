@@ -29,6 +29,8 @@ const DEFAULT_TTL_MS = 30_000;
 const MAX_TTL_MS = 300_000;
 /** All snapshots of an instance together may take this many times its quota; they do not count against the quota itself. */
 export const SNAPSHOT_QUOTA_FACTOR = 3;
+/** The newest snapshot at least this old is never pruned, so a burst of new snapshots cannot push out every earlier state. */
+export const SNAPSHOT_OLD_MS = 24 * 60 * 60_000;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS docs (
@@ -332,7 +334,11 @@ export class InstanceData {
     for (;;) {
       // Fetched anew for every batch: the consumer may be a slow download, and an idle handle can be closed in between.
       const db = this.open(instanceId, false);
-      if (!db) return;
+      if (!db) {
+        // Nothing to export is fine at the start; data that vanishes half-way (the instance was deleted) must not look like a complete export.
+        if (after === '') return;
+        throw new LagerError('not_found', 'The instance was deleted during the export.');
+      }
       const rows = db.prepare('SELECT path, data FROM docs WHERE path > ? ORDER BY path LIMIT ?').all(after, EXPORT_BATCH) as unknown as Array<{ path: string; data: string }>;
       for (const r of rows) {
         const owner = privateAreaOwner(r.path.split('/'));
@@ -432,20 +438,24 @@ export class InstanceData {
     return out.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
   }
 
-  /** Bytes all snapshots of the instance take on disk; they are outside the quota. */
-  snapshotBytes(instanceId: string): number {
-    return this.listSnapshots(instanceId).reduce((sum, s) => sum + s.sizeBytes, 0);
-  }
-
-  /** Drops the oldest snapshots beyond `snapshotKeep` and beyond the byte budget; the newest one always stays. */
+  /**
+   * Drops the oldest snapshots beyond `snapshotKeep` and beyond the byte budget. Two always stay and count first: the newest
+   * one, and the newest one that is at least a day old, so that several version changes in a row leave a state from before them.
+   */
   private prune(instanceId: string): void {
     const keep = Math.max(1, Math.floor(this.snapshotKeep));
     const budget = this.quotaBytes > 0 ? this.quotaBytes * SNAPSHOT_QUOTA_FACTOR : Infinity;
-    let bytes = 0;
-    this.listSnapshots(instanceId).forEach((s, i) => {
-      bytes += s.sizeBytes;
-      if (i > 0 && (i >= keep || bytes > budget)) fs.rmSync(path.join(this.snapshotDir(instanceId), `${s.id}.sqlite`), { force: true });
-    });
+    const [newest, ...rest] = this.listSnapshots(instanceId);
+    if (!newest) return;
+    const old = rest.find((s) => Date.parse(s.createdAt) <= Date.now() - SNAPSHOT_OLD_MS);
+    let count = old ? 2 : 1;
+    let bytes = newest.sizeBytes + (old?.sizeBytes ?? 0);
+    let room = true;
+    for (const s of rest) {
+      if (s === old) continue;
+      room = room && count < keep && bytes + s.sizeBytes <= budget;
+      if (room) { count++; bytes += s.sizeBytes; } else fs.rmSync(path.join(this.snapshotDir(instanceId), `${s.id}.sqlite`), { force: true });
+    }
   }
 
   restore(instanceId: string, snapshotId: string): void {

@@ -8,6 +8,7 @@ import type { HubEvent } from '../data/hub.js';
 import { LagerError } from '../errors.js';
 import type { Capabilities, DbRule, Instance } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
+import { addressKey } from './client-address.js';
 import { clearCookie, instanceCookieName, NONCE_RE, nonceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
 import { safeReturnPath, sendError, sendNotFound } from './errors.js';
 import { injectRuntime, type BadgeText } from './inject.js';
@@ -40,10 +41,12 @@ const MAX_BUFFERED_BYTES = 1024 * 1024;
 /** How long a started sign-in may take before its nonce lapses. */
 const NONCE_SECONDS = 600;
 /**
- * Database operations per viewer, instance and minute. A page load makes one read per listener and every change one more,
- * so real apps stay far below; guests are counted per client address and get half.
+ * Database operations per viewer, instance and minute. A page load makes one read per listener and every change at most one
+ * more per listener every 250 ms (the runtime coalesces), so real apps stay far below. Guests are counted per client address
+ * (an IPv6 /64 is one address): that address can stand for many people behind one router, who can only read, so it gets
+ * more reads than a single account and fewer writes. All guests of an instance together get `guestTotalFactor` times that.
  */
-export const DB_RATE = { reads: 600, writes: 300, guestShare: 0.5, windowMs: 60_000 };
+export const DB_RATE = { reads: 600, writes: 300, guestReads: 1200, guestWrites: 150, guestTotalFactor: 4, windowMs: 60_000 };
 const DB_READS = new Set(['get', 'query']);
 const RANK: Record<Level, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
 
@@ -281,10 +284,14 @@ export function createInstanceRouter(core: Core): express.Router {
     if (req.get('X-Lager-Request') !== '1') throw new LagerError('forbidden', 'Missing X-Lager-Request header.');
     const ctx = ctxOf(res);
     requireAccess(ctx);
-    // Counted before anything is read or parsed further: every query loads its whole collection.
+    // Counted before the store is touched: every query loads its whole collection. Anything that is not a read counts as a write.
     const isRead = DB_READS.has((req.body as { op?: unknown } | undefined)?.op as string);
-    const budget = (isRead ? DB_RATE.reads : DB_RATE.writes) * (ctx.viewer.userId === null ? DB_RATE.guestShare : 1);
-    if (!(isRead ? dbReads : dbWrites).hit(`${ctx.instance.id}\n${ctx.viewer.userId ?? `ip:${req.ip ?? ''}`}`, budget)) {
+    const limiter = isRead ? dbReads : dbWrites;
+    const guest = ctx.viewer.userId === null;
+    const budget = guest ? (isRead ? DB_RATE.guestReads : DB_RATE.guestWrites) : (isRead ? DB_RATE.reads : DB_RATE.writes);
+    const viewerKey = `${ctx.instance.id}\n${ctx.viewer.userId ?? `ip:${addressKey(req.ip)}`}`;
+    // Guests also share one budget per instance, so many addresses together stay bounded; a guest already at their own limit does not use it up.
+    if (!limiter.hit(viewerKey, budget) || (guest && !limiter.hit(`${ctx.instance.id}\nguests`, budget * DB_RATE.guestTotalFactor))) {
       res.set('Retry-After', '5');
       throw new LagerError('rate_limited', 'Too many database requests; try again shortly.');
     }

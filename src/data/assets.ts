@@ -135,7 +135,6 @@ export class InstanceAssets {
     return this.dbs.size;
   }
 
-
   private instanceDir(instanceId: string): string {
     if (typeof instanceId !== 'string' || !INSTANCE_ID_RE.test(instanceId)) throw new LagerError('invalid_argument', 'Invalid instance id.');
     return path.join(this.dataDir, 'instances', instanceId);

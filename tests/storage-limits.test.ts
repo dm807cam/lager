@@ -8,9 +8,10 @@ import { InstanceAssets } from '../src/data/assets.js';
 import { MAX_OPEN_HANDLES } from '../src/data/handles.js';
 import { Hub } from '../src/data/hub.js';
 import { runQuery, type QuerySpec } from '../src/data/query.js';
-import { InstanceData, SNAPSHOT_QUOTA_FACTOR } from '../src/data/store.js';
+import { InstanceData, SNAPSHOT_OLD_MS, SNAPSHOT_QUOTA_FACTOR } from '../src/data/store.js';
 import { LagerError } from '../src/errors.js';
 import { apiExtension } from '../src/http/api.js';
+import { addressKey } from '../src/http/client-address.js';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { DB_RATE } from '../src/http/instance.js';
 import { manageExtension } from '../src/http/manage.js';
@@ -25,6 +26,7 @@ const stores: Array<{ close(): void }> = [];
 let h: Harness | undefined;
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
   for (const s of stores.splice(0)) s.close();
   h?.core.close();
   h = undefined;
@@ -53,9 +55,47 @@ describe('snapshot byte budget', () => {
     const kept = store.listSnapshots('i1');
     expect(kept.length).toBeLessThan(8);
     expect(kept.length).toBeGreaterThan(1);
-    expect(store.snapshotBytes('i1')).toBeLessThanOrEqual(SNAPSHOT_QUOTA_FACTOR * quota);
+    expect(kept.reduce((sum, s) => sum + s.sizeBytes, 0)).toBeLessThanOrEqual(SNAPSHOT_QUOTA_FACTOR * quota);
     // Newest first, without gaps: only the oldest ones went.
     expect(kept.map((s) => s.id)).toEqual(made.map((s) => s.id).reverse().slice(0, kept.length));
+  });
+
+  it('keeps the newest snapshot that is at least a day old when newer ones fill the budget, and stays within it', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const quota = 200 * KIB;
+    const store = dataStore(tmp(), { quota });
+    fill(store);
+    store.snapshot('i1', 'ancient');
+    vi.setSystemTime(Date.now() + SNAPSHOT_OLD_MS);
+    const old = store.snapshot('i1', 'yesterday')!;
+    vi.setSystemTime(Date.now() + SNAPSHOT_OLD_MS);
+    // A burst of version changes today: more than the budget holds.
+    const made = Array.from({ length: 8 }, (_, n) => store.snapshot('i1', `s${n}`)!);
+    const kept = store.listSnapshots('i1');
+    expect(kept[kept.length - 1].id).toBe(old.id);
+    expect(kept.some((s) => s.label === 'ancient')).toBe(false);
+    expect(kept.length).toBeGreaterThan(2);
+    expect(kept.length).toBeLessThan(9);
+    expect(kept.slice(0, -1).map((s) => s.id)).toEqual(made.map((s) => s.id).reverse().slice(0, kept.length - 1));
+    expect(kept.reduce((sum, s) => sum + s.sizeBytes, 0)).toBeLessThanOrEqual(SNAPSHOT_QUOTA_FACTOR * quota);
+    // Once a newer snapshot is a day old it takes over, so the protected state does not grow stale.
+    vi.setSystemTime(Date.now() + SNAPSHOT_OLD_MS + 1000);
+    for (let n = 0; n < 8; n++) store.snapshot('i1', `t${n}`);
+    const later = store.listSnapshots('i1');
+    expect(later[later.length - 1].id).toBe(made[7].id);
+    expect(later.reduce((sum, s) => sum + s.sizeBytes, 0)).toBeLessThanOrEqual(SNAPSHOT_QUOTA_FACTOR * quota);
+  });
+
+  it('the count limit also leaves the day-old snapshot in place', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const store = dataStore(tmp(), { keep: 3 });
+    fill(store);
+    store.snapshot('i1', 'yesterday');
+    vi.setSystemTime(Date.now() + SNAPSHOT_OLD_MS);
+    for (let n = 0; n < 5; n++) store.snapshot('i1', `s${n}`);
+    expect(store.listSnapshots('i1').map((s) => s.label)).toEqual(['s4', 's3', 'yesterday']);
   });
 
   it('without a quota only the count applies', () => {
@@ -216,6 +256,16 @@ describe('open database handles', () => {
     expect(store.openHandles).toBeLessThanOrEqual(2);
   });
 
+  it('an export fails instead of ending early when the instance is deleted half-way', () => {
+    const store = dataStore(tmp());
+    store.importDocs('gone', Array.from({ length: 1200 }, (_, i) => ({ path: `tasks/t${String(i).padStart(4, '0')}`, data: { i } })), null);
+    let seen = 0;
+    expect(code(() => { for (const d of store.exportDocs('gone')) { if (++seen === 10) store.trash('gone'); void d; } })).toBe('not_found');
+    expect(seen).toBe(500);
+    // An instance without data exports nothing, without an error.
+    expect([...store.exportDocs('never')]).toEqual([]);
+  });
+
   it('snapshot, restore and trash work on instances whose handle was closed', () => {
     const dir = tmp();
     const store = dataStore(dir, { maxOpen: 2 });
@@ -252,16 +302,18 @@ describe('open database handles', () => {
 
 describe('http', () => {
   const HOST = 'todo.apps.localhost';
-  function setup(): { h: Harness; token: string; instId: string } {
-    h = makeHarness({ extensions: [apiExtension, dashboardExtension, manageExtension] });
+  function setup(trustProxy?: number): { h: Harness; token: string; instId: string } {
+    h = makeHarness({ extensions: [apiExtension, dashboardExtension, manageExtension], trustProxy });
     h.core.apps.deploy({ slug: 'todo', html: '<p>1</p>', userId: h.adminId, capabilities: { db: { rules: [{ path: 'secret', read: 'owner' }] } } });
     h.core.apps.deploy({ slug: 'todo', html: '<p>2</p>', userId: h.adminId, capabilities: { db: {}, user: {} } });
     return { h, token: h.core.tokens.create(h.adminId, 'test').token, instId: h.core.apps.getInstanceBySlug('todo')!.id };
   }
-  const db = (h: Harness, cookie: string | undefined, body: object) => {
+  const db = (h: Harness, cookie: string | undefined, body: object, from?: string) => {
     const req = request(h.app).post('/__lager/db').set('Host', HOST).set('X-Lager-Request', '1');
+    if (from) req.set('X-Forwarded-For', from);
     return (cookie ? req.set('Cookie', cookie) : req).send(body);
   };
+  const many = <T>(n: number, fn: (i: number) => Promise<T>): Promise<T[]> => Promise.all(Array.from({ length: n }, (_, i) => fn(i)));
 
   it('restores and manual activations share one budget per instance across REST and the dashboard', async () => {
     const { h, token, instId } = setup();
@@ -339,18 +391,135 @@ describe('http', () => {
     expect((await db(h, undefined, { op: 'get', path: 'tasks/t1' })).status).toBe(200);
   });
 
-  it('guests are counted per client address and get half the budget', async () => {
-    const { h, instId } = setup();
+  it('guests are counted per client address, an IPv6 /64 being one address', async () => {
+    const { h, instId } = setup(1);
     h.core.apps.setVisibility(instId, 'public', h.adminId);
-    const half = DB_RATE.reads * DB_RATE.guestShare;
-    const reads = await Promise.all(Array.from({ length: half }, () => db(h, undefined, { op: 'query', path: 'tasks' })));
-    expect(reads.every((r) => r.status === 200)).toBe(true);
-    const refused = await db(h, undefined, { op: 'query', path: 'tasks' });
+    // A guest may not write, but the attempt is counted like any other write.
+    const write = (from: string) => db(h, undefined, { op: 'set', path: 'tasks/t1', data: {} }, from);
+    const first = await many(DB_RATE.guestWrites, (i) => write(`2001:db8:1:2::${(i + 1).toString(16)}`));
+    expect(first.every((r) => r.status === 403)).toBe(true);
+    for (const from of ['2001:db8:1:2:ffff:ffff:ffff:ffff', '2001:DB8:1:2::1', '2001:0db8:0001:0002:0000:0000:0000:0009']) {
+      const refused = await write(from);
+      expect(refused.status, from).toBe(429);
+      expect(refused.body.error.code).toBe('rate_limited');
+    }
+    // Another /64, an IPv4 address and its IPv4-mapped spelling: the last two are one client.
+    expect((await write('2001:db8:1:3::1')).status).toBe(403);
+    const v4 = await many(DB_RATE.guestWrites, (i) => write(i % 2 === 0 ? '203.0.113.7' : '::ffff:203.0.113.7'));
+    expect(v4.every((r) => r.status === 403)).toBe(true);
+    expect((await write('203.0.113.7')).status).toBe(429);
+    expect((await write('::ffff:cb00:7107')).status).toBe(429);
+    expect((await write('203.0.113.8')).status).toBe(403);
+    // Reads are counted apart, and a signed-in viewer from the same address has a budget of their own.
+    expect((await db(h, undefined, { op: 'query', path: 'tasks' }, '203.0.113.7')).status).toBe(200);
+    const cookie = await h.enter('todo', await h.login());
+    expect((await db(h, cookie, { op: 'set', path: 'tasks/t1', data: {} }, '203.0.113.7')).status).toBe(200);
+  });
+
+  it('all guests of an instance together are bounded, whatever addresses they come from', async () => {
+    const { h, instId } = setup(1);
+    h.core.apps.setVisibility(instId, 'public', h.adminId);
+    h.core.apps.deploy({ slug: 'other', html: '<p>1</p>', userId: h.adminId });
+    h.core.apps.setVisibility(h.core.apps.getInstanceBySlug('other')!.id, 'public', h.adminId);
+    const write = (from: string, host = HOST) => request(h!.app).post('/__lager/db').set('Host', host).set('X-Lager-Request', '1')
+      .set('X-Forwarded-For', from).send({ op: 'set', path: 'tasks/t1', data: {} });
+    const total = DB_RATE.guestWrites * DB_RATE.guestTotalFactor;
+    // Every request from a prefix of its own: no single address comes near its limit.
+    const spread = await many(total, (i) => write(`2001:db8:${(i + 1).toString(16)}::1`));
+    expect(spread.every((r) => r.status === 403)).toBe(true);
+    const refused = await write('2001:db8:ffff::1');
     expect(refused.status).toBe(429);
     expect(refused.body.error.code).toBe('rate_limited');
-    // A signed-in viewer from the same address has a budget of their own.
+    // Guests on another instance and signed-in viewers of this one are not affected.
+    expect((await write('2001:db8:ffff::1', 'other.apps.localhost')).status).toBe(403);
     const cookie = await h.enter('todo', await h.login());
-    expect((await db(h, cookie, { op: 'query', path: 'tasks' })).status).toBe(200);
+    expect((await db(h, cookie, { op: 'set', path: 'tasks/t1', data: {} }, '2001:db8:ffff::1')).status).toBe(200);
+  });
+
+  it('the database budget comes back when its window has passed', async () => {
+    const { h } = setup();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const cookie = await h.enter('todo', await h.login());
+    const set = () => db(h, cookie, { op: 'set', path: 'tasks/t1', data: { a: 1 } });
+    await many(DB_RATE.writes, set);
+    expect((await set()).status).toBe(429);
+    vi.setSystemTime(Date.now() + DB_RATE.windowMs - 1000);
+    expect((await set()).status).toBe(429);
+    vi.setSystemTime(Date.now() + 1001);
+    expect((await set()).status).toBe(200);
+  });
+
+  it('refused and failed attempts cost nothing of the snapshot budget', async () => {
+    const { h, token, instId } = setup();
+    const manager = h.core.users.create({ email: 'm@x.y', name: 'm', password: 'password-123', role: 'user' });
+    h.core.access.setGrant(h.core.apps.getInstanceBySlug('todo')!, 'user', manager.id, 'admin', h.core.users.get(h.adminId)!);
+    const managerToken = h.core.tokens.create(manager.id, 'test').token;
+    const activate = (version: number, bearer = token) => request(h!.app).post('/api/instances/todo/activate').set('Host', h!.host)
+      .set('Authorization', `Bearer ${bearer}`).send({ version });
+    const admin = h.core.users.get(h.adminId)!;
+    const cookies = new Map([[admin.id, await h.login()], [manager.id, await h.login(manager.email, 'password-123')]]);
+    const ui = (user: { id: string }, route: string, body: Record<string, string>) =>
+      request(h!.app).post(`/ui/instances/todo/${route}`).set('Host', h!.host).set('Cookie', cookies.get(user.id)!).type('form')
+        .send({ csrf: signToken({ uid: user.id, k: 'ui' }, h!.core.config.secret, 3600), ...body });
+    h.core.data.set(instId, 'tasks/t1', { v: 1 }, h.adminId);
+    const snap = h.core.data.snapshot(instId, 'manual')!;
+    const tries = SNAPSHOT_ACTIONS_PER_HOUR + 2;
+    for (let i = 0; i < tries; i++) {
+      // A version that does not exist, and one a manager may not switch to because its data rules differ.
+      expect((await activate(9)).status).toBe(404);
+      expect((await activate(1, managerToken)).status).toBe(409);
+      // A manager may not restore at all; the owner names a snapshot that does not exist, then a malformed id.
+      expect((await ui(manager, 'restore', { snapshot: snap.id })).status).toBe(403);
+      expect((await ui(admin, 'restore', { snapshot: '20200101T000000000Z-gone' })).status).toBe(404);
+      expect((await ui(admin, 'restore', { snapshot: '../x' })).status).toBe(302);
+    }
+    expect(h.core.data.listSnapshots(instId).map((s) => s.id)).toEqual([snap.id]);
+    // The whole budget is still there for what really takes a snapshot.
+    for (let i = 0; i < SNAPSHOT_ACTIONS_PER_HOUR - 1; i++) expect((await activate(i % 2 === 0 ? 1 : 2)).status).toBe(200);
+    expect((await ui(admin, 'restore', { snapshot: snap.id })).status).toBe(302);
+    expect(h.core.data.listSnapshots(instId).length).toBe(1 + SNAPSHOT_ACTIONS_PER_HOUR);
+    expect((await activate(2)).status).toBe(429);
+    // An instance without data takes no snapshot, so its version changes are free.
+    h.core.apps.deploy({ slug: 'empty', html: '<p>1</p>', userId: h.adminId });
+    h.core.apps.deploy({ slug: 'empty', html: '<p>2</p>', userId: h.adminId });
+    for (let i = 0; i < tries; i++) {
+      const res = await request(h.app).post('/api/instances/empty/activate').set('Host', h.host).set('Authorization', `Bearer ${token}`).send({ version: i % 2 === 0 ? 1 : 2 });
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it('switching auto-update on counts when it changes the version, and the budget comes back after an hour', async () => {
+    const { h, token, instId } = setup();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const post = (route: string, body: object) => request(h!.app).post(`/api/instances/todo/${route}`).set('Host', h!.host)
+      .set('Authorization', `Bearer ${token}`).send(body);
+    h.core.data.set(instId, 'tasks/t1', { v: 1 }, h.adminId);
+    // Switching it on or off without a version change is free.
+    for (let i = 0; i < SNAPSHOT_ACTIONS_PER_HOUR + 2; i++) {
+      expect((await post('auto-update', { on: i % 2 === 0 })).status).toBe(200);
+    }
+    for (let i = 0; i < SNAPSHOT_ACTIONS_PER_HOUR / 2; i++) {
+      expect((await post('activate', { version: 1 })).status).toBe(200);
+      expect((await post('auto-update', { on: true })).body.activeVersion).toBe(2);
+    }
+    expect(h.core.data.listSnapshots(instId)).toHaveLength(SNAPSHOT_ACTIONS_PER_HOUR);
+    // Back on version 1 by other means: switching auto-update on would now take the eleventh snapshot of the hour.
+    h.core.apps.activate(instId, 1, h.adminId);
+    const count = h.core.data.listSnapshots(instId).length;
+    const refused = await post('auto-update', { on: true });
+    expect(refused.status).toBe(429);
+    expect(refused.body.error.code).toBe('rate_limited');
+    const cookie = await h.login();
+    const csrf = signToken({ uid: h.adminId, k: 'ui' }, h.core.config.secret, 3600);
+    const form = await request(h.app).post('/ui/instances/todo/auto-update').set('Host', h.host).set('Cookie', cookie).type('form').send({ csrf, on: ['0', '1'] });
+    expect((await request(h.app).get(form.headers.location as string).set('Host', h.host).set('Cookie', cookie)).text).toContain(t('en', 'notice.snapshotRate'));
+    expect(h.core.apps.getInstanceBySlug('todo')!.activeVersion).toBe(1);
+    expect(h.core.data.listSnapshots(instId)).toHaveLength(count);
+    // Switching it off is never refused.
+    expect((await post('auto-update', { on: false })).status).toBe(200);
+
+    vi.setSystemTime(Date.now() + 60 * 60_000 + 1);
+    expect((await post('auto-update', { on: true })).body.activeVersion).toBe(2);
   });
 
   it('an oversized query is refused over HTTP', async () => {
@@ -376,5 +545,38 @@ describe('http', () => {
     expect((await db(h, undefined, { op: 'get', path: 'secret/s1' })).body.doc).toBeNull();
     expect((await db(h, cookie, { op: 'get', path: 'secret/s1' })).body.doc).not.toBeNull();
     expect(all).not.toHaveBeenCalled();
+  });
+});
+
+describe('addressKey', () => {
+  it('keeps IPv4 addresses and unwraps IPv4-mapped ones', () => {
+    expect(addressKey('203.0.113.7')).toBe('203.0.113.7');
+    expect(addressKey('::ffff:203.0.113.7')).toBe('203.0.113.7');
+    expect(addressKey('::FFFF:203.0.113.7')).toBe('203.0.113.7');
+    expect(addressKey('::ffff:cb00:7107')).toBe('203.0.113.7');
+    expect(addressKey('0:0:0:0:0:ffff:cb00:7107')).toBe('203.0.113.7');
+    expect(addressKey(' 127.0.0.1 ')).toBe('127.0.0.1');
+  });
+
+  it('reduces IPv6 addresses to their /64 in one canonical spelling', () => {
+    const key = '2001:db8:1:2::/64';
+    for (const ip of [
+      '2001:db8:1:2::1', '2001:db8:1:2:ffff:ffff:ffff:ffff', '2001:0db8:0001:0002:0000:0000:0000:0001', '2001:DB8:1:2::ABCD',
+      '2001:db8:1:2:3:4:5:6', '2001:db8:1:2::', '[2001:db8:1:2::1]', '2001:db8:1:2::1%eth0', '2001:db8:1:2::192.0.2.1',
+    ]) expect(addressKey(ip), ip).toBe(key);
+    expect(addressKey('2001:db8:1:3::1')).toBe('2001:db8:1:3::/64');
+    expect(addressKey('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(addressKey('2001:db8:0:0:1::')).toBe('2001:db8:0:0::/64');
+    expect(addressKey('::1')).toBe('0:0:0:0::/64');
+    expect(addressKey('::')).toBe('0:0:0:0::/64');
+    expect(addressKey('fe80::1%en0')).toBe('fe80:0:0:0::/64');
+    // An IPv4-compatible or other embedded form that is not IPv4-mapped stays IPv6.
+    expect(addressKey('64:ff9b::203.0.113.7')).toBe('64:ff9b:0:0::/64');
+  });
+
+  it('maps everything that is not an address to one shared key', () => {
+    for (const ip of [undefined, '', 'unknown', 'not an ip', '1.2.3', '1.2.3.4.5', '999.1.1.1', '2001:db8:::1', '12345::', 'g::1', '1.2.3.4:80', '::ffff:1.2.3']) {
+      expect(addressKey(ip), String(ip)).toBe('unknown');
+    }
   });
 });

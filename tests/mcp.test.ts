@@ -313,6 +313,10 @@ describe('mcp endpoint', () => {
     await call(client, 'db_write', { instance: 'todo', ops: [{ op: 'set', path: 'tasks/t1', data: { v: 1 } }] });
     // Activating the active version takes no snapshot and is free.
     for (let i = 0; i < 3; i++) expect((await call(client, 'activate_version', { instance: 'todo', version: 2 })).isError).toBe(false);
+    for (let i = 0; i < 12; i++) {
+      expect((await call(client, 'activate_version', { instance: 'todo', version: 9 })).json.error.code).toBe('not_found');
+      expect((await call(client, 'restore_snapshot', { instance: 'todo', snapshot: '20200101T000000000Z-gone' })).json.error.code).toBe('not_found');
+    }
     for (let i = 0; i < 9; i++) expect((await call(client, 'activate_version', { instance: 'todo', version: i % 2 === 0 ? 1 : 2 })).isError).toBe(false);
     const snaps = (await call(client, 'list_snapshots', { instance: 'todo' })).json.snapshots as { id: string }[];
     expect(snaps).toHaveLength(9);
@@ -322,8 +326,17 @@ describe('mcp endpoint', () => {
       expect(refused.isError).toBe(true);
       expect(refused.json.error.code).toBe('rate_limited');
     }
+    // Attempts that fail validation cost nothing; switching auto-update on would change the version and is refused like the others.
+    const auto = await call(client, 'set_auto_update', { instance: 'todo', on: true });
+    expect(auto.isError).toBe(true);
+    expect(auto.json.error.code).toBe('rate_limited');
+    expect((await call(client, 'set_auto_update', { instance: 'todo', on: false })).isError).toBe(false);
     expect(r.h.core.apps.getInstanceBySlug('todo')!.activeVersion).toBe(1);
     expect((await call(client, 'list_snapshots', { instance: 'todo' })).json.snapshots).toHaveLength(10);
+    const { tools } = await client.listTools();
+    for (const name of ['activate_version', 'restore_snapshot', 'set_auto_update']) {
+      expect(tools.find((t) => t.name === name)!.description, name).toContain('10 per instance and hour');
+    }
   });
 
   it('restore_snapshot restores data', async () => {
