@@ -21,7 +21,9 @@ const STUBS: Record<string, string> = {
   sleep: '#!/bin/sh\nexit 0\n',
   chown: '#!/bin/sh\necho "chown $*" >> "$STUB_LOG"\n',
   systemctl: '#!/bin/sh\nexit 0\n',
-  hostname: '#!/bin/sh\nif [ "$1" = "-I" ]; then echo "192.168.1.23 fd00::1"; else echo "testpi"; fi\n',
+  // STUB_NO_HOSTNAME_I: a hostname without -I, as on Arch and Alpine.
+  hostname: '#!/bin/sh\nif [ "$1" = "-I" ]; then\n  if [ -n "$STUB_NO_HOSTNAME_I" ]; then echo "hostname: invalid option -- I" >&2; exit 1; fi\n  echo "192.168.1.23 fd00::1"\nelse echo "testpi"; fi\n',
+  ip: '#!/bin/sh\nif [ -n "$STUB_NO_IP" ]; then exit 127; fi\necho "1.1.1.1 via 192.168.1.1 dev eth0 src 192.168.1.50 uid 0"\n',
   curl: '#!/bin/sh\necho "curl $*" >> "$STUB_LOG"\nexit "${STUB_HEALTH_EXIT:-0}"\n',
   docker: `#!/usr/bin/env bash
 echo "docker $*" >> "$STUB_LOG"
@@ -41,7 +43,13 @@ if [ "$1" = run ]; then
   exit 0
 fi
 if [ "$1" = compose ]; then
-  case "$args" in *" ps "*) if [ -n "$STUB_RUNNING" ]; then echo lager; fi ;; esac
+  case "$args" in
+    *" ps "*)
+      if [ -n "$STUB_RUNNING" ]; then echo lager; fi
+      # Far more output than a pipe holds, which a reader that stops at the first match would cut off.
+      if [ "$STUB_RUNNING" = many ]; then for i in $(seq 1 30000); do echo "other-service-$i"; done; fi ;;
+    *"backup.js"*) if [ -n "$STUB_BACKUP_FAIL" ]; then echo "backup: no space left on device" >&2; exit 1; fi ;;
+  esac
   exit 0
 fi
 exit 0
@@ -144,6 +152,74 @@ describe.runIf(process.platform === 'linux')('install.sh', () => {
     expect(fs.readdirSync(path.join(box.dir, 'backups')).sort()).toEqual(['2026-01-02-000000', '2026-01-03-000000']);
   });
 
+  it('leaves directories in the backup folder alone that it did not create', () => {
+    const box = sandbox();
+    expect(install(box, { LAGER_MODE: 'local', LAGER_ADMIN_EMAIL: 'me@example.com' }).status).toBe(0);
+    for (const name of ['2026-01-01-000000', '2026-01-02-000000', 'my own copy']) fs.mkdirSync(path.join(box.dir, 'backups', name));
+    expect(install(box, { STUB_RUNNING: '1', LAGER_BACKUPS_KEEP: '1' }).status).toBe(0);
+    expect(fs.readdirSync(path.join(box.dir, 'backups')).sort()).toEqual(['2026-01-02-000000', 'my own copy']);
+    const bad = install(box, { STUB_RUNNING: '1', LAGER_BACKUPS_KEEP: 'all' });
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toContain('LAGER_BACKUPS_KEEP');
+  });
+
+  it('stops the update when the backup fails, and shows why', () => {
+    const box = sandbox();
+    expect(install(box, { LAGER_MODE: 'local', LAGER_ADMIN_EMAIL: 'me@example.com' }).status).toBe(0);
+    const r = install(box, { STUB_RUNNING: '1', STUB_BACKUP_FAIL: '1' });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('no space left on device');
+    expect(r.stderr).toContain('LAGER_SKIP_BACKUP=1');
+    expect(r.stderr).not.toContain('failed. Nothing you set up');
+    expect(r.calls.some((c) => c.includes(' pull'))).toBe(false);
+    expect(r.calls.some((c) => c.includes('up -d'))).toBe(false);
+  });
+
+  it('updates without a backup only when LAGER_SKIP_BACKUP=1 says so', () => {
+    const box = sandbox();
+    expect(install(box, { LAGER_MODE: 'local', LAGER_ADMIN_EMAIL: 'me@example.com' }).status).toBe(0);
+    const r = install(box, { STUB_RUNNING: '1', STUB_BACKUP_FAIL: '1', LAGER_SKIP_BACKUP: '1' });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain('Skipping the backup');
+    expect(r.calls.some((c) => c.includes('backup.js'))).toBe(false);
+    expect(r.calls.some((c) => c.includes('up -d --remove-orphans'))).toBe(true);
+  });
+
+  it('takes the backup however long the list of running services is', () => {
+    const box = sandbox();
+    expect(install(box, { LAGER_MODE: 'local', LAGER_ADMIN_EMAIL: 'me@example.com' }).status).toBe(0);
+    const r = install(box, { STUB_RUNNING: 'many' });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.calls.some((c) => c.includes('exec -T lager node dist/backup.js /backups/'))).toBe(true);
+  });
+
+  it('remembers the image of an earlier run until another one is given', () => {
+    const box = sandbox();
+    const image = (): string => /image: (ghcr\S+)/.exec(read(box.dir, 'docker-compose.yml'))?.[1] ?? '';
+    expect(install(box, { LAGER_MODE: 'local', LAGER_ADMIN_EMAIL: 'me@example.com', LAGER_IMAGE: 'ghcr.io/dm807cam/lager:edge' }).status).toBe(0);
+    expect(image()).toBe('ghcr.io/dm807cam/lager:edge');
+    expect(read(box.dir, 'installer.env')).toContain('LAGER_IMAGE=ghcr.io/dm807cam/lager:edge');
+    // A plain run keeps it.
+    expect(install(box, { STUB_RUNNING: '1' }).status).toBe(0);
+    expect(image()).toBe('ghcr.io/dm807cam/lager:edge');
+    // An image given later wins and is remembered in turn.
+    expect(install(box, { STUB_RUNNING: '1', LAGER_IMAGE: 'ghcr.io/dm807cam/lager:0.1.0' }).status).toBe(0);
+    expect(image()).toBe('ghcr.io/dm807cam/lager:0.1.0');
+    expect(install(box, { STUB_RUNNING: '1' }).status).toBe(0);
+    expect(image()).toBe('ghcr.io/dm807cam/lager:0.1.0');
+    expect(read(box.dir, 'installer.env')).toContain('LAGER_IMAGE=ghcr.io/dm807cam/lager:0.1.0');
+  });
+
+  it('an installation from before the image was remembered gets the default image', () => {
+    const box = sandbox();
+    expect(install(box, { LAGER_MODE: 'local', LAGER_ADMIN_EMAIL: 'me@example.com' }).status).toBe(0);
+    const state = path.join(box.dir, 'installer.env');
+    fs.writeFileSync(state, read(box.dir, 'installer.env').split('\n').filter((l) => !l.startsWith('LAGER_IMAGE=')).join('\n'));
+    expect(install(box, { STUB_RUNNING: '1' }).status).toBe(0);
+    expect(read(box.dir, 'docker-compose.yml')).toContain('image: ghcr.io/dm807cam/lager:latest');
+    expect(read(box.dir, 'installer.env')).toContain('LAGER_IMAGE=ghcr.io/dm807cam/lager:latest');
+  });
+
   it('gives a tunnel a fresh name when one with that name already exists', () => {
     const box = sandbox();
     const r = install(box, { LAGER_MODE: 'cloudflare', LAGER_DOMAIN: 'mylager.net', LAGER_ADMIN_EMAIL: 'me@mylager.net', STUB_TUNNEL_EXISTS: '1' });
@@ -164,6 +240,20 @@ describe.runIf(process.platform === 'linux')('install.sh', () => {
     expect(read(box.dir, 'docker-compose.yml')).not.toContain('cloudflared');
     expect(r.calls.some((c) => c.includes('tunnel'))).toBe(false);
     expect(r.stdout).toContain('only in this network');
+    // The two things that break these addresses are named where the user sees them.
+    expect(r.stdout).toContain('DNS rebind protection');
+    expect(r.stdout).toContain('fixed address');
+  });
+
+  it('finds the address of this machine without "hostname -I"', () => {
+    const box = sandbox();
+    const r = install(box, { LAGER_MODE: 'local', LAGER_ADMIN_EMAIL: 'me@example.com', STUB_NO_HOSTNAME_I: '1' });
+    expect(r.status, r.stderr).toBe(0);
+    expect(envOf(box.dir).LAGER_PUBLIC_URL).toBe('http://lager.192-168-1-50.sslip.io:8080');
+    const none = install(sandbox(), { LAGER_MODE: 'local', LAGER_ADMIN_EMAIL: 'me@example.com', STUB_NO_HOSTNAME_I: '1', STUB_NO_IP: '1' });
+    expect(none.status).toBe(1);
+    expect(none.stderr).toContain("Could not find this machine's address");
+    expect(none.stderr).not.toContain('failed. Nothing you set up');
   });
 
   it('proxy mode takes the given addresses', () => {

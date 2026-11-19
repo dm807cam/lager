@@ -12,14 +12,18 @@
 #   LAGER_PUBLIC_URL, LAGER_APPS_DOMAIN proxy: the addresses your own reverse proxy serves
 #   LAGER_ADMIN_EMAIL=you@example.com   the first administrator
 #   LAGER_NONINTERACTIVE=1              never ask; fail if an answer is missing
-# Further knobs: LAGER_DIR (default /opt/lager), LAGER_IMAGE (default ghcr.io/dm807cam/lager:latest),
-# LAGER_RECONFIGURE=1 (ask the questions again), LAGER_BACKUPS_KEEP (default 5).
+# Further knobs: LAGER_DIR (default /opt/lager), LAGER_IMAGE (default ghcr.io/dm807cam/lager:latest; remembered for
+# later runs), LAGER_RECONFIGURE=1 (ask the questions again), LAGER_BACKUPS_KEEP (default 5),
+# LAGER_SKIP_BACKUP=1 (update without the backup, for example when the backup itself fails).
 set -Eeuo pipefail
 
 LAGER_DIR="${LAGER_DIR:-/opt/lager}"
-LAGER_IMAGE="${LAGER_IMAGE:-ghcr.io/dm807cam/lager:latest}"
+# The image given here wins; otherwise the one an earlier run saved; otherwise the default (see load_state).
+LAGER_IMAGE="${LAGER_IMAGE:-}"
+DEFAULT_IMAGE=ghcr.io/dm807cam/lager:latest
 CLOUDFLARED_IMAGE="${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}"
 LAGER_BACKUPS_KEEP="${LAGER_BACKUPS_KEEP:-5}"
+LAGER_SKIP_BACKUP="${LAGER_SKIP_BACKUP:-0}"
 LAGER_NONINTERACTIVE="${LAGER_NONINTERACTIVE:-0}"
 LAGER_RECONFIGURE="${LAGER_RECONFIGURE:-0}"
 PORT=8080
@@ -69,6 +73,7 @@ check_system() {
     armv7l|armv6l) die "Lager needs a 64-bit system. On a Raspberry Pi, install the 64-bit Raspberry Pi OS (Pi 3, 4, 5 and Zero 2 support it)." ;;
     *) die "Unsupported processor: $(uname -m). Lager images exist for amd64 and arm64." ;;
   esac
+  case "$LAGER_BACKUPS_KEEP" in ''|*[!0-9]*) die "LAGER_BACKUPS_KEEP must be a number, not \"$LAGER_BACKUPS_KEEP\"." ;; esac
 }
 
 ensure_docker() {
@@ -94,9 +99,10 @@ load_state() {
   if [ -f "$STATE" ]; then
     local key value
     while IFS='=' read -r key value; do
-      case "$key" in LAGER_MODE|LAGER_DOMAIN|LAGER_TUNNEL_ID|LAGER_TUNNEL_NAME) [ -n "${!key:-}" ] || printf -v "$key" '%s' "$value" ;; esac
+      case "$key" in LAGER_MODE|LAGER_DOMAIN|LAGER_TUNNEL_ID|LAGER_TUNNEL_NAME|LAGER_IMAGE) [ -n "${!key:-}" ] || printf -v "$key" '%s' "$value" ;; esac
     done <"$STATE"
   fi
+  LAGER_IMAGE=${LAGER_IMAGE:-$DEFAULT_IMAGE}
 }
 
 save_state() {
@@ -106,6 +112,7 @@ save_state() {
     echo "LAGER_DOMAIN=${LAGER_DOMAIN:-}"
     echo "LAGER_TUNNEL_ID=${LAGER_TUNNEL_ID:-}"
     echo "LAGER_TUNNEL_NAME=${LAGER_TUNNEL_NAME:-}"
+    echo "LAGER_IMAGE=${LAGER_IMAGE}"
   } >"$STATE"
   chmod 600 "$STATE"
 }
@@ -127,8 +134,9 @@ env_set() {
 
 lan_ip() {
   local ip
-  ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-  [ -n "$ip" ] || ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')
+  # Not every system has "hostname -I" (Arch and Alpine do not) or "ip", so a failing command only means: try the next.
+  ip=$({ hostname -I 2>/dev/null || true; } | awk '{for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) { print $i; exit }}')
+  [ -n "$ip" ] || ip=$({ ip -4 route get 1.1.1.1 2>/dev/null || true; } | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}')
   [ -n "$ip" ] || die "Could not find this machine's address in the local network."
   printf '%s' "$ip"
 }
@@ -173,7 +181,8 @@ configure() {
       public_url="https://$LAGER_DOMAIN"; apps_domain="$LAGER_DOMAIN"; trust=true; bind=127.0.0.1 ;;
     local)
       local ip dashed
-      ip=$(lan_ip); dashed=${ip//./-}
+      ip=$(lan_ip) || exit 1
+      dashed=${ip//./-}
       # sslip.io answers every name that contains an address with that address, so app subdomains need no DNS setup.
       public_url="http://lager.$dashed.sslip.io:$PORT"; apps_domain="apps.$dashed.sslip.io"; trust=false; bind=0.0.0.0 ;;
     proxy)
@@ -300,17 +309,37 @@ compose() { docker compose --project-directory "$LAGER_DIR" -f "$LAGER_DIR/docke
 
 backup_before_update() {
   # Only an update has something to back up; the server keeps running while the backup is taken.
-  compose ps --status running --services 2>/dev/null | grep -qx lager || return 0
+  # The list is read into a variable first: a pipe into "grep -q" can fail under pipefail when grep stops reading early.
+  local running name out
+  running=$(compose ps --status running --services 2>/dev/null || true)
   step "Backup"
-  local name
-  name=$(date +%Y-%m-%d-%H%M%S)
-  if compose exec -T lager node dist/backup.js "/backups/$name" >/dev/null 2>&1; then
-    ok "Saved a backup to $LAGER_DIR/backups/$name."
-    # Keep the newest ones.
-    find "$LAGER_DIR/backups" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | head -n "-$LAGER_BACKUPS_KEEP" | sed "s#^#$LAGER_DIR/backups/#" | xargs -r rm -rf
-  else
-    warn "The backup did not work; continuing with the update. Your data directory is untouched."
+  case $'\n'"$running"$'\n' in
+    *$'\n'lager$'\n'*) ;;
+    *) warn "Lager is not running, so no backup can be taken. Your data directory is untouched."; return 0 ;;
+  esac
+  if [ "$LAGER_SKIP_BACKUP" = 1 ]; then
+    warn "Skipping the backup because LAGER_SKIP_BACKUP=1 is set."
+    return 0
   fi
+  name=$(date +%Y-%m-%d-%H%M%S)
+  # The failure is handled right here, so the general error message stays out of the captured output.
+  if ! out=$(trap - ERR; compose exec -T lager node dist/backup.js "/backups/$name" 2>&1); then
+    [ -z "$out" ] || printf '%s\n' "$out" >&2
+    die "The backup did not work, so the update stops here. Lager keeps running as before and your data is untouched. Fix the cause above, or run the installer with LAGER_SKIP_BACKUP=1 to update without a backup."
+  fi
+  ok "Saved a backup to $LAGER_DIR/backups/$name."
+  prune_backups
+}
+
+# Keeps the newest LAGER_BACKUPS_KEEP backups. Only directories with the timestamp names given above are touched, and
+# those names sort by age, so the shell's own sorted file list is enough.
+prune_backups() {
+  local dirs=() d i extra
+  for d in "$LAGER_DIR/backups"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]; do
+    if [ -d "$d" ]; then dirs+=("$d"); fi
+  done
+  extra=$((${#dirs[@]} - LAGER_BACKUPS_KEEP))
+  for ((i = 0; i < extra; i++)); do rm -rf -- "${dirs[i]}"; done
 }
 
 start() {
@@ -357,6 +386,12 @@ EOF
 
   ${YELLOW}This address works only in this network and without https.${RESET} AI assistants that sign in
   with OAuth (claude.ai, ChatGPT) need https: run the installer with LAGER_RECONFIGURE=1 to switch to Cloudflare.
+
+  If the address does not open: some routers (Fritz!Box, OpenWrt, pfSense) block names that point into the home
+  network. Allow sslip.io in the router's DNS rebind protection. The address also contains this machine's current
+  IP address: give the machine a fixed address in the router, or run the installer with LAGER_RECONFIGURE=1
+  LAGER_MODE=local after the address changed.
+  ${DIM}Details: https://github.com/dm807cam/lager/blob/main/docs/installation.md#this-network-only${RESET}
 EOF
   fi
   if [ "$LAGER_MODE" = cloudflare ] && ! curl -fsS -o /dev/null "$url/healthz" 2>/dev/null; then
@@ -376,6 +411,8 @@ main() {
     die "$ENV_FILE exists but $STATE is missing. Run with LAGER_MODE=cloudflare, local or proxy to say how this Lager is reached."
   fi
   configure "$first"
+  # Every run saves what it used, so an image chosen once (for example :edge) stays until another one is given.
+  save_state
   write_compose
   setup_tunnel
   [ "$first" = 1 ] || backup_before_update
