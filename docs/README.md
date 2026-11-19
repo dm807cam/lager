@@ -8,7 +8,7 @@ The [README](../README.md) gives the overview and the quick start. These pages c
 | --- | --- |
 | [Installation](installation.md) | Docker Compose, published images, every configuration variable, mail, reverse proxy (Nginx Proxy Manager), running from source |
 | [Custom domains](custom-domains.md) | Serving an instance on its own host name, and who may set one up |
-| [Users and sharing](users-and-sharing.md) | Accounts, roles, registration modes, groups, sharing an instance or handing out separate instances |
+| [Users and sharing](users-and-sharing.md) | Accounts, roles, registration modes, groups, sharing an instance or handing out separate instances, the "Made with Lager" badge |
 | [Data, backup and operations](data-and-backup.md) | Export and import, moving apps between servers, the trash, backups, logs |
 | [Limits](limits.md) | Quotas and limits Lager enforces, and what it deliberately does not do |
 | [Languages and appearance](languages-and-appearance.md) | Interface languages, adding a translation, light and dark mode |

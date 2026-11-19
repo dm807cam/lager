@@ -48,6 +48,15 @@ export class Settings {
     return DOMAIN_MODES.includes(v as CustomDomainsMode) ? (v as CustomDomainsMode) : 'admins';
   }
 
+  /** Whether apps may show the "Made with Lager" badge at all; each instance can still turn it off. On by default. */
+  get madeWithBadge(): boolean {
+    return this.read('made_with_badge') !== 'off';
+  }
+
+  setMadeWithBadge(on: boolean): void {
+    this.write('made_with_badge', on ? 'on' : 'off');
+  }
+
   setCustomDomains(mode: CustomDomainsMode): void {
     if (!DOMAIN_MODES.includes(mode)) throw new LagerError('invalid_argument', 'Custom domains must be admins or publishers.');
     this.write('custom_domains', mode);

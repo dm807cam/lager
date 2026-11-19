@@ -38,8 +38,8 @@ export function domainsJson(core: Core, i: Instance): DomainJson[] {
 }
 
 /** `url` is the primary address `<slug>.<apps domain>`; custom domains are listed separately. */
-export function instanceJson(core: Core, i: Instance): { slug: string; url: string; activeVersion: number; visibility: string; domains: DomainJson[] } {
-  return { slug: i.slug, url: instanceUrl(core.config, i.slug), activeVersion: i.activeVersion, visibility: i.visibility, domains: domainsJson(core, i) };
+export function instanceJson(core: Core, i: Instance): { slug: string; url: string; activeVersion: number; visibility: string; domains: DomainJson[]; showBadge: boolean } {
+  return { slug: i.slug, url: instanceUrl(core.config, i.slug), activeVersion: i.activeVersion, visibility: i.visibility, domains: domainsJson(core, i), showBadge: i.showBadge };
 }
 
 /** Instances of the app that `user` may see: their own and those shared with them (never other users' private ones). */

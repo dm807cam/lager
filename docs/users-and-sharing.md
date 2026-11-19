@@ -47,3 +47,14 @@ With several routes to the same instance (direct grant, group, visibility "all s
 Administrators create groups in the administration area (Groups) and fill them with accounts. A grant to a group applies to all its members.
 
 An app itself, that is its versions, can be seen and changed only by its owner and the collaborators the owner adds on the app page (administrators or publishers).
+
+## "Made with Lager"
+
+People who open an app that was shared with them, and visitors of public instances, see a small "Made with Lager" link in a corner of the app, in their language. It leads to the Lager project and tells them where the app comes from. It carries no tracking.
+
+- **Who sees it:** everyone on the instance below manager level. The owner and managers of the instance never see it when they are signed in on it. On a public instance, a visitor who has not signed in on the instance (you too, when you just open the link) counts as a public visitor.
+- **Hiding it as a viewer:** the × closes it. The browser remembers this for that app on that device.
+- **Turning it off for one instance:** the owner or a manager unticks "Show the “Made with Lager” badge" on the instance page, or sends `POST /api/instances/<slug>/badge` with `{"on": false}`.
+- **Turning it off for the whole server:** an administrator unticks "Allow the badge in apps" under Administration → Settings. No app on the server shows it then, and the instance switch disappears.
+
+The badge is drawn in its own shadow root, so the app's styles cannot change it and it cannot change the app. It sits above the home-screen safe area and is hidden when the page is printed.

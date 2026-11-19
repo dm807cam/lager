@@ -87,7 +87,8 @@ export const MIGRATIONS: string[] = [
     visibility TEXT NOT NULL CHECK (visibility IN ('private','users','public')),
     created_at TEXT NOT NULL,
     users_level TEXT NOT NULL DEFAULT 'interact',
-    disabled_at TEXT
+    disabled_at TEXT,
+    show_badge INTEGER NOT NULL DEFAULT 1
   );
   CREATE INDEX instances_app ON instances(app_id);
   CREATE TABLE grants (
