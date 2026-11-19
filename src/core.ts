@@ -1,6 +1,7 @@
 import { ADMIN_PASSWORD_PLACEHOLDERS, isLoopbackHost, MIN_SECRET_LENGTH, type Config } from './config.js';
 import { InstanceAssets } from './data/assets.js';
 import { Hub } from './data/hub.js';
+import { RateLimiter } from './http/ratelimit.js';
 import { Rooms } from './data/rooms.js';
 import { InstanceData } from './data/store.js';
 import { OAuthStore } from './mcp/oauth.js';
@@ -41,8 +42,16 @@ export interface Core {
   ai: AiModels;
   /** App icons rendered from the SVG the deploying assistant supplies. `await core.icons.ready()` before `set` or `setDefault`. */
   icons: AppIcons;
+  /** New versions per app (`app:<id>`) and new apps per person (`user:<id>`) within an hour, REST and MCP together (see `Apps.deploy`). */
+  deployLimiter: RateLimiter;
   close(): void;
 }
+
+/**
+ * One app takes this many new versions an hour, and one person may start this many new apps an hour: plenty for an assistant that
+ * iterates, too few to fill the disk with versions quickly.
+ */
+export const DEPLOYS_PER_HOUR = 60;
 
 export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typeof fetch }): Core {
   const db = openPlatformDb(config.dataDir);
@@ -76,6 +85,11 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
         + 'Change it on the Account page before anyone else can reach this server.');
     }
   }
+  // Without an account nobody can sign in, and only an administrator can let anyone else in: such a server would run for nothing.
+  if (fresh && !(config.adminEmail && config.adminPassword)) {
+    refuse('This Lager has no account yet, and the first administrator cannot be created: set both LAGER_ADMIN_EMAIL and '
+      + `LAGER_ADMIN_PASSWORD (at least ${MIN_PASSWORD_LENGTH} characters) for the first start. The password line can be removed afterwards.`);
+  }
   users.ensureAdmin(config.adminEmail, config.adminPassword);
   const mailer = opts?.mailer ?? createMailer(config);
   const settings = new Settings(db, { registration: mailer.enabled ? 'open' : 'invite' });
@@ -88,7 +102,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   users.onDisabled((id) => { oauth.revokeUser(id); });
   users.onDemoted((id) => { accounts.deleteInvitesBy(id); });
   const icons = new AppIcons(config.dataDir);
-  const ai = new AiModels(db, config.secret, opts?.fetch);
+  const ai = new AiModels(db, config.secret, opts?.fetch, config.aiTimeoutSeconds === undefined ? undefined : config.aiTimeoutSeconds * 1000);
   const hub = new Hub();
   const data = new InstanceData(config.dataDir, hub, config.snapshotKeep, config.instanceQuotaBytes);
   // Pages an instance saved itself count like its documents and uploads against the one instance quota.
@@ -102,14 +116,21 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
     canDeploy: (app, userId) => { const u = users.get(userId); return u !== null && access.canDeploy(app, u); },
     canManage: (instance, userId) => { const u = users.get(userId); return u !== null && access.canManageInstance(instance, u); },
   });
-  apps.onInstanceDeleted((instance) => { assets.drop(instance.id); data.trash(instance.id); domains.removeAll(instance.id); });
+  // A platform at <label>.<apps domain> answers on that host itself, so an instance of that name could never be reached.
+  const appsSuffix = `.${config.appsDomain.toLowerCase()}`;
+  const platformHost = config.publicUrl.hostname.toLowerCase();
+  if (platformHost.endsWith(appsSuffix)) apps.reserveSlug(platformHost.slice(0, -appsSuffix.length));
+  // The host names go first and on their own: they are rows, and files that cannot be moved must not leave a domain pointing at nothing.
+  apps.onInstanceDeleted((instance) => { domains.removeAll(instance.id); });
+  apps.onInstanceDeleted((instance) => { assets.drop(instance.id); });
+  apps.onInstanceDeleted((instance) => { data.trash(instance.id); });
   // Keep a restore point of the instance data whenever its active version changes.
   apps.onBeforeActivate((inst, from, to) => { data.snapshot(inst.id, `v${from}-to-v${to}`); });
   // Every open view of the instance reloads when its active version changes.
   apps.onActivated((inst) => { hub.publish(inst.id, { type: 'reload', version: inst.activeVersion }); });
   return {
     config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, accounts, groups, domains, access,
-    icons, ai,
+    icons, ai, deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000),
     close() {
       icons.close();
       assets.close();
