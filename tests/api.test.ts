@@ -114,7 +114,7 @@ describe('rest api', () => {
       apps: [{
         slug: 'mine', title: 'Mine', latestVersion: 2, description: '', themeColor: '#1f2a5c',
         iconUrl: `http://lager.localhost:8080/app-icons/${mine.id}/${mine.iconVersion}/192.png`,
-        instances: [{ slug: 'mine', url: 'http://mine.apps.localhost:8080', activeVersion: 2, visibility: 'private', domains: [] }],
+        instances: [{ slug: 'mine', url: 'http://mine.apps.localhost:8080', activeVersion: 2, visibility: 'private', domains: [], showBadge: true }],
       }],
     });
 
@@ -137,7 +137,7 @@ describe('rest api', () => {
     const res = await request(h.app).post('/api/instances/todo/activate').set('Host', h.host)
       .set('Authorization', `Bearer ${token}`).send({ version: 1 });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ slug: 'todo', url: 'http://todo.apps.localhost:8080', activeVersion: 1, visibility: 'private', domains: [] });
+    expect(res.body).toEqual({ slug: 'todo', url: 'http://todo.apps.localhost:8080', activeVersion: 1, visibility: 'private', domains: [], showBadge: true });
     expect(h.core.apps.getInstanceBySlug('todo')!.activeVersion).toBe(1);
     const bad = await request(h.app).post('/api/instances/todo/activate').set('Host', h.host)
       .set('Authorization', `Bearer ${token}`).send({ version: 9 });
@@ -238,7 +238,7 @@ describe('rest api', () => {
 
     const mine = await create({ slug: 'todo-mine', visibility: 'users' });
     expect(mine.status).toBe(200);
-    expect(mine.body).toEqual({ slug: 'todo-mine', url: 'http://todo-mine.apps.localhost:8080', activeVersion: 1, visibility: 'users', domains: [] });
+    expect(mine.body).toEqual({ slug: 'todo-mine', url: 'http://todo-mine.apps.localhost:8080', activeVersion: 1, visibility: 'users', domains: [], showBadge: true });
     expect(h.core.apps.getInstanceBySlug('todo-mine')!.ownerId).toBe(h.adminId);
 
     const forPub = await create({ slug: 'todo-pub', ownerEmail: 'pub@x.y' });

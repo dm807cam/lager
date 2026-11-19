@@ -10,7 +10,7 @@ import type { Capabilities, DbRule, Instance } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 import { clearCookie, instanceCookieName, NONCE_RE, nonceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
 import { safeReturnPath, sendError, sendNotFound } from './errors.js';
-import { injectRuntime } from './inject.js';
+import { injectRuntime, type BadgeText } from './inject.js';
 import { mountPageRoutes } from './instance-page.js';
 import { mountPwaRoutes } from './instance-pwa.js';
 import { mountAssetRoutes } from './instance-assets.js';
@@ -19,11 +19,15 @@ import { mountCompleteRoutes } from './instance-complete.js';
 import { assertOwnOrigin } from './origin.js';
 import { StreamLimiter } from './stream-limit.js';
 import { requestLocale } from './locale.js';
+import { t as tr } from '../i18n/index.js';
 import { badCodePage, disabledPage, forbiddenPage, instanceHostPage, notFoundPage } from './pages.js';
 import { epochValid } from './session.js';
 import { signToken, verifyToken } from './tokens.js';
 
 const RUNTIME_FILE = new URL('../runtime/runtime.js', import.meta.url);
+const BADGE_FILE = new URL('../runtime/badge.js', import.meta.url);
+/** Where the "Made with Lager" badge points: the project, not this server. */
+export const PROJECT_URL = 'https://github.com/dm807cam/lager';
 const MAX_PROFILE_IDS = 100;
 const MAX_SEARCH_RESULTS = 20;
 const MAX_SEARCH_QUERY = 100;
@@ -99,6 +103,8 @@ export function createInstanceRouter(core: Core): express.Router {
   const usedCodes = new Map<string, number>();
   const runtime = fs.readFileSync(RUNTIME_FILE);
   const runtimeEtag = `"${crypto.createHash('sha256').update(runtime).digest('base64url').slice(0, 27)}"`;
+  const badgeScript = fs.readFileSync(BADGE_FILE);
+  const badgeEtag = `"${crypto.createHash('sha256').update(badgeScript).digest('base64url').slice(0, 27)}"`;
 
   const ctxOf = (res: Response): Ctx => res.locals.ctx as Ctx;
   const hasScope = (ctx: Ctx, scope: string): boolean => Array.isArray(ctx.caps.user?.scopes) && ctx.caps.user.scopes.includes(scope);
@@ -159,8 +165,15 @@ export function createInstanceRouter(core: Core): express.Router {
       return;
     }
     const app = core.apps.getApp(ctx.instance.appId);
+    // The badge is for the people the app is shared with; whoever manages the instance never sees it.
+    const level = ctx.viewer.level;
+    let badge: BadgeText | undefined;
+    if (core.settings.madeWithBadge && ctx.instance.showBadge && level !== 'admin' && level !== 'owner') {
+      const locale = requestLocale(core, req, ctx.user);
+      badge = { label: tr(locale, 'badge.label'), linkLabel: tr(locale, 'badge.link'), close: tr(locale, 'badge.close'), href: PROJECT_URL };
+    }
     const html = injectRuntime(core.apps.readVersionHtml(ctx.instance.appId, ctx.instance.activeVersion),
-      app ? { title: app.title, themeColor: app.themeColor, iconVersion: app.iconVersion } : undefined);
+      app ? { title: app.title, themeColor: app.themeColor, iconVersion: app.iconVersion } : undefined, badge);
     res.set({
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
@@ -179,6 +192,15 @@ export function createInstanceRouter(core: Core): express.Router {
       return;
     }
     res.send(runtime);
+  });
+
+  router.get('/__lager/badge.js', (req, res) => {
+    res.set({ 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', ETag: badgeEtag });
+    if (req.headers['if-none-match'] === badgeEtag) {
+      res.status(304).end();
+      return;
+    }
+    res.send(badgeScript);
   });
 
   router.get('/__lager/session', (req, res) => {

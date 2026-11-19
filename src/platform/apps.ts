@@ -34,6 +34,8 @@ export interface Instance {
   id: string; appId: string; slug: string; ownerId: string;
   activeVersion: number; autoUpdate: boolean; visibility: Visibility; createdAt: string;
   usersLevel: UsersLevel; disabled: boolean;
+  /** Whether people the instance is shared with, and public visitors, see the "Made with Lager" badge. */
+  showBadge: boolean;
 }
 export interface DeployResult {
   app: App; version: Version; instances: Instance[]; warnings: string[];
@@ -70,7 +72,7 @@ interface VersionRow {
 interface InstanceRow {
   id: string; app_id: string; slug: string; owner_id: string;
   active_version: number; auto_update: number; visibility: Visibility; created_at: string;
-  users_level: UsersLevel; disabled_at: string | null;
+  users_level: UsersLevel; disabled_at: string | null; show_badge: number;
 }
 
 const toApp = (r: AppRow): App => ({
@@ -104,7 +106,7 @@ const toVersion = (r: VersionRow): Version => ({
 const toInstance = (r: InstanceRow): Instance => ({
   id: r.id, appId: r.app_id, slug: r.slug, ownerId: r.owner_id, activeVersion: r.active_version,
   autoUpdate: r.auto_update !== 0, visibility: r.visibility, createdAt: r.created_at,
-  usersLevel: r.users_level, disabled: r.disabled_at !== null,
+  usersLevel: r.users_level, disabled: r.disabled_at !== null, showBadge: r.show_badge !== 0,
 });
 
 /** JSON with sorted object keys so equal capabilities always serialize identically. */
@@ -593,6 +595,13 @@ export class Apps {
     this.db.prepare('UPDATE instances SET auto_update = ? WHERE id = ?').run(on ? 1 : 0, instance.id);
     const latest = on ? this.latestDeployedVersion(instance.appId) : null;
     if (latest && latest.number !== instance.activeVersion) return this.activate(instance.id, latest.number, userId);
+    return this.getInstance(instance.id)!;
+  }
+
+  /** Whether the instance shows the "Made with Lager" badge to the people it is shared with (owner and managers never see it). */
+  setShowBadge(instanceId: string, on: boolean, userId: string): Instance {
+    const instance = this.managedInstance(instanceId, userId);
+    this.db.prepare('UPDATE instances SET show_badge = ? WHERE id = ?').run(on ? 1 : 0, instance.id);
     return this.getInstance(instance.id)!;
   }
 

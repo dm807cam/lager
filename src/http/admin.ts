@@ -132,6 +132,8 @@ ${settingRow('max-instances', t(locale, 'admin.settings.maxInstances'), t(locale
     `<input id="max-instances" name="maxInstances" type="number" inputmode="numeric" min="1" max="1000" step="1" required value="${core.settings.maxInstancesPerUser}">`)}
 ${settingRow('custom-domains', t(locale, 'admin.settings.customDomains'), t(locale, 'admin.settings.customDomains.hint'),
     `<select id="custom-domains" name="customDomains">${optionList(options(locale, DOMAIN_KEYS), core.settings.customDomains)}</select>`)}
+${settingRow('made-with-badge', t(locale, 'admin.settings.badge'), t(locale, 'admin.settings.badge.hint'),
+    `<input type="hidden" name="madeWithBadge" value="0"><label class="check"><input id="made-with-badge" type="checkbox" class="switch" name="madeWithBadge" value="1"${core.settings.madeWithBadge ? ' checked' : ''}><span>${esc(t(locale, 'admin.settings.badge.label'))}</span></label>`)}
 </div>`, esc(t(locale, 'common.save')), 'primary', 'stack settings-form');
   return shell(core, locale, admin, 'settings', t(locale, 'admin.section.settings'), body, msg);
 }
@@ -467,6 +469,9 @@ export const adminExtension: PlatformExtension = (router, core) => {
       core.settings.setMaxInstancesPerUser(max);
       core.settings.setRegistration(mode);
       core.settings.setCustomDomains(domains);
+      // The form sends a hidden "0" and, when ticked, a "1" as well; a request without the field leaves the setting as it is.
+      const badge = (req.body as Record<string, unknown> | undefined)?.madeWithBadge;
+      if (badge !== undefined) core.settings.setMadeWithBadge(Array.isArray(badge) ? badge.includes('1') : badge === '1');
       res.redirect('/admin/settings');
     } catch (e) { failWith(res, e, (m) => settingsSection(core, localeOf(res), user, m), { invalid_argument: 'admin.settings.invalid' }); }
   }));

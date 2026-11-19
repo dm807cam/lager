@@ -120,6 +120,15 @@
       ]
     },
     {
+      "action": "/ui/instances/notes/badge",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "on",
+        "on"
+      ]
+    },
+    {
       "action": "/ui/instances/notes/delete",
       "method": "post",
       "fields": [
@@ -225,6 +234,15 @@
     },
     {
       "action": "/ui/instances/tasks/auto-update",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "on",
+        "on"
+      ]
+    },
+    {
+      "action": "/ui/instances/tasks/badge",
       "method": "post",
       "fields": [
         "csrf",
@@ -575,6 +593,8 @@
       "fields": [
         "csrf",
         "customDomains",
+        "madeWithBadge",
+        "madeWithBadge",
         "maxInstances",
         "registration"
       ]
@@ -769,23 +789,6 @@
       ]
     }
   ],
-  "consent": [
-    {
-      "action": "/authorize",
-      "method": "post",
-      "fields": [
-        "client_id",
-        "code_challenge",
-        "code_challenge_method",
-        "csrf",
-        "decision",
-        "decision",
-        "redirect_uri",
-        "response_type",
-        "state"
-      ]
-    }
-  ],
   "register (closed)": [],
   "register (invite only)": [],
   "forgot (sent)": [],
@@ -807,6 +810,15 @@
     },
     {
       "action": "/ui/instances/notes/auto-update",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "on",
+        "on"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/badge",
       "method": "post",
       "fields": [
         "csrf",
@@ -900,6 +912,23 @@
       "fields": [
         "csrf",
         "visibility"
+      ]
+    }
+  ],
+  "consent": [
+    {
+      "action": "/authorize",
+      "method": "post",
+      "fields": [
+        "client_id",
+        "code_challenge",
+        "code_challenge_method",
+        "csrf",
+        "decision",
+        "decision",
+        "redirect_uri",
+        "response_type",
+        "state"
       ]
     }
   ],

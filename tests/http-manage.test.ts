@@ -374,14 +374,15 @@ describe('self-publishing and versions', () => {
     const { p, u, pc, uc } = await setup();
     const before = await page(pc, '/instances/notes');
     expect(before.text).toContain(en('instance.autoUpdate.label'));
-    expect(before.text).toMatch(/name="on"[^>]*value="1"[^>]*checked|checked[^>]*name="on"/);
+    const autoUpdateForm = (html: string): string => /<form[^>]*action="\/ui\/instances\/notes\/auto-update"[\s\S]*?<\/form>/.exec(html)![0];
+    expect(autoUpdateForm(before.text)).toMatch(/name="on"[^>]*value="1"[^>]*checked|checked[^>]*name="on"/);
     const off = await post(pc, p, '/ui/instances/notes/auto-update', { on: '0' });
     expect(off.status).toBe(302);
     expect(off.headers.location).toBe('/instances/notes');
     expect(inst().autoUpdate).toBe(false);
     h.core.apps.deploy({ slug: 'notes', html: '<p>3</p>', userId: p.id });
     expect(inst().activeVersion).toBe(2);
-    expect((await page(pc, '/instances/notes')).text).not.toMatch(/name="on"[^>]*checked/);
+    expect(autoUpdateForm((await page(pc, '/instances/notes')).text)).not.toMatch(/name="on"[^>]*checked/);
     await post(pc, p, '/ui/instances/notes/auto-update', { on: '1' });
     expect(inst().autoUpdate).toBe(true);
     // switching it on moves the instance to the latest deployed version at once, with the usual snapshot

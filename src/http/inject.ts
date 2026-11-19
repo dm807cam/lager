@@ -5,6 +5,12 @@ const VIEWPORT = '<meta name="viewport" content="width=device-width, initial-sca
 /** What the page head needs to know about its app to be installable. */
 export interface PageMeta { title: string; themeColor: string; iconVersion: number }
 
+/** The "Made with Lager" badge, in the viewer's language; given only when this viewer should see it. */
+export interface BadgeText { label: string; linkLabel: string; close: string; href: string }
+
+const badgeTag = (b: BadgeText): string =>
+  `<script src="/__lager/badge.js" defer data-label="${attr(b.label)}" data-link-label="${attr(b.linkLabel)}" data-close="${attr(b.close)}" data-href="${attr(b.href)}"></script>`;
+
 const attr = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
@@ -143,11 +149,12 @@ function installTags(tags: string[], meta: PageMeta): string {
 /**
  * Inserts the runtime script tag exactly once: after the real `<head>` start tag, else after `<html>`, else after the doctype
  * (each only if within the first 64 KiB), else at the start.
- * With `meta` the tags that make the page installable follow it (manifest, icons, theme colour, and a viewport when the page has none).
+ * With `meta` the tags that make the page installable follow it (manifest, icons, theme colour, and a viewport when the page has none);
+ * with `badge` the deferred script that shows the "Made with Lager" badge.
  */
-export function injectRuntime(html: string, meta?: PageMeta): string {
+export function injectRuntime(html: string, meta?: PageMeta, badge?: BadgeText): string {
   const found = scan(html);
-  const tag = TAG + (meta ? installTags(found.tags, meta) : '');
+  const tag = TAG + (meta ? installTags(found.tags, meta) : '') + (badge ? badgeTag(badge) : '');
   for (const end of [found.headOpenEnd, found.htmlOpenEnd, found.doctypeEnd]) {
     if (end >= 0 && end <= INSERT_LIMIT) return html.slice(0, end) + tag + html.slice(end);
   }
