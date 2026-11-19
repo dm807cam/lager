@@ -89,18 +89,18 @@ describe('Domains', () => {
     } finally { c.close(); }
   });
 
-  it('refuses a parent domain of the platform host or of the apps domain, and still takes a sibling', () => {
+  it('refuses a parent domain of the platform host or of the apps domain and a name under the platform host, and still takes a sibling', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-domains-'));
     const c = createCore({ ...core.config, dataDir: dir, publicUrl: new URL('https://lager.home.example.test'), appsDomain: 'apps.corp.example.org' });
     try {
       const a = c.users.getByEmail('a@x.y')!;
       const inst = c.apps.deploy({ slug: 'n', html: '<p>1</p>', userId: a.id }).instances[0];
-      for (const bad of ['home.example.test', 'example.test', 'corp.example.org', 'example.org', 'Example.ORG.']) {
+      for (const bad of ['home.example.test', 'example.test', 'corp.example.org', 'example.org', 'Example.ORG.', 'notes.lager.home.example.test', 'a.b.lager.home.example.test']) {
         expect(() => c.domains.add(inst, bad, a, true), bad).toThrow(expect.objectContaining({ code: 'invalid_argument', reason: 'host_unavailable' }));
       }
       expect(c.domains.list(inst.id)).toEqual([]);
       // Neither a parent nor under the apps domain: a name next to them, or one that merely ends in the same letters.
-      for (const fine of ['notes.home.example.test', 'other.example.org', 'notapps.corp.example.org', 'xample.org']) {
+      for (const fine of ['notes.home.example.test', 'other.example.org', 'notapps.corp.example.org', 'xample.org', 'notlager.home.example.test']) {
         expect(c.domains.add(inst, fine, a, true)).toBe(fine);
       }
     } finally { c.close(); }

@@ -58,8 +58,9 @@ export class Domains {
     const apps = this.config.appsDomain.toLowerCase();
     const platform = this.config.publicUrl.hostname.toLowerCase();
     // Lager's own names and everything under the apps domain (those are instance names) never go to an instance. Neither does a
-    // parent of them: whoever holds example.com in a browser's eyes can set cookies for lager.example.com and every instance.
-    const own = normalized === platform || normalized === apps || normalized.endsWith('.' + apps);
+    // parent of them, nor a name under the platform host: either can set cookies that the platform's host receives (a parent
+    // for all of its subdomains; a subdomain with a Domain attribute, which a plain-http platform cannot fend off).
+    const own = normalized === platform || normalized.endsWith('.' + platform) || normalized === apps || normalized.endsWith('.' + apps);
     if (own || platform.endsWith('.' + normalized) || apps.endsWith('.' + normalized)) {
       throw new LagerError('invalid_argument', 'This domain cannot be used.', 'host_unavailable');
     }
