@@ -219,6 +219,173 @@ describe('instance host', () => {
     expect(probe.body.docs.map((d: { path: string }) => d.path)).toEqual(['config/z-mine']);
   });
 
+  it('a write answers with the stored document only to someone who may read it', async () => {
+    const { h, inst } = setup({ caps: { db: { rules: [{ path: 'votes', read: 'admin', write: 'interact' }] } } });
+    const admin = h.core.users.get(h.adminId)!;
+    const mk = (name: string) => {
+      const u = h.core.users.create({ email: `${name}@x.y`, name, password: `${name}-password-1`, role: 'user' });
+      h.core.access.setGrant(inst, 'user', u.id, 'interact', admin);
+      return u;
+    };
+    const ada = mk('ada');
+    const bob = mk('bob');
+    h.core.data.set(inst.id, `votes/${bob.id}`, { choice: 'secret' }, bob.id);
+    const adaInst = await h.enter('workout', await h.login('ada@x.y', 'ada-password-1'));
+    // An update merges into what is stored: without read access it is refused, whatever is there and however big it is.
+    h.core.data.set(inst.id, 'votes/big', { pad: 'x'.repeat(200 * 1024) }, bob.id);
+    const answers = [];
+    for (const [target, data] of [[`votes/${bob.id}`, {}], ['votes/big', { pad2: 'y'.repeat(100 * 1024) }], ['votes/missing', { pad2: 'y'.repeat(100 * 1024) }]] as const) {
+      const probe = await db(h, W, adaInst, { op: 'update', path: target, data });
+      expect(probe.status, target).toBe(403);
+      expect(probe.body.error.message).toContain('use set');
+      expect(JSON.stringify(probe.body)).not.toContain('secret');
+      answers.push(JSON.stringify(probe.body));
+    }
+    expect(new Set(answers).size).toBe(1);
+    expect(h.core.data.get(inst.id, `votes/${bob.id}`)!.version).toBe(1);
+    expect(h.core.data.get(inst.id, 'votes/missing')).toBeNull();
+    // A lease would answer with the version and expiry of the hidden document and merge into it.
+    for (const target of [`votes/${bob.id}`, 'votes/missing']) {
+      const lease = await db(h, W, adaInst, { op: 'acquire', path: target, options: { holder: 'h', data: { x: 1 } } });
+      expect(lease.status, target).toBe(403);
+      expect(lease.body.error.message).toBe('acquire needs read access to the document as well as write access.');
+    }
+    expect(h.core.data.get(inst.id, `votes/${bob.id}`)!.data).toEqual({ choice: 'secret' });
+    // Deleting says the same whether or not there was a document.
+    const gone = await db(h, W, adaInst, { op: 'delete', path: 'votes/big' });
+    const never = await db(h, W, adaInst, { op: 'delete', path: 'votes/never-there' });
+    expect([gone.status, gone.body]).toEqual([200, { ok: true }]);
+    expect([never.status, never.body]).toEqual([gone.status, gone.body]);
+    expect(h.core.data.get(inst.id, 'votes/big')).toBeNull();
+    // set replaces without looking: the same answer over an existing document and a new one.
+    expect((await db(h, W, adaInst, { op: 'set', path: `votes/x-${bob.id}`, data: { a: 1 } })).body).toEqual({ doc: null });
+    expect((await db(h, W, adaInst, { op: 'set', path: `votes/x-${bob.id}`, data: { a: 2 } })).body).toEqual({ doc: null });
+    h.core.data.delete(inst.id, `votes/x-${bob.id}`);
+    expect((await db(h, W, adaInst, { op: 'set', path: `votes/${ada.id}`, data: { choice: 'mine' } })).body).toEqual({ doc: null });
+    expect((await db(h, W, adaInst, { op: 'add', path: 'votes', data: { choice: 'more' } })).body).toEqual({ doc: null });
+    // The writes happened all the same.
+    expect(h.core.data.get(inst.id, `votes/${ada.id}`)!.data).toEqual({ choice: 'mine' });
+    expect(h.core.data.query(inst.id, 'votes')).toHaveLength(3);
+    // Whoever may read gets the document as before.
+    const ownerInst = await h.enter('workout', await h.login());
+    expect((await db(h, W, ownerInst, { op: 'update', path: `votes/${bob.id}`, data: {} })).body.doc.data).toEqual({ choice: 'secret' });
+    expect((await db(h, W, adaInst, { op: 'update', path: 'tasks/t', data: { n: 1 } })).body.doc.data).toEqual({ n: 1 });
+  });
+
+  it('a viewer cannot store anything in their private area', async () => {
+    const { h, inst } = setup();
+    const vera = h.core.users.create({ email: 'vera@x.y', name: 'Vera', password: 'vera-password-1', role: 'user' });
+    h.core.access.setGrant(inst, 'user', vera.id, 'view', h.core.users.get(h.adminId)!);
+    const cookie = await h.enter('workout', await h.login('vera@x.y', 'vera-password-1'));
+    const own = `data/users/${vera.id}/prefs`;
+    for (const body of [{ op: 'set', path: own, data: { a: 1 } }, { op: 'update', path: own, data: { a: 1 } },
+      { op: 'add', path: `data/users/${vera.id}`, data: { a: 1 } }, { op: 'acquire', path: own, options: { holder: 'h' } }]) {
+      expect((await db(h, W, cookie, body)).status, body.op).toBe(403);
+    }
+    expect(h.core.data.hasData(inst.id)).toBe(false);
+    h.core.data.set(inst.id, own, { theme: 'dark' }, vera.id);
+    expect((await db(h, W, cookie, { op: 'get', path: own })).body.doc.data).toEqual({ theme: 'dark' });
+    h.core.access.setGrant(inst, 'user', vera.id, 'interact', h.core.users.get(h.adminId)!);
+    expect((await db(h, W, cookie, { op: 'set', path: own, data: { a: 1 } })).status).toBe(200);
+    // Lowered to viewer again: nobody else can remove this data, so its owner still can; changing it stays closed.
+    h.core.access.setGrant(inst, 'user', vera.id, 'view', h.core.users.get(h.adminId)!);
+    expect((await db(h, W, cookie, { op: 'update', path: own, data: { b: 2 } })).status).toBe(403);
+    expect((await db(h, W, cookie, { op: 'delete', path: `data/users/${h.adminId}/prefs` })).status).toBe(403);
+    expect((await db(h, W, cookie, { op: 'delete', path: 'tasks/t' })).status).toBe(403);
+    expect((await db(h, W, cookie, { op: 'delete', path: own })).body).toEqual({ ok: true });
+    expect(h.core.data.get(inst.id, own)).toBeNull();
+  });
+
+  it('the change feed is silent about paths the subscriber cannot read', async () => {
+    const { h, inst } = setup({ caps: { db: { rules: [{ path: 'votes', read: 'admin', write: 'interact' }] } } });
+    const ada = h.core.users.create({ email: 'ada@x.y', name: 'Ada', password: 'ada-password-1', role: 'user' });
+    h.core.access.setGrant(inst, 'user', ada.id, 'interact', h.core.users.get(h.adminId)!);
+    const cookie = await h.enter('workout', await h.login('ada@x.y', 'ada-password-1'));
+    const server = http.createServer(h.app);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const received = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no event within 2s')), 2000);
+        const req = http.get({ host: '127.0.0.1', port, path: '/__lager/db/events', headers: { Host: W, Cookie: cookie } }, (res) => {
+          let buf = '';
+          res.on('data', (c) => {
+            buf += c;
+            if (buf.includes('"path":"tasks/after"')) { clearTimeout(timer); req.destroy(); resolve(buf); }
+          });
+          setTimeout(() => {
+            h.core.data.set(inst.id, 'votes/hidden', { n: 1 }, h.adminId);
+            h.core.data.delete(inst.id, 'votes/hidden');
+            // A readable change afterwards proves the stream was open while the hidden ones happened.
+            h.core.data.set(inst.id, 'tasks/after', { n: 1 }, h.adminId);
+          }, 50);
+        });
+        req.on('error', (e) => { if (!(e as NodeJS.ErrnoException).code?.includes('ECONNRESET')) reject(e); });
+      });
+      expect(received.match(/event: change/g)).toHaveLength(1);
+      expect(received).not.toContain('votes');
+    } finally {
+      server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it('a busy lease does not name its holder, and a malformed query is a 400', async () => {
+    const { h } = setup();
+    const inst = await h.enter('workout', await h.login());
+    expect((await db(h, W, inst, { op: 'acquire', path: 'locks/x', options: { holder: 'first-tab-secret' } })).body.acquired).toBe(true);
+    const busy = await db(h, W, inst, { op: 'acquire', path: 'locks/x', options: { holder: 'second' } });
+    expect(busy.body.acquired).toBe(false);
+    expect(busy.body.holder).toBeUndefined();
+    expect(JSON.stringify(busy.body)).not.toContain('first-tab-secret');
+    for (const query of [{ where: {} }, { orderBy: {} }, { where: 'x' }]) {
+      const res = await db(h, W, inst, { op: 'query', path: 'tasks', query });
+      expect(res.status, JSON.stringify(query)).toBe(400);
+      expect(res.body.error.code).toBe('invalid_argument');
+    }
+  });
+
+  it('users endpoint names only people the instance knows', async () => {
+    const { h, inst } = setup({ caps: { user: { scopes: ['email'] } }, visibility: 'users' });
+    const admin = h.core.users.get(h.adminId)!;
+    const mk = (name: string) => h.core.users.create({ email: `${name}@x.y`, name, password: `${name}-password-1`, role: 'user' });
+    const [granted, viaGroup, author, inRoom, stranger, me, privately] = ['granted', 'viagroup', 'author', 'inroom', 'stranger', 'me', 'privately'].map(mk);
+    h.core.access.setGrant(inst, 'user', granted.id, 'view', admin);
+    const team = h.core.groups.create('team');
+    h.core.groups.addMember(team.id, viaGroup.id);
+    h.core.access.setGrant(inst, 'group', team.id, 'view', admin);
+    h.core.data.set(inst.id, 'tasks/t1', { n: 1 }, author.id);
+    // Using only one's private area tells nobody that the account was here.
+    h.core.data.set(inst.id, `data/users/${privately.id}/prefs`, { n: 1 }, privately.id);
+    const peer = h.core.rooms.connect(inst.id, '', { by: inRoom.id, guest: false }, () => {});
+    // The stranger wrote to another instance only.
+    h.core.data.set(h.core.apps.getInstanceBySlug('other')!.id, 'tasks/t1', { n: 1 }, stranger.id);
+
+    const cookie = await h.enter('workout', await h.login('me@x.y', 'me-password-1'));
+    const ask = async (ids: string[]) => (await request(h.app).get('/__lager/users').query({ ids: ids.join(',') }).set('Host', W).set('Cookie', cookie)).body.profiles;
+    const everyone = [h.adminId, granted.id, viaGroup.id, author.id, inRoom.id, stranger.id, me.id, privately.id, 'nope'];
+    const first = await ask(everyone);
+    expect(Object.keys(first).sort()).toEqual([h.adminId, granted.id, viaGroup.id, author.id, inRoom.id, me.id].sort());
+    expect(first[me.id]).toEqual({ id: me.id, name: 'me', email: 'me@x.y', isMe: true });
+    expect(JSON.stringify(first)).not.toContain('stranger');
+
+    // Leaving the room and losing the grant end it; writing here starts it. An author stays known after
+    // someone else edited the document and after it was deleted.
+    peer.leave();
+    h.core.access.removeGrant(inst, 'user', granted.id, admin);
+    h.core.data.update(inst.id, 'tasks/t1', { n: 2 }, h.adminId);
+    expect(Object.keys(await ask([author.id]))).toEqual([author.id]);
+    h.core.data.delete(inst.id, 'tasks/t1');
+    h.core.data.set(inst.id, 'tasks/t2', { n: 2 }, stranger.id);
+    expect(Object.keys(await ask(everyone)).sort()).toEqual([h.adminId, viaGroup.id, author.id, stranger.id, me.id].sort());
+
+    // An anonymous visitor of a public instance gets the same people, without addresses.
+    h.core.apps.setVisibility(inst.id, 'public', h.adminId);
+    const anon = (await request(h.app).get('/__lager/users').query({ ids: everyone.join(',') }).set('Host', W)).body.profiles;
+    expect(Object.keys(anon).sort()).toEqual([h.adminId, viaGroup.id, author.id, stranger.id].sort());
+    expect(anon[stranger.id].email).toBeNull();
+  });
+
   it('users endpoint hides email without scope and caps ids', async () => {
     const { h } = setup({ caps: { user: {} } });
     const inst = await h.enter('workout', await h.login());
