@@ -27,6 +27,8 @@ function setup() {
   const admin = hh.core.users.get(hh.adminId)!;
   // The administrator manages `notes` as a grantee (not as owner), which is what the page needs; `other` stays private to the publisher.
   hh.core.access.setGrant(inst, 'user', admin.id, 'admin', pub);
+  // A grantee is asked once before the first sign-in to an instance; here the administrator has answered already.
+  hh.core.access.confirmSignIn(inst, admin, true);
   return { hh, pub, inst, other, admin };
 }
 

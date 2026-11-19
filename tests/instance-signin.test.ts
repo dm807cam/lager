@@ -80,29 +80,47 @@ describe('the question before the first sign-in to an instance', () => {
     expect((await s.ask(cookie, { slug: 'other' })).status).toBe(200);
   });
 
-  it('the owner, people the instance is shared with and those who manage the app are not asked', async () => {
-    const s = setup({ visibility: 'users' });
+  it('only the owner of the instance and those who maintain its app are not asked; a share does not answer for the visitor', async () => {
+    const s = setup({ visibility: 'private' });
     const { core } = s.h;
     const admin = core.users.get(s.h.adminId)!;
     const mk = (name: string, role: 'user' | 'publisher' = 'user') => core.users.create({ email: `${name}@x.y`, name, password: PW, role });
     const granted = mk('granted');
     const viaGroup = mk('viagroup');
     const collaborator = mk('collab', 'publisher');
+    const instanceOwner = mk('instowner');
     core.access.setGrant(s.inst, 'user', granted.id, 'view', admin);
     const team = core.groups.create('Team');
     core.groups.addMember(team.id, viaGroup.id);
     core.access.setGrant(s.inst, 'group', team.id, 'view', admin);
     core.apps.addCollaborator(s.app.id, collaborator.id, s.h.adminId);
-    for (const email of ['admin@x.y', 'granted@x.y', 'viagroup@x.y', 'collab@x.y']) {
+    core.access.setGrant(s.inst, 'user', collaborator.id, 'view', admin);
+    // A second instance of the app that belongs to somebody else: its owner is not asked there.
+    core.apps.createInstance({ appId: s.app.id, slug: 'theirs', ownerId: instanceOwner.id, createdBy: s.h.adminId });
+    for (const [email, slug] of [['admin@x.y', 'workout'], ['collab@x.y', 'workout'], ['instowner@x.y', 'theirs']] as const) {
       const cookie = email === 'admin@x.y' ? await s.h.login() : await s.h.login(email, PW);
-      const res = await s.ask(cookie);
-      expect(res.status, email).toBe(302);
-      expect(res.headers.location, email).toContain('/__lager/callback?code=');
+      const res = await s.ask(cookie, { slug });
+      expect(res.status, `${email} ${slug}`).toBe(302);
+      expect(res.headers.location, `${email} ${slug}`).toContain('/__lager/callback?code=');
     }
     expect(s.confirmations()).toEqual([]);
-    // Once the grant is gone, the same person comes through the visibility and is asked.
-    core.access.removeGrant(s.inst, 'user', granted.id, admin);
-    expect((await s.ask(await s.h.login('granted@x.y', PW))).status).toBe(200);
+    // A publisher who shares his app with somebody's address, or with a group, has not asked that person: they are asked, once.
+    for (const email of ['granted@x.y', 'viagroup@x.y']) {
+      const cookie = await s.h.login(email, PW);
+      const page = await s.ask(cookie);
+      expect(page.status, email).toBe(200);
+      expect(page.headers.location, email).toBeUndefined();
+      expect(page.text).toContain(t('en', 'signin.sees.name'));
+      expect((await s.answer(cookie, { ...s.fieldsOf(page.text), decision: 'continue' })).status).toBe(302);
+      expect((await s.ask(cookie)).status, email).toBe(302);
+    }
+    expect(s.confirmations().map((c) => c.user_id).sort()).toEqual([granted.id, viaGroup.id].sort());
+    // Until they have agreed to it, the instance does not get a grantee's address either.
+    core.apps.deploy({ slug: 'workout', html: HTML, userId: s.h.adminId, capabilities: { user: { scopes: ['email'] } } });
+    const owner = await s.h.enter('workout', await s.h.login());
+    const profiles = (await request(s.h.app).get('/__lager/users').query({ ids: `${granted.id},${s.h.adminId}` }).set('Host', W).set('Cookie', owner)).body.profiles;
+    expect(profiles[granted.id]).toMatchObject({ name: 'granted', email: null });
+    expect(profiles[s.h.adminId]).toMatchObject({ email: 'admin@x.y' });
   });
 
   it('cancel signs nobody in: back to a public instance, which works without a sign-in, else to the platform', async () => {

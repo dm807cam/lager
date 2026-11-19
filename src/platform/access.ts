@@ -155,11 +155,12 @@ export class Access {
   }
 
   /**
-   * True when the user reaches the instance through its visibility alone (public, or open to every signed-in user): not the owner,
-   * not someone it is shared with, not someone who manages its app. Such an instance has to be confirmed before it learns who visits.
+   * True unless the user owns the instance or owns or maintains its app. Everyone else is asked before the instance learns who
+   * visits: whoever reaches it through its visibility, and also whoever it was shared with, directly or through a group. A share is
+   * the publisher's doing, not the visitor's: an app could otherwise share itself with an address and learn who is behind it.
    */
   needsSignInConfirmation(instance: Instance, user: User): boolean {
-    if (this.isConnected(instance, user.id)) return false;
+    if (instance.ownerId === user.id) return false;
     const app = this.apps.getApp(instance.appId);
     return !(app && this.canReadApp(app, user));
   }
