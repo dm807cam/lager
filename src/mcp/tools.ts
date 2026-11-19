@@ -156,6 +156,8 @@ export async function deployWithIcon(core: Core, user: User, input: {
   if (declared !== undefined && (!prior || core.access.canDeploy(prior, user))) assertModelAllowed(core, user, declared);
   const result = core.apps.deploy({
     slug: input.slug, html: input.html, title: input.title, note: input.note, capabilities: input.capabilities, userId: user.id,
+    // Counted by `deploy` itself, only when it creates a version: a refused deploy costs nobody anything.
+    rateLimit: (key) => core.deployLimiter.hit(key),
     description: input.description, themeColor: input.themeColor,
   });
   let app = result.app;
@@ -576,8 +578,8 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   server.registerTool('deploy_app', { ...toolMeta('deploy_app'),
     description: 'Deploy an app (one self-contained HTML file) as a new version. Creates the app and its default instance on first deploy. Call get_guide once before your first deploy in a conversation: apps keep their data through the window.lager runtime it describes, never through localStorage. Pass capabilities for every runtime feature the HTML uses, and icon_svg, description and theme_color when you create an app. Returns the instance URLs, the icon URL and warnings to tell the user.',
     inputSchema: {
-      slug: slugArg, html: z.string().describe('Complete HTML of the app'), title: z.string().optional(),
-      capabilities: capabilitiesArg.optional(), note: z.string().optional().describe('Short version note'),
+      slug: slugArg, html: z.string().describe('Complete HTML of the app'), title: z.string().optional().describe('Name of the app, one line of at most 100 characters'),
+      capabilities: capabilitiesArg.optional(), note: z.string().optional().describe('Short version note, one line of at most 500 characters'),
       icon_svg: iconSvgArg.optional(), description: descriptionArg.optional(), theme_color: themeColorArg.optional(),
     },
   }, ({ slug, html, title, capabilities, note, icon_svg, description, theme_color }) => runAsync(() => deployWithIcon(core, user, {

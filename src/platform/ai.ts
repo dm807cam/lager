@@ -46,7 +46,11 @@ export const MAX_TOKENS_LIMIT = 128_000;
 export const DEFAULT_MAX_TOKENS = 16_000;
 export const DEFAULT_HOURLY_LIMIT = 60;
 export const HOURLY_LIMIT_MAX = 10_000;
-const REQUEST_TIMEOUT_MS = 180_000;
+/**
+ * How long a provider may take unless LAGER_AI_TIMEOUT_SECONDS says otherwise. Below what the proxies in front of Lager allow
+ * (Cloudflare cuts a response off after about 100 seconds), so a slow answer ends as Lager's own `timeout` error.
+ */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 90_000;
 const MAX_MODEL = 200;
 const MAX_KEY = 1000;
 const MAX_URL = 500;
@@ -126,7 +130,7 @@ function cleanName(name: unknown, what: string): string {
 export class AiModels {
   private keyBytes: Buffer;
 
-  constructor(private db: DatabaseSync, secret: string, private fetchImpl: Fetch = (...a) => fetch(...a)) {
+  constructor(private db: DatabaseSync, secret: string, private fetchImpl: Fetch = (...a) => fetch(...a), private timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
     // A key of its own, so the stored API key cannot be read with a session-signing key and the other way round.
     this.keyBytes = crypto.createHash('sha256').update(`lager-ai-key:${secret}`).digest();
   }
@@ -469,7 +473,7 @@ export class AiModels {
     const model = route.model;
     const maxTokens = Math.min(opts.maxTokens ?? this.maxTokens, this.maxTokens);
     const base = (row.base_url || preset.baseUrl).replace(/\/+$/, '');
-    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const timeout = AbortSignal.timeout(this.timeoutMs);
     const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
     let url: string;
     let headers: Record<string, string>;
@@ -485,13 +489,16 @@ export class AiModels {
       body = { model, messages, [preset.tokenParam]: maxTokens };
     }
     let res: Response;
+    let raw: string;
     try {
       res = await this.fetchImpl(url, { method: 'POST', headers, body: JSON.stringify(body), signal, redirect: 'error' });
+      // Reading belongs in here too: a body that stalls past the time limit or breaks off is a provider failure like an unanswered request.
+      raw = await readCapped(res);
     } catch (e) {
+      if (e instanceof AiError) throw e;
       if (timeout.aborted) throw new AiError('timeout', 'The language model took too long to answer.', 504);
       throw new AiError('provider_error', 'The language model could not be reached.', 502, e instanceof Error ? e.message : String(e));
     }
-    const raw = await readCapped(res);
     let json: unknown = null;
     try { json = JSON.parse(raw); } catch { /* reported below */ }
     if (!res.ok) {
