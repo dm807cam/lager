@@ -29,7 +29,7 @@ updates:
       interval: weekly
     commit-message:
       prefix: build
-    # A new Node major changes what CI tests (ci.yml); move image and CI matrix together by hand.
+    # A new Node major changes what CI tests (ci.yml); move the image, CI and package.json "engines" together by hand.
     ignore:
       - dependency-name: node
         update-types: ['version-update:semver-major']

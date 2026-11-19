@@ -20,7 +20,7 @@
   <a href="https://github.com/dm807cam/lager/actions/workflows/ci.yml"><img src="https://github.com/dm807cam/lager/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg" alt="License: AGPL-3.0-or-later"></a>
   <a href="https://github.com/dm807cam/lager/pkgs/container/lager"><img src="https://img.shields.io/badge/docker-ghcr.io%2Fdm807cam%2Flager-2496ED?logo=docker&logoColor=white" alt="Docker image"></a>
-  <img src="https://img.shields.io/badge/node-%E2%89%A522.13-339933?logo=node.js&logoColor=white" alt="Node.js 22.13 or newer">
+  <img src="https://img.shields.io/badge/node-%E2%89%A524-339933?logo=node.js&logoColor=white" alt="Node.js 24 or newer">
   <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="Pull requests welcome"></a>
 </p>
 
@@ -154,7 +154,7 @@ git clone https://github.com/dm807cam/lager.git && cd lager
 npm ci
 cp .env.example .env && set -a && . ./.env && set +a
 LAGER_DATA_DIR=./data npm run dev    # platform at http://localhost:8080, apps at http://<slug>.apps.localhost:8080
-npm test                             # about 1150 tests, under a minute (Node 22.22+)
+npm test                             # about 1150 tests, under a minute (Node 24+)
 ```
 
 ## Security

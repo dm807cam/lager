@@ -112,12 +112,14 @@ Images are built for `linux/amd64` and `linux/arm64` (so a Raspberry Pi works to
 
 | Pushed | Tags written | Use it for |
 | --- | --- | --- |
-| A release tag `v1.2.3` | `:1.2.3`, `:1.2`, `:1`, `:latest` and `:sha-<commit>` | `:latest` follows the releases. `:1.2.3` pins one exact release, `:1.2` and `:1` follow a release line |
-| A release tag `v0.4.1` | `:0.4.1`, `:0.4`, `:latest` and `:sha-<commit>` | While Lager is 0.x there is no `:0`, because every minor release may break: pin `:0.4` or `:0.4.1` |
-| A pre-release tag `v1.2.3-rc.1` | `:1.2.3-rc.1` and `:sha-<commit>` | Trying a release candidate. It moves neither `:latest` nor `:1.2` or `:1` |
-| A commit on `main` | `:edge` and `:sha-<commit>` | The development version, for testing. It can be ahead of `:latest` and may break |
+| A release tag `v1.2.3` | `:1.2.3`, `:1.2`, `:1` and `:latest` | `:latest` follows the releases. `:1.2.3` pins one exact release, `:1.2` and `:1` follow a release line |
+| A release tag `v0.4.1` | `:0.4.1`, `:0.4` and `:latest` | While Lager is 0.x there is no `:0`, because every minor release may break: pin `:0.4` or `:0.4.1` |
+| A pre-release tag `v1.2.3-rc.1` | `:1.2.3-rc.1` | Trying a release candidate. It moves neither `:latest` nor `:1.2` or `:1` |
+| A commit on `main` | `:edge` | The development version, for testing. It can be ahead of `:latest` and may break |
 
 `:latest` points at the release whose tag was pushed most recently, which is not necessarily the highest version: if a fix for an older line (`v1.1.5`) is tagged after `v1.2.0`, `:latest` and `:1` move to it until the next release is tagged. `:latest` never moves on a commit to `main` or on a pre-release tag.
+
+Only the current `:edge` build is kept: after every publish, earlier edge builds are deleted from the registry. Release images stay. To test one particular development build for longer, pull `:edge` and keep the image locally.
 
 To run a published image, replace `build: .` in `docker-compose.yml` with `image: ghcr.io/dm807cam/lager:latest` and start with `docker compose up -d`. To update, run `docker compose pull && docker compose up -d`. Your data stays in the volume. Back it up before a major version change (see [Backup](data-and-backup.md#backup)).
 
@@ -266,4 +268,4 @@ LAGER_DATA_DIR=./data npm run dev
 
 The platform is called `localhost` and not `lager.localhost` because the MCP SDK accepts an address without https for OAuth only for the host name `localhost`.
 
-Node.js 22.13 or newer is required. `npm test` runs the tests; `npm run build && npm start` starts the built server. If you want to work on Lager itself, the [contributing guide](../CONTRIBUTING.md) explains the workflow.
+Node.js 24 or newer is required. `npm test` runs the tests; `npm run build && npm start` starts the built server. If you want to work on Lager itself, the [contributing guide](../CONTRIBUTING.md) explains the workflow.

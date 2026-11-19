@@ -68,7 +68,7 @@ What fits Lager well:
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) **22.22 or newer** for development. Lager itself runs on 22.13 or newer (it uses the built-in `node:sqlite`), but the test tools need 22.22. CI runs the tests on Node 22 and 24 and checks that the server starts on 22.13.
+- [Node.js](https://nodejs.org/) **24 or newer**, the version the Docker image ships. CI runs the tests on Node 24 only.
 - npm (ships with Node.js)
 - Git
 - Optional: Docker, to test the container image
