@@ -4,6 +4,11 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Changed
+
+- **Node.js 24 or newer** is needed to run Lager from source (it was 22.13). The Docker image and the installer already use Node 24, so they are not affected.
+- **Images:** commits on `main` publish only `:edge`, without a `:sha-<commit>` tag, and earlier edge builds are deleted after each publish. Release images and their tags stay.
+
 ## [0.1.0] - 2026-11-19
 
 The first public release.

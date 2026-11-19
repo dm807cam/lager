@@ -1,34 +1,38 @@
 name: CI
 
+# Tests, the installer check and a Docker smoke test run on every pull request and push. Pushes to main and release
+# tags then publish ghcr.io/<owner>/lager for linux/amd64 and linux/arm64, and older builds are deleted:
+#   push to main      -> :edge (the previous edge build is deleted)
+#   tag v1.2.3        -> :1.2.3, :1.2, :1 and :latest
+#   tag v0.4.1        -> :0.4.1, :0.4 and :latest (no :0: in 0.x every minor release may break)
+#   tag v1.2.3-rc.1   -> :1.2.3-rc.1
 on:
   push:
     branches: [main]
+    tags: ['v*.*.*']
   pull_request:
   workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A newer push to a pull request makes the older run pointless; a publish on main or a tag always finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   test:
-    name: Test (Node ${{ matrix.node }})
+    name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        # The lowest supported major (package.json "engines") and the one the Docker image uses.
-        node: ['22', '24']
     steps:
       - uses: actions/checkout@v7
 
+      # The Node major of the Docker image (Dockerfile) and the minimum in package.json "engines": move all three together.
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.node }}
+          node-version: '24'
           cache: npm
 
       - name: Install dependencies
@@ -53,47 +57,6 @@ jobs:
       # ShellCheck is preinstalled on GitHub's Ubuntu runners. The behaviour is tested in tests/install-script.test.ts.
       - name: ShellCheck
         run: shellcheck install.sh
-
-  min-node:
-    name: Runs on Node 22.13
-    # package.json promises Node 22.13 for running Lager. The test tools themselves need newer Node (jsdom wants
-    # 22.22), so this job builds the server and checks that it starts and answers, instead of running the tests.
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22.13.0'
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Start and answer
-        env:
-          LAGER_PUBLIC_URL: http://localhost:8080
-          LAGER_APPS_DOMAIN: apps.localhost
-          LAGER_ADMIN_EMAIL: admin@example.com
-          LAGER_ADMIN_PASSWORD: ci-password-123
-          LAGER_DATA_DIR: ${{ runner.temp }}/lager-data
-          LAGER_HOST: 127.0.0.1
-        run: |
-          node dist/server.js > server.log 2>&1 &
-          for i in $(seq 1 30); do
-            if curl -fsS -H 'Host: localhost:8080' http://127.0.0.1:8080/healthz; then
-              curl -fsS -o /dev/null -H 'Host: localhost:8080' http://127.0.0.1:8080/login
-              echo; echo "Lager runs on $(node --version)."
-              exit 0
-            fi
-            sleep 1
-          done
-          cat server.log
-          exit 1
 
   docker:
     name: Docker image
@@ -176,3 +139,78 @@ jobs:
             exit 1
           fi
           echo "Every commit is signed off by its author."
+
+  publish:
+    name: Publish image
+    # Only what passed the tests and the smoke test is published.
+    if: github.event_name == 'push'
+    needs: [test, installer, docker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to the GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/lager
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+            type=edge,branch=main
+          labels: |
+            org.opencontainers.image.title=Lager
+            org.opencontainers.image.description=Self-hosted server for the apps your AI builds
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha,scope=publish
+          cache-to: type=gha,mode=max,scope=publish
+          provenance: true
+          sbom: true
+
+  cleanup:
+    name: Delete old images
+    # Keeps every release tag, :latest and the current :edge. Deleted: earlier edge builds (untagged once :edge moved on)
+    # and the :sha-<commit> tags that older builds carried. The action knows multi-platform images, so it never deletes
+    # the platform images and attestations that a kept tag still points to.
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      packages: write
+    steps:
+      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          package: lager
+          delete-tags: sha-*
+          delete-untagged: true
+          delete-ghost-images: true
+          delete-partial-images: true
+          delete-orphaned-images: true
+          # A build that another run is pushing right now is briefly untagged; it is younger than this and stays.
+          older-than: 10 minutes
