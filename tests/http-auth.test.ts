@@ -79,7 +79,8 @@ describe('registration and verification', () => {
     const verify = await s.post('/verify', { token, password: PASSWORD });
     expect(verify.status).toBe(302);
     expect(verify.headers.location).toBe('/login?verified=1');
-    expect(([] as string[]).concat(verify.headers['set-cookie'] ?? [])).toEqual([]);
+    // No session; only the cookie that remembers this browser for the account.
+    expect(([] as string[]).concat(verify.headers['set-cookie'] ?? []).map((c) => c.split('=')[0])).toEqual(['lager_device']);
     expect(h!.core.users.getByEmail('ann@example.org')!.verified).toBe(true);
     expect((await s.get('/login?verified=1')).text).toContain(t('en', 'login.verified'));
     const cookie = await h!.login('ann@example.org', PASSWORD);
@@ -251,9 +252,42 @@ describe('registration and verification', () => {
     expect(ok.status).toBe(302);
   });
 
-  it('duplicate e-mail and short password re-render the form', async () => {
+  it('a taken address is answered like a new one, and its owner gets a mail instead', async () => {
     const s = setup();
-    await s.registerVerified('ann@example.org');
+    const fresh = await s.register('ann@example.org');
+    await s.post('/verify', { token: new URL(s.linkOf(), 'http://x').searchParams.get('token')!, password: PASSWORD });
+    s.mailer.sent.length = 0;
+    const dup = await s.post('/register', { name: 'Zed', email: 'Ann@Example.org', password: 'another password' });
+    // Status and page are those of a registration that worked: the form does not say which addresses have an account.
+    expect(dup.status).toBe(fresh.status);
+    expect(dup.text).toBe(fresh.text);
+    expect(dup.headers['set-cookie']).toBeUndefined();
+    expect(s.mailer.sent).toHaveLength(1);
+    expect(s.mailer.sent[0]).toMatchObject({ to: 'ann@example.org', subject: t('en', 'mail.exists.subject') });
+    expect(s.mailer.sent[0].text).toContain('http://lager.localhost:8080/login');
+    expect(s.mailer.sent[0].text).toContain('http://lager.localhost:8080/forgot');
+    // Nothing about the account changed: the old password still signs in, the new one does not.
+    expect((await h!.core.users.checkLogin('ann@example.org', PASSWORD)).ok).toBe(true);
+    expect((await h!.core.users.checkLogin('ann@example.org', 'another password')).ok).toBe(false);
+    // The owner's mailbox is not filled: at most three such mails an hour per address.
+    for (let i = 0; i < 3; i++) await s.post('/register', { name: 'Zed', email: 'ann@example.org', password: 'another password' });
+    expect(s.mailer.sent).toHaveLength(3);
+  });
+
+  it('an invitation sent to a taken address still names it: a working one would sign in at once', async () => {
+    const s = setup();
+    h!.core.users.create({ email: 'ann@example.org', name: 'Ann', password: PASSWORD, role: 'user' });
+    const { url } = await h!.core.accounts.createInvite({ email: 'ann@example.org', role: 'user', createdBy: h!.adminId });
+    s.mailer.sent.length = 0;
+    const invited = await s.register('ann@example.org', { invite: new URL(url).searchParams.get('invite')! });
+    expect(invited.status).toBe(409);
+    expect(s.mailer.sent).toHaveLength(0);
+  });
+
+  it('duplicate e-mail without mail, and a short password, re-render the form', async () => {
+    const s = setup();
+    s.mailer.enabled = false;
+    h!.core.users.create({ email: 'ann@example.org', name: 'Ann', password: PASSWORD, role: 'user' });
     const dup = await s.post('/register', { name: 'Zed', email: 'ann@example.org', password: PASSWORD });
     expect(dup.status).toBe(409);
     expect(dup.text).toContain(t('en', 'auth.register.exists'));

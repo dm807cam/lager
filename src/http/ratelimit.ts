@@ -36,4 +36,15 @@ export class RateLimiter {
   reset(key: string): void {
     this.hits.delete(key);
   }
+
+  /**
+   * Takes back the newest attempt of the key. For work that is awaited: `hit` first, so that requests arriving together cannot all
+   * pass a check made before any of them was counted, and `release` when the attempt turns out not to count.
+   */
+  release(key: string): void {
+    const list = this.hits.get(key);
+    if (!list) return;
+    list.pop();
+    if (list.length === 0) this.hits.delete(key);
+  }
 }

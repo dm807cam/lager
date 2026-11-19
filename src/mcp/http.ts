@@ -4,7 +4,7 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { bearerUser } from '../http/api.js';
 import type { PlatformExtension } from '../http/app.js';
-import { clientAuthentication, LagerOAuthProvider } from './oauth.js';
+import { authorizeGuard, clientAuthentication, LagerOAuthProvider } from './oauth.js';
 import { buildMcpServer } from './tools.js';
 
 // deploy_app carries up to 16 MiB of HTML inside a JSON-RPC message.
@@ -49,6 +49,7 @@ export const mcpExtension: PlatformExtension = (router, core) => {
   }
   if (auth) {
     router.post(['/token', '/revoke'], ...clientAuthentication(core));
+    router.use('/authorize', authorizeGuard(core));
     router.use(auth);
   }
 

@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 /**
  * Schema changes of the platform database, applied in order and counted in `PRAGMA user_version`.
- * The first entry is the complete schema; append a new entry for every later change, never edit a released one.
+ * The first entry is the baseline schema and is frozen (ADR 0013); append a new entry for every later change, never edit an existing one.
  */
 export const MIGRATIONS: string[] = [
   `
@@ -200,6 +200,19 @@ export const MIGRATIONS: string[] = [
   -- "Everyone else": the AI group of every person not assigned to another one; off until a model is chosen.
   INSERT INTO ai_groups (id, name, model_id, hourly_limit, created_at)
     VALUES ('default', '', NULL, 60, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+  `,
+  `
+  -- A visitor's agreement that an instance they reach through its visibility alone learns who they are; \`email\` says
+  -- whether the agreement covered the address. Gone with the instance and with the account.
+  CREATE TABLE instance_signins (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+    email INTEGER NOT NULL DEFAULT 0,
+    confirmed_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, instance_id)
+  );
+  -- When the client last showed a consent page or was issued a code or token; NULL until then. Idle clients are purged by it.
+  ALTER TABLE oauth_clients ADD COLUMN last_used_at TEXT;
   `,
 ];
 

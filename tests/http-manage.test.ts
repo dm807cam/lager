@@ -29,7 +29,7 @@ async function setup(): Promise<Ctx> {
   return { p, u, w, pc: await login(p), uc: await login(u), wc: await login(w) };
 }
 
-const csrf = (user: User): string => signToken({ uid: user.id, k: 'ui' }, h.core.config.secret, 3600);
+const csrf = (user: User): string => signToken({ uid: user.id, k: 'ui', ep: h.core.users.get(user.id)?.sessionEpoch }, h.core.config.secret, 3600);
 const page = (cookie: string | null, path: string) => {
   const r = request(h.app).get(path).set('Host', h.host);
   return cookie ? r.set('Cookie', cookie) : r;

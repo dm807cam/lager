@@ -231,7 +231,8 @@ export function createInstanceRouter(core: Core): express.Router {
       viewer: {
         id: ctx.user?.id ?? null,
         name: ctx.user?.name ?? '',
-        email: ctx.user && emailAllowed(ctx) ? ctx.user.email : null,
+        // A visitor who agreed to share only a name (see /auth/instance) keeps the address back when the app starts asking for it.
+        email: ctx.user && emailAllowed(ctx) && core.access.signInConfirmed(ctx.instance, ctx.user, true) ? ctx.user.email : null,
         level,
         isOwner: level === 'owner',
         canEdit: level === 'admin' || level === 'owner',
@@ -258,7 +259,8 @@ export function createInstanceRouter(core: Core): express.Router {
       }
       const found = hasScope(ctx, 'profile') ? core.access.usersWithAccess(ctx.instance, req.query.q, MAX_SEARCH_RESULTS, emailAllowed(ctx)) : [];
       res.set('Cache-Control', 'no-store').json({
-        profiles: found.map((u) => ({ id: u.id, name: u.name, email: emailAllowed(ctx) ? u.email : null, isMe: u.id === ctx.user?.id })),
+        // As for single profiles: no address of someone who has not agreed to share it with this instance.
+        profiles: found.map((u) => ({ id: u.id, name: u.name, email: emailAllowed(ctx) && core.access.signInConfirmed(ctx.instance, u, true) ? u.email : null, isMe: u.id === ctx.user?.id })),
       });
       return;
     }
@@ -275,7 +277,7 @@ export function createInstanceRouter(core: Core): express.Router {
       || core.data.hasAuthor(ctx.instance.id, uid) || core.rooms.hasUser(ctx.instance.id, uid);
     for (const id of declared ? ids : []) {
       const u = known(id) ? core.users.get(id) : null;
-      if (u) profiles[id] = { id: u.id, name: u.name, email: withEmail ? u.email : null, isMe: u.id === ctx.user?.id };
+      if (u) profiles[id] = { id: u.id, name: u.name, email: withEmail && core.access.signInConfirmed(ctx.instance, u, true) ? u.email : null, isMe: u.id === ctx.user?.id };
     }
     res.set('Cache-Control', 'no-store').json({ profiles });
   });
@@ -372,7 +374,7 @@ export function createInstanceRouter(core: Core): express.Router {
     const first = ctxOf(res);
     requireAccess(first);
     const userId = first.viewer.userId;
-    const viewer = dbStreams.admit(first.instance.id, userId ?? `ip:${req.ip ?? ''}`, userId === null, '');
+    const viewer = dbStreams.admit(first.instance.id, userId ?? `ip:${addressKey(req.ip)}`, userId === null, '');
     if (!viewer) {
       res.status(429).set('Retry-After', '5').json({ error: { code: 'rate_limited', message: 'Too many open connections.' } });
       return;

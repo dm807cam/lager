@@ -21,6 +21,7 @@ We follow the format [described by Michael Nygard](https://cognitect.com/blog/20
 | [0013](0013-one-schema-before-release.md) | One database schema until the first release | Accepted |
 | [0014](0014-agpl-and-dco.md) | AGPL-3.0-or-later and the DCO instead of a CLA | Accepted |
 | [0015](0015-model-catalog-and-model-per-app.md) | A model catalog, allowed models per AI group and a model per app | Accepted |
+| [0016](0016-confirm-before-instance-sign-in.md) | A visitor confirms before an instance learns who they are | Proposed |
 
 ## Writing a new record
 
