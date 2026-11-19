@@ -15,6 +15,7 @@ An installation that ran a build from before the first release will notice these
 - **Language model time limit:** a model call ends with the error `timeout` after 90 seconds instead of 180. `LAGER_AI_TIMEOUT_SECONDS` changes that; keep it below the response timeout of your proxy.
 - **Reserved names:** new apps and instances cannot be named `login`, `account`, `accounts`, `mail`, `smtp`, `ftp`, `assets`, `cdn`, `status`, `support` or `security`, nor like the platform's own host under the apps domain. Existing ones keep working.
 - **Custom domains:** a parent domain of the platform host or of the apps domain (`example.com` for a platform at `lager.example.com`) can no longer be attached to an instance. Domains that are already attached keep working.
+- **Home-screen install of private instances:** the manifest and icons of an instance that is not public show the app's name, description and icon only to a viewer with access; anyone else gets a manifest named "Lager" with the placeholder icon. Apps that bring their own `rel="manifest"` link need `crossorigin="use-credentials"` on it to keep their name when installed.
 - **Title and note:** a new app title takes at most 100 characters and a version note at most 500, one line each.
 
 ## [0.1.0] - unreleased

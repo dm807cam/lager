@@ -134,7 +134,9 @@ function installTags(tags: string[], meta: PageMeta): string {
   let out = '';
   // A page with its own manifest manages its install tags itself; otherwise each tag is added only if the page lacks it.
   if (!has.manifest) {
-    out += '<link rel="manifest" href="/__lager/manifest.webmanifest">';
+    // Browsers fetch a manifest without cookies unless the link asks for them, and without them an instance that is not public
+    // answers with the generic manifest ("Lager", the bundled icon) instead of the app's name and icon.
+    out += '<link rel="manifest" href="/__lager/manifest.webmanifest" crossorigin="use-credentials">';
     if (!has.touchIcon) out += `<link rel="apple-touch-icon" href="/__lager/icon-180.png?v=${v}">`;
     if (!has.icon) out += `<link rel="icon" type="image/png" href="/__lager/icon-192.png?v=${v}">`;
     if (!has.themeColor) out += `<meta name="theme-color" content="${attr(color)}">`;

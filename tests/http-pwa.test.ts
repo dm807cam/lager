@@ -17,9 +17,13 @@ async function setup(opts: { title?: string; html?: string; themeColor?: string;
   await deployWithIcon(h.core, user, {
     slug: 'todo', html: opts.html ?? PAGE, title: opts.title ?? 'Todo list for the whole family', iconSvg: ICON, description: 'A shared list.', themeColor: opts.themeColor ?? '#336699',
   });
-  if (opts.visibility) h.core.apps.setVisibility(h.core.apps.getInstanceBySlug('todo')!.id, opts.visibility, h.adminId);
+  // Public unless a test says otherwise: an instance that is not public shows its name and icon only to people with access.
+  h.core.apps.setVisibility(h.core.apps.getInstanceBySlug('todo')!.id, opts.visibility ?? 'public', h.adminId);
   return h;
 }
+
+/** The instance cookie of the owner (the administrator of the harness). */
+const ownerCookie = async (h: Harness): Promise<string> => h.enter('todo', await h.login());
 
 function pngSize(b: Buffer): { w: number; h: number } {
   expect([...b.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -35,7 +39,7 @@ const get = (h: Harness, host: string, url: string) => request(h.app).get(url).s
 describe('instance manifest and icons', () => {
   it('manifest of an instance carries name, colours and three icons', async () => {
     const h = await setup({ visibility: 'private' });
-    const res = await request(h.app).get('/__lager/manifest.webmanifest').set('Host', HOST);
+    const res = await request(h.app).get('/__lager/manifest.webmanifest').set('Host', HOST).set('Cookie', await ownerCookie(h));
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toMatch(/^application\/manifest\+json/);
     expect(res.headers['x-content-type-options']).toBe('nosniff');
@@ -172,6 +176,81 @@ describe('instance manifest and icons', () => {
   });
 });
 
+describe('an instance that is not public keeps its name and icon from people without access', () => {
+  const GENERIC = {
+    name: 'Lager', short_name: 'Lager', start_url: '/', scope: '/', display: 'standalone', background_color: '#1f2a5c', theme_color: '#1f2a5c',
+    icons: [
+      { src: '/__lager/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/__lager/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/__lager/icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    ],
+  };
+  const ICONS = [['/__lager/icon-180.png', 180], ['/__lager/icon-192.png', 192], ['/__lager/icon-512.png', 512], ['/__lager/icon-512-maskable.png', 512], ['/apple-touch-icon.png', 180], ['/favicon.ico', 64]] as const;
+  const fallback = (size: number): Buffer => fs.readFileSync(new URL(`../assets/app-fallback-${size}.png`, import.meta.url));
+
+  for (const visibility of ['private', 'users'] as const) {
+    it(`${visibility}: an anonymous request gets the generic manifest and the bundled icon`, async () => {
+      const h = await setup({ visibility });
+      const v = h.core.apps.getApp('todo')!.iconVersion;
+      const res = await request(h.app).get('/__lager/manifest.webmanifest').set('Host', HOST);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(GENERIC);
+      expect(res.text).not.toMatch(/Todo|shared list|336699/i);
+      expect(res.headers.vary).toMatch(/Cookie/i);
+      for (const [url, size] of ICONS) {
+        // Also under the current version, which a viewer with access is given: the answer never becomes the real icon.
+        for (const query of ['', `?v=${v}`]) {
+          const icon = await get(h, HOST, url + query);
+          expect(icon.status, url).toBe(200);
+          expect((icon.body as Buffer).equals(fallback(size)), url + query).toBe(true);
+          expect(icon.headers['cache-control'], url + query).toBe('no-cache');
+        }
+      }
+    });
+  }
+
+  it('a signed-in account without access gets the generic answer too', async () => {
+    const h = await setup({ visibility: 'private' });
+    const inst = h.core.apps.getInstanceBySlug('todo')!;
+    h.core.users.create({ email: 'guest@x.y', name: 'Guest', password: 'guest-password-1', role: 'user' });
+    // The cookie is obtained while the instance is shared with everyone, then the instance is closed again.
+    h.core.apps.setVisibility(inst.id, 'users', h.adminId);
+    const cookie = await h.enter('todo', await h.login('guest@x.y', 'guest-password-1'));
+    expect((await request(h.app).get('/__lager/manifest.webmanifest').set('Host', HOST).set('Cookie', cookie)).body.name).toBe('Todo list for the whole family');
+    h.core.apps.setVisibility(inst.id, 'private', h.adminId);
+    expect((await request(h.app).get('/__lager/manifest.webmanifest').set('Host', HOST).set('Cookie', cookie)).body).toEqual(GENERIC);
+    const icon = await get(h, HOST, '/__lager/icon-192.png').set('Cookie', cookie);
+    expect((icon.body as Buffer).equals(fallback(192))).toBe(true);
+  });
+
+  it('a viewer with access gets the real name and icon, kept only in their own browser', async () => {
+    const h = await setup({ visibility: 'private' });
+    const cookie = await ownerCookie(h);
+    const v = h.core.apps.getApp('todo')!.iconVersion;
+    const manifest = await request(h.app).get('/__lager/manifest.webmanifest').set('Host', HOST).set('Cookie', cookie);
+    expect(manifest.body).toMatchObject({ name: 'Todo list for the whole family', description: 'A shared list.', theme_color: '#336699' });
+    expect(manifest.headers['cache-control']).toBe('no-cache');
+    for (const [url, size] of ICONS) {
+      const icon = await get(h, HOST, `${url}?v=${v}`).set('Cookie', cookie);
+      expect(pngSize(icon.body as Buffer), url).toEqual({ w: size, h: size });
+      expect((icon.body as Buffer).equals(fallback(size)), url).toBe(false);
+      expect(icon.headers['cache-control'], url).toBe('private, max-age=31536000, immutable');
+      expect(icon.headers.vary, url).toMatch(/Cookie/i);
+    }
+  });
+
+  it('a public instance is unchanged: everyone gets name and icon, cacheable by anyone', async () => {
+    const h = await setup({ visibility: 'public' });
+    const v = h.core.apps.getApp('todo')!.iconVersion;
+    const manifest = await request(h.app).get('/__lager/manifest.webmanifest').set('Host', HOST);
+    expect(manifest.body).toMatchObject({ name: 'Todo list for the whole family', description: 'A shared list.' });
+    expect(manifest.headers.vary ?? '').not.toMatch(/Cookie/i);
+    const icon = await get(h, HOST, `/__lager/icon-192.png?v=${v}`);
+    expect((icon.body as Buffer).equals(fallback(192))).toBe(false);
+    expect(icon.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+  });
+});
+
 describe('head injection on the page', () => {
   const sessionPage = async (h: Harness): Promise<string> => {
     const cookie = await h.login();
@@ -184,7 +263,8 @@ describe('head injection on the page', () => {
     const html = await sessionPage(h);
     const v = h.core.apps.getApp('todo')!.iconVersion;
     for (const tag of [
-      '<link rel="manifest" href="/__lager/manifest.webmanifest">',
+      // With credentials, or the browser would fetch the manifest without the instance cookie and get the generic one.
+      '<link rel="manifest" href="/__lager/manifest.webmanifest" crossorigin="use-credentials">',
       `<link rel="apple-touch-icon" href="/__lager/icon-180.png?v=${v}">`,
       `<link rel="icon" type="image/png" href="/__lager/icon-192.png?v=${v}">`,
       '<meta name="theme-color" content="#336699">',
