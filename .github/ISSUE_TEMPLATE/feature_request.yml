@@ -1,0 +1,45 @@
+name: ✨ Feature request
+description: Suggest an improvement or a new feature for Lager.
+labels: ["enhancement", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping to shape Lager! Please check [existing issues](https://github.com/dm807cam/lager/issues?q=is%3Aissue) and [ideas in Discussions](https://github.com/dm807cam/lager/discussions/categories/ideas) first.
+        Larger features are best discussed before anyone starts building them, see [Suggesting features](https://github.com/dm807cam/lager/blob/main/CONTRIBUTING.md#suggesting-features).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the situation and why the current behaviour is not enough. Start from the problem, not the solution.
+      placeholder: When I share an app with my family, I cannot…
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like to happen?
+      description: Describe the solution you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Other solutions or workarounds you tried.
+  - type: dropdown
+    id: who
+    attributes:
+      label: Who benefits most?
+      multiple: true
+      options:
+        - People using apps
+        - People building apps with Claude
+        - Administrators running a server
+        - Contributors
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I would like to work on this myself.
