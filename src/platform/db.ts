@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -204,13 +203,6 @@ export const MIGRATIONS: string[] = [
   `,
 ];
 
-/**
- * A fingerprint of the first migration, kept in `PRAGMA application_id`. Before the first release that migration is
- * edited in place (ADR 0013), so a database created by an earlier pre-release build has the same `user_version` but
- * another schema; the fingerprint tells the two apart and Lager refuses to start instead of failing on missing columns.
- */
-export const SCHEMA_FINGERPRINT = crypto.createHash('sha256').update(MIGRATIONS[0]!).digest().readInt32BE(0);
-
 export function openPlatformDb(dataDir: string): DatabaseSync {
   fs.mkdirSync(dataDir, { recursive: true });
   const db = new DatabaseSync(path.join(dataDir, 'platform.sqlite'));
@@ -223,17 +215,10 @@ export function openPlatformDb(dataDir: string): DatabaseSync {
     throw new Error(`${path.join(dataDir, 'platform.sqlite')} has schema version ${row.user_version}, but this Lager knows only ${MIGRATIONS.length}. `
       + 'It was created by a newer or a pre-release build; use that build, or start with an empty data directory.');
   }
-  const { application_id: fingerprint } = db.prepare('PRAGMA application_id').get() as { application_id: number };
-  if (row.user_version >= 1 && fingerprint !== SCHEMA_FINGERPRINT) {
-    db.close();
-    throw new Error(`${path.join(dataDir, 'platform.sqlite')} was created by a pre-release build of Lager with a different schema. `
-      + 'Export what you need with that build, then start with an empty data directory.');
-  }
   for (let v = row.user_version; v < MIGRATIONS.length; v++) {
     db.exec('BEGIN');
     try {
-      db.exec(MIGRATIONS[v]!);
-      if (v === 0) db.exec(`PRAGMA application_id = ${SCHEMA_FINGERPRINT}`);
+      db.exec(MIGRATIONS[v]);
       db.exec(`PRAGMA user_version = ${v + 1}`);
       db.exec('COMMIT');
     } catch (e) {
