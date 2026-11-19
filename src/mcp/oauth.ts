@@ -45,9 +45,12 @@ const randomSecret = (): string => crypto.randomBytes(32).toString('base64url');
 const isoIn = (seconds: number): string => new Date(Date.now() + seconds * 1000).toISOString();
 const expired = (iso: string): boolean => iso <= new Date().toISOString();
 
-/** A private-use scheme in reverse-domain form (RFC 8252 §7.1), such as `com.example.app:`: at least one dot. */
-const REVERSE_DOMAIN_SCHEME = /^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+:$/;
-/** Schemes without a dot that a client named in docs/connecting-ai.md signs in with: Cursor's desktop app. */
+/**
+ * A private-use scheme in reverse-domain form (RFC 8252 §7.1), such as `com.example.app:`: three or more labels of letters, digits
+ * and hyphens. Two labels are not enough: operating systems ship handlers of that shape (`x-apple.systempreferences:`, `vnd.youtube:`).
+ */
+const REVERSE_DOMAIN_SCHEME = /^[a-z][a-z0-9-]*(\.[a-z0-9-]+){2,}:$/;
+/** Other schemes a client named in docs/connecting-ai.md signs in with: Cursor's desktop app. */
 const KNOWN_APP_SCHEMES = new Set(['cursor:']);
 
 /**
@@ -89,12 +92,21 @@ export class OAuthStore {
     if (Buffer.byteLength(JSON.stringify(metadata)) > MAX_CLIENT_METADATA_BYTES) {
       throw new InvalidClientMetadataError(`Client metadata must not exceed ${MAX_CLIENT_METADATA_BYTES} bytes.`);
     }
-    this.purge();
     this.db
       .prepare('INSERT INTO oauth_clients (client_id, secret_hash, secret_expires_at, metadata, issued_at, created_at) VALUES (?, ?, ?, ?, ?, ?)')
       .run(client_id, client_secret ? hashSecret(client_secret) : null, client_secret_expires_at ?? null,
         JSON.stringify(metadata), client_id_issued_at ?? Math.floor(Date.now() / 1000), new Date().toISOString());
+    this.purge();
     return client;
+  }
+
+  /**
+   * Notes that the client is in use: when its consent page is shown and whenever a code or token is issued to it. The purge
+   * measures idleness from here, so an assistant that kept its registration and connects again after a long time is not deleted
+   * between the consent page and the answer.
+   */
+  touchClient(clientId: string): void {
+    this.db.prepare('UPDATE oauth_clients SET last_used_at = ? WHERE client_id = ?').run(new Date().toISOString(), clientId);
   }
 
   /** Client information without any secret; client authentication happens in `clientAuthentication`. */
@@ -123,13 +135,15 @@ export class OAuthStore {
   issueCode(input: {
     clientId: string; userId: string; redirectUri: string; codeChallenge: string; scopes: string[]; resource?: URL;
   }): string {
-    this.purge();
+    this.touchClient(input.clientId);
     const code = randomSecret();
     this.db
       .prepare(`INSERT INTO oauth_codes (code_hash, client_id, user_id, redirect_uri, code_challenge, scopes, resource, grant_id, used, expires_at, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`)
       .run(hashSecret(code), input.clientId, input.userId, input.redirectUri, input.codeChallenge, input.scopes.join(' '),
         input.resource?.href ?? null, crypto.randomUUID(), isoIn(CODE_TTL_S), new Date().toISOString());
+    // Only after the insert: a purge must never run between a request being accepted and its own row being written.
+    this.purge();
     return code;
   }
 
@@ -152,7 +166,7 @@ export class OAuthStore {
   // ---- tokens ----------------------------------------------------------
 
   issueTokens(clientId: string, userId: string, grantId: string, scopes: string, resource: string | null): OAuthTokens {
-    this.purge();
+    this.touchClient(clientId);
     const access = randomSecret();
     const refresh = randomSecret();
     const now = new Date().toISOString();
@@ -160,6 +174,7 @@ export class OAuthStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`);
     insert.run(hashSecret(access), 'access', clientId, userId, grantId, scopes, resource, isoIn(ACCESS_TTL_S), now);
     insert.run(hashSecret(refresh), 'refresh', clientId, userId, grantId, scopes, resource, isoIn(REFRESH_TTL_S), now);
+    this.purge();
     return {
       access_token: access, token_type: 'bearer', expires_in: ACCESS_TTL_S, refresh_token: refresh,
       ...(scopes ? { scope: scopes } : {}),
@@ -218,7 +233,7 @@ export class OAuthStore {
     this.db.prepare('DELETE FROM oauth_tokens WHERE expires_at <= ?').run(now);
     this.db.prepare('DELETE FROM oauth_codes WHERE expires_at <= ?').run(now);
     // Registering needs no account, so clients nobody finished connecting, or stopped using, must not pile up.
-    this.db.prepare(`DELETE FROM oauth_clients WHERE created_at <= ?
+    this.db.prepare(`DELETE FROM oauth_clients WHERE COALESCE(last_used_at, created_at) <= ?
       AND client_id NOT IN (SELECT client_id FROM oauth_tokens) AND client_id NOT IN (SELECT client_id FROM oauth_codes)`)
       .run(new Date(Date.now() - CLIENT_IDLE_S * 1000).toISOString());
   }
@@ -305,15 +320,17 @@ export class LagerOAuthProvider implements OAuthServerProvider {
     res.set({ 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'", 'Referrer-Policy': 'no-referrer' });
 
     if (req.method !== 'POST') {
-      const csrf = signToken({ uid: user.id, k: 'consent', q }, config.secret, CONSENT_TTL_S);
+      this.core.oauth.touchClient(client.client_id);
+      const csrf = signToken({ uid: user.id, k: 'consent', q, ep: user.sessionEpoch }, config.secret, CONSENT_TTL_S);
       res.type('html').send(consentPage(requestLocale(this.core, req, user), client.client_name || client.client_id, redirectTarget(params.redirectUri), user.name || user.email,
         { ...fields, csrf }));
       return;
     }
 
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const t = verifyToken<{ uid?: unknown; k?: unknown; q?: unknown }>(typeof body.csrf === 'string' ? body.csrf : undefined, config.secret);
-    if (!t || t.k !== 'consent' || t.uid !== user.id || t.q !== q) {
+    const t = verifyToken<{ uid?: unknown; k?: unknown; q?: unknown; ep?: unknown }>(typeof body.csrf === 'string' ? body.csrf : undefined, config.secret);
+    // Like a form token, the consent token is worth nothing after a sign-out or a password change.
+    if (!t || t.k !== 'consent' || t.uid !== user.id || t.q !== q || t.ep !== user.sessionEpoch) {
       res.status(403).type('html').send(consentInvalidPage(requestLocale(this.core, req, user)));
       return;
     }

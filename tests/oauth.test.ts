@@ -349,7 +349,7 @@ describe('oauth', () => {
   it('a scheme that looks like a domain is shown as an app link, not as that website', async () => {
     const h = setup();
     const cookie = await h.login();
-    const redirect = 'chatgpt.com:/connector_platform_oauth_redirect';
+    const redirect = 'app.chatgpt.com:/connector_platform_oauth_redirect';
     const reg = await request(h.app).post('/register').set('Host', h.host)
       .send({ redirect_uris: [redirect], client_name: 'ChatGPT', token_endpoint_auth_method: 'none' });
     expect(reg.status).toBe(201);
@@ -358,23 +358,28 @@ describe('oauth', () => {
       .set('Host', h.host).set('Cookie', cookie);
     expect(page.status).toBe(200);
     // The whole address is named, in the wording for apps on this device, never "you will be sent on to chatgpt.com:".
-    expect(page.text).toContain('<strong>chatgpt.com:/connector_platform_oauth_redirect</strong>');
+    expect(page.text).toContain('<strong>app.chatgpt.com:/connector_platform_oauth_redirect</strong>');
     expect(page.text).toContain('the app on this device');
     expect(page.text).not.toContain('you will be sent on to');
   });
 });
 
 describe('OAuth hardening', () => {
-  it('redirect addresses come from an allowlist: https, http on loopback, reverse-domain schemes and the documented clients', async () => {
+  it('redirect addresses come from an allowlist: other schemes, also dotted ones the operating system handles, are refused', async () => {
     const h = setup();
     const tryRegister = (uri: string) => request(h.app).post('/register').set('Host', h.host).send({ redirect_uris: [uri], token_endpoint_auth_method: 'none' });
     // Schemes the operating system hands to whatever registered them, and web schemes that are not https.
     for (const uri of ['ms-settings:display', 'tel:+4930123456', 'mailto:a@b.c', 'myapp://callback', 'vscode://vendor.ext/cb', 'zoommtg://zoom.us/join',
-      'steam://run/1', 'http://example.com/cb', 'http://localhost.evil.example/cb', 'ws://localhost:1/cb', 'com.example.app://user:pw@host/cb', '.app:/cb', 'app.:/cb']) {
+      'steam://run/1', 'x-apple.systempreferences:com.apple.preference.security', 'vnd.youtube:dQw4w9WgXcQ', 'chatgpt.com:/cb', 'a..b.c:/cb', 'http://example.com/cb', 'http://localhost.evil.example/cb', 'ws://localhost:1/cb', 'com.example.app://user:pw@host/cb', '.app:/cb', 'app.:/cb']) {
       expect((await tryRegister(uri)).status, uri).toBe(400);
     }
+  });
+
+  it('the redirect addresses of the documented clients and of native apps are accepted', async () => {
+    const h = setup();
+    const tryRegister = (uri: string) => request(h.app).post('/register').set('Host', h.host).send({ redirect_uris: [uri], token_endpoint_auth_method: 'none' });
     for (const uri of ['https://claude.ai/api/mcp/auth_callback', 'http://localhost:33418/callback', 'http://127.0.0.1:5000/cb', 'http://[::1]:5000/cb',
-      'com.example.app:/oauth2redirect', 'chatgpt.com:/connector_platform_oauth_redirect', 'cursor://anysphere.cursor-mcp/oauth/callback']) {
+      'com.example.app:/oauth2redirect', 'com.example.my-app.desktop:/cb', 'cursor://anysphere.cursor-mcp/oauth/callback']) {
       expect((await tryRegister(uri)).status, uri).toBe(201);
     }
   });
@@ -427,6 +432,48 @@ describe('OAuth hardening', () => {
     }
   });
 
+  it('an assistant that kept its registration connects again after a long time: consent, approve and the code all work', async () => {
+    const h = setup();
+    const cookie = await h.login();
+    const client = await register(h);
+    // Registered long ago; every token has gone since (a password change, a revoke, or 30 idle days).
+    const db = new DatabaseSync(path.join(h.core.config.dataDir, 'platform.sqlite'));
+    db.prepare('UPDATE oauth_clients SET created_at = ? WHERE client_id = ?').run(new Date(Date.now() - 400 * 24 * 3600_000).toISOString(), client.client_id);
+    db.close();
+    const { verifier, challenge } = pkce();
+    const consent = await request(h.app).get(`/authorize?${authorizeQuery(client.client_id, challenge)}`).set('Host', h.host).set('Cookie', cookie);
+    expect(consent.status).toBe(200);
+    // Somebody else registers while the consent page is open: that sweep must not take the client away.
+    await register(h);
+    const approve = await request(h.app).post('/authorize').set('Host', h.host).set('Cookie', cookie).type('form').send({ ...hiddenFields(consent.text), decision: 'approve' });
+    expect(approve.status).toBe(302);
+    const code = new URL(approve.headers.location).searchParams.get('code')!;
+    expect(code).toBeTruthy();
+    const tokens = await exchange(h, { grant_type: 'authorization_code', code, code_verifier: verifier, client_id: client.client_id, redirect_uri: REDIRECT });
+    expect(tokens.status).toBe(200);
+    expect((await initialize(h, tokens.body.access_token)).status).toBe(200);
+    // Issuing a code does not sweep its own client away either, with no consent page before it.
+    const second = await register(h);
+    const db2 = new DatabaseSync(path.join(h.core.config.dataDir, 'platform.sqlite'));
+    db2.prepare('UPDATE oauth_clients SET created_at = ? WHERE client_id = ?').run(new Date(Date.now() - 400 * 24 * 3600_000).toISOString(), second.client_id);
+    db2.close();
+    h.core.oauth.issueCode({ clientId: second.client_id, userId: h.adminId, redirectUri: REDIRECT, codeChallenge: challenge, scopes: [] });
+    expect(h.core.oauth.getClient(second.client_id)).toBeDefined();
+  });
+
+  it('a consent page from before a sign-out cannot be answered afterwards', async () => {
+    const h = setup();
+    const cookie = await h.login();
+    const client = await register(h);
+    const { challenge } = pkce();
+    const consent = await request(h.app).get(`/authorize?${authorizeQuery(client.client_id, challenge)}`).set('Host', h.host).set('Cookie', cookie);
+    h.core.users.bumpEpoch(h.adminId);
+    const fresh = await h.login();
+    const approve = await request(h.app).post('/authorize').set('Host', h.host).set('Cookie', fresh).type('form').send({ ...hiddenFields(consent.text), decision: 'approve' });
+    expect(approve.status).toBe(403);
+    expect(approve.headers.location).toBeUndefined();
+  });
+
   it('registered clients that hold no code and no token are forgotten after 30 days; metadata is capped', async () => {
     const h = setup();
     const { client_id: idle } = await register(h);
@@ -438,10 +485,17 @@ describe('OAuth hardening', () => {
     age.run(days(31), idle);
     age.run(days(29), fresh);
     age.run(days(400), used);
+    // Used once, long ago, and holding nothing any more: idleness counts from the last use, not from the registration.
+    const { client_id: lapsed } = await register(h);
+    const { client_id: recent } = await register(h);
+    db.prepare('UPDATE oauth_clients SET created_at = ?, last_used_at = ? WHERE client_id = ?').run(days(400), days(31), lapsed);
+    db.prepare('UPDATE oauth_clients SET created_at = ?, last_used_at = ? WHERE client_id = ?').run(days(400), days(2), recent);
     db.close();
     // The next registration sweeps.
     await register(h);
     expect(h.core.oauth.getClient(idle)).toBeUndefined();
+    expect(h.core.oauth.getClient(lapsed)).toBeUndefined();
+    expect(h.core.oauth.getClient(recent)).toBeDefined();
     expect(h.core.oauth.getClient(fresh)).toBeDefined();
     expect(h.core.oauth.getClient(used)).toBeDefined();
     expect((await initialize(h, tokens.access_token)).status).toBe(200);

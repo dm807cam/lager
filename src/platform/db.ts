@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 /**
  * Schema changes of the platform database, applied in order and counted in `PRAGMA user_version`.
- * The first entry is the complete schema; append a new entry for every later change, never edit a released one.
+ * The first entry is the baseline schema and is frozen (ADR 0013); append a new entry for every later change, never edit an existing one.
  */
 export const MIGRATIONS: string[] = [
   `
@@ -211,6 +211,8 @@ export const MIGRATIONS: string[] = [
     confirmed_at TEXT NOT NULL,
     PRIMARY KEY (user_id, instance_id)
   );
+  -- When the client last showed a consent page or was issued a code or token; NULL until then. Idle clients are purged by it.
+  ALTER TABLE oauth_clients ADD COLUMN last_used_at TEXT;
   `,
 ];
 
