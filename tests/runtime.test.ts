@@ -134,10 +134,14 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 const es = (): FakeEventSource => FakeEventSource.instances[FakeEventSource.instances.length - 1];
 
-function boot(): any {
+const REFRESH_INTERVAL = 'var MIN_REFRESH_MS = 250;';
+if (!SOURCE.includes(REFRESH_INTERVAL)) throw new Error('runtime.js no longer declares MIN_REFRESH_MS as the tests expect');
+
+/** Starts the runtime. Listeners reload without a minimum interval unless `refreshMs` asks for the real one, so tests need not wait between events. */
+function boot(refreshMs = 0): any {
   delete g.lager;
   delete g.__lagerRuntime;
-  (0, eval)(SOURCE);
+  (0, eval)(SOURCE.replace(REFRESH_INTERVAL, `var MIN_REFRESH_MS = ${refreshMs};`));
   return g.lager;
 }
 
@@ -644,6 +648,82 @@ describe('onSnapshot', () => {
     es().emit('open'); // nothing changed: deduplicated
     await flush();
     expect(seen).toHaveLength(2);
+  });
+
+  it('changes in quick succession are answered by one reload at the end of the minimum interval; the first load is immediate', async () => {
+    const db = await boot(250).use('db');
+    put('tasks/t1', { v: 0 });
+    const seen: any[] = [];
+    vi.useFakeTimers();
+    try {
+      const unsub = db.collection('tasks').onSnapshot((s: any) => seen.push(s.docs.map((d: any) => d.data().v)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen).toEqual([[0]]);
+      expect(dbCalls()).toHaveLength(1);
+      for (let v = 1; v <= 5; v++) {
+        put('tasks/t1', { v });
+        es().emit('change', { path: 'tasks/t1', parent: 'tasks' });
+        await vi.advanceTimersByTimeAsync(40);
+      }
+      // 200 ms after the first load: five changes, still no second request.
+      expect(dbCalls()).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(49);
+      expect(dbCalls()).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(dbCalls()).toHaveLength(2);
+      expect(seen).toEqual([[0], [5]]);
+      // After a quiet interval the next change is loaded at once.
+      await vi.advanceTimersByTimeAsync(250);
+      put('tasks/t1', { v: 6 });
+      es().emit('change', { path: 'tasks/t1', parent: 'tasks' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(dbCalls()).toHaveLength(3);
+      expect(seen[seen.length - 1]).toEqual([6]);
+      // A pending reload does not outlive the listener.
+      es().emit('change', { path: 'tasks/t1', parent: 'tasks' });
+      expect(vi.getTimerCount()).toBe(1);
+      unsub();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a rate-limited listener waits as long as Retry-After says, also when events arrive, and then recovers', async () => {
+    const db = await boot(250).use('db');
+    put('tasks/t1', { v: 1 });
+    const seen: any[] = [];
+    const errors: any[] = [];
+    vi.useFakeTimers();
+    try {
+      let limited = true;
+      g.fetch = async (u: string, i: any) => {
+        if (!limited || u !== '/__lager/db') return fakeFetch(u, i);
+        calls.push([u, i]);
+        return new Response(JSON.stringify({ error: { code: 'rate_limited', message: 'slow down' } }), { status: 429, headers: { 'Retry-After': '5' } });
+      };
+      db.doc('tasks/t1').onSnapshot((s: any) => seen.push(s), (e: any) => errors.push(e));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(dbCalls()).toHaveLength(1);
+      // The ordinary backoff would retry after 1 s, and a change event at once.
+      await vi.advanceTimersByTimeAsync(2000);
+      es().emit('change', { path: 'tasks/t1', parent: 'tasks' });
+      await vi.advanceTimersByTimeAsync(2999);
+      expect(dbCalls()).toHaveLength(1);
+      limited = false;
+      await vi.advanceTimersByTimeAsync(1);
+      expect(dbCalls()).toHaveLength(2);
+      expect(errors).toHaveLength(0);
+      expect(seen).toHaveLength(1);
+      expect(seen[0].data()).toEqual({ v: 1 });
+      // A single call reports it as unavailable, with nothing but code and message to see.
+      limited = true;
+      const failure = await db.doc('tasks/t1').get().catch((e: any) => e);
+      expect(failure).toEqual({ code: 'unavailable', message: 'slow down' });
+      expect(Object.keys(failure)).toEqual(['code', 'message']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('fetch errors go to the error callback and end the listener', async () => {
