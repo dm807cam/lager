@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # ShellCheck is preinstalled on GitHub's Ubuntu runners. The behaviour is tested in tests/install-script.test.ts.
       - name: ShellCheck
