@@ -37,6 +37,63 @@ describe('platform host', () => {
     expect(res.headers['set-cookie']).toBeUndefined();
   });
 
+  it('a failed sign-in keeps the typed address in the field, never the password, and answers alike for a known and an unknown name', async () => {
+    h = makeHarness();
+    const hh = h;
+    const attempt = (email: string, password: string) => request(hh.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email, password });
+    const fresh = await request(h.app).get('/login').set('Host', PLATFORM_HOST);
+    expect(fresh.text).toContain('<input id="email" name="email" type="email" autocomplete="username" required autofocus>');
+    expect(fresh.text).toContain('<input id="password" name="password" type="password" autocomplete="current-password" required>');
+
+    const secret = 'Wrong-password-that-must-not-come-back';
+    const known = await attempt('  Admin@X.y ', secret);
+    expect(known.status).toBe(401);
+    // As typed (trimmed), escaped, with the cursor now in the password field.
+    expect(known.text).toContain('<input id="email" name="email" type="email" autocomplete="username" required value="Admin@X.y">');
+    expect(known.text).toContain('<input id="password" name="password" type="password" autocomplete="current-password" required autofocus>');
+    expect(known.text).not.toContain(secret);
+    expect(known.text).not.toMatch(/type="password"[^>]*value=/);
+
+    const hostile = await attempt('"><script>alert(1)</script>@x.y', secret);
+    expect(hostile.text).toContain('value="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;@x.y"');
+    expect(hostile.text).not.toContain('<script>alert(1)');
+    expect((await attempt('a'.repeat(400) + '@x.y', secret)).text).toContain(`value="${'a'.repeat(254)}"`);
+    expect((await request(h.app).post('/login').set('Host', PLATFORM_HOST).type('form').send('email=a%40x.y&email=b%40x.y&password=x')).text).not.toContain('value="a@x.y');
+
+    // The same page for a name with an account and one without, apart from the address each visitor typed themselves.
+    const same = (html: string, email: string): string => withoutNonce(html).split(`value="${email}"`).join('value="…"');
+    const unknown = await attempt('Nobdy@X.y', secret);
+    expect(unknown.status).toBe(401);
+    expect(same(unknown.text, 'Nobdy@X.y')).toBe(same(known.text, 'Admin@X.y'));
+    expect(unknown.text.length).toBe(known.text.length);
+
+    // The answers that are not about the password keep it as well: too many attempts.
+    for (let i = 0; i < 12; i++) await attempt('admin@x.y', 'nope');
+    const blocked = await attempt('admin@x.y', 'admin-password-1');
+    expect(blocked.status).toBe(429);
+    expect(blocked.text).toContain('required value="admin@x.y">');
+  });
+
+  it('the sign-in page offers "Create account" only while anyone may register', async () => {
+    h = makeHarness();
+    const link = `<a href="/register">${t('en', 'login.register')}</a>`;
+    const pages = async (): Promise<string[]> => [
+      (await request(h!.app).get('/login').set('Host', PLATFORM_HOST)).text,
+      (await request(h!.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email: 'x@x.y', password: 'nope' })).text,
+    ];
+    h.core.settings.setRegistration('open');
+    for (const html of await pages()) expect(html).toContain(link);
+    for (const mode of ['invite', 'closed'] as const) {
+      h.core.settings.setRegistration(mode);
+      for (const html of await pages()) {
+        expect(html, mode).not.toContain('href="/register"');
+        expect(html, mode).toContain('href="/forgot"');
+      }
+      // The page itself still answers and explains; an invitation link leads there directly.
+      expect((await request(h.app).get('/register').set('Host', PLATFORM_HOST)).status, mode).toBe(200);
+    }
+  });
+
   it('11th failed login → 429', async () => {
     h = makeHarness();
     for (let i = 0; i < 10; i++) {

@@ -156,18 +156,24 @@ export const resendForm = (locale: Locale, email = ''): string => `<form method=
 <button type="submit" class="${btn('secondary')}">${esc(t(locale, 'auth.resend.button'))}</button>
 </form>`;
 
-export function loginPage(locale: Locale, returnPath: string, error?: string, opts: { registration?: 'open' | 'invite' | 'closed'; resendEmail?: string; notice?: string } = {}): string {
+/**
+ * `email` is what the visitor typed in an attempt that failed: it comes back in the field, so only the password is typed again
+ * (the password itself never comes back). The link to create an account shows only while anyone may register; with
+ * invitations only or registration closed it would lead a visitor without an invitation to a page that turns them away.
+ */
+export function loginPage(locale: Locale, returnPath: string, error?: string, opts: { registration?: 'open' | 'invite' | 'closed'; resendEmail?: string; notice?: string; email?: string } = {}): string {
+  const typed = opts.email ?? '';
   return page(locale, t(locale, 'login.title'), `<div class="auth-hero"><h1>${esc(t(locale, 'brand.tagline'))}</h1></div>
 <div class="auth-card"><h2>${esc(t(locale, 'login.title'))}</h2>
 ${opts.notice ? notice('success', opts.notice) : ''}${error ? notice('danger', error) : ''}
 <form method="post" action="/login" class="stack">
 <input type="hidden" name="return" value="${esc(returnPath)}">
-<div class="field"><label for="email">${esc(t(locale, 'common.email'))}</label><input id="email" name="email" type="email" autocomplete="username" required autofocus></div>
-<div class="field"><label for="password">${esc(t(locale, 'common.password'))}</label><input id="password" name="password" type="password" autocomplete="current-password" required></div>
+<div class="field"><label for="email">${esc(t(locale, 'common.email'))}</label><input id="email" name="email" type="email" autocomplete="username" required${typed ? ` value="${esc(typed)}"` : ' autofocus'}></div>
+<div class="field"><label for="password">${esc(t(locale, 'common.password'))}</label><input id="password" name="password" type="password" autocomplete="current-password" required${typed ? ' autofocus' : ''}></div>
 <button type="submit" class="${btn('primary')}">${esc(t(locale, 'login.submit'))}</button>
 </form>
 ${opts.resendEmail !== undefined ? resendForm(locale, opts.resendEmail) : ''}</div>
-<p class="auth-links"><a href="/forgot">${esc(t(locale, 'login.forgot'))}</a>${opts.registration === 'closed' ? '' : `<a href="/register">${esc(t(locale, 'login.register'))}</a>`}</p>
+<p class="auth-links"><a href="/forgot">${esc(t(locale, 'login.forgot'))}</a>${opts.registration === 'open' ? `<a href="/register">${esc(t(locale, 'login.register'))}</a>` : ''}</p>
 <p class="pitch">${esc(t(locale, 'brand.pitch'))}</p>`, { hero: true, returnPath: returnPath === '/' ? '/login' : `/login?return=${encodeURIComponent(returnPath)}` });
 }
 

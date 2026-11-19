@@ -14,6 +14,17 @@ import { LagerError } from '../src/errors.js';
 import { t } from '../src/i18n/index.js';
 import { makeHarness, type Harness, withoutNonce } from './support/http.js';
 
+/**
+ * A sign-in page as it must be compared between two names: without the script nonce, and without the address the visitor typed,
+ * which comes back in the email field and nowhere else. The visitor supplied it, so it tells them nothing.
+ */
+function apartFromEmail(html: string, email: string): string {
+  const field = `name="email" type="email" autocomplete="username" required value="${email}"`;
+  expect(html.split(email)).toHaveLength(2);
+  expect(html).toContain(field);
+  return withoutNonce(html).replace(field, 'name="email" …');
+}
+
 let h: Harness | undefined;
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); h?.core.close(); h = undefined; });
 
@@ -136,7 +147,7 @@ describe('the pause of an account under attack', () => {
       await form(h, '/login', `5.${email.length}.8.1`, { email, password: 'nope' });
       check.mockClear();
       const res = await form(h, '/login', `5.${email.length}.8.2`, { email, password: 'nope again' });
-      outcome.push({ status: res.status, text: withoutNonce(res.text), checked: check.mock.calls.length, paused: limiter.accountPaused(email) });
+      outcome.push({ status: res.status, text: apartFromEmail(res.text, email), checked: check.mock.calls.length, paused: limiter.accountPaused(email) });
     }
     expect(outcome[0]).toEqual(outcome[1]);
   }, 60_000);
@@ -149,7 +160,7 @@ describe('the pause of an account under attack', () => {
       const res = await form(h, '/login', '8.8.8.8', { email, password: 'admin-password-1' });
       expect(res.status).toBe(401);
       expect(res.text).toContain(t('en', 'login.invalid'));
-      results.push(withoutNonce(res.text));
+      results.push(apartFromEmail(res.text, email));
     }
     expect(results[0]).toBe(results[1]);
   });

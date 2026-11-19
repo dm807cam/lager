@@ -333,8 +333,10 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
     const locale = requestLocale(core, req);
     const ip = addressKey(req.ip);
     const account = typeof body.email === 'string' ? body.email.trim().toLowerCase().slice(0, 254) : '';
+    // What was typed goes back into the field of every answer that is not a sign-in, the same way whatever the reason.
+    const email = typeof body.email === 'string' ? body.email.trim().slice(0, 254) : '';
     const tooMany = (): void => {
-      res.status(429).type('html').send(loginPage(locale, ret, t(locale, 'login.tooMany'), { registration: core.settings.registration }));
+      res.status(429).type('html').send(loginPage(locale, ret, t(locale, 'login.tooMany'), { registration: core.settings.registration, email }));
     };
     // Counted as a failure now, before the password is checked: of many attempts sent at once, only as many as the limits leave are looked at.
     const owner = core.users.getByEmail(account);
@@ -352,7 +354,7 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
         // Too many passwords are being checked at once: this one was not looked at, so it does not count either, and the
         // answer says that the server is busy, not that the visitor failed.
         limiter.release(attempt, false);
-        res.status(429).type('html').send(loginPage(locale, ret, t(locale, 'login.busy'), { registration: core.settings.registration }));
+        res.status(429).type('html').send(loginPage(locale, ret, t(locale, 'login.busy'), { registration: core.settings.registration, email }));
         return;
       }
     }
@@ -363,7 +365,7 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
       const message = reason === 'unverified' ? t(locale, 'login.unverified')
         : reason === 'disabled' ? t(locale, 'login.disabled') : t(locale, 'login.invalid');
       res.status(401).type('html').send(loginPage(locale, ret, message, {
-        registration: core.settings.registration, resendEmail: reason === 'unverified' ? account : undefined,
+        registration: core.settings.registration, resendEmail: reason === 'unverified' ? account : undefined, email,
       }));
       return;
     }
