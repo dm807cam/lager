@@ -117,7 +117,7 @@ Images are built for `linux/amd64` and `linux/arm64` (so a Raspberry Pi works to
 | A pre-release tag `v1.2.3-rc.1` | `:1.2.3-rc.1` and `:sha-<commit>` | Trying a release candidate. It moves neither `:latest` nor `:1.2` or `:1` |
 | A commit on `main` | `:edge` and `:sha-<commit>` | The development version, for testing. It can be ahead of `:latest` and may break |
 
-`:latest` points at the release whose tag was pushed most recently, which is not necessarily the highest version: if a fix for an older line (`v1.1.5`) is tagged after `v1.2.0`, `:latest` and `:1` move to it until the next release is tagged. `:latest` never moves on a commit to `main` or on a pre-release tag. Until the first release is tagged, `:latest` does not exist and `:edge` is the only moving tag.
+`:latest` points at the release whose tag was pushed most recently, which is not necessarily the highest version: if a fix for an older line (`v1.1.5`) is tagged after `v1.2.0`, `:latest` and `:1` move to it until the next release is tagged. `:latest` never moves on a commit to `main` or on a pre-release tag.
 
 To run a published image, replace `build: .` in `docker-compose.yml` with `image: ghcr.io/dm807cam/lager:latest` and start with `docker compose up -d`. To update, run `docker compose pull && docker compose up -d`. Your data stays in the volume. Back it up before a major version change (see [Backup](data-and-backup.md#backup)).
 

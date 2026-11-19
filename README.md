@@ -164,4 +164,8 @@ Please do not report security problems in public issues. Read the [security poli
 
 Lager is free software, licensed under the [GNU Affero General Public License v3.0 or later](LICENSE). You may use, study, change and share it. If you run a modified version that other people use over a network, the AGPL requires you to offer them its source code.
 
+Copyright (C) 2026 dm807cam and the Lager contributors.
+
+The Lager icon (in `assets/` and `website/assets/`) was generated with an AI image tool by the maintainer. The hero images are composed from screenshots of Lager with demo data. Both are part of the project under the same license.
+
 Lager is an independent project and is not affiliated with or endorsed by Anthropic. Claude is a trademark of Anthropic.
