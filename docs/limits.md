@@ -16,7 +16,13 @@ The limits Lager enforces and what it deliberately does not do.
 - **Restores and version changes:** Restoring a snapshot, activating another version by hand and switching automatic updates on (when that changes the version) each take a snapshot first. Together they are limited to 10 per instance and hour, in the dashboard, the REST API and the MCP tools alike; further ones get the error `rate_limited` (HTTP 429). Only what really takes a snapshot counts: a refused or failed attempt, a change on an instance without data and deploys do not.
 - **Open databases:** Lager keeps the databases of at most 64 instances open at a time (and as many asset indexes) and closes the least recently used one; it is reopened on the next request. This is not configurable and needs no attention.
 - **Snapshots:** They contain only the documents of the instance. `restore_snapshot` does not restore uploaded files or self-saved pages. Only the owner of the instance can restore one, in the dashboard or with `restore_snapshot`: a restore rolls back all documents, including other people's private areas and data the app's rules keep from managers.
-- **Reserved names:** The name of a deleted instance stays reserved for its former owner. Other accounts cannot take it over, because otherwise stored browser data and service workers of the old instance would carry over to the new one.
+- **Reserved names:** The name of a deleted instance stays reserved for its former owner. Other accounts cannot take it over, because otherwise stored browser data and service workers of the old instance would carry over to the new one. New apps and instances also cannot take a name from a fixed list of names that stand for parts of a site (such as `www`, `api`, `admin`, `login`, `accounts`, `mail`, `status` or `support`), nor the platform's own name when the platform address lies under the apps domain. Apps and instances that already have such a name keep working.
+
+- **Deploys:** An app takes at most 60 new versions per hour, and one person starts at most 60 new apps per hour, in the REST API and the MCP tools together (accounts that are not administrators are held to the 10 new instances per day above first). A deploy that is refused or changes nothing does not count. Beyond the limit a deploy answers `409` with the reason `deploy_rate`.
+
+- **Title, description and note:** The title of an app has at most 100 characters, its description 200 and the note of a version 500. Each is one line of plain text: line breaks and runs of spaces become a single space, and control characters are refused.
+
+- **Language model calls:** A call to `lager.complete` is given up after 90 seconds by default (`LAGER_AI_TIMEOUT_SECONDS`, 5 to 600). Keep the value below the response timeout of the reverse proxy.
 
 ## Storage outside the quota
 
@@ -24,7 +30,7 @@ Three things take disk space without counting against `LAGER_INSTANCE_QUOTA_MB`.
 
 - **Snapshots:** Lager takes one before every version change of an instance (a deploy to an instance that follows deploys, a manual activation) and before every restore. An instance keeps its newest `LAGER_SNAPSHOT_KEEP` snapshots (default 20), and all of them together may take at most 3 times the instance quota (150 MiB with the default quota); older ones are deleted first. Two snapshots are never deleted for this and are counted first: the newest one, and the newest one that is at least 24 hours old. Several version changes in a row on a nearly full instance therefore still leave a state from before that day, and with `LAGER_SNAPSHOT_KEEP=1` two snapshots can remain. The total stays at 3 times the quota, because the two protected snapshots are part of that budget (it is exceeded only if those two alone are larger, which the quota rules out unless it was lowered afterwards). Without a quota (`LAGER_INSTANCE_QUOTA_MB=0`) only the count applies. A snapshot holds the documents only, so it is never larger than the quota. The instance page shows the space its snapshots take.
 - **Trash:** A deleted instance moves to the trash with its documents, files, snapshots and saved pages, and stays there for `LAGER_TRASH_DAYS` days (default 30). The limit on new instances per day bounds how fast the trash can grow.
-- **Deployed versions:** Every deploy with new content stores one HTML file of at most 16 MiB. There is no limit on the number of versions of an app.
+- **Deployed versions:** Every deploy with new content stores one HTML file of at most 16 MiB. An app keeps its newest 100 deployed versions; an older one is deleted for good with the next deploy, unless an instance still runs it. The worst case for one app is therefore 100 versions plus one per instance that is pinned to an older one.
 
 ## What Lager cannot do
 
