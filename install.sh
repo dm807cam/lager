@@ -73,7 +73,9 @@ check_system() {
     armv7l|armv6l) die "Lager needs a 64-bit system. On a Raspberry Pi, install the 64-bit Raspberry Pi OS (Pi 3, 4, 5 and Zero 2 support it)." ;;
     *) die "Unsupported processor: $(uname -m). Lager images exist for amd64 and arm64." ;;
   esac
-  case "$LAGER_BACKUPS_KEEP" in ''|*[!0-9]*) die "LAGER_BACKUPS_KEEP must be a number, not \"$LAGER_BACKUPS_KEEP\"." ;; esac
+  case "$LAGER_BACKUPS_KEEP" in ''|*[!0-9]*|?????*) die "LAGER_BACKUPS_KEEP must be a number from 0 to 9999, not \"$LAGER_BACKUPS_KEEP\"." ;; esac
+  # Read as a decimal number: with a leading zero ("08") the shell would take it for an octal one and fail.
+  LAGER_BACKUPS_KEEP=$((10#$LAGER_BACKUPS_KEEP))
 }
 
 ensure_docker() {
@@ -95,14 +97,33 @@ ENV_FILE="$LAGER_DIR/.env"
 load_state() {
   mkdir -p "$LAGER_DIR"
   chmod 700 "$LAGER_DIR"
-  # Values from an earlier run win over defaults, but answers given in the environment win over both.
+  # Values from an earlier run win over defaults. An image given in the environment wins over the saved one on every
+  # run. The answers that "configure" turns into settings (how Lager is reached, its domain, its tunnel) can be given
+  # for the first run and with LAGER_RECONFIGURE=1 only: on a plain update the saved ones win, because .env, the
+  # Compose file and the tunnel were made from them, and a state that says otherwise would take the tunnel away.
   if [ -f "$STATE" ]; then
     local key value
-    while IFS='=' read -r key value; do
-      case "$key" in LAGER_MODE|LAGER_DOMAIN|LAGER_TUNNEL_ID|LAGER_TUNNEL_NAME|LAGER_IMAGE) [ -n "${!key:-}" ] || printf -v "$key" '%s' "$value" ;; esac
+    # The "||" part keeps a last line that does not end with a newline.
+    while IFS='=' read -r key value || [ -n "$key" ]; do
+      case "$key" in
+        LAGER_IMAGE) [ -n "${!key:-}" ] || printf -v "$key" '%s' "$value" ;;
+        LAGER_MODE|LAGER_DOMAIN|LAGER_TUNNEL_ID|LAGER_TUNNEL_NAME)
+          if [ -z "${!key:-}" ]; then
+            printf -v "$key" '%s' "$value"
+          elif [ -n "$value" ] && [ "${!key}" != "$value" ] && [ "$LAGER_RECONFIGURE" != 1 ] && [ -s "$ENV_FILE" ]; then
+            warn "Ignoring $key=${!key}: this Lager was set up with $key=$value. To change how it is set up, run the installer with LAGER_RECONFIGURE=1."
+            printf -v "$key" '%s' "$value"
+            if [ "$key" = LAGER_MODE ]; then LAGER_MODE_FROM_ENV=''; fi
+          fi ;;
+      esac
     done <"$STATE"
   fi
   LAGER_IMAGE=${LAGER_IMAGE:-$DEFAULT_IMAGE}
+  # The name is written into installer.env and the Compose file, so nothing may be in it that starts a new line or
+  # ends a value there. Image names consist of these characters only.
+  case "$LAGER_IMAGE" in
+    *[!A-Za-z0-9._/:@-]*) die "LAGER_IMAGE is not a valid image name. Use letters, digits and . _ - / : @ only, for example ghcr.io/dm807cam/lager:edge." ;;
+  esac
 }
 
 save_state() {
@@ -325,7 +346,7 @@ backup_before_update() {
   # The failure is handled right here, so the general error message stays out of the captured output.
   if ! out=$(trap - ERR; compose exec -T lager node dist/backup.js "/backups/$name" 2>&1); then
     [ -z "$out" ] || printf '%s\n' "$out" >&2
-    die "The backup did not work, so the update stops here. Lager keeps running as before and your data is untouched. Fix the cause above, or run the installer with LAGER_SKIP_BACKUP=1 to update without a backup."
+    die "The backup did not work, so the update stops here. Nothing was changed: Lager keeps running as before, with its settings and data untouched. Fix the cause above, or run the installer with LAGER_SKIP_BACKUP=1 to update without a backup."
   fi
   ok "Saved a backup to $LAGER_DIR/backups/$name."
   prune_backups
@@ -410,12 +431,14 @@ main() {
   if [ "$first" = 0 ] && [ -z "${LAGER_MODE:-}" ]; then
     die "$ENV_FILE exists but $STATE is missing. Run with LAGER_MODE=cloudflare, local or proxy to say how this Lager is reached."
   fi
+  # The backup comes before anything is rewritten: if it fails, the settings, the Compose file and the tunnel stay as
+  # they were. It uses the Compose file of the earlier run.
+  [ "$first" = 1 ] || backup_before_update
   configure "$first"
   # Every run saves what it used, so an image chosen once (for example :edge) stays until another one is given.
   save_state
   write_compose
   setup_tunnel
-  [ "$first" = 1 ] || backup_before_update
   start
   summary "$first"
 }

@@ -163,10 +163,33 @@ describe.runIf(process.platform === 'linux')('install.sh', () => {
     expect(bad.stderr).toContain('LAGER_BACKUPS_KEEP');
   });
 
-  it('stops the update when the backup fails, and shows why', () => {
+  it('accepts a number of backups with a leading zero and refuses what is not a small number', () => {
     const box = sandbox();
     expect(install(box, { LAGER_MODE: 'local', LAGER_ADMIN_EMAIL: 'me@example.com' }).status).toBe(0);
-    const r = install(box, { STUB_RUNNING: '1', STUB_BACKUP_FAIL: '1' });
+    for (let day = 1; day <= 9; day++) fs.mkdirSync(path.join(box.dir, 'backups', `2026-01-0${day}-000000`));
+    const r = install(box, { STUB_RUNNING: '1', LAGER_BACKUPS_KEEP: '08' });
+    expect(r.status, r.stderr).toBe(0);
+    expect(fs.readdirSync(path.join(box.dir, 'backups'))).toHaveLength(8);
+    expect(fs.existsSync(path.join(box.dir, 'backups', '2026-01-01-000000'))).toBe(false);
+    for (const keep of ['12345', '99999999999999999999', '-1', '1 2']) {
+      const bad = install(box, { STUB_RUNNING: '1', LAGER_BACKUPS_KEEP: keep });
+      expect(bad.status, keep).toBe(1);
+      expect(bad.stderr).toContain('LAGER_BACKUPS_KEEP must be a number');
+    }
+    expect(fs.readdirSync(path.join(box.dir, 'backups'))).toHaveLength(8);
+  });
+
+  it('stops the update when the backup fails, and shows why', () => {
+    const box = sandbox();
+    expect(install(box, { LAGER_MODE: 'cloudflare', LAGER_DOMAIN: 'mylager.net', LAGER_ADMIN_EMAIL: 'me@mylager.net' }).status).toBe(0);
+    const files = ['.env', 'installer.env', 'docker-compose.yml', 'cloudflared/config.yml'];
+    const before = files.map((f) => read(box.dir, f));
+    fs.rmSync(path.join(box.dir, 'cloudflared/config.yml'));
+    // Even with a new image and new answers, a failed backup leaves every file of the installation as it was.
+    const r = install(box, { STUB_RUNNING: '1', STUB_BACKUP_FAIL: '1', LAGER_IMAGE: 'ghcr.io/dm807cam/lager:edge', LAGER_RECONFIGURE: '1', LAGER_MODE: 'local' });
+    expect(files.slice(0, 3).map((f) => read(box.dir, f))).toEqual(before.slice(0, 3));
+    expect(fs.existsSync(path.join(box.dir, 'cloudflared/config.yml'))).toBe(false);
+    expect(r.calls.some((c) => c.includes('route dns'))).toBe(false);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('no space left on device');
     expect(r.stderr).toContain('LAGER_SKIP_BACKUP=1');
@@ -208,6 +231,82 @@ describe.runIf(process.platform === 'linux')('install.sh', () => {
     expect(install(box, { STUB_RUNNING: '1' }).status).toBe(0);
     expect(image()).toBe('ghcr.io/dm807cam/lager:0.1.0');
     expect(read(box.dir, 'installer.env')).toContain('LAGER_IMAGE=ghcr.io/dm807cam/lager:0.1.0');
+  });
+
+  it('refuses an image name that could write other lines into its files', () => {
+    for (const image of ['ghcr.io/dm807cam/lager:edge\n    privileged: true', 'ghcr.io/dm807cam/lager:edge extra', 'ghcr.io/dm807cam/lager:"edge"', 'ghcr.io/dm807cam/lager:edge\t']) {
+      const box = sandbox();
+      const r = install(box, { LAGER_MODE: 'local', LAGER_ADMIN_EMAIL: 'me@example.com', LAGER_IMAGE: image });
+      expect(r.status, image).toBe(1);
+      expect(r.stderr).toContain('LAGER_IMAGE is not a valid image name');
+      expect(fs.existsSync(path.join(box.dir, 'docker-compose.yml'))).toBe(false);
+      expect(fs.existsSync(path.join(box.dir, 'installer.env'))).toBe(false);
+    }
+  });
+
+  it('accepts a registry with a port and a digest, and keeps the earlier files when a later name is refused', () => {
+    const box = sandbox();
+    const digest = `registry.example.com:5000/me/lager@sha256:${'a'.repeat(64)}`;
+    expect(install(box, { LAGER_MODE: 'local', LAGER_ADMIN_EMAIL: 'me@example.com', LAGER_IMAGE: digest }).status).toBe(0);
+    expect(read(box.dir, 'docker-compose.yml')).toContain(`image: ${digest}`);
+    const bad = install(box, { STUB_RUNNING: '1', LAGER_IMAGE: 'x\nLAGER_MODE=cloudflare' });
+    expect(bad.status).toBe(1);
+    expect(read(box.dir, 'docker-compose.yml')).toContain(`image: ${digest}`);
+    expect(read(box.dir, 'installer.env')).toContain('LAGER_MODE=local');
+    expect(bad.calls.some((c) => c.includes('backup.js'))).toBe(false);
+  });
+
+  it('reads the last line of its state file even without a newline at the end', () => {
+    const box = sandbox();
+    expect(install(box, { LAGER_MODE: 'local', LAGER_ADMIN_EMAIL: 'me@example.com', LAGER_IMAGE: 'ghcr.io/dm807cam/lager:edge' }).status).toBe(0);
+    const state = read(box.dir, 'installer.env');
+    expect(state.trimEnd().split('\n').at(-1)).toBe('LAGER_IMAGE=ghcr.io/dm807cam/lager:edge');
+    fs.writeFileSync(path.join(box.dir, 'installer.env'), state.trimEnd());
+    expect(install(box, { STUB_RUNNING: '1' }).status).toBe(0);
+    expect(read(box.dir, 'docker-compose.yml')).toContain('image: ghcr.io/dm807cam/lager:edge');
+  });
+
+  it('an update keeps the way Lager was set up, whatever answers are passed without LAGER_RECONFIGURE=1', () => {
+    const box = sandbox();
+    expect(install(box, { LAGER_MODE: 'cloudflare', LAGER_DOMAIN: 'mylager.net', LAGER_ADMIN_EMAIL: 'me@mylager.net' }).status).toBe(0);
+    const env = envOf(box.dir);
+    const state = read(box.dir, 'installer.env');
+    const r = install(box, { STUB_RUNNING: '1', LAGER_MODE: 'local', LAGER_DOMAIN: 'other.net', LAGER_TUNNEL_ID: 'aaaaaaaa-2222-3333-4444-555555555555' });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain('Ignoring LAGER_MODE=local');
+    expect(r.stderr).toContain('Ignoring LAGER_DOMAIN=other.net');
+    expect(r.stderr).toContain('Ignoring LAGER_TUNNEL_ID=');
+    expect(r.stderr).toContain('LAGER_RECONFIGURE=1');
+    expect(envOf(box.dir)).toEqual(env);
+    expect(read(box.dir, 'installer.env')).toBe(state);
+    expect(read(box.dir, 'docker-compose.yml')).toContain('cloudflared:');
+    expect(read(box.dir, 'cloudflared/config.yml')).toContain('hostname: mylager.net');
+    // The next plain update still has the tunnel.
+    const plain = install(box, { STUB_RUNNING: '1' });
+    expect(plain.status, plain.stderr).toBe(0);
+    expect(plain.stderr).not.toContain('Ignoring');
+    expect(read(box.dir, 'docker-compose.yml')).toContain('cloudflared:');
+    // Passing the same answers again is not worth a warning, and the image may change on any run.
+    const same = install(box, { STUB_RUNNING: '1', LAGER_MODE: 'cloudflare', LAGER_DOMAIN: 'mylager.net', LAGER_IMAGE: 'ghcr.io/dm807cam/lager:edge' });
+    expect(same.status, same.stderr).toBe(0);
+    expect(same.stderr).not.toContain('Ignoring');
+    expect(read(box.dir, 'docker-compose.yml')).toContain('image: ghcr.io/dm807cam/lager:edge');
+    expect(read(box.dir, 'docker-compose.yml')).toContain('cloudflared:');
+  });
+
+  it('LAGER_RECONFIGURE=1 changes the way Lager is reached, in the settings and in the state together', () => {
+    const box = sandbox();
+    expect(install(box, { LAGER_MODE: 'cloudflare', LAGER_DOMAIN: 'mylager.net', LAGER_ADMIN_EMAIL: 'me@mylager.net' }).status).toBe(0);
+    const r = install(box, { STUB_RUNNING: '1', LAGER_RECONFIGURE: '1', LAGER_MODE: 'local' });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).not.toContain('Ignoring');
+    expect(read(box.dir, 'installer.env')).toContain('LAGER_MODE=local');
+    expect(envOf(box.dir).LAGER_PUBLIC_URL).toBe('http://lager.192-168-1-23.sslip.io:8080');
+    expect(read(box.dir, 'docker-compose.yml')).not.toContain('cloudflared');
+    // The backup of the running server was taken before the change.
+    const docker = r.calls.filter((c) => c.startsWith('docker '));
+    expect(docker.findIndex((c) => c.includes('backup.js'))).toBeGreaterThan(-1);
+    expect(docker.findIndex((c) => c.includes('backup.js'))).toBeLessThan(docker.findIndex((c) => c.includes(' pull')));
   });
 
   it('an installation from before the image was remembered gets the default image', () => {
