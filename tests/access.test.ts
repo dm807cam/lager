@@ -205,7 +205,11 @@ describe('Access', () => {
     const ids = (q?: string, limit?: number): string[] => core.access.usersWithAccess(fresh(), q, limit).map((u) => u.id).sort();
     expect(ids()).toEqual([o.id, e.id, v.id].sort());
     expect(ids('ERI')).toEqual([e.id]);
+    // An address is matched only for someone who agreed to share it with this instance.
+    expect(ids('v@x')).toEqual([]);
+    core.access.confirmSignIn(fresh(), v, true);
     expect(ids('v@x')).toEqual([v.id]);
+    expect(ids('o@x')).toEqual([o.id]);
     expect(ids(undefined, 2)).toHaveLength(2);
     core.users.setDisabled(e.id, true);
     expect(ids()).toEqual([o.id, v.id].sort());

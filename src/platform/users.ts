@@ -27,22 +27,68 @@ interface UserRow {
 const SCRYPT = { N: 16384, r: 8, p: 1 };
 const KEY_LEN = 64;
 
-function hashPassword(password: string): string {
+/**
+ * Password hashes computed at the same time, and how many more may wait their turn. scrypt runs on the thread pool, which file and
+ * DNS work share (four threads by default): a burst of sign-ins must leave half of it free, and must not queue without end.
+ */
+export const MAX_HASHES_IN_FLIGHT = 2;
+export const MAX_HASHES_WAITING = 32;
+/** The ceiling of the priority lane. Its callers are few by construction; this only makes sure that nothing can ever queue without end. */
+export const MAX_URGENT_HASHES_WAITING = 64;
+let hashing = 0;
+const waiting: Array<() => void> = [];
+/**
+ * Served before `waiting`, with a queue of its own: hashes whose number something else already bounds (a reset link, a session, an invitation
+ * or the registration cap, the device cookie of the account). A flood of guessed sign-ins fills `waiting`; it must not keep out the
+ * owner who sets a new password or signs in from a known browser.
+ */
+const urgent: Array<() => void> = [];
+
+const BUSY = 'Too many passwords are being checked at the moment. Please try again shortly.';
+const scryptAsync = (password: string, salt: Buffer, keylen: number, options: crypto.ScryptOptions): Promise<Buffer> =>
+  new Promise((resolve, reject) => { crypto.scrypt(password, salt, keylen, options, (e, key) => { if (e) reject(e); else resolve(key); }); });
+
+/** scrypt off the event loop, at most `MAX_HASHES_IN_FLIGHT` at a time; with the queue full an ordinary caller is told to come back (`rate_limited`). */
+async function scrypt(password: string, salt: Buffer, keylen: number, options: crypto.ScryptOptions, priority = false): Promise<Buffer> {
+  if (hashing < MAX_HASHES_IN_FLIGHT) hashing++;
+  else if ((priority ? urgent.length : waiting.length) >= (priority ? MAX_URGENT_HASHES_WAITING : MAX_HASHES_WAITING)) throw new LagerError('rate_limited', BUSY, 'busy');
+  else if (priority) await new Promise<void>((turn) => { urgent.push(turn); });
+  // Whoever finishes hands its slot to the next in line, so the count stays as it is.
+  else await new Promise<void>((turn) => { waiting.push(turn); });
+  try {
+    return await scryptAsync(password, salt, keylen, options);
+  } finally {
+    const next = urgent.shift() ?? waiting.shift();
+    if (next) next(); else hashing--;
+  }
+}
+const encode = (salt: Buffer, hash: Buffer): string => `scrypt$${salt.toString('hex')}$${hash.toString('hex')}`;
+
+/**
+ * The stored form of a password. Hash before opening a transaction: nothing may be awaited inside one. Always in the priority
+ * lane: a password is set only by a reset link, a signed-in account or a registration, and each of those is limited elsewhere.
+ */
+export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.randomBytes(16);
-  const hash = crypto.scryptSync(password, salt, KEY_LEN, SCRYPT);
-  return `scrypt$${salt.toString('hex')}$${hash.toString('hex')}`;
+  return encode(salt, await scrypt(password, salt, KEY_LEN, SCRYPT, true));
 }
 
-function checkPassword(password: string, stored: string): boolean {
+/** Blocks the process for one hash: only where nothing is being served yet, as for the first administrator at startup. */
+function hashPasswordSync(password: string): string {
+  const salt = crypto.randomBytes(16);
+  return encode(salt, crypto.scryptSync(password, salt, KEY_LEN, SCRYPT));
+}
+
+async function checkPassword(password: string, stored: string, priority = false): Promise<boolean> {
   const [scheme, saltHex, hashHex] = stored.split('$');
   if (scheme !== 'scrypt' || !saltHex || !hashHex) return false;
   const expected = Buffer.from(hashHex, 'hex');
-  const actual = crypto.scryptSync(password, Buffer.from(saltHex, 'hex'), expected.length, SCRYPT);
+  const actual = await scrypt(password, Buffer.from(saltHex, 'hex'), expected.length, SCRYPT, priority);
   return crypto.timingSafeEqual(actual, expected);
 }
 
 // Used to spend comparable time when the email is unknown.
-const DUMMY_HASH = hashPassword(crypto.randomUUID());
+const DUMMY_HASH = hashPasswordSync(crypto.randomUUID());
 
 function toUser(r: UserRow): User {
   return {
@@ -66,7 +112,8 @@ export class Users {
   /** Runs after an administrator lost the role. */
   onDemoted(hook: (userId: string) => void): void { this.demotedHooks.push(hook); }
 
-  create(input: { email: string; name: string; password: string; role: Role; verified?: boolean; locale?: Locale | null }): User {
+  /** `passwordHash` is what `hashPassword` returned for `password`; without it the password is hashed here, synchronously. */
+  create(input: { email: string; name: string; password: string; passwordHash?: string; role: Role; verified?: boolean; locale?: Locale | null }): User {
     const email = input.email.trim();
     if (!email) throw new LagerError('invalid_argument', 'Email is required.');
     if (!input.password) throw new LagerError('invalid_argument', 'Password is required.');
@@ -78,25 +125,31 @@ export class Users {
     const locale = isLocale(input.locale) ? input.locale : null;
     this.db
       .prepare('INSERT INTO users (id, email, name, role, password_hash, created_at, verified_at, locale) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, email, input.name, input.role, hashPassword(input.password), createdAt, verified ? createdAt : null, locale);
+      .run(id, email, input.name, input.role, input.passwordHash ?? hashPasswordSync(input.password), createdAt, verified ? createdAt : null, locale);
     return { id, email, name: input.name, role: input.role, createdAt, verified, disabled: false, sessionEpoch: 0, locale };
   }
 
-  /** The password is always checked first, so the reason never leaks whether an account exists or is blocked. */
-  checkLogin(email: string, password: string): LoginResult {
-    const row = this.db.prepare('SELECT * FROM users WHERE email = ?').get(email.trim()) as UserRow | undefined;
-    if (!row) {
-      checkPassword(password, DUMMY_HASH);
+  /**
+   * The password is always checked first, so the reason never leaks whether an account exists or is blocked. `priority` puts the
+   * hash ahead of ordinary sign-ins: for a caller who already holds something of the account (its device cookie, a session, a link).
+   */
+  async checkLogin(email: string, password: string, priority = false): Promise<LoginResult> {
+    const found = this.db.prepare('SELECT * FROM users WHERE email = ?').get(email.trim()) as UserRow | undefined;
+    if (!found) {
+      await checkPassword(password, DUMMY_HASH, priority);
       return { ok: false, reason: 'invalid' };
     }
-    if (!checkPassword(password, row.password_hash)) return { ok: false, reason: 'invalid' };
+    if (!(await checkPassword(password, found.password_hash, priority))) return { ok: false, reason: 'invalid' };
+    // Read again: the account may have been disabled, or its password replaced, while the hash was computed.
+    const row = this.db.prepare('SELECT * FROM users WHERE id = ? AND password_hash = ?').get(found.id, found.password_hash) as UserRow | undefined;
+    if (!row) return { ok: false, reason: 'invalid' };
     if (row.disabled_at !== null) return { ok: false, reason: 'disabled' };
     if (row.verified_at === null) return { ok: false, reason: 'unverified' };
     return { ok: true, user: toUser(row) };
   }
 
-  verifyPassword(email: string, password: string): User | null {
-    const r = this.checkLogin(email, password);
+  async verifyPassword(email: string, password: string): Promise<User | null> {
+    const r = await this.checkLogin(email, password);
     return r.ok ? r.user : null;
   }
 
@@ -157,7 +210,8 @@ export class Users {
   }
 
   /** Replaces the password and invalidates existing sessions. */
-  setPassword(id: string, password: string): void {
+  /** `passwordHash` is what `hashPassword` returned for `password`, for a caller that must hash before it commits to anything. */
+  async setPassword(id: string, password: string, passwordHash?: string): Promise<void> {
     if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
       throw new LagerError('invalid_argument', `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`, 'password_short');
     }
@@ -165,12 +219,22 @@ export class Users {
       throw new LagerError('invalid_argument', `Password must be at most ${MAX_PASSWORD_LENGTH} characters.`, 'password_long');
     }
     this.require(id);
-    this.db.prepare('UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?').run(hashPassword(password), id);
+    const hash = passwordHash ?? await hashPassword(password);
+    this.db.prepare('UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?').run(hash, id);
     for (const hook of this.passwordHooks) hook(id);
   }
 
   markVerified(id: string): void {
     this.db.prepare('UPDATE users SET verified_at = COALESCE(verified_at, ?) WHERE id = ?').run(new Date().toISOString(), id);
+  }
+
+  /**
+   * A short digest of the stored password hash: it changes with the password and with nothing else. The device cookie carries it,
+   * so a browser that knew an older password stops counting as known, while a sign-out changes nothing.
+   */
+  passwordMark(id: string): string | null {
+    const row = this.db.prepare('SELECT password_hash FROM users WHERE id = ?').get(id) as { password_hash: string } | undefined;
+    return row ? crypto.createHash('sha256').update(row.password_hash).digest('base64url').slice(0, 16) : null;
   }
 
   /** Invalidates all sessions of the user. */

@@ -95,7 +95,12 @@ describe('multi-user end to end', () => {
       const host = hostOf(slug);
       const start = await call(host, 'GET', '/');
       if (start.status !== 302) return { denied: start };
-      const hs = await call(PLATFORM, 'GET', pathOf(start.headers.location!), { headers: { Cookie: session } });
+      let hs = await call(PLATFORM, 'GET', pathOf(start.headers.location!), { headers: { Cookie: session } });
+      // Someone the instance was shared with is asked once before the first sign-in, and continues.
+      if (hs.status === 200) {
+        const fields = Object.fromEntries([...hs.body.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)].map((m) => [m[1], m[2]]));
+        hs = await call(PLATFORM, 'POST', '/auth/instance', { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...fields, decision: 'continue' }).toString() });
+      }
       if (hs.status !== 302) return { denied: hs };
       const cb = new URL(hs.headers.location!);
       expect(cb.host).toBe(host);

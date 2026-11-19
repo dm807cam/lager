@@ -199,6 +199,8 @@ describe('notices', () => {
     expect(closed.status).toBe(403);
     expect(closed.text).toContain(esc(t('es', 'auth.register.inviteInvalid')));
     s.h.core.settings.setRegistration('open');
+    // Only a server without mail names a taken address on the page; with mail the owner is told by mail instead.
+    s.mailer.enabled = false;
     const dup = await s.post('/register', { name: 'Admin', email: 'admin@x.y', password: PASSWORD }, { 'Accept-Language': 'de' });
     expect(dup.status).toBe(409);
     expect(dup.text).toContain(esc(t('de', 'auth.register.exists')));

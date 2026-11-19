@@ -37,13 +37,13 @@ describe('core', () => {
     }
   });
 
-  it('starts with the values of .env.example on this machine', () => {
+  it('starts with the values of .env.example on this machine', async () => {
     const example = /^LAGER_ADMIN_PASSWORD=(.+)$/m.exec(fs.readFileSync(new URL('../.env.example', import.meta.url), 'utf8'))![1];
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const urls = ['http://localhost:8080', 'http://lager.localhost:8080', 'http://localhost.:8080', 'http://127.0.0.1:8080', 'http://[::1]:8080'];
     for (const url of urls) {
       const c = makeWith({ publicUrl: new URL(url), adminPassword: example });
-      expect(c.users.checkLogin('admin@x.y', example).ok, url).toBe(true);
+      expect((await c.users.checkLogin('admin@x.y', example)).ok, url).toBe(true);
       c.close();
     }
     // Accepted, but never silently: the port may be published beyond this machine.
@@ -81,17 +81,17 @@ describe('core', () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  it('holds the first administrator to the minimum password length, on the first start only', () => {
+  it('holds the first administrator to the minimum password length, on the first start only', async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-core-'));
     expect(() => makeWith({ dataDir, adminPassword: 'too-short' })).toThrow(/LAGER_ADMIN_PASSWORD is too short.*at least 10 characters/);
     // Nothing was created, and the database is closed again: the corrected start succeeds on the same directory.
     const first = makeWith({ dataDir, adminPassword: 'ci-password-123' });
-    expect(first.users.checkLogin('admin@x.y', 'ci-password-123').ok).toBe(true);
+    expect((await first.users.checkLogin('admin@x.y', 'ci-password-123')).ok).toBe(true);
     first.close();
     // Once an account exists the variable is no longer read, so whatever it holds cannot stop a later start.
     core = makeWith({ dataDir, adminPassword: 'short' });
     expect(core.users.count()).toBe(1);
-    expect(core.users.checkLogin('admin@x.y', 'short').ok).toBe(false);
+    expect((await core.users.checkLogin('admin@x.y', 'short')).ok).toBe(false);
   });
 
   it('bootstraps admin', () => {

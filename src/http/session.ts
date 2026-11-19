@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import type { Core } from '../core.js';
 import { isMessageKey, type MessageKey } from '../i18n/index.js';
 import type { User } from '../platform/users.js';
-import { readCookie, sessionCookieName, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
+import { clearPlantedSession, deviceCookieName, readCookie, sessionCookieName, sessionCookiePlanted, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
 import { signToken, verifyToken } from './tokens.js';
 
 /** True while `ep` is the account's current session epoch and the account is usable. Tokens without a numeric `ep` never match. */
@@ -13,9 +13,17 @@ export function epochValid(user: User | null, ep: unknown): user is User {
 /**
  * Platform session: signed `{uid, ep}` without a kind. Tokens with a kind (`code`, `inst`) are never accepted here.
  * A session dies when the account's epoch moves on (logout, password change, disabling) and sessions issued before
- * epochs existed carry no `ep` and are rejected.
+ * epochs existed carry no `ep` and are rejected. A request that carries the session cookie twice is signed out: which of the two
+ * the browser lists first is up to whoever planted the second.
  */
 export function sessionUser(core: Core, req: Request): User | null {
+  if (sessionCookiePlanted(req, core.config)) {
+    if (req.res && !req.res.headersSent && !req.res.locals.sessionCleared) {
+      clearPlantedSession(req.res, core.config);
+      req.res.locals.sessionCleared = true;
+    }
+    return null;
+  }
   const t = verifyToken<{ uid?: unknown; ep?: unknown; k?: unknown }>(readCookie(req, sessionCookieName(core.config)), core.config.secret);
   if (!t || t.k !== undefined || typeof t.uid !== 'string') return null;
   const user = core.users.get(t.uid);
@@ -27,14 +35,35 @@ export function issueSession(core: Core, res: Response, user: User): void {
   setCookie(res, core.config, sessionCookieName(core.config), signToken({ uid: user.id, ep: user.sessionEpoch }, core.config.secret, THIRTY_DAYS_SECONDS));
 }
 
+const DEVICE_TTL_SECONDS = 365 * 24 * 3600;
+
+/**
+ * Marks this browser as one that has just proved control of the account: by signing in, by setting a password through a reset link,
+ * by confirming the address with the password, or by changing the password. The pause of an account under attack does not apply
+ * to such a browser (see `LoginLimiter`). The cookie signs nobody in, and it stops counting when the password changes.
+ */
+export function markDevice(core: Core, res: Response, user: User): void {
+  setCookie(res, core.config, deviceCookieName(core.config),
+    signToken({ uid: user.id, k: 'dev', p: core.users.passwordMark(user.id) }, core.config.secret, DEVICE_TTL_SECONDS), DEVICE_TTL_SECONDS);
+}
+
+/** True when the browser carries the device cookie of this account, made under its current password. */
+export function knownDevice(core: Core, req: Request, user: User): boolean {
+  const d = verifyToken<{ uid?: unknown; k?: unknown; p?: unknown }>(readCookie(req, deviceCookieName(core.config)), core.config.secret);
+  return d !== null && d.k === 'dev' && d.uid === user.id && typeof d.p === 'string' && d.p === core.users.passwordMark(user.id);
+}
+
 const CSRF_TTL_SECONDS = 12 * 3600;
 
-/** Signed token that platform forms send back to prove they were rendered for this user. */
-export const csrfToken = (core: Core, user: User): string => signToken({ uid: user.id, k: 'ui' }, core.config.secret, CSRF_TTL_SECONDS);
+/**
+ * Signed token that platform forms send back to prove they were rendered for this user. Like a session it carries the account's
+ * epoch, so a form rendered before a sign-out or a password change is worthless afterwards.
+ */
+export const csrfToken = (core: Core, user: User): string => signToken({ uid: user.id, k: 'ui', ep: user.sessionEpoch }, core.config.secret, CSRF_TTL_SECONDS);
 
 export function csrfValid(core: Core, user: User, value: unknown): boolean {
-  const t = verifyToken<{ uid?: unknown; k?: unknown }>(typeof value === 'string' ? value : undefined, core.config.secret);
-  return t !== null && t.k === 'ui' && t.uid === user.id;
+  const t = verifyToken<{ uid?: unknown; k?: unknown; ep?: unknown }>(typeof value === 'string' ? value : undefined, core.config.secret);
+  return t !== null && t.k === 'ui' && t.uid === user.id && t.ep === user.sessionEpoch;
 }
 
 const FLASH_TTL_SECONDS = 120;

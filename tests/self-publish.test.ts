@@ -239,7 +239,7 @@ describe('platform database schema version', () => {
     expect(fresh.prepare('SELECT id, model_id, hourly_limit FROM ai_groups').all().map((r) => ({ ...r }))).toEqual([{ id: 'default', model_id: null, hourly_limit: 60 }]);
     fresh.exec('PRAGMA user_version = 10');
     fresh.close();
-    expect(() => openPlatformDb(d)).toThrow(/schema version 10, but this Lager knows only 1/);
+    expect(() => openPlatformDb(d)).toThrow(new RegExp(`schema version 10, but this Lager knows only ${MIGRATIONS.length}\\.`));
     // Opening a current database again runs nothing and changes nothing.
     const d2 = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-schema-'));
     openPlatformDb(d2).close();

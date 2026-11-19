@@ -333,7 +333,7 @@ describe('http', () => {
 
     const cookie = await h.login();
     const admin = h.core.users.get(h.adminId)!;
-    const csrf = signToken({ uid: admin.id, k: 'ui' }, h.core.config.secret, 3600);
+    const csrf = signToken({ uid: admin.id, k: 'ui', ep: admin.sessionEpoch }, h.core.config.secret, 3600);
     const post = (route: string, body: Record<string, string>) => request(h.app).post(`/ui/instances/todo/${route}`).set('Host', h.host)
       .set('Cookie', cookie).type('form').send({ csrf, ...body });
     for (const res of [await post('restore', { snapshot: before[0].id }), await post('activate', { version: '1' })]) {
@@ -481,7 +481,7 @@ describe('http', () => {
     const cookies = new Map([[admin.id, await h.login()], [manager.id, await h.login(manager.email, 'password-123')]]);
     const ui = (user: { id: string }, route: string, body: Record<string, string>) =>
       request(h!.app).post(`/ui/instances/todo/${route}`).set('Host', h!.host).set('Cookie', cookies.get(user.id)!).type('form')
-        .send({ csrf: signToken({ uid: user.id, k: 'ui' }, h!.core.config.secret, 3600), ...body });
+        .send({ csrf: signToken({ uid: user.id, k: 'ui', ep: h!.core.users.get(user.id)?.sessionEpoch }, h!.core.config.secret, 3600), ...body });
     h.core.data.set(instId, 'tasks/t1', { v: 1 }, h.adminId);
     const snap = h.core.data.snapshot(instId, 'manual')!;
     const tries = SNAPSHOT_ACTIONS_PER_HOUR + 2;
@@ -531,7 +531,7 @@ describe('http', () => {
     expect(refused.status).toBe(429);
     expect(refused.body.error.code).toBe('rate_limited');
     const cookie = await h.login();
-    const csrf = signToken({ uid: h.adminId, k: 'ui' }, h.core.config.secret, 3600);
+    const csrf = signToken({ uid: h.adminId, k: 'ui', ep: h.core.users.get(h.adminId)?.sessionEpoch }, h.core.config.secret, 3600);
     const form = await request(h.app).post('/ui/instances/todo/auto-update').set('Host', h.host).set('Cookie', cookie).type('form').send({ csrf, on: ['0', '1'] });
     expect((await request(h.app).get(form.headers.location as string).set('Host', h.host).set('Cookie', cookie)).text).toContain(t('en', 'notice.snapshotRate'));
     expect(h.core.apps.getInstanceBySlug('todo')!.activeVersion).toBe(1);

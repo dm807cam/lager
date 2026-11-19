@@ -59,7 +59,14 @@ export function makeHarness(opts: HarnessOptions = {}): Harness {
     async enter(slug, platformCookie) {
       const auth = await request(app).get('/auth/instance').query({ slug, return: '/', n: NONCE })
         .set('Host', host).set('Cookie', platformCookie);
-      const loc = new URL(auth.headers.location);
+      let location = auth.headers.location as string | undefined;
+      if (location === undefined) {
+        // Access through the instance's visibility alone: the platform asks before the first sign-in, and the visitor continues.
+        const fields = Object.fromEntries([...auth.text.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)].map((m) => [m[1], m[2]]));
+        const answer = await request(app).post('/auth/instance').set('Host', host).set('Cookie', platformCookie).type('form').send({ ...fields, decision: 'continue' });
+        location = answer.headers.location as string;
+      }
+      const loc = new URL(location);
       const cb = await request(app).get(loc.pathname + loc.search).set('Host', loc.host)
         .set('Cookie', config.publicUrl.protocol === 'https:' ? NONCE_COOKIE_HTTPS : NONCE_COOKIE);
       return cookiePair(cb, instanceName);

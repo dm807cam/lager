@@ -154,13 +154,42 @@ export class Access {
     ).get(instance.id, userId, userId) !== undefined;
   }
 
+  /**
+   * True unless the user owns the instance or owns or maintains its app. Everyone else is asked before the instance learns who
+   * visits: whoever reaches it through its visibility, and also whoever it was shared with, directly or through a group. A share is
+   * the publisher's doing, not the visitor's: an app could otherwise share itself with an address and learn who is behind it.
+   */
+  needsSignInConfirmation(instance: Instance, user: User): boolean {
+    if (instance.ownerId === user.id) return false;
+    const app = this.apps.getApp(instance.appId);
+    return !(app && this.canReadApp(app, user));
+  }
+
+  /** Whether the user agreed that this instance learns their name and, when `email` is asked for, their address. */
+  signInConfirmed(instance: Instance, user: User, email: boolean): boolean {
+    if (!this.needsSignInConfirmation(instance, user)) return true;
+    const row = this.db.prepare('SELECT email FROM instance_signins WHERE user_id = ? AND instance_id = ?').get(user.id, instance.id) as { email: number } | undefined;
+    return row !== undefined && (!email || row.email === 1);
+  }
+
+  /** Remembers the agreement; one that covered the address keeps covering it. */
+  confirmSignIn(instance: Instance, user: User, email: boolean): void {
+    this.db.prepare(
+      `INSERT INTO instance_signins (user_id, instance_id, email, confirmed_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_id, instance_id) DO UPDATE SET email = MAX(email, excluded.email), confirmed_at = excluded.confirmed_at`,
+    ).run(user.id, instance.id, email ? 1 : 0, new Date().toISOString());
+  }
+
   /** Restoring a snapshot rolls back everything, including data the rules keep from managers: only the owner of an instance that is not disabled. */
   canRestoreInstance(instance: Instance, user: User): boolean {
     return this.levelFor(instance, user) === 'owner';
   }
 
   /** Active users who can open the instance: owner, direct grantees and members of granted groups. */
-  /** `matchEmail = false` matches the query against names only (so addresses cannot be probed). */
+  /**
+   * `matchEmail = false` matches the query against names only (so addresses cannot be probed). With it, an address still matches
+   * only for someone who agreed to share it with this instance (`signInConfirmed`), or who is not asked.
+   */
   usersWithAccess(instance: Instance, query?: string, limit = DEFAULT_LIMIT, matchEmail = true): User[] {
     const ids = new Set<string>([instance.ownerId]);
     for (const g of this.listGrants(instance.id)) {
@@ -171,7 +200,7 @@ export class Access {
     const max = Number.isInteger(limit) && limit > 0 ? limit : DEFAULT_LIMIT;
     return [...ids].map((id) => this.users.get(id))
       .filter((u): u is User => u !== null && !u.disabled
-        && (needle === '' || u.name.toLowerCase().includes(needle) || (matchEmail && u.email.toLowerCase().includes(needle))))
+        && (needle === '' || u.name.toLowerCase().includes(needle) || (matchEmail && u.email.toLowerCase().includes(needle) && this.signInConfirmed(instance, u, true))))
       .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, max);
   }

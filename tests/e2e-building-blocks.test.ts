@@ -136,7 +136,12 @@ describe('building blocks end to end', () => {
     const open = async (session: string, host: string): Promise<string> => {
       const start = await call(host, 'GET', '/');
       expect(start.status).toBe(302);
-      const hs = await call(PLATFORM, 'GET', pathOf(start.headers.location!), { headers: { Cookie: session } });
+      let hs = await call(PLATFORM, 'GET', pathOf(start.headers.location!), { headers: { Cookie: session } });
+      // Someone the instance was shared with is asked once before the first sign-in, and continues.
+      if (hs.status === 200) {
+        const fields = Object.fromEntries([...hs.body.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)].map((m) => [m[1], m[2]]));
+        hs = await call(PLATFORM, 'POST', '/auth/instance', { headers: { Cookie: session, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...fields, decision: 'continue' }).toString() });
+      }
       expect(hs.status).toBe(302);
       const cb = new URL(hs.headers.location!);
       expect(cb.host).toBe(host);
