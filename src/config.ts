@@ -16,6 +16,8 @@ export interface Config {
   adminEmail?: string;
   adminPassword?: string;
   secret: string;
+  /** True when LAGER_SECRET came from the environment and is shorter than MIN_SECRET_LENGTH; `createCore` decides what that means. */
+  weakSecret?: boolean;
   snapshotKeep: number;
   /** Express `trust proxy` setting: number of trusted proxy hops, or false for none. */
   trustProxy: number | false;
@@ -98,8 +100,21 @@ function parseLocale(raw: string | undefined): Locale {
   return v;
 }
 
-/** Example values shipped in .env.example and earlier releases; never acceptable on a public https instance. */
-export const ADMIN_PASSWORD_PLACEHOLDERS: readonly string[] = ['change-me', 'bitte-aendern'];
+/** Example values shipped in .env.example and earlier releases; acceptable only where the public URL is this machine itself. */
+export const ADMIN_PASSWORD_PLACEHOLDERS: readonly string[] = ['change-me-please', 'change-me', 'bitte-aendern'];
+
+/** Shortest LAGER_SECRET accepted from the environment; the generated one has 64 characters. */
+export const MIN_SECRET_LENGTH = 32;
+
+/**
+ * True for a public URL host that names this machine itself: localhost, *.localhost and the loopback addresses, with or without the
+ * trailing dot of a fully qualified name. It says where visitors are sent, not who can connect: the port may still be published
+ * on every interface (the Docker quick start does that).
+ */
+export function isLoopbackHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/\.$/, '');
+  return h === 'localhost' || h.endsWith('.localhost') || h === '[::1]' || /^127(\.\d{1,3}){3}$/.test(h);
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const publicUrl = new URL(required(env, 'LAGER_PUBLIC_URL'));
@@ -108,6 +123,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   fs.mkdirSync(dataDir, { recursive: true });
   const quotaMb = parseIntEnv(env, 'LAGER_INSTANCE_QUOTA_MB', 50);
   if (quotaMb < 1) throw new Error('LAGER_INSTANCE_QUOTA_MB must be a positive integer');
+  const envSecret = env.LAGER_SECRET?.trim() || undefined;
   return {
     dataDir,
     port: parseIntEnv(env, 'LAGER_PORT', 8080),
@@ -117,7 +133,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     appsDomain,
     adminEmail: env.LAGER_ADMIN_EMAIL?.trim() || undefined,
     adminPassword: env.LAGER_ADMIN_PASSWORD || undefined,
-    secret: env.LAGER_SECRET?.trim() || loadSecret(dataDir),
+    secret: envSecret ?? loadSecret(dataDir),
+    weakSecret: envSecret !== undefined && envSecret.length < MIN_SECRET_LENGTH,
     snapshotKeep: parseIntEnv(env, 'LAGER_SNAPSHOT_KEEP', 20),
     trustProxy: parseTrustProxy(env.LAGER_TRUST_PROXY),
     smtpUrl: env.LAGER_SMTP_URL?.trim() || undefined,

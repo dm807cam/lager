@@ -406,9 +406,12 @@ export const apiExtension: PlatformExtension = (router, core) => {
     res.json(instanceJson(core, inst));
   });
 
+  // The same rule as the dashboard: only roles that deploy get a token. Listing and revoking stay open, so a demoted account can clean up.
   router.post('/api/tokens', noStore, sessionOnly, express.json({ limit: '10kb' }), (req, res) => {
+    const user = userOf(res);
+    if (user.role !== 'admin' && user.role !== 'publisher') throw new LagerError('forbidden', 'API tokens are not available for your role.');
     const name = bodyObject(req).name;
-    res.json(core.tokens.create(userOf(res).id, typeof name === 'string' ? name : ''));
+    res.json(core.tokens.create(user.id, typeof name === 'string' ? name : ''));
   });
 
   router.get('/api/tokens', noStore, sessionOnly, (_req, res) => {

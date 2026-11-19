@@ -34,6 +34,14 @@ function setup(opts: { mailer?: MemoryMailer } = {}) {
 }
 
 describe('administration area', () => {
+  it('the invitations page says that a link without an address needs a confirmation by mail, only while mail is on', async () => {
+    let s = setup({ mailer: new MemoryMailer() });
+    expect((await s.get('/admin/invites', await s.hh.login())).text).toContain(en('admin.invites.unbound'));
+    s.hh.core.close();
+    s = setup();
+    expect((await s.get('/admin/invites', await s.hh.login())).text).not.toContain(en('admin.invites.unbound'));
+  });
+
   it('non-admin gets 403, anonymous is redirected', async () => {
     const s = setup();
     const anon = await s.get('/admin/users');

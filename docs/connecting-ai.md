@@ -9,7 +9,7 @@ The dashboard shows the address of your connector: `<LAGER_PUBLIC_URL>/mcp`, for
 There are two ways to sign in:
 
 - **OAuth** (recommended): the assistant opens a Lager sign-in page in your browser, you sign in and allow access. Lager supports dynamic client registration, PKCE and refresh tokens, so no client id or secret needs to be entered anywhere. OAuth works only if `LAGER_PUBLIC_URL` starts with `https` or the host is `localhost`.
-- **API token**: for assistants that cannot do OAuth, or for scripts. Create a token in the dashboard under **Publish → API tokens** (it is shown only once) and send it as the header `Authorization: Bearer lgr_...`. API tokens work with any address.
+- **API token**: for assistants that cannot do OAuth, or for scripts. Create a token in the dashboard under **Publish → API tokens** (it is shown only once) and send it as the header `Authorization: Bearer lgr_...`. Only publishers and administrators can create tokens, and changing or resetting the account's password revokes them all. API tokens work with any address.
 
 ## Claude
 

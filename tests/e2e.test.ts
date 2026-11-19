@@ -21,7 +21,7 @@ async function boot(): Promise<{ core: Core; call: (host: string, method: string
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-e2e-'));
   const config: Config = {
     dataDir, port: 0, defaultLocale: 'en', publicUrl: new URL('http://lager.localhost:8080'), appsDomain: 'apps.localhost',
-    adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 'e2e-secret', snapshotKeep: 20, trustProxy: false, instanceQuotaBytes: 50 * 1024 * 1024,
+    adminEmail: 'admin@x.y', adminPassword: 'admin-password-1', secret: 'e2e-secret', snapshotKeep: 20, trustProxy: false, instanceQuotaBytes: 50 * 1024 * 1024,
   };
   const core = createCore(config);
   const server = http.createServer(createHttpApp(core, [authExtension, apiExtension, mcpExtension, dashboardExtension]));
@@ -77,7 +77,7 @@ describe('end to end', () => {
 
     // 3. sign in on the platform and follow the handshake
     const login = await call(platform, 'POST', '/login', {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'email=admin%40x.y&password=pw',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'email=admin%40x.y&password=admin-password-1',
     });
     const session = cookiePair(login, 'lager_session');
     const loc = new URL(anon.headers.location!);

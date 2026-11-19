@@ -302,6 +302,28 @@ describe('rest api', () => {
     expect(again.status).toBe(404);
   });
 
+  it('only roles that deploy create a token over JSON; every role lists and revokes its own', async () => {
+    const { h } = setup();
+    const send = (r: request.Test, cookie: string) => r.set('Host', h.host).set('Cookie', cookie).set('X-Lager-Request', '1');
+    h.core.users.create({ email: 'pub@x.y', name: 'P', password: 'pw-12345678', role: 'publisher' });
+    const plain = h.core.users.create({ email: 'plain@x.y', name: 'U', password: 'pw-12345678', role: 'user' });
+    const pubCookie = await h.login('pub@x.y', 'pw-12345678');
+    expect((await send(request(h.app).post('/api/tokens'), pubCookie).send({ name: 'ci' })).status).toBe(200);
+
+    const cookie = await h.login('plain@x.y', 'pw-12345678');
+    const refused = await send(request(h.app).post('/api/tokens'), cookie).send({ name: 'ci' });
+    expect(refused.status).toBe(403);
+    expect(refused.body.error.code).toBe('forbidden');
+    expect(h.core.tokens.list(plain.id)).toEqual([]);
+    // A token from before a demotion can still be seen and revoked.
+    const old = h.core.tokens.create(plain.id, 'old');
+    const list = await send(request(h.app).get('/api/tokens'), cookie);
+    expect(list.status).toBe(200);
+    expect(list.body.tokens.map((t: { name: string }) => t.name)).toEqual(['old']);
+    expect((await send(request(h.app).delete(`/api/tokens/${old.info.id}`), cookie)).status).toBe(200);
+    expect(h.core.tokens.verify(old.token)).toBeNull();
+  });
+
   it('body over 16 MiB → 413 or 400', async () => {
     const { h, token } = setup();
     const big = 'a'.repeat(16 * 1024 * 1024 + 1);
