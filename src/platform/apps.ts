@@ -503,8 +503,9 @@ export class Apps {
         const owned = (this.db.prepare('SELECT COUNT(*) AS c FROM instances WHERE owner_id = ?').get(owner.id) as { c: number }).c;
         if (owned >= this.settings.maxInstancesPerUser) throw new LagerError('conflict', 'Instance limit reached.', 'instance_limit');
         // The limit is the owner's to use up. Others may fill it to half at most, so nobody can leave an account unable to create its own.
+        // The refusal does not say how many instances the account has: that is not the creator's to learn.
         if (forOther && owned * 2 >= this.settings.maxInstancesPerUser) {
-          throw new LagerError('conflict', 'This account already owns half of the instances it may have. Ask its owner to create the instance, or ask an administrator.', 'owner_limit_half');
+          throw new LagerError('conflict', 'This account cannot take another instance from you right now. Ask its owner to create the instance, or ask an administrator.', 'owner_limit_half');
         }
       }
       if (this.db.prepare('SELECT 1 FROM instances WHERE slug = ?').get(input.slug)) {

@@ -7,6 +7,7 @@ import { createCore, type Core } from '../src/core.js';
 import { LagerError } from '../src/errors.js';
 import { Apps, type Instance } from '../src/platform/apps.js';
 import { openPlatformDb } from '../src/platform/db.js';
+import { LOCALES, t } from '../src/i18n/index.js';
 import { Users, type User } from '../src/platform/users.js';
 
 let db: ReturnType<typeof openPlatformDb>;
@@ -279,6 +280,9 @@ describe('Apps with the access model', () => {
     const refused = (() => { try { core.apps.createInstance({ appId: r.app.id, slug: 'gift-3', ownerId: usr.id, createdBy: own.id }); return null; } catch (e) { return e as LagerError; } })();
     expect(refused).toMatchObject({ code: 'conflict', reason: 'owner_limit_half' });
     expect(refused!.message).toMatch(/Ask its owner .* or ask an administrator/);
+    // Neither the error nor the notice in any language tells the creator how much of its limit the other account has used.
+    expect(refused!.message).not.toMatch(/half|\d/i);
+    for (const locale of LOCALES) expect(t(locale, 'notice.ownerLimitHalf'), locale).not.toMatch(/half|Hälfte|moitié|mitad|\d/i);
     expect(core.apps.getInstanceBySlug('gift-3')).toBeNull();
     // A refusal costs the creator nothing of their daily budget.
     const spent = (): number => ((core.apps as unknown as { db: { prepare(sql: string): { get(): { c: number } } } }).db.prepare('SELECT COUNT(*) AS c FROM instance_creations').get()).c;
