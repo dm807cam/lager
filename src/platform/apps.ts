@@ -386,6 +386,11 @@ export class Apps {
     return rows.map(toVersion);
   }
 
+  getVersion(appId: string, number: number): Version | null {
+    const row = this.db.prepare('SELECT * FROM versions WHERE app_id = ? AND number = ?').get(appId, number) as VersionRow | undefined;
+    return row ? toVersion(row) : null;
+  }
+
   /** The highest-numbered version that was deployed (not self-published), or null. */
   latestDeployedVersion(appId: string): Version | null {
     const row = this.db.prepare('SELECT * FROM versions WHERE app_id = ? AND instance_id IS NULL ORDER BY number DESC LIMIT 1').get(appId) as VersionRow | undefined;

@@ -525,7 +525,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     return { name: field(req, 'name'), type: field(req, 'type') as ProviderId, baseUrl: field(req, 'baseUrl', 600), apiKey: key === '' ? undefined : key };
   };
   const modelInput = (req: Request): AiModelInput =>
-    ({ id: field(req, 'id', 100), providerId: field(req, 'provider'), model: field(req, 'model'), description: field(req, 'description', MAX_MODEL_DESCRIPTION + 100) });
+    ({ id: field(req, 'id', 100).trim().toLowerCase(), providerId: field(req, 'provider'), model: field(req, 'model'), description: field(req, 'description', MAX_MODEL_DESCRIPTION + 100) });
   /** Every checked box of a field that may repeat. */
   const fields = (req: Request, name: string): string[] => {
     const v = (req.body as Record<string, unknown> | undefined)?.[name];

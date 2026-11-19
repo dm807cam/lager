@@ -50,7 +50,7 @@ describe('/admin/ai', () => {
     expect(page.text).not.toContain('very-secret');
 
     expect(page.text).not.toContain('action="/admin/ai/groups"');
-    expect((await env.post('/admin/ai/models', { id: 'fast', provider: p.id, model: 'claude-haiku-5-5', description: 'Quick replies' })).status).toBe(302);
+    expect((await env.post('/admin/ai/models', { id: ' Fast ', provider: p.id, model: 'claude-haiku-5-5', description: 'Quick replies' })).status).toBe(302);
     expect((await env.post('/admin/ai/models', { id: 'smart', provider: p.id, model: 'claude-opus-5-5', description: '' })).status).toBe(302);
     expect(env.core.ai.getModel('fast')).toMatchObject({ providerId: p.id, model: 'claude-haiku-5-5', description: 'Quick replies' });
     expect((await env.post('/admin/ai/groups', { name: 'Family', model: 'fast', allowed: ['fast', 'smart'], hourlyLimit: '12' })).status).toBe(302);

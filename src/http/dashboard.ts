@@ -26,7 +26,7 @@ function instanceActions(core: Core, locale: Locale, i: Instance, title: string,
 /** Whether a version may ask a language model: it declares `complete` (what `lager.complete()` needs). */
 function usesAi(core: Core, appId: string, version: number | undefined): boolean {
   if (version === undefined) return false;
-  const complete = core.apps.listVersions(appId).find((v) => v.number === version)?.capabilities.complete;
+  const complete = core.apps.getVersion(appId, version)?.capabilities.complete;
   return complete !== null && typeof complete === 'object';
 }
 

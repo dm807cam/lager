@@ -247,4 +247,13 @@ describe('platform database schema version', () => {
     expect((again.prepare('SELECT COUNT(*) AS n FROM ai_groups').get() as { n: number }).n).toBe(1);
     again.close();
   });
+
+  it('refuses a database that an earlier pre-release build created with another first schema', async () => {
+    const { openPlatformDb } = await import('../src/platform/db.js');
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-schema-'));
+    const db = openPlatformDb(d);
+    db.exec('PRAGMA application_id = 0');
+    db.close();
+    expect(() => openPlatformDb(d)).toThrow(/pre-release build of Lager with a different schema/);
+  });
 });

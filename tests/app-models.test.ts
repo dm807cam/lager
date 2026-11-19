@@ -129,7 +129,8 @@ describe('model choice per app', () => {
     expect((await asAdmin('set_app_model', { slug: 'chat', model: 'fast' })).json).toEqual({ chosen: 'fast', declared: 'smart', applies: 'fast' });
     expect(await env.ask('chat', env.adult)).toBe('llama3.2');
     // A redeploy keeps the owner's choice.
-    await asAdmin('deploy_app', { slug: 'chat', html: '<p>chat 2</p>', capabilities: { complete: { model: 'smart' } } });
+    const redeploy = await asAdmin('deploy_app', { slug: 'chat', html: '<p>chat 2</p>', capabilities: { complete: { model: 'smart' } } });
+    expect(redeploy.json.warnings.join(' ')).toContain('chosen model "fast" applies instead of the declared "smart"');
     expect(env.core.apps.getApp('chat')!.aiModelId).toBe('fast');
     expect((await asAdmin('set_app_model', { slug: 'chat', model: 'code' })).json.error.message).toContain('not available');
     expect((await asAdmin('set_app_model', { slug: 'chat', model: null })).json).toEqual({ chosen: null, declared: 'smart', applies: 'smart' });
@@ -137,6 +138,8 @@ describe('model choice per app', () => {
 
     const asPublisher = await env.mcp(env.publisher.id);
     expect((await asPublisher('set_app_model', { slug: 'chat', model: 'fast' })).json.error.code).toBe('forbidden');
+    // Someone who may not deploy the app hears that, not that the model is closed to them.
+    expect((await asPublisher('deploy_app', { slug: 'chat', html, capabilities: { complete: { model: 'smart' } } })).json.error.code).toBe('forbidden');
   });
 
   it('a collaborator chooses among the models of their own AI group, and an unchanged choice always saves', async () => {

@@ -112,7 +112,7 @@ interface GroupRow { id: string; name: string; model_id: string | null; hourly_l
 
 const GROUP_SELECT = `SELECT g.id, g.name, g.model_id, g.hourly_limit,
   (SELECT COUNT(*) FROM users u WHERE u.ai_group_id = g.id) AS member_count,
-  (SELECT group_concat(m.model_id, ' ') FROM (SELECT model_id FROM ai_group_models WHERE group_id = g.id ORDER BY model_id) m) AS allowed
+  (SELECT group_concat(model_id, ' ') FROM ai_group_models WHERE group_id = g.id) AS allowed
   FROM ai_groups g`;
 
 const bad = (msg: string): never => { throw new LagerError('invalid_argument', msg, 'ai_invalid'); };
@@ -299,7 +299,7 @@ export class AiModels {
 
   private toGroup(r: GroupRow): AiGroup {
     return {
-      id: r.id, name: r.name, modelId: r.model_id, allowed: r.allowed ? r.allowed.split(' ') : [],
+      id: r.id, name: r.name, modelId: r.model_id, allowed: r.allowed ? r.allowed.split(' ').sort() : [],
       hourlyLimit: r.hourly_limit, memberCount: r.member_count, isDefault: r.id === DEFAULT_GROUP,
     };
   }
@@ -455,9 +455,9 @@ export class AiModels {
     return { groupId: '', modelId: entry?.id ?? '', providerId, model: entry?.model ?? PRESETS[p.type].modelHint, hourlyLimit: 1 };
   }
 
-  /** Whether anyone can call a model right now. */
+  /** Whether anyone can call a model right now: some AI group's default model is reachable (the model every app falls back to). */
   get configured(): boolean {
-    return this.listGroups().some((g) => this.allowedIn(g).some((id) => this.routeTo(g, id) !== null));
+    return this.listGroups().some((g) => g.modelId !== null && this.routeTo(g, g.modelId) !== null);
   }
 
   /** Sends one conversation to the route's provider and returns its text answer. */

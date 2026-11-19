@@ -67,7 +67,10 @@ export function appSummary(core: Core, user: User, app: App): object {
   };
 }
 
-/** The catalog model the latest deployed version asks for in `complete.model`, if any. */
+/**
+ * The catalog model the latest deployed version asks for in `complete.model`, if any. An instance that runs an older
+ * version (pinned, rolled back or saved by the page) follows the declaration of that version instead.
+ */
 export function declaredModel(core: Core, app: App): string | null {
   const model = core.apps.latestDeployedVersion(app.id)?.capabilities.complete?.model;
   return typeof model === 'string' && model ? model : null;
@@ -146,15 +149,19 @@ export async function deployWithIcon(core: Core, user: User, input: {
   iconSvg?: string; description?: string; themeColor?: string;
 }): Promise<object> {
   if (input.iconSvg !== undefined && typeof input.iconSvg !== 'string') throw new LagerError('invalid_argument', 'icon_svg must be a string.');
-  const declared = input.capabilities?.complete?.model;
-  if (declared !== undefined) assertModelAllowed(core, user, declared);
   const prior = core.apps.getApp(input.slug);
+  const declared = input.capabilities?.complete?.model;
+  // Someone who may not deploy this app learns that from the deploy itself, not from a model check that cannot help them.
+  if (declared !== undefined && (!prior || core.access.canDeploy(prior, user))) assertModelAllowed(core, user, declared);
   const result = core.apps.deploy({
     slug: input.slug, html: input.html, title: input.title, note: input.note, capabilities: input.capabilities, userId: user.id,
     description: input.description, themeColor: input.themeColor,
   });
   let app = result.app;
   const warnings = [...result.warnings];
+  if (declared !== undefined && app.aiModelId !== null && app.aiModelId !== declared) {
+    warnings.push(`The app's chosen model "${app.aiModelId}" applies instead of the declared "${declared}". Call set_app_model with null to follow the declaration.`);
+  }
   // The deploy is committed by now: whatever goes wrong with the icon is reported, never turned into a failed deploy.
   try {
     let drawn = false;
@@ -597,7 +604,7 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }, () => run(() => modelsJson(core, user)));
 
   server.registerTool('set_app_model', { ...toolMeta('set_app_model'),
-    description: 'Choose the language model of an app you own or collaborate on, without a new deploy: a name from list_models, or null to follow what the app\'s versions declare in complete.model again. The choice applies to every instance of the app. Viewers whose AI group does not allow the model get the default model of their group. Returns {chosen, declared, applies}.',
+    description: 'Choose the language model of an app you own or collaborate on, without a new deploy: a name from list_models, or null to follow what the app\'s versions declare in complete.model again. The choice applies to every instance of the app. Viewers whose AI group does not allow the model get the default model of their group. Returns {chosen, declared, applies}; declared and applies describe the latest deployed version, while instances on an older version follow that version\'s declaration.',
     inputSchema: { slug: slugArg, model: z.string().nullable().describe('Name from list_models, or null') },
   }, ({ slug, model }) => run(() => setAppModel(core, user, readableApp(core, user, slug), model)));
 

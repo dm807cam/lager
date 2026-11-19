@@ -181,11 +181,15 @@ describe('Model choice per app', () => {
     const { ai, db, adult, work } = catalog();
     db.prepare('UPDATE ai_providers SET key_enc = ? WHERE id = ?').run('v1:broken:x:y', work.id);
     expect(ai.routeFor(adult, 'smart')).toMatchObject({ modelId: 'fast' });
+    expect(ai.configured).toBe(true);
     const fresh = catalog();
     fresh.ai.updateGroup(DEFAULT_GROUP, { name: '', modelId: 'smart', allowed: ['fast'], hourlyLimit: 20 });
     fresh.db.prepare('UPDATE ai_providers SET key_enc = ? WHERE id = ?').run('v1:broken:x:y', fresh.work.id);
     expect(fresh.ai.routeFor(fresh.adult, 'fast')).toMatchObject({ modelId: 'fast' });
     expect(fresh.ai.routeFor(fresh.adult, null)).toBeNull();
+    // Only the default model counts: apps that ask for none would fail, so the status says so.
+    fresh.ai.updateGroup(fresh.kids.id, { name: 'Kids', modelId: 'smart', allowed: ['fast'], hourlyLimit: 5 });
+    expect(fresh.ai.configured).toBe(false);
   });
 
   it('lists what each person may choose, default first, and nothing while the group is off', () => {
