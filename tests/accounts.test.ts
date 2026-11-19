@@ -8,7 +8,7 @@ import { Accounts } from '../src/platform/accounts.js';
 import { t } from '../src/i18n/index.js';
 import { createMailer, MemoryMailer } from '../src/platform/mail.js';
 import { Settings, type RegistrationMode } from '../src/platform/settings.js';
-import { Users } from '../src/platform/users.js';
+import { MAX_PASSWORD_LENGTH, Users } from '../src/platform/users.js';
 
 const HOUR = 3600_000;
 const config: Config = {
@@ -53,7 +53,7 @@ describe('Accounts', () => {
     expect(users.checkLogin('ann@x.y', PW)).toEqual({ ok: false, reason: 'unverified' });
     const token = tokenIn(mailer.sent[0].text, 'token');
     expect(mailer.sent[0].text).toContain('/verify?token=');
-    expect(accounts.verifyEmail(token).verified).toBe(true);
+    expect(accounts.verifyEmail(token, PW).verified).toBe(true);
     expect(users.get(r.user.id)?.verified).toBe(true);
     expect(users.checkLogin('ann@x.y', PW).ok).toBe(true);
   });
@@ -62,9 +62,56 @@ describe('Accounts', () => {
     await accounts.register({ name: 'Ann', email: 'ann@x.y', password: PW });
     const token = tokenIn(mailer.sent[0].text, 'token');
     expect(() => accounts.resetPassword(token, 'another-long-pw')).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
-    accounts.verifyEmail(token);
-    expect(() => accounts.verifyEmail(token)).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
-    expect(() => accounts.verifyEmail('garbage')).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+    accounts.verifyEmail(token, PW);
+    expect(() => accounts.verifyEmail(token, PW)).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+    expect(() => accounts.verifyEmail('garbage', PW)).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+  });
+
+  it('the link alone confirms nothing: it takes the password of whoever registered', async () => {
+    // Someone registers a victim's address with a password only they know; the victim clicks the genuine mail.
+    const r = await accounts.register({ name: 'Mallory', email: 'victim@x.y', password: 'the attacker knows this' });
+    const token = tokenIn(mailer.sent[0].text, 'token');
+    for (const guess of ['', 'the victim guesses', undefined as unknown as string]) {
+      expect(() => accounts.verifyEmail(token, guess)).toThrow(expect.objectContaining({ code: 'forbidden', reason: 'password_wrong' }));
+    }
+    expect(users.get(r.user.id)?.verified).toBe(false);
+    expect(users.checkLogin('victim@x.y', 'the attacker knows this')).toEqual({ ok: false, reason: 'unverified' });
+    // A wrong password did not spend the link.
+    expect(accounts.checkVerificationToken(token)).toBe(true);
+    expect(accounts.verifyEmail(token, 'the attacker knows this').verified).toBe(true);
+  });
+
+  it('a disabled account gets the invalid-link answer, also with the right password', async () => {
+    const r = await accounts.register({ name: 'Ann', email: 'ann@x.y', password: PW });
+    users.create({ email: 'root@x.y', name: 'R', password: 'x', role: 'admin' });
+    users.setDisabled(r.user.id, true);
+    const token = tokenIn(mailer.sent[0].text, 'token');
+    expect(() => accounts.verifyEmail(token, PW)).toThrow(expect.objectContaining({ reason: 'link_invalid' }));
+    expect(users.get(r.user.id)?.verified).toBe(false);
+  });
+
+  it('a long password is stored whole; one over the limit is refused, never shortened', async () => {
+    const long = 'x'.repeat(MAX_PASSWORD_LENGTH);
+    const r = await accounts.register({ name: 'Ann', email: 'ann@x.y', password: long });
+    accounts.verifyEmail(tokenIn(mailer.sent[0].text, 'token'), long);
+    expect(users.checkLogin('ann@x.y', long).ok).toBe(true);
+    expect(users.checkLogin('ann@x.y', long.slice(0, 300)).ok).toBe(false);
+    const tooLong = long + 'x';
+    await expect(accounts.register({ name: 'Bob', email: 'bob@x.y', password: tooLong })).rejects.toMatchObject({ code: 'invalid_argument', reason: 'password_long' });
+    expect(users.getByEmail('bob@x.y')).toBeNull();
+    expect(() => users.setPassword(r.user.id, tooLong)).toThrow(expect.objectContaining({ reason: 'password_long' }));
+    const reset = tokenIn(accounts.createResetLink(r.user.id), 'token');
+    expect(() => accounts.resetPassword(reset, tooLong)).toThrow(expect.objectContaining({ reason: 'password_long' }));
+    // The refused password did not spend the reset link.
+    expect(accounts.resetPassword(reset, PW).id).toBe(r.user.id);
+  });
+
+  it('a reset link confirms the address of an account that never did', async () => {
+    const r = await accounts.register({ name: 'Ann', email: 'ann@x.y', password: PW });
+    await accounts.requestPasswordReset('ann@x.y');
+    accounts.resetPassword(tokenIn(mailer.sent[1].text, 'token'), 'a brand new password');
+    expect(users.get(r.user.id)?.verified).toBe(true);
+    expect(users.checkLogin('ann@x.y', 'a brand new password').ok).toBe(true);
   });
 
   it('expired tokens fail', async () => {
@@ -81,7 +128,7 @@ describe('Accounts', () => {
     expect(() => accounts.resetPassword(reset, 'another-long-pw')).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
     expect(accounts.getInvite(invite)).not.toBeNull();
     vi.setSystemTime(new Date('2026-01-02T00:00:01Z'));
-    expect(() => accounts.verifyEmail(verify)).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+    expect(() => accounts.verifyEmail(verify, PW)).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
     vi.setSystemTime(new Date('2026-01-08T00:00:01Z'));
     expect(accounts.getInvite(invite)).toBeNull();
     await expect(accounts.register({ name: 'I', email: 'inv@x.y', password: PW, inviteToken: invite }))
@@ -111,9 +158,12 @@ describe('Accounts', () => {
     expect(url).toMatch(/^http:\/\/lager\.test\/register\?invite=/);
     const token = tokenIn(url, 'invite');
     const r = await accounts.register({ name: 'A', email: 'a@x.y', password: PW, inviteToken: token });
-    expect(r.user).toMatchObject({ role: 'publisher', verified: true });
-    expect(r.needsVerification).toBe(false);
-    expect(mailer.sent).toHaveLength(0);
+    // The link was not sent to any address, so it proves none: the invitee confirms theirs like anyone else.
+    expect(r.user).toMatchObject({ role: 'publisher', verified: false });
+    expect(r.needsVerification).toBe(true);
+    expect(mailer.sent).toHaveLength(1);
+    expect(mailer.sent[0]).toMatchObject({ to: 'a@x.y', subject: t('en', 'mail.verify.subject') });
+    expect(users.checkLogin('a@x.y', PW)).toEqual({ ok: false, reason: 'unverified' });
     expect(accounts.getInvite(token)).toBeNull();
     expect(accounts.listInvites().find((i) => i.id === id)?.used).toBe(true);
     await expect(accounts.register({ name: 'B', email: 'b@x.y', password: PW, inviteToken: token })).rejects.toMatchObject({ code: 'forbidden' });
@@ -128,6 +178,14 @@ describe('Accounts', () => {
     await expect(accounts.register({ name: 'A', email: 'other@x.y', password: PW, inviteToken: token })).rejects.toMatchObject({ code: 'forbidden' });
     const r = await accounts.register({ name: 'A', email: 'bOUND@x.Y', password: PW, inviteToken: token });
     expect(r.user.verified).toBe(true);
+  });
+
+  it('without mail an invitation still gives a usable account, bound or not', async () => {
+    accounts = new Accounts(db, users, new Settings(db, { registration: 'invite' }), createMailer({ ...config, smtpUrl: undefined }), config);
+    const admin = users.create({ email: 'root@x.y', name: 'R', password: 'x', role: 'admin' });
+    const { url } = await accounts.createInvite({ role: 'user', createdBy: admin.id });
+    const r = await accounts.register({ name: 'A', email: 'a@x.y', password: PW, inviteToken: tokenIn(url, 'invite') });
+    expect(r).toMatchObject({ needsVerification: false, user: { verified: true } });
   });
 
   it('invite is consumed atomically', async () => {
@@ -213,8 +271,8 @@ describe('Accounts', () => {
     const reset = tokenIn(accounts.createResetLink(u.id), 'token');
     const invite = tokenIn((await accounts.createInvite({ role: 'user', createdBy: admin.id })).url, 'invite');
     const bad = expect.objectContaining({ code: 'invalid_argument' });
-    expect(() => accounts.verifyEmail(reset)).toThrow(bad);
-    expect(() => accounts.verifyEmail(invite)).toThrow(bad);
+    expect(() => accounts.verifyEmail(reset, PW)).toThrow(bad);
+    expect(() => accounts.verifyEmail(invite, PW)).toThrow(bad);
     expect(() => accounts.resetPassword(invite, 'brand-new-password')).toThrow(bad);
     expect(accounts.getInvite(reset)).toBeNull();
     // none of the failed attempts consumed anything

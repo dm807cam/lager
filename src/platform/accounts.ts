@@ -6,7 +6,7 @@ import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import type { Mailer } from './mail.js';
 import type { Settings } from './settings.js';
 import { hashSecret, sameHash } from './tokens.js';
-import { MAX_NAME_LENGTH, MIN_PASSWORD_LENGTH, type Role, type User, type Users } from './users.js';
+import { MAX_NAME_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, type Role, type User, type Users } from './users.js';
 
 export interface InviteInfo { id: string; email: string | null; role: Role; createdAt: string; expiresAt: string; used: boolean }
 
@@ -28,21 +28,25 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+$/;
 
 const invalidToken = (): LagerError => new LagerError('invalid_argument', 'The link is invalid or has expired.', 'link_invalid');
 
+function assertPassword(password: unknown): asserts password is string {
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+    throw new LagerError('invalid_argument', `The password must be at least ${MIN_PASSWORD_LENGTH} characters long.`, 'password_short');
+  }
+  if (password.length > MAX_PASSWORD_LENGTH) {
+    throw new LagerError('invalid_argument', `The password must be at most ${MAX_PASSWORD_LENGTH} characters long.`, 'password_long');
+  }
+}
+
 const toInvite = (r: TokenRow): InviteInfo => ({
   id: r.id, email: r.email, role: r.role ?? 'user', createdAt: r.created_at, expiresAt: r.expires_at, used: r.used_at !== null,
 });
 
 /** Registration, e-mail verification, password reset and invitations. One-time tokens are stored as SHA-256 only. */
 export class Accounts {
-  private resetHooks: Array<(userId: string) => void> = [];
-
   constructor(
     private db: DatabaseSync, private users: Users, private settings: Settings,
     private mailer: Mailer, private config: Config,
   ) {}
-
-  /** Runs after a password was set through a reset link (recovery), as opposed to a change by the signed-in owner. */
-  onPasswordReset(hook: (userId: string) => void): void { this.resetHooks.push(hook); }
 
   private link(path: string, param: string, token: string): string {
     return `${this.config.publicUrl.origin}${path}?${param}=${token}`;
@@ -113,11 +117,10 @@ export class Accounts {
 
     if (!name || name.length > MAX_NAME_LENGTH) throw new LagerError('invalid_argument', `The name must be 1 to ${MAX_NAME_LENGTH} characters long.`, 'name_invalid');
     if (!EMAIL_RE.test(email)) throw new LagerError('invalid_argument', 'Please enter a valid email address.', 'email_invalid');
-    if (typeof input.password !== 'string' || input.password.length < MIN_PASSWORD_LENGTH) {
-      throw new LagerError('invalid_argument', `The password must be at least ${MIN_PASSWORD_LENGTH} characters long.`, 'password_short');
-    }
+    assertPassword(input.password);
 
-    const verified = invite !== null || !this.mailer.enabled;
+    // An invitation proves a mailbox only when it was sent to exactly this address (checked above); an open one proves none.
+    const verified = !this.mailer.enabled || Boolean(invite?.email);
     let user: User;
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -138,11 +141,20 @@ export class Accounts {
     return row !== null && row.user_id !== null && this.users.get(row.user_id) !== null;
   }
 
-  verifyEmail(token: string): User {
+  /**
+   * Confirms the address of whoever holds both the link and the account's password. The link alone is not enough: anyone can
+   * register someone else's address, and the owner of the mailbox must not confirm an account whose password another person chose.
+   * A wrong password leaves the link usable.
+   */
+  verifyEmail(token: string, password: string): User {
     const row = this.find('verify', token);
-    if (!row?.user_id || !this.users.get(row.user_id) || !this.consume(row)) throw invalidToken();
-    this.users.markVerified(row.user_id);
-    return this.users.get(row.user_id)!;
+    const user = row?.user_id ? this.users.get(row.user_id) : null;
+    if (!row || !user) throw invalidToken();
+    const login = this.users.checkLogin(user.email, typeof password === 'string' ? password : '');
+    if (!login.ok && login.reason === 'invalid') throw new LagerError('forbidden', 'The password is wrong.', 'password_wrong');
+    if ((!login.ok && login.reason === 'disabled') || !this.consume(row)) throw invalidToken();
+    this.users.markVerified(user.id);
+    return this.users.get(user.id)!;
   }
 
   async resendVerification(email: string, locale?: Locale): Promise<void> {
@@ -167,14 +179,11 @@ export class Accounts {
   resetPassword(token: string, password: string): User {
     const row = this.find('reset', token);
     if (!row?.user_id || !this.users.get(row.user_id)) throw invalidToken();
-    if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
-      throw new LagerError('invalid_argument', `The password must be at least ${MIN_PASSWORD_LENGTH} characters long.`, 'password_short');
-    }
+    assertPassword(password);
     if (!this.consume(row)) throw invalidToken();
     this.users.setPassword(row.user_id, password);
     this.deleteResetLinks(row.user_id);
     this.users.markVerified(row.user_id);
-    for (const hook of this.resetHooks) hook(row.user_id);
     return this.users.get(row.user_id)!;
   }
 

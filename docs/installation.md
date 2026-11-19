@@ -88,7 +88,7 @@ Everything is stored in the named Docker volume `lager-data`. If you prefer a di
 mkdir -p data && sudo chown 1000:1000 data
 ```
 
-On first start the first administrator is created from `LAGER_ADMIN_EMAIL` and `LAGER_ADMIN_PASSWORD`. Then open `LAGER_PUBLIC_URL` in a browser and sign in. Further accounts are created through invitations or registration (see [Users and sharing](users-and-sharing.md#accounts-and-roles)).
+On first start the first administrator is created from `LAGER_ADMIN_EMAIL` and `LAGER_ADMIN_PASSWORD`. The password needs at least 10 characters; with a shorter one, or with the example value on an address other machines can reach, Lager stops with a message and creates no account. Then open `LAGER_PUBLIC_URL` in a browser and sign in. Further accounts are created through invitations or registration (see [Users and sharing](users-and-sharing.md#accounts-and-roles)).
 
 ## Published images
 
@@ -110,12 +110,12 @@ Lager is configured through environment variables only. The template is `.env.ex
 | --- | --- | --- |
 | `LAGER_PUBLIC_URL` | Public address of the platform (login, dashboard, API, MCP) | required |
 | `LAGER_APPS_DOMAIN` | Domain of the apps; instances run at `<slug>.<domain>` | required |
-| `LAGER_ADMIN_EMAIL`, `LAGER_ADMIN_PASSWORD` | First administrator; only created while no account exists | none |
+| `LAGER_ADMIN_EMAIL`, `LAGER_ADMIN_PASSWORD` | First administrator; only created while no account exists. The password needs at least 10 characters, and the example value from `.env.example` is accepted only while `LAGER_PUBLIC_URL` points at this machine (`localhost`, `*.localhost`, `127.0.0.1`, `[::1]`); otherwise Lager does not start. On such an address the example value still logs a warning: change the password before others can reach the server | none |
 | `LAGER_DATA_DIR` | Data directory | `./data` (`/data` in the container) |
 | `LAGER_PORT` | Port of the server | `8080` |
 | `LAGER_HOST` | Address the server binds to. Without Docker, set `127.0.0.1` when the reverse proxy runs on the same machine, so nobody reaches Lager around the proxy. Leave it empty in the container | every interface |
 | `LAGER_ACCESS_LOG` | `true` writes one line per request to the log (time, client address, method, host and path without the query string, status, duration) | `false` |
-| `LAGER_SECRET` | Key for sessions; otherwise generated and stored in `secret.key` | generated |
+| `LAGER_SECRET` | Key for sessions and for encrypting stored AI provider keys; otherwise generated and stored in `secret.key`. If set, use at least 32 random characters (for example `openssl rand -hex 32`): a first start with a shorter one is refused, and an existing installation only logs a warning at startup. Changing the secret signs everyone out and makes stored AI provider keys unreadable, so they have to be entered again | generated |
 | `LAGER_SNAPSHOT_KEEP` | Data snapshots kept per instance | `20` |
 | `LAGER_TRASH_DAYS` | Days that deleted instances and apps stay in the trash (`0` = never clean up) | `30` |
 | `LAGER_DEFAULT_LOCALE` | Language of pages and mails when neither the account, the `lager_lang` cookie nor the browser's `Accept-Language` names a supported one: `en`, `de`, `fr`, `es` | `en` |
@@ -138,7 +138,7 @@ Keep the quotes around `LAGER_MAIL_FROM`: without them, loading `.env` in a shel
 Without `LAGER_SMTP_URL` Lager runs completely, just without mail:
 
 - Email addresses are not verified; new accounts are usable at once. For this reason registration defaults to "invitation only".
-- Invitations work: the link is shown once to the administrator in the administration area, who passes it on.
+- Invitations work: the link is shown once to the administrator in the administration area, who passes it on. An account created through it is usable at once.
 - "Forgot password" sends nothing. Instead an administrator creates a reset link in the administration area (Users; valid for 1 hour, usable once) and passes it on.
 
 If you enable mail later, existing accounts stay verified.

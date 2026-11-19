@@ -30,7 +30,7 @@ function fixture() {
 }
 
 describe('credentials do not survive password changes', () => {
-  it('account-page password change revokes OAuth tokens and codes and reset links, keeps API tokens', async () => {
+  it('account-page password change revokes OAuth tokens and codes, API tokens and reset links', async () => {
     const f = fixture();
     expect([f.alive.access(), f.alive.api()]).toEqual([true, true]);
     const cookie = await h!.login('ann@example.org', PASSWORD);
@@ -40,7 +40,9 @@ describe('credentials do not survive password changes', () => {
     expect(f.alive.access()).toBe(false);
     expect(f.alive.refresh()).toBe(false);
     expect(f.alive.code()).toBe(false);
-    expect(f.alive.api()).toBe(true);
+    // Whoever changes a password because it leaked must not leave a deploy credential behind.
+    expect(f.alive.api()).toBe(false);
+    expect(f.core.tokens.list(f.user.id)).toEqual([]);
     const dead = await request(h!.app).post('/reset').set('Host', h!.host).type('form').send({ token: f.resetToken, password: 'yet another password' });
     expect(dead.status).toBe(400);
     expect(dead.text).toContain(t('en', 'auth.link.invalid'));

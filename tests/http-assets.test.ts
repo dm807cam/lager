@@ -29,7 +29,7 @@ function setup(visibility: 'private' | 'users' | 'public' = 'private') {
 }
 
 async function cookieFor(h: Harness, slug: string, email: string): Promise<string> {
-  return h.enter(slug, await h.login(email, email === 'admin@x.y' ? 'pw' : 'pw-12345678'));
+  return h.enter(slug, await h.login(email, email === 'admin@x.y' ? 'admin-password-1' : 'pw-12345678'));
 }
 
 const upload = (h: Harness, host: string, cookie: string | undefined, body: Buffer | string, type?: string, header = true) => {

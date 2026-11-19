@@ -13,7 +13,7 @@ function make(): Core {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-tokens-'));
   const config: Config = {
     dataDir, port: 0, defaultLocale: 'en', publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test',
-    adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 's', snapshotKeep: 20, trustProxy: false,
+    adminEmail: 'admin@x.y', adminPassword: 'admin-password-1', secret: 's', snapshotKeep: 20, trustProxy: false,
   };
   core = createCore(config);
   return core;

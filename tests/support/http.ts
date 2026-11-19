@@ -35,7 +35,7 @@ export function makeHarness(opts: HarnessOptions = {}): Harness {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-http-'));
   const config: Config = {
     dataDir, port: 0, defaultLocale: opts.defaultLocale ?? 'en', publicUrl: new URL(opts.publicUrl ?? 'http://lager.localhost:8080'), appsDomain: 'apps.localhost',
-    adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 'test-secret', snapshotKeep: 20, trustProxy: opts.trustProxy ?? false,
+    adminEmail: 'admin@x.y', adminPassword: 'admin-password-1', secret: 'test-secret', snapshotKeep: 20, trustProxy: opts.trustProxy ?? false,
     instanceQuotaBytes: opts.instanceQuotaBytes ?? 50 * 1024 * 1024, accessLog: opts.accessLog,
   };
   const core = createCore(config, { ...(opts.mailer ? { mailer: opts.mailer } : {}), ...(opts.fetch ? { fetch: opts.fetch } : {}) });
@@ -52,7 +52,7 @@ export function makeHarness(opts: HarnessOptions = {}): Harness {
   };
   return {
     core, app, adminId, host,
-    async login(email = 'admin@x.y', password = 'pw') {
+    async login(email = 'admin@x.y', password = 'admin-password-1') {
       const res = await request(app).post('/login').set('Host', host).type('form').send({ email, password });
       return cookiePair(res, sessionName);
     },

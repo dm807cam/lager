@@ -9,7 +9,7 @@ Lager has several accounts. Each account has exactly one role:
 | Role | May |
 | --- | --- |
 | Administrator | Manage users, roles, invitations, groups and settings, disable instances, create reset links; also everything a publisher may do |
-| Publisher | Deploy apps (dashboard, REST API, MCP), create API tokens, create instances of their apps for other accounts, maintain apps together with other publishers or administrators (collaboration) |
+| Publisher | Deploy apps (dashboard, REST API, MCP), create API tokens (only publishers and administrators can; other accounts can still list and revoke tokens they already have), create instances of their apps for other accounts, maintain apps together with other publishers or administrators (collaboration) |
 | User | Open instances that are shared with them or open to all signed-in users; create their own instances of apps that allow self-service |
 
 How an account comes into being depends on the registration mode, which an administrator sets in the administration area under Settings:
@@ -20,7 +20,11 @@ How an account comes into being depends on the registration mode, which an admin
 
 The default depends on mail: if `LAGER_SMTP_URL` is set, registration is open, otherwise invitation only. Once an administrator has saved a mode, that choice applies.
 
-An administrator creates invitations in the administration area (Invitations), with a role and optionally an email address that the link is bound to. The link is valid for 7 days and works once. Whoever creates an account through it is signed in immediately. Passwords need at least 10 characters.
+An administrator creates invitations in the administration area (Invitations), with a role and optionally an email address that the link is bound to. The link is valid for 7 days and works once. An invitation with an address was sent to that mailbox, so whoever creates the account through it is signed in immediately. An invitation without an address proves no mailbox: the new account gets the role, and confirms its email address like any other registration before it can sign in. Without mail (no `LAGER_SMTP_URL`) nothing is confirmed, and both kinds sign in immediately.
+
+To confirm an email address, the new account opens the link from the mail and enters the password chosen at registration. Whoever forgot it uses "Forgot your password?": setting a new password through the reset link confirms the address as well. The link alone confirms nothing, so nobody can register someone else's address and have its owner confirm it for them.
+
+Passwords need at least 10 characters and may have at most 1024. Changing or resetting a password signs out every other device, disconnects all AI assistants and revokes all API tokens of the account.
 
 Lager creates the first administrator at startup from `LAGER_ADMIN_EMAIL` and `LAGER_ADMIN_PASSWORD`, but only while there is no account at all. You appoint further administrators by changing the role of an existing account. The last active administrator can be neither demoted nor disabled. A disabled account can no longer sign in, and its sessions on the platform and on instances end immediately.
 

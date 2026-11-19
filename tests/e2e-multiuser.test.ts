@@ -81,12 +81,12 @@ describe('multi-user end to end', () => {
       expect(res.status).toBe(302);
       return cookiePair(res, 'lager_session');
     };
-    /** The only place that knows how a verification link works: the page shows a form, the post verifies, then the user signs in. */
+    /** The only place that knows how a verification link works: the page asks for the password, the post verifies, then the user signs in. */
     const verifyEmail = async (link: string, email: string, password: string): Promise<string> => {
       const shown = await call(PLATFORM, 'GET', pathOf(link));
       expect(shown.status).toBe(200);
       const token = new URL(link).searchParams.get('token')!;
-      const done = await call(PLATFORM, 'POST', '/verify', { headers: FORM, body: form({ token }) });
+      const done = await call(PLATFORM, 'POST', '/verify', { headers: FORM, body: form({ token, password }) });
       expect(done.status).toBe(302);
       return await login(email, password);
     };
@@ -116,10 +116,10 @@ describe('multi-user end to end', () => {
       call(PLATFORM, 'POST', url, { headers: { ...FORM, Cookie: session }, body: form({ csrf, ...fields }) });
     const home = (call2: Call, session: string) => call2(PLATFORM, 'GET', '/', { headers: { Cookie: session } });
 
-    // 1. The administrator invites a publisher; the publisher registers through the link and is signed in at once.
+    // 1. The administrator invites a publisher by address; the publisher registers through the link and is signed in at once.
     const adminSession = await login('admin@x.y', 'admin-password-1');
     const adminCsrf = csrfIn((await call(PLATFORM, 'GET', '/admin/invites', { headers: { Cookie: adminSession } })).body);
-    const inviteRes = await adminPost(adminSession, adminCsrf, '/admin/invites', { role: 'publisher' });
+    const inviteRes = await adminPost(adminSession, adminCsrf, '/admin/invites', { role: 'publisher', email: 'p@x.y' });
     expect(inviteRes.status).toBe(200);
     const inviteLink = /(https?:\/\/[^\s<]*\/register\?invite=[\w-]+)/.exec(inviteRes.body)?.[1];
     expect(inviteLink).toBeDefined();
