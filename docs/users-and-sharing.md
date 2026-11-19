@@ -37,7 +37,7 @@ The levels on an instance:
 
 | Level | May |
 | --- | --- |
-| Viewer (`view`) | Open the app and read data; a viewer stores nothing, not in their private area (`data/users/<id>/…`) either |
+| Viewer (`view`) | Open the app and read data. By default a viewer writes nothing; an app's rules can open single paths to viewers, but never the private area (`data/users/<id>/…`): writing there always takes contributor level. Viewers can still delete their own private data |
 | Contributor (`interact`) | additionally write data, as far as the app's rules allow |
 | Manager (`admin`) | additionally manage grants, visibility and versions, and see the snapshots |
 | Owner (`owner`) | everything, and restore a snapshot or delete the instance; cannot be granted |

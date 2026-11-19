@@ -552,6 +552,15 @@ describe('mcp endpoint', () => {
     const read = await call(adm.client, 'db_read', { instance: 'todo', path: 'locked/a' });
     expect(read.isError).toBe(true);
     expect(read.json.error.code).toBe('forbidden');
+    // A path a manager may write but not read: replacing is fine, merging would measure the hidden document.
+    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>2</p>', capabilities: { db: { rules: [...rules, { path: 'inbox', read: 'owner', write: 'admin' }] } } });
+    await call(owner, 'db_write', { instance: 'todo', ops: [{ op: 'set', path: 'inbox/a', data: { pad: 'x'.repeat(200 * 1024) } }] });
+    const merge = await call(adm.client, 'db_write', { instance: 'todo', ops: [{ op: 'update', path: 'inbox/a', data: { pad2: 'y'.repeat(100 * 1024) } }] });
+    expect(merge.isError).toBe(true);
+    expect(merge.json.error.code).toBe('forbidden');
+    expect(merge.json.error.message).toContain('use set');
+    expect(r.h.core.data.get(inst.id, 'inbox/a')!.version).toBe(1);
+    expect((await call(adm.client, 'db_write', { instance: 'todo', ops: [{ op: 'set', path: 'inbox/b', data: { v: 1 } }] })).json).toEqual({ applied: 1 });
     // Everything else stays open to the Verwalter.
     expect((await call(adm.client, 'db_write', { instance: 'todo', ops: [{ op: 'set', path: 'tasks/t1', data: { v: 3 } }] })).json).toEqual({ applied: 1 });
     expect((await call(adm.client, 'db_read', { instance: 'todo', path: 'tasks/t1' })).json.doc.data).toEqual({ v: 3 });

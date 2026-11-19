@@ -46,7 +46,7 @@ Lager injects `window.lager` into every page before the page's own scripts run, 
 - `db.collection(path)` returns a collection reference (odd number of segments, `tasks` or `lists/l1/items`); `db.doc(path)` a document reference (even number, `tasks/t1`). Both are synchronous and throw a `TypeError` for an invalid path.
 - Collection reference: `.doc(id?)` (synchronous; without `id` a new random id), `.add(data)` resolves the new document reference, and the query methods below.
 - Query (chainable, synchronous): `.where(field, op, value)` with `op` one of `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not-in`, `array-contains`, `array-contains-any` (`field` may be a dotted path such as `"author.id"`), `.orderBy(field, "asc" | "desc")`, `.limit(n)`. Then `.get()` resolves a query snapshot, or `.onSnapshot(next, error?)` listens.
-- Document reference: `.id`, `.path`, `.get()` resolves a document snapshot, `.set(data)` replaces the document, `.update(data)` merges deeply into it (creating it if needed; both resolve nothing, so a viewer who may write but not read a path learns nothing about what is stored there), `.delete()` removes it (not its sub-collections), `.collection(name)`, `.onSnapshot(next, error?)`, `.acquire({holder, ttlMs?, data?})` takes a lease (default 30 s, at most 300 s) and resolves `{acquired, version, expiresAt}`.
+- Document reference: `.id`, `.path`, `.get()` resolves a document snapshot, `.set(data)` replaces the document, `.update(data)` merges deeply into it (creating it if needed; it needs read access to the path too), `.delete()` removes it (not its sub-collections), `.collection(name)`, `.onSnapshot(next, error?)`, `.acquire({holder, ttlMs?, data?})` takes a lease (default 30 s, at most 300 s) and resolves `{acquired, version, expiresAt}`.
 - Document snapshot: `.id`, `.exists`, `.data()` (the stored object, frozen; `undefined` when the document does not exist).
 - Query snapshot: `.docs` (document snapshots), `.size`, `.empty`, `.docChanges()` (`[{type: "added" | "modified" | "removed", doc, oldIndex, newIndex}]`).
 - `onSnapshot` calls `next` once right away with the current state and again after every change, including changes by other viewers, and returns a function that stops listening. It retries network and server failures by itself; any other error goes to `error` once and ends the listener. `get`, `set`, `update`, `delete`, `add` and `acquire` reject with an object `{code, message}`, where `code` is `not_granted` (the viewer's level does not allow it), `quota_exceeded`, `invalid_argument` or `unavailable` (network or server; retry later).
@@ -130,7 +130,9 @@ Example sign-off – everyone signs off only for themselves, and even the owner 
 ]}}
 ```
 
-`data/users/<id>/…` always belongs to user `<id>` alone – reading and writing, not even for the owner, and rules cannot loosen that. Private settings and drafts live there. The user reads it from `view` and writes it from `interact`, like any other data: a viewer cannot store anything, there either.
+`data/users/<id>/…` always belongs to user `<id>` alone – reading and writing, not even for the owner, and rules cannot loosen that. Private settings and drafts live there. The user reads it from `view`; writing it always takes `interact`, also when a rule opens other paths to viewers, so a viewer cannot store anything there. Deleting one's own private documents works from `view`.
+
+A path the viewer may write but not read (a drop box, for example `{"path": "inbox", "read": "admin", "write": "interact"}`) takes `set`, `add` and `delete` only. `update` and `acquire` reject with `not_granted` there, because they work on the stored document; write whole documents with `set` instead.
 
 ## Limits
 
@@ -198,7 +200,7 @@ The first deploy creates the default instance with the slug of the app (visibili
 
 An instance's storage is limited (default 50 MB). When it is full, writes are rejected with the error code `quota_exceeded`; then delete data or tell the user. `db_write` runs the operations one after another; if one fails midway, the error message says how many were applied before.
 
-`user.search(q)` in the app (person picker, `@` mention) finds the owner and the people the instance is shared with, and needs `user: {scopes: ["profile"]}`; at most 8 results, `[]` without the scope or without a sign-in. Store only the `id`, never the name; email addresses come only with the additional scope `"email"`. `user.profiles(ids)` resolves an id only for people this instance knows: the viewer, the owner, the people it is shared with, whoever last wrote one of its documents and whoever is in one of its rooms right now. Every other id stays unknown, like one that does not exist.
+`user.search(q)` in the app (person picker, `@` mention) finds the owner and the people the instance is shared with, and needs `user: {scopes: ["profile"]}`; at most 8 results, `[]` without the scope or without a sign-in. Store only the `id`, never the name; email addresses come only with the additional scope `"email"`. `user.profiles(ids)` resolves an id only for people this instance knows: the viewer, the owner, the people it is shared with, everyone who ever wrote one of its documents (outside the private areas) and whoever is in one of its rooms right now. Every other id stays unknown, like one that does not exist.
 
 ## Pre-filling data
 

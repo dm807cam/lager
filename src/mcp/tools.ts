@@ -700,7 +700,7 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }));
 
   server.registerTool('db_write', { ...toolMeta('db_write'),
-    description: `Write instance data, e.g. to seed it after a deploy. Up to ${MAX_DB_OPS} operations, applied in order: set (replace), update (deep merge), delete.`,
+    description: `Write instance data, e.g. to seed it after a deploy. Up to ${MAX_DB_OPS} operations, applied in order: set (replace), update (deep merge; needs read access to the path too), delete.`,
     inputSchema: {
       instance: slugArg,
       ops: z.array(z.object({
@@ -715,6 +715,8 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     for (const o of ops) {
       parseDocPath(o.path);
       if (!canWrite(rules, viewer, o.path)) throw new LagerError('forbidden', `You may not write "${o.path}" (another user's private area or a rule of the app).`);
+      // A merge is size-checked as a whole and would reveal how big a document is that the caller may not read.
+      if (o.op === 'update' && !canRead(rules, viewer, o.path)) throw new LagerError('forbidden', `You may not read "${o.path}", so you cannot merge into it: use set (replace) instead of update.`);
       if (o.op !== 'delete') {
         if (o.data === undefined) throw new LagerError('invalid_argument', `${o.op} on "${o.path}" needs data.`);
         assertDocData(o.data);

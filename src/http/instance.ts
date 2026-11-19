@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import express from 'express';
 import type { Request, Response } from 'express';
 import type { Core } from '../core.js';
-import { canRead, canWrite, type Level, type Viewer } from '../data/rules.js';
+import { canDelete, canRead, canWrite, type Level, type Viewer } from '../data/rules.js';
 import type { HubEvent } from '../data/hub.js';
 import { LagerError } from '../errors.js';
 import type { Capabilities, DbRule, Instance } from '../platform/apps.js';
@@ -29,6 +29,8 @@ const BADGE_FILE = new URL('../runtime/badge.js', import.meta.url);
 /** Where the "Made with Lager" badge points: the project, not this server. */
 export const PROJECT_URL = 'https://github.com/dm807cam/lager';
 const MAX_PROFILE_IDS = 100;
+const WRITE_ONLY_UPDATE = 'update needs read access to the document as well, because it merges into what is stored. On a path the viewer may write but not read, use set (replace) instead.';
+const WRITE_ONLY_ACQUIRE = 'acquire needs read access to the document as well as write access.';
 const MAX_SEARCH_RESULTS = 20;
 const MAX_SEARCH_QUERY = 100;
 const PING_MS = 25_000;
@@ -301,11 +303,13 @@ export function createInstanceRouter(core: Core): express.Router {
       case 'set':
       case 'update':
         if (!canWrite(ctx.rules, ctx.viewer, path)) deny();
+        // A merge is checked against the size limit as a whole, which would tell a writer who cannot read how big the hidden document is.
+        if (op === 'update' && !canRead(ctx.rules, ctx.viewer, path)) throw new LagerError('forbidden', WRITE_ONLY_UPDATE);
         // The stored document can hold more than the caller sent (an update merges), so it only goes back to someone who may read it.
         res.json({ doc: readable(core.data[op](id, path, obj(data, 'data'), by)) });
         return;
       case 'delete':
-        if (!canWrite(ctx.rules, ctx.viewer, path)) deny();
+        if (!canDelete(ctx.rules, ctx.viewer, path)) deny();
         core.data.delete(id, path);
         res.json({ ok: true });
         return;
@@ -317,6 +321,8 @@ export function createInstanceRouter(core: Core): express.Router {
       }
       case 'acquire': {
         if (!canWrite(ctx.rules, ctx.viewer, path)) deny();
+        // A lease answers with the document's version and expiry and merges its data: nothing for someone who may not read the document.
+        if (!canRead(ctx.rules, ctx.viewer, path)) throw new LagerError('forbidden', WRITE_ONLY_ACQUIRE);
         const o = obj(options, 'options');
         res.json(core.data.acquire(id, path, {
           holder: o.holder as string, ttlMs: o.ttlMs as number | undefined, data: o.data as Record<string, unknown> | undefined,

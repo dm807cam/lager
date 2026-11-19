@@ -9,6 +9,7 @@
 
   var SESSION_URL = '/__lager/session';
   var USERS_URL = '/__lager/users?ids=';
+  var PROFILE_MISS_MS = 60000;
   var DB_URL = '/__lager/db';
   var ASSETS_URL = '/__lager/assets';
   var EVENTS_URL = '/__lager/db/events';
@@ -424,6 +425,7 @@
     var id = viewerId(session);
     var level = levelOf(session);
     var cache = new Map();
+    var misses = new Map(); // id -> time until which it is not asked again
     var inflight = new Map();
 
     function toProfile(p) {
@@ -441,8 +443,9 @@
           if (!found) return;
           ids.forEach(function (i) {
             var entry = Object.prototype.hasOwnProperty.call(found, i) && found[i] && typeof found[i].id === 'string' ? found[i] : null;
-            // Unknown ids are cached as misses until the page reloads: the server only names people this instance knows.
-            cache.set(i, entry ? toProfile(entry) : null);
+            // A miss is only kept for a short while: the server names the people this instance knows, and someone
+            // who writes here, joins a room or is given access becomes known later.
+            if (entry) { cache.set(i, toProfile(entry)); misses.delete(i); } else misses.set(i, Date.now() + PROFILE_MISS_MS);
           });
         })
         .catch(function () { /* never rejects; the ids are retried on the next call */ })
@@ -454,7 +457,8 @@
       var list = (Array.isArray(input) ? input : [input]).filter(function (i) { return typeof i === 'string' && i !== ''; });
       list = Array.from(new Set(list));
       if (session) {
-        var need = list.filter(function (i) { return !cache.has(i) && !inflight.has(i); });
+        var now = Date.now();
+        var need = list.filter(function (i) { return !cache.has(i) && !inflight.has(i) && !(misses.get(i) > now); });
         for (var n = 0; n < need.length; n += MAX_PROFILE_IDS) fetchChunk(need.slice(n, n + MAX_PROFILE_IDS));
       }
       var waits = Array.from(new Set(list.map(function (i) { return inflight.get(i); }).filter(Boolean)));
