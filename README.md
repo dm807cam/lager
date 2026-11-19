@@ -111,7 +111,7 @@ Then ask for an app, for example *"Build a shared groceries list for my family a
 | **Data** | Document database with live updates and access rules, file uploads, realtime rooms with presence, pages that save themselves, file downloads, snapshots, NDJSON export and import |
 | **People** | Several accounts with roles (administrator, publisher, user), invitations, open or closed registration, groups, four access levels per instance, public instances |
 | **Interfaces** | Browser dashboard, REST API, MCP endpoint (Streamable HTTP) with OAuth 2.1 and dynamic client registration, or API tokens |
-| **AI** | `lager.complete()` routed to the providers you connect, AI groups with their own model and hourly limit per person, keys stored encrypted |
+| **AI** | `lager.complete()` routed to the providers you connect, a catalog of named models, a model per app that the building AI picks, AI groups that decide which models their people may use and how often, keys stored encrypted |
 | **Operations** | Single process, SQLite, one data directory, online backup command, trash with retention, multi-architecture Docker images |
 
 What Lager deliberately does not do (no single sign-on, no built-in TLS, no replication, …) is listed under [Limits](docs/limits.md#what-lager-cannot-do).

@@ -46,8 +46,17 @@ export function toMessages(input: unknown, system: unknown): ChatMessage[] {
   return messages;
 }
 
+/** The catalog model the app asks for: the owner's choice, else what the active version declares in `complete.model`. */
+export function wantedModel(core: Core, ctx: Ctx): string | null {
+  const chosen = core.apps.getApp(ctx.instance.appId)?.aiModelId;
+  if (chosen) return chosen;
+  const declared = isObject(ctx.caps.complete) ? ctx.caps.complete.model : undefined;
+  return typeof declared === 'string' && declared ? declared : null;
+}
+
 /**
- * Mounts `POST /__lager/complete`: the page's `window.lager.complete` asks the model of the caller's AI group.
+ * Mounts `POST /__lager/complete`: the page's `window.lager.complete` asks the model the app wants when the caller's
+ * AI group allows it, and otherwise the default model of the caller's group.
  * Only signed-in viewers with at least `interact` may call it, so guests on public apps cannot spend the server's credit.
  */
 export function mountCompleteRoutes(router: express.Router, core: Core, ctxOf: (res: Response) => Ctx, requireAccess: (ctx: Ctx) => void): void {
@@ -65,7 +74,7 @@ export function mountCompleteRoutes(router: express.Router, core: Core, ctxOf: (
       if (userId === null) throw new LagerError('unauthenticated', 'Sign in to use the language model.');
       const level = ctx.viewer.level;
       if (level !== 'interact' && level !== 'admin' && level !== 'owner') throw new LagerError('forbidden', 'You may only view this app.');
-      const route = core.ai.routeFor(userId);
+      const route = core.ai.routeFor(userId, wantedModel(core, ctx));
       if (!route) { reply(res, { status: 503, code: 'not_configured', message: 'No language model is available to you.' }); return; }
       const body: unknown = req.body;
       if (!isObject(body)) throw new LagerError('invalid_argument', 'Request body must be a JSON object.');

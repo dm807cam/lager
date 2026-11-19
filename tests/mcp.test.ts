@@ -56,13 +56,14 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 const guide = fs.readFileSync(new URL('../src/guide.md', import.meta.url), 'utf8');
 
 describe('mcp endpoint', () => {
-  it('lists the twenty-two tools and exposes instructions', async () => {
+  it('lists the twenty-four tools and exposes instructions', async () => {
     const r = await start();
     const client = await connect(r);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'activate_version', 'add_domain', 'check_app', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'export_data', 'get_app', 'get_guide', 'get_version',
-      'import_data', 'list_apps', 'list_shares', 'list_snapshots', 'remove_domain', 'restore_snapshot', 'set_app_icon', 'set_auto_update', 'set_visibility', 'share_instance', 'unshare_instance',
+      'import_data', 'list_apps', 'list_models', 'list_shares', 'list_snapshots', 'remove_domain', 'restore_snapshot', 'set_app_icon', 'set_app_model', 'set_auto_update', 'set_visibility',
+      'share_instance', 'unshare_instance',
     ]);
     expect(client.getServerVersion()?.name).toBe('lager');
     const firstSection = guide.split(/\r?\n---\r?\n/)[0].trim();
@@ -93,7 +94,7 @@ describe('mcp endpoint', () => {
       expect(JSON.stringify(tool.inputSchema), tool.name).not.toContain('propertyNames');
     }
     const readOnly = tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name).sort();
-    expect(readOnly).toEqual(['check_app', 'export_data', 'get_app', 'get_guide', 'get_version', 'list_apps', 'list_shares', 'list_snapshots', 'db_read'].sort());
+    expect(readOnly).toEqual(['check_app', 'export_data', 'get_app', 'get_guide', 'get_version', 'list_apps', 'list_models', 'list_shares', 'list_snapshots', 'db_read'].sort());
     const destructive = tools.filter((t) => t.annotations?.destructiveHint === true).map((t) => t.name).sort();
     expect(destructive).toEqual(['db_write', 'import_data', 'remove_domain', 'restore_snapshot', 'set_visibility', 'share_instance', 'unshare_instance']);
     const deploy = tools.find((t) => t.name === 'deploy_app')!;
@@ -753,7 +754,7 @@ describe('mcp endpoint', () => {
     const client = new Client({ name: 't', version: '1' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${r.base}/mcp`), { authProvider: provider }));
     clients.push(client);
-    expect((await client.listTools()).tools).toHaveLength(22);
+    expect((await client.listTools()).tools).toHaveLength(24);
   });
 
   describe('icons and descriptions', () => {
