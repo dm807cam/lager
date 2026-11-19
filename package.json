@@ -28,7 +28,7 @@
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@resvg/resvg-wasm": "^2.6.2",
     "express": "^5.3.0",
-    "nodemailer": "^10.5.0",
+    "nodemailer": "^10.6.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -36,7 +36,7 @@
     "@types/node": "^26.6.6",
     "@types/nodemailer": "^8.0.2",
     "@types/supertest": "^7.2.1",
-    "jsdom": "^31.0.0",
+    "jsdom": "^31.0.1",
     "supertest": "^7.3.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
