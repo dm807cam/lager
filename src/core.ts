@@ -5,6 +5,7 @@ import { RateLimiter } from './http/ratelimit.js';
 import { Rooms } from './data/rooms.js';
 import { InstanceData } from './data/store.js';
 import { OAuthStore } from './mcp/oauth.js';
+import { AccountRemoval } from './platform/account-removal.js';
 import { Accounts } from './platform/accounts.js';
 import { AiModels } from './platform/ai.js';
 import { Access } from './platform/access.js';
@@ -33,6 +34,8 @@ export interface Core {
   mailer: Mailer;
   /** Registration, e-mail verification, password reset and invitations. */
   accounts: Accounts;
+  /** Deleting an account for good, with what it owns handed on or deleted. */
+  removal: AccountRemoval;
   groups: Groups;
   /** Custom hostnames that answer for an instance. */
   domains: Domains;
@@ -130,7 +133,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   apps.onActivated((inst) => { hub.publish(inst.id, { type: 'reload', version: inst.activeVersion }); });
   return {
     config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, accounts, groups, domains, access,
-    icons, ai, deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000),
+    icons, ai, removal: new AccountRemoval(db, users, apps), deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000),
     close() {
       icons.close();
       assets.close();
