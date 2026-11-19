@@ -53,11 +53,28 @@ const toInvite = (r: TokenRow): InviteInfo => ({
 /** Registration, e-mail verification, password reset and invitations. One-time tokens are stored as SHA-256 only. */
 export class Accounts {
   private mailTimes: Record<Budget, number[]> = { account: [], reset: [] };
+  /** Links and invitations a request is working on right now, by token hash; see `once`. */
+  private inFlight = new Set<string>();
 
   constructor(
     private db: DatabaseSync, private users: Users, private settings: Settings,
     private mailer: Mailer, private config: Config,
   ) {}
+
+  /**
+   * Runs `work` for a link or invitation unless another request is already working on the same one. A token is used up only
+   * after its password has been hashed, so without this, one link posted many times at once would be hashed as many times, in
+   * the lane that goes ahead of every sign-in. The others are told to try again; by then the first has usually used the token up.
+   */
+  private async once<T>(row: TokenRow, work: () => Promise<T>): Promise<T> {
+    if (this.inFlight.has(row.hash)) throw new LagerError('rate_limited', 'This link is being processed. Please try again in a moment.', 'busy');
+    this.inFlight.add(row.hash);
+    try {
+      return await work();
+    } finally {
+      this.inFlight.delete(row.hash);
+    }
+  }
 
   private link(path: string, param: string, token: string): string {
     return `${this.config.publicUrl.origin}${path}?${param}=${token}`;
@@ -156,18 +173,24 @@ export class Accounts {
 
     // An invitation proves a mailbox only when it was sent to exactly this address (checked above); an open one proves none.
     const verified = !this.mailer.enabled || Boolean(invite?.email);
-    // Hashed before the transaction, and before it is known whether the address is taken: both outcomes take the same time.
-    const passwordHash = await hashPassword(input.password);
-    let user: User;
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      if (invite && !this.consume(invite)) throw new LagerError('forbidden', 'The invitation is invalid or has expired.', 'invite_invalid');
-      user = this.users.create({ email, name, password: input.password, passwordHash, role: invite?.role ?? 'user', verified, locale: input.locale });
-      this.db.exec('COMMIT');
-    } catch (e) {
-      this.db.exec('ROLLBACK');
-      throw e;
-    }
+    // Where a taken address is named to the visitor anyway (no mail, or an invitation sent to that address), it is refused before
+    // any hashing: such attempts are not held by the hourly cap and must not cost a hash each.
+    if (verified && this.users.getByEmail(email)) throw new LagerError('conflict', `A user with email ${email} already exists.`, 'email_taken');
+    const create = async (): Promise<User> => {
+      // Hashed before the transaction, and before it is known whether the address is taken: both outcomes take the same time.
+      const passwordHash = await hashPassword(input.password);
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        if (invite && !this.consume(invite)) throw new LagerError('forbidden', 'The invitation is invalid or has expired.', 'invite_invalid');
+        const created = this.users.create({ email, name, password: input.password, passwordHash, role: invite?.role ?? 'user', verified, locale: input.locale });
+        this.db.exec('COMMIT');
+        return created;
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
+      }
+    };
+    const user = invite ? await this.once(invite, create) : await create();
     // Started but not awaited, like the notice to an address that is taken: how long the mail server takes says nothing to the visitor.
     if (!verified) this.background(this.sendVerification(user, input.locale));
     return { user, needsVerification: !verified };
@@ -201,8 +224,8 @@ export class Accounts {
     const row = this.find('verify', token);
     const user = row?.user_id ? this.users.get(row.user_id) : null;
     if (!row || !user) throw invalidToken();
-    // Ahead of ordinary sign-ins: the caller holds the link, and guesses at one link are limited.
-    const login = await this.users.checkLogin(user.email, typeof password === 'string' ? password : '', true);
+    // Ahead of ordinary sign-ins: the caller holds the link, and one link is checked by one request at a time.
+    const login = await this.once(row, () => this.users.checkLogin(user.email, typeof password === 'string' ? password : '', true));
     if (!login.ok && login.reason === 'invalid') throw new LagerError('forbidden', 'The password is wrong.', 'password_wrong');
     if ((!login.ok && login.reason === 'disabled') || !this.consume(row)) throw invalidToken();
     this.users.markVerified(user.id);
@@ -233,13 +256,16 @@ export class Accounts {
     const row = this.find('reset', token);
     if (!row?.user_id || !this.users.get(row.user_id)) throw invalidToken();
     assertPassword(password);
-    // Hashed before the link is used up: if the server is too busy to hash, the link still works afterwards.
-    const passwordHash = await hashPassword(password);
-    if (!this.consume(row)) throw invalidToken();
-    await this.users.setPassword(row.user_id, password, passwordHash);
-    this.deleteResetLinks(row.user_id);
-    this.users.markVerified(row.user_id);
-    return this.users.get(row.user_id)!;
+    const userId = row.user_id;
+    return this.once(row, async () => {
+      // Hashed before the link is used up: if the server is too busy to hash, the link still works afterwards.
+      const passwordHash = await hashPassword(password);
+      if (!this.consume(row)) throw invalidToken();
+      await this.users.setPassword(userId, password, passwordHash);
+      this.deleteResetLinks(userId);
+      this.users.markVerified(userId);
+      return this.users.get(userId)!;
+    });
   }
 
   /** Pending reset links of the account stop working. */

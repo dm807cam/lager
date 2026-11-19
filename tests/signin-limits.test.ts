@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -8,7 +9,7 @@ import { LoginLimiter, loginLimiter } from '../src/http/platform.js';
 import { csrfToken, csrfValid } from '../src/http/session.js';
 import { MAX_ACCOUNT_MAILS_PER_HOUR, MAX_RESET_MAILS_PER_HOUR } from '../src/platform/accounts.js';
 import { MemoryMailer } from '../src/platform/mail.js';
-import { MAX_HASHES_IN_FLIGHT, MAX_HASHES_WAITING } from '../src/platform/users.js';
+import { MAX_HASHES_IN_FLIGHT, MAX_HASHES_WAITING, MAX_URGENT_HASHES_WAITING } from '../src/platform/users.js';
 import { LagerError } from '../src/errors.js';
 import { t } from '../src/i18n/index.js';
 import { makeHarness, type Harness } from './support/http.js';
@@ -377,16 +378,21 @@ describe('attempts that arrive at the same time', () => {
     expect(h.core.users.count() - before).toBe(MAX_REGISTRATIONS_PER_HOUR);
   }, 30_000);
 
-  it('guesses at once at the password of a confirmation link: ten are checked', async () => {
+  it('guesses at once at the password of a confirmation link: one is checked, and the limit of ten per link holds', async () => {
     const mailer = new MemoryMailer();
     h = makeHarness({ trustProxy: 1, mailer });
     h.core.settings.setRegistration('open');
     await h.core.accounts.register({ name: 'N', email: 'n@x.y', password: PW });
     const token = new URL(/https?:\/\/\S+/.exec(mailer.sent[0].text)![0]).searchParams.get('token')!;
-    const verify = vi.spyOn(h.core.accounts, 'verifyEmail');
+    const hashes = vi.spyOn(crypto, 'scrypt');
     const burst = await Promise.all(Array.from({ length: 30 }, (_, i) => form(h!, '/verify', `8.1.${i}.1`, { token, password: `guess number ${i}` })));
-    expect(statuses(burst)).toEqual({ 400: 10, 429: 20 });
-    expect(verify).toHaveBeenCalledTimes(10);
+    // One link is checked by one request at a time: one password is looked at, the others are asked to try again and do not count.
+    expect(statuses(burst)).toEqual({ 400: 1, 429: 29 });
+    expect(hashes).toHaveBeenCalledTimes(1);
+    // One after the other, the limit of ten wrong passwords per link holds as before.
+    const serial: number[] = [];
+    for (let i = 0; i < 11; i++) serial.push((await form(h, '/verify', `8.2.${i}.1`, { token, password: `guess number ${i}` })).status);
+    expect(serial).toEqual([...Array<number>(9).fill(400), 429, 429]);
   });
 
   it('too many password hashes at once: two run, 32 wait, the rest are told to come back, and none of them counts as a failure', async () => {
@@ -577,5 +583,71 @@ describe('what must get through while guesses flood the server', () => {
     expect(mailer.sent).toHaveLength(3);
     // Another account that is not paused is still held to the budget.
     expect((await forgot('40.3.0.1', 'admin@x.y')).status).toBe(429);
+  });
+});
+
+describe('one link, posted many times at once, costs one hash', () => {
+  const statuses = (list: Array<{ status: number }>): Record<number, number> =>
+    list.reduce<Record<number, number>>((acc, r) => ({ ...acc, [r.status]: (acc[r.status] ?? 0) + 1 }), {});
+  const N = 40;
+
+  it('a reset link: one hash, one new password, the rest are asked to try again', async () => {
+    h = makeHarness({ trustProxy: 1 });
+    const token = new URL(h.core.accounts.createResetLink(h.adminId)).searchParams.get('token')!;
+    const hashes = vi.spyOn(crypto, 'scrypt');
+    const burst = await Promise.all(Array.from({ length: N }, (_, i) => form(h!, '/reset', `3.1.${i}.1`, { token, password: `a new password ${i}` })));
+    expect(statuses(burst)).toEqual({ 200: 1, 429: N - 1 });
+    expect(hashes).toHaveBeenCalledTimes(1);
+    // Afterwards the link is used up, and nothing is left locked.
+    expect((await form(h, '/reset', '3.2.0.1', { token, password: 'yet another password' })).status).toBe(400);
+    const next = new URL(h.core.accounts.createResetLink(h.adminId)).searchParams.get('token')!;
+    expect((await form(h, '/reset', '3.2.0.2', { token: next, password: 'yet another password' })).status).toBe(200);
+  });
+
+  it('a confirmation link and an invitation', async () => {
+    const mailer = new MemoryMailer();
+    h = makeHarness({ trustProxy: 1, mailer });
+    h.core.settings.setRegistration('open');
+    await h.core.accounts.register({ name: 'N', email: 'n@x.y', password: PW });
+    const verify = new URL(/https?:\/\/\S+/.exec(mailer.sent[0].text)![0]).searchParams.get('token')!;
+    const { url } = await h.core.accounts.createInvite({ role: 'user', createdBy: h.adminId });
+    const invite = new URL(url).searchParams.get('invite')!;
+    const hashes = vi.spyOn(crypto, 'scrypt');
+    const confirmed = await Promise.all(Array.from({ length: N }, (_, i) => form(h!, '/verify', `3.3.${i}.1`, { token: verify, password: PW })));
+    expect(statuses(confirmed)).toEqual({ 302: 1, 429: N - 1 });
+    expect(hashes).toHaveBeenCalledTimes(1);
+    hashes.mockClear();
+    const before = h.core.users.count();
+    const invited = await Promise.all(Array.from({ length: N }, (_, i) =>
+      form(h!, '/register', `3.4.${i}.1`, { name: 'I', email: `i${i}@example.org`, password: PW, invite })));
+    expect(invited.filter((r) => r.status === 200 || r.status === 302)).toHaveLength(1);
+    expect(hashes).toHaveBeenCalledTimes(1);
+    expect(h.core.users.count() - before).toBe(1);
+  });
+
+  it(`the priority lane has a ceiling too: ${MAX_URGENT_HASHES_WAITING} wait, the next is told the server is busy`, async () => {
+    h = makeHarness();
+    const { users } = h.core;
+    const running = Array.from({ length: MAX_HASHES_IN_FLIGHT }, (_, i) => users.checkLogin(`r${i}@x.y`, 'nope'));
+    const queued = Array.from({ length: MAX_URGENT_HASHES_WAITING }, (_, i) => users.checkLogin(`q${i}@x.y`, 'nope', true));
+    await expect(users.checkLogin('admin@x.y', 'admin-password-1', true)).rejects.toMatchObject({ code: 'rate_limited', reason: 'busy' });
+    await expect(users.setPassword(h.adminId, 'a brand new password')).rejects.toMatchObject({ code: 'rate_limited', reason: 'busy' });
+    expect((await Promise.all([...running, ...queued])).every((r) => !r.ok)).toBe(true);
+    expect((await users.checkLogin('admin@x.y', 'admin-password-1', true)).ok).toBe(true);
+  });
+
+  it('without mail a taken address is refused before any hash', async () => {
+    h = makeHarness({ trustProxy: 1 });
+    h.core.settings.setRegistration('open');
+    const hashes = vi.spyOn(crypto, 'scrypt');
+    for (let i = 0; i < 3; i++) {
+      const res = await form(h, '/register', `3.5.${i}.1`, { name: 'A', email: 'Admin@x.y', password: PW });
+      expect(res.status).toBe(409);
+    }
+    await expect(h.core.accounts.register({ name: 'A', email: 'admin@x.y', password: PW })).rejects.toMatchObject({ reason: 'email_taken' });
+    expect(hashes).not.toHaveBeenCalled();
+    // A free address is hashed and created as before.
+    expect((await form(h, '/register', '3.5.9.1', { name: 'A', email: 'free@example.org', password: PW })).status).toBe(302);
+    expect(hashes).toHaveBeenCalledTimes(1);
   });
 });

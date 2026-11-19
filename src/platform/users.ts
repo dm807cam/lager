@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import { promisify } from 'node:util';
 import type { DatabaseSync } from 'node:sqlite';
 import { LagerError } from '../errors.js';
 import { isLocale, type Locale } from '../i18n/index.js';
@@ -34,22 +33,26 @@ const KEY_LEN = 64;
  */
 export const MAX_HASHES_IN_FLIGHT = 2;
 export const MAX_HASHES_WAITING = 32;
+/** The ceiling of the priority lane. Its callers are few by construction; this only makes sure that nothing can ever queue without end. */
+export const MAX_URGENT_HASHES_WAITING = 64;
 let hashing = 0;
 const waiting: Array<() => void> = [];
 /**
- * Served before `waiting` and not capped: hashes whose number something else already bounds (a reset link, a session, an invitation
+ * Served before `waiting`, with a queue of its own: hashes whose number something else already bounds (a reset link, a session, an invitation
  * or the registration cap, the device cookie of the account). A flood of guessed sign-ins fills `waiting`; it must not keep out the
  * owner who sets a new password or signs in from a known browser.
  */
 const urgent: Array<() => void> = [];
 
-const scryptAsync = promisify(crypto.scrypt) as (password: string, salt: Buffer, keylen: number, options: crypto.ScryptOptions) => Promise<Buffer>;
+const BUSY = 'Too many passwords are being checked at the moment. Please try again shortly.';
+const scryptAsync = (password: string, salt: Buffer, keylen: number, options: crypto.ScryptOptions): Promise<Buffer> =>
+  new Promise((resolve, reject) => { crypto.scrypt(password, salt, keylen, options, (e, key) => { if (e) reject(e); else resolve(key); }); });
 
 /** scrypt off the event loop, at most `MAX_HASHES_IN_FLIGHT` at a time; with the queue full an ordinary caller is told to come back (`rate_limited`). */
 async function scrypt(password: string, salt: Buffer, keylen: number, options: crypto.ScryptOptions, priority = false): Promise<Buffer> {
   if (hashing < MAX_HASHES_IN_FLIGHT) hashing++;
+  else if ((priority ? urgent.length : waiting.length) >= (priority ? MAX_URGENT_HASHES_WAITING : MAX_HASHES_WAITING)) throw new LagerError('rate_limited', BUSY, 'busy');
   else if (priority) await new Promise<void>((turn) => { urgent.push(turn); });
-  else if (waiting.length >= MAX_HASHES_WAITING) throw new LagerError('rate_limited', 'Too many passwords are being checked at the moment. Please try again shortly.', 'busy');
   // Whoever finishes hands its slot to the next in line, so the count stays as it is.
   else await new Promise<void>((turn) => { waiting.push(turn); });
   try {
