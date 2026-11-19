@@ -27,7 +27,7 @@ curl -X POST -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: applicati
 
 ## Deleting and trash
 
-When the owner deletes an instance or an app in the dashboard, Lager removes it from the platform but only moves the files to `<data directory>/trash` (`/data/trash` in the container): the data of an instance, including its uploads, as `<instance id>-<timestamp>`, and the versions of an app as `app-<app id>-<timestamp>`. Lager offers no restore for this; recovering is possible only by copying the files back. At startup and every 24 hours afterwards, Lager removes entries older than `LAGER_TRASH_DAYS` days (default 30; `0` turns the cleanup off, and you then empty the directory by hand). The age is taken from the timestamp in the name. Per run Lager writes one line to the log. An app can be deleted only while no instances of other accounts exist for it. Instances that an administrator has disabled can still be deleted by their owner.
+When the owner deletes an instance or an app in the dashboard, Lager removes it from the platform but only moves the files to `<data directory>/trash` (`/data/trash` in the container): the data of an instance, including its uploads, as `<instance id>-<timestamp>`, the versions of an app as `app-<app id>-<timestamp>`, and every page that a deleted instance had saved itself (building block `page`) as `version-<app id>-<version number>-<timestamp>`. Lager offers no restore for this; recovering is possible only by copying the files back. At startup and every 24 hours afterwards, Lager removes entries older than `LAGER_TRASH_DAYS` days (default 30; `0` turns the cleanup off, and you then empty the directory by hand). The age is taken from the timestamp in the name. Per run Lager writes one line to the log. An app can be deleted only while no instances of other accounts exist for it. Instances that an administrator has disabled can still be deleted by their owner.
 
 ## Backup
 
@@ -41,18 +41,33 @@ docker compose start
 
 With a bind mount, stop the service as well and then `cp -a data data-backup-$(date +%F)`. Do not copy the directory while Lager runs: the databases are SQLite files in WAL mode, and a copy taken during a write can be unreadable.
 
-**Without stopping Lager:** `node dist/backup.js <target directory>` (or `npm run backup -- <target directory>`) writes a consistent copy of the data directory while the server keeps running. It reads `LAGER_DATA_DIR`, copies every database with SQLite's own snapshot mechanism and the other files as they are, and leaves the trash out. The target must be a new or empty directory outside the data directory. In the container, mount a directory for it:
+**Without stopping Lager:** `node dist/backup.js <target directory>` (or `npm run backup -- <target directory>`) writes a consistent copy of the data directory while the server keeps running. It reads `LAGER_DATA_DIR`, copies every database with SQLite's own snapshot mechanism and the other files as they are, and leaves the trash out. The target must be a new or empty directory outside the data directory. In the container, mount a directory for it. Create that directory first and give it to the container's user (`node`, UID 1000): if it is missing, Docker creates it as root, and the backup fails with a permission error.
 
 ```sh
+mkdir -p backup && sudo chown 1000:1000 backup
 docker compose run --rm -v "$PWD/backup":/backup lager node dist/backup.js /backup/$(date +%F)
 ```
 
-An upload or a version that arrives while the backup runs may be missing from it; run it at a quiet time or accept that the last seconds are not included. The command exits with a non-zero status on failure, so it fits into a cron job or a systemd timer.
+An installation made with the [one-command installer](installation.md#one-command-install) already mounts `/opt/lager/backups` at `/backups` with the right owner, and every update writes a backup there. For one in between:
 
-To restore, stop Lager and copy the contents back (or unpack the archive into an empty volume). Keep `secret.key` (or `LAGER_SECRET`), otherwise all sessions become invalid.
+```sh
+cd /opt/lager && docker compose exec -T lager node dist/backup.js /backups/$(date +%Y-%m-%d-%H%M%S)
+```
+
+An upload or a version that arrives while the backup runs may be missing from it; run it at a quiet time or accept that the last seconds are not included. The command exits with a non-zero status on failure, so a scheduler notices when it fails. Lager ships no scheduled backup: you create the schedule yourself. An example line for root's crontab (`sudo crontab -e`) that backs up an installer-made installation every night at 03:00 (cron needs `%` written as `\%`):
+
+```cron
+0 3 * * * cd /opt/lager && docker compose exec -T lager node dist/backup.js /backups/$(date +\%Y-\%m-\%d-\%H\%M\%S)
+```
+
+A systemd timer that runs the same command works as well. Nothing removes these backups except the installer's next update, which keeps the newest `LAGER_BACKUPS_KEEP` (default 5) folders with such a name, so with a nightly job the folder holds about a week at most. Copy backups to another machine if they should survive the loss of this one.
+
+To restore, stop Lager and copy the contents back (or unpack the archive into an empty volume). Keep `secret.key` (or `LAGER_SECRET`) together with the data. Without it all sessions become invalid, and the keys of the AI providers stored in the database can no longer be decrypted: every provider that has a key stops working until an administrator enters the key again.
+
+**Protect the backups.** A backup of the data directory contains `secret.key` next to the encrypted provider keys, so whoever can read the backup can read those keys, along with all app data and the password hashes. Keep backups as private as the server itself, and encrypt them before they leave it. If you set `LAGER_SECRET` in `.env` instead, the secret is not in the data directory: keep a copy of it in a separate place, because a backup is incomplete without it.
 
 ## Logs and crashes
 
-Lager writes to standard output and standard error: one line at start, one per trash cleanup, every server error with its stack, and mail that could not be sent. With Docker, `docker compose logs -f lager` shows them; under systemd, `journalctl --user -u lager -f`. Set `LAGER_ACCESS_LOG=true` for one line per request if your proxy does not keep an access log.
+Lager writes to standard output and standard error: one line at start, one per trash cleanup, every server error with its stack, and mail that could not be sent. With Docker, `docker compose logs -f lager` shows them. Lager ships no systemd unit; if you run it from source under a unit you wrote yourself, `journalctl -u <your unit> -f` shows them. Set `LAGER_ACCESS_LOG=true` for one line per request if your proxy does not keep an access log.
 
-If a bug escapes every handler, Lager logs it with a timestamp, closes its databases and exits with status 1, so the supervisor restarts it (`restart: unless-stopped` in the Compose file; `Restart=on-failure` in a systemd unit). A port that is already taken ends the start with a clear message instead of a stack trace.
+If a bug escapes every handler, Lager logs it with a timestamp, closes its databases and exits with status 1, so the supervisor restarts it (`restart: unless-stopped` in the Compose file; in a systemd unit of your own, set `Restart=on-failure`). A port that is already taken ends the start with a clear message instead of a stack trace.

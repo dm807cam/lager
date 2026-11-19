@@ -10,7 +10,7 @@ For a Raspberry Pi or any 64-bit Linux server, one command installs, configures 
 curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | sudo bash
 ```
 
-**Run it again to update.** The second run asks nothing. It takes a backup of the running server, downloads the newest image and restarts Lager, keeping settings and data. The script lives in the repository as [`install.sh`](../install.sh); read it before you pipe it into a shell.
+**Run it again to update.** The second run asks nothing. It takes a backup of the running server, pulls the image this installation uses (by default `:latest`, the newest release; see [Published images](#published-images)) and restarts Lager, keeping settings and data. If the backup fails, the installer shows the error and stops before it changes anything; `LAGER_SKIP_BACKUP=1` updates without a backup. If Lager is not running at that moment, no backup can be taken and the installer says so. The script lives in the repository as [`install.sh`](../install.sh); read it before you pipe it into a shell.
 
 ### What it does
 
@@ -21,8 +21,8 @@ curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | su
    | Choice | Addresses | Good for |
    | --- | --- | --- |
    | **Cloudflare** (recommended) | `https://<domain>` and `https://<app>.<domain>` | Use from anywhere with https, without opening ports or handling certificates |
-   | **This network only** | `http://lager.<ip>.sslip.io:8080` and `http://<app>.apps.<ip>.sslip.io:8080` | Trying Lager at home. AI assistants connect with an [API token](connecting-ai.md#the-connector-address); claude.ai and ChatGPT need https |
-   | **Own reverse proxy** | the addresses you enter | You already run a proxy with TLS and wildcard DNS (see [Running behind Nginx Proxy Manager](#running-behind-nginx-proxy-manager)) |
+   | **This network only** | `http://lager.<ip>.sslip.io:8080` and `http://<app>.apps.<ip>.sslip.io:8080` | Trying Lager at home. AI assistants connect with an [API token](connecting-ai.md#the-connector-address); claude.ai and ChatGPT need https. Read the two caveats under [This network only](#this-network-only) |
+   | **Own reverse proxy** | the addresses you enter | You already run a proxy with TLS and wildcard DNS (see [Reverse proxy requirements](#reverse-proxy-requirements) and [Running behind Nginx Proxy Manager](#running-behind-nginx-proxy-manager)) |
 
 4. **Asks for the administrator's email address** and generates a password, which it shows once at the end. Change it on the Account page.
 5. **Writes** `/opt/lager/.env` (your settings, kept on every run) and `/opt/lager/docker-compose.yml` (rewritten on every run), then starts Lager and waits until it answers.
@@ -38,6 +38,15 @@ The installer runs [Cloudflare Tunnel](https://developers.cloudflare.com/cloudfl
 3. It writes `/opt/lager/cloudflared/config.yml` and starts the tunnel together with Lager.
 
 No port on your router has to be opened, and the server's address stays private. Live updates in apps work through the tunnel. If Cloudflare refuses the wildcard DNS record, the installer tells you the one record to add by hand: CNAME `*`, target `<tunnel id>.cfargotunnel.com`, proxied.
+
+### This network only
+
+This choice needs no domain: the addresses are names on [sslip.io](https://sslip.io), a public DNS service that answers every name containing an IP address with that address. `lager.192-168-1-23.sslip.io` resolves to `192.168.1.23`, the machine Lager runs on. Two things can break these addresses:
+
+- **DNS rebind protection.** Many routers refuse public names that resolve to an address inside the home network. Fritz!Box does so by default, and OpenWrt and pfSense do when the protection is on. The browser then reports that the server cannot be found. Add `sslip.io` to the router's exceptions: on a Fritz!Box under Home Network → Network → Network Settings → DNS Rebind Protection; in OpenWrt as a whitelisted domain of the rebind protection (`rebind_domain`); in pfSense as a `private-domain` entry of the DNS Resolver.
+- **The IP address is part of every address.** The installer writes the machine's current address into `.env`. If the router later hands out a different one, no Lager address works any more. Give the machine a fixed address (a DHCP reservation in the router). After a change, run the installer again with `LAGER_RECONFIGURE=1 LAGER_MODE=local`; apps then get new addresses, and their data stays.
+
+The devices also need internet access to resolve the names. For anything beyond trying Lager out, use Cloudflare or your own reverse proxy.
 
 ### Answering ahead of time
 
@@ -57,14 +66,19 @@ curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh \
 | `LAGER_NONINTERACTIVE` | `1` never asks and fails when an answer is missing | `0` |
 | `LAGER_RECONFIGURE` | `1` asks the questions again (data and the administrator stay) | `0` |
 | `LAGER_DIR` | Where everything lives | `/opt/lager` |
-| `LAGER_IMAGE` | The image to run, for example `ghcr.io/dm807cam/lager:edge` for the development version | `ghcr.io/dm807cam/lager:latest` |
+| `LAGER_IMAGE` | The image to run, for example `ghcr.io/dm807cam/lager:edge` for the development version or `ghcr.io/dm807cam/lager:0.1` to stay on one release line (see [Published images](#published-images)). The installer remembers it in `installer.env`, so later runs keep it until you pass another one | `ghcr.io/dm807cam/lager:latest` |
 | `LAGER_BACKUPS_KEEP` | Backups kept from updates | `5` |
+| `LAGER_SKIP_BACKUP` | `1` updates without taking a backup first. Without it, a failed backup stops the update | `0` |
+| `LAGER_BIND` | Proxy mode: the address of this machine on which Docker publishes Lager's port 8080. Keep `127.0.0.1` when the proxy runs on the same machine; set the machine's address (or `0.0.0.0`) when the proxy runs elsewhere, and protect the port with a firewall | `127.0.0.1` |
+
+`LAGER_BIND` is a setting of the installer, not of the server. The installer stores it in `.env` and writes it into the `ports` line of `docker-compose.yml` (`"<LAGER_BIND>:8080:8080"`); Lager itself ignores it. Cloudflare mode always uses `127.0.0.1`, because the tunnel reaches Lager inside Docker's network, and "this network only" always uses `0.0.0.0`. To change it later, edit `LAGER_BIND` in `/opt/lager/.env` and run the installer again. Do not confuse it with [`LAGER_HOST`](#configuration), the address the server binds to inside the container or when it runs without Docker.
 
 ### Files, backups and removal
 
 - `/opt/lager/data/`: all data (see [Backup](data-and-backup.md#backup)).
-- `/opt/lager/backups/`: one backup per update, the newest five kept.
+- `/opt/lager/backups/`: one backup per update in a folder named after the time (`2026-01-31-020000`), the newest five kept. They contain `secret.key`; protect them like the data itself (see [Backup](data-and-backup.md#backup)).
 - `/opt/lager/.env`: settings. Edit it and run the installer again to apply them.
+- `/opt/lager/installer.env`: what the installer remembers between runs (the way Lager is reached, the tunnel, the image).
 - **Logs:** `cd /opt/lager && docker compose logs -f lager`.
 - **Removal:** `cd /opt/lager && docker compose down`, then delete the folder. With Cloudflare, also delete the tunnel and its DNS records in the Cloudflare dashboard.
 
@@ -92,13 +106,15 @@ On first start the first administrator is created from `LAGER_ADMIN_EMAIL` and `
 
 ## Published images
 
-Every release and every commit on `main` is published as a multi-architecture image (`linux/amd64` and `linux/arm64`, so a Raspberry Pi works too) to the GitHub Container Registry:
+Images are built for `linux/amd64` and `linux/arm64` (so a Raspberry Pi works too) and published to the GitHub Container Registry as `ghcr.io/dm807cam/lager`, after the tests pass. Which tags are written depends on what was pushed to the repository:
 
-| Tag | Contains |
-| --- | --- |
-| `ghcr.io/dm807cam/lager:latest` | the newest release |
-| `ghcr.io/dm807cam/lager:1`, `:1.2`, `:1.2.3` | a release line or one exact release (while Lager is 0.x there is no `:0`, because every minor release may break: pin `:0.4` or `:0.4.1`) |
-| `ghcr.io/dm807cam/lager:edge` | the current `main` branch, for testing |
+| Pushed | Tags written | Use it for |
+| --- | --- | --- |
+| A release tag `v1.2.3` | `:1.2.3`, `:1.2`, `:1`, `:latest` and `:sha-<commit>` | `:latest` is the newest release. `:1.2.3` pins one exact release, `:1.2` and `:1` follow a release line |
+| A release tag `v0.4.1` | `:0.4.1`, `:0.4`, `:latest` and `:sha-<commit>` | While Lager is 0.x there is no `:0`, because every minor release may break: pin `:0.4` or `:0.4.1` |
+| A commit on `main` | `:edge` and `:sha-<commit>` | The development version, for testing. It can be ahead of `:latest` and may break |
+
+`:latest` moves only when a release tag `v*.*.*` is pushed, never on a commit to `main`. Until the first release is tagged, `:latest` does not exist and `:edge` is the only moving tag.
 
 To run a published image, replace `build: .` in `docker-compose.yml` with `image: ghcr.io/dm807cam/lager:latest` and start with `docker compose up -d`. To update, run `docker compose pull && docker compose up -d`. Your data stays in the volume. Back it up before a major version change (see [Backup](data-and-backup.md#backup)).
 
@@ -115,14 +131,16 @@ Lager is configured through environment variables only. The template is `.env.ex
 | `LAGER_PORT` | Port of the server | `8080` |
 | `LAGER_HOST` | Address the server binds to. Without Docker, set `127.0.0.1` when the reverse proxy runs on the same machine, so nobody reaches Lager around the proxy. Leave it empty in the container | every interface |
 | `LAGER_ACCESS_LOG` | `true` writes one line per request to the log (time, client address, method, host and path without the query string, status, duration) | `false` |
-| `LAGER_SECRET` | Key for sessions; otherwise generated and stored in `secret.key` | generated |
+| `LAGER_SECRET` | Secret that signs sessions and encrypts the stored keys of AI providers; otherwise generated and stored in `secret.key` in the data directory | generated |
 | `LAGER_SNAPSHOT_KEEP` | Data snapshots kept per instance | `20` |
 | `LAGER_TRASH_DAYS` | Days that deleted instances and apps stay in the trash (`0` = never clean up) | `30` |
 | `LAGER_DEFAULT_LOCALE` | Language of pages and mails when neither the account, the `lager_lang` cookie nor the browser's `Accept-Language` names a supported one: `en`, `de`, `fr`, `es` | `en` |
 | `LAGER_SMTP_URL` | SMTP access for outgoing mail, for example `smtps://user:password@smtp.example.com:465`; without a value no mail is sent | none |
 | `LAGER_MAIL_FROM` | Sender of the mails | `Lager <no-reply@<host of LAGER_PUBLIC_URL>>` |
 | `LAGER_INSTANCE_QUOTA_MB` | Size of an instance's data in MiB, integer from 1 | `50` |
-| `LAGER_TRUST_PROXY` | Number of proxy hops in front of Lager whose `X-Forwarded-*` headers are trusted: `false`/`0` none, `true` = 1, or a number | `true` (1) |
+| `LAGER_TRUST_PROXY` | Number of proxy hops in front of Lager whose `X-Forwarded-*` headers are trusted: `false`/`0` none, `true` = 1, or a number (see [Reverse proxy requirements](#reverse-proxy-requirements)) | `true` (1) |
+
+The installer adds one setting of its own to `.env`, [`LAGER_BIND`](#answering-ahead-of-time). The server does not read it.
 
 ## Mail
 
@@ -143,9 +161,59 @@ Without `LAGER_SMTP_URL` Lager runs completely, just without mail:
 
 If you enable mail later, existing accounts stay verified.
 
+## Reverse proxy requirements
+
+Lager speaks plain HTTP on one port and expects a reverse proxy with TLS in front. It needs two host names, both forwarded to that port: the platform (for example `lager.example.com`) and a wildcard for the apps (`*.apps.example.com`), plus every [custom domain](custom-domains.md). Whatever proxy you use, it must do the following:
+
+| Requirement | Why | nginx default |
+| --- | --- | --- |
+| Pass the `Host` header on unchanged | Lager decides by the host name whether a request goes to the platform or to which app. With a changed host it answers 404. If the proxy sends `X-Forwarded-Host`, it must carry the same original host name, because Lager prefers it | replaced by the upstream's name: set `proxy_set_header Host $http_host` |
+| Set `X-Forwarded-Proto` | Lager learns from it that the visitor uses https, and compares the browser's `Origin` header with that address. Without it, Lager refuses live updates and other requests from the app's own page as cross-origin (403) | not set |
+| Set `X-Forwarded-For` | Lager takes the client address from it, for the limit on sign-in attempts, the limits for anonymous visitors and the access log. Without it, all visitors share the proxy's address | not set |
+| Allow request bodies of 24 MiB | The largest body Lager accepts is 24 MiB: a deploy sent as JSON through the REST API or MCP (the HTML itself may be 16 MiB). Uploads (`assets`) are at most 20 MiB and imports at most 20 MiB | 1 MiB (`client_max_body_size`): larger deploys and uploads fail with 413 |
+| Wait at least 30 seconds for the next bytes of a response | Live updates (`/__lager/db/events`, `/__lager/room/events`) are Server-Sent Events that stay open. Lager writes a ping every 25 seconds, so the connection is never silent for longer | 60 s (`proxy_read_timeout`): enough |
+| Wait longer than a model call can take | `lager.complete` (`/__lager/complete`) answers only when the language model has answered, which can take up to 180 seconds. Keep the proxy's read timeout above that | 60 s: long model calls end with 504 |
+| Do not buffer the event streams | Buffered events arrive late or only when the connection closes | buffering is on, but Lager sends `X-Accel-Buffering: no` with these responses, which nginx obeys: nothing to configure |
+
+If a header set in one `location` seems to get lost in nginx: `proxy_set_header` lines are inherited from the level above only when a `location` has none of its own. A `location` that sets a single header therefore has to repeat `Host` and the `X-Forwarded-*` headers.
+
+Tell Lager how many proxies are in front of it. By default it trusts exactly one (`LAGER_TRUST_PROXY=true`, one hop) and takes the last entry of `X-Forwarded-For` as the client address. If several proxies are chained, set the number (for example `2`). Set `false` if Lager is reachable directly from the internet; otherwise anyone can forge the client address and get around the limit on sign-in attempts. With `false` Lager also ignores `X-Forwarded-Proto` and `X-Forwarded-Host`.
+
+A minimal nginx server (add your certificates; the wildcard certificate needs a DNS challenge):
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name lager.example.com *.apps.example.com;
+    # ssl_certificate and ssl_certificate_key for both names
+
+    client_max_body_size 25m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 200s;
+    }
+}
+```
+
+A minimal Caddyfile. Caddy passes `Host` on unchanged, sets the `X-Forwarded-*` headers, has no body limit and no read timeout by default, and does not buffer event streams, so nothing else is needed. The wildcard certificate needs a Caddy build with the DNS module of your provider:
+
+```caddyfile
+lager.example.com, *.apps.example.com {
+    tls {
+        dns <provider> <credentials>
+    }
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
 ## Running behind Nginx Proxy Manager
 
-Lager needs two host names, both pointing at the same port:
+Nginx Proxy Manager meets the [reverse proxy requirements](#reverse-proxy-requirements) with one addition, the read timeout below. Lager needs two host names, both pointing at the same port:
 
 1. The platform, for example `lager.example.com`.
 2. All apps: `*.apps.example.com` (wildcard).
@@ -163,22 +231,17 @@ In Nginx Proxy Manager you create two proxy hosts:
 | `lager.example.com` | `http`, host of the container, port 8080 | Websockets Support on, SSL certificate, Force SSL |
 | `*.apps.example.com` | `http`, host of the container, port 8080 | Websockets Support on, wildcard certificate, Force SSL |
 
-Live updates of the database (`/__lager/db/events`) and of the realtime rooms (`/__lager/room/events`) are delivered as Server-Sent Events. The proxy must not buffer these responses. On the "Advanced" tab of the proxy host `*.apps.example.com`, enter:
+Nginx Proxy Manager passes `Host` on, sets `X-Forwarded-Proto` and `X-Forwarded-For`, and allows large request bodies, so deploys, uploads and live updates work without further settings. Live updates need no `location` block of their own: Lager sends `X-Accel-Buffering: no` with its event streams (`/__lager/db/events`, `/__lager/room/events`), which turns nginx's buffering off for exactly these responses, and its ping every 25 seconds keeps them open. Do not add a `location` block with `proxy_set_header` for them on the "Advanced" tab: such a block loses the `Host` header that Nginx Proxy Manager sets, Lager answers 404, and live updates stop.
+
+One setting is worth adding if apps use `lager.complete`. nginx waits 60 seconds for an answer, and a language model can take up to 180 seconds. On the "Advanced" tab of the proxy host `*.apps.example.com`, enter this single line:
 
 ```nginx
-location ~ ^/__lager/(db|room)/events$ {
-    proxy_pass http://<host of the container>:8080;
-    proxy_http_version 1.1;
-    proxy_set_header Connection "";
-    proxy_buffering off;
-    proxy_cache off;
-    proxy_read_timeout 1h;
-}
+proxy_read_timeout 200s;
 ```
 
-Alternatively you can put the line `proxy_buffering off;` directly into the host's "Custom Nginx Configuration". Without this setting, changes and presence of other users show up late or only after a reload. The same applies to the proxy host of every custom domain (see [Custom domains](custom-domains.md)).
+The same applies to the proxy host of every custom domain (see [Custom domains](custom-domains.md)).
 
-By default Lager trusts exactly one proxy in front of it (`LAGER_TRUST_PROXY=true`, one hop) and takes the last entry of `X-Forwarded-For` as the client address. If several proxies are chained, set the number (for example `2`). Set `false` if Lager is reachable directly from the internet; otherwise anyone can forge the client address and get around the limit on sign-in attempts.
+`LAGER_TRUST_PROXY` keeps its default (`true`, one proxy) in this setup; [Reverse proxy requirements](#reverse-proxy-requirements) explains when to change it.
 
 ## Running from source
 
