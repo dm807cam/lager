@@ -122,6 +122,9 @@ export function createInstanceRouter(core: Core): express.Router {
   const hasScope = (ctx: Ctx, scope: string): boolean => Array.isArray(ctx.caps.user?.scopes) && ctx.caps.user.scopes.includes(scope);
   const emailAllowed = (ctx: Ctx): boolean => hasScope(ctx, 'email');
 
+  // Everything under /__lager/ is data, a script or an image with its type declared: never to be sniffed into something else.
+  router.use('/__lager', (_req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); next(); });
+
   mountPwaRoutes(router, core, (req, instance) => core.access.levelFor(instance, instanceUser(core, req, instance)) !== 'none');
 
   router.use((req, res, next) => {
@@ -146,7 +149,7 @@ export function createInstanceRouter(core: Core): express.Router {
       typeof req.query.code === 'string' ? req.query.code : undefined, config.secret);
     const user = t && typeof t.uid === 'string' ? core.users.get(t.uid) : null;
     // The code names the host it was issued for and is only good there: a code for the custom domain is not valid on the default host.
-    const host = req.hostname.toLowerCase().replace(/\.$/, '');
+    const host = (req.hostname ?? '').toLowerCase().replace(/\.$/, '');
     const nonce = readCookie(req, nonceCookieName(config));
     const sameBrowser = typeof nonce === 'string' && NONCE_RE.test(nonce) && typeof t?.n === 'string'
       && nonce.length === t.n.length && crypto.timingSafeEqual(Buffer.from(nonce), Buffer.from(t.n));

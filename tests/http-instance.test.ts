@@ -29,6 +29,21 @@ async function db(h: Harness, host: string, cookie: string | undefined, body: ob
 }
 
 describe('instance host', () => {
+  it('everything under /__lager/ forbids content sniffing: JSON answers, errors and scripts', async () => {
+    const { h } = setup({ visibility: 'public' });
+    for (const url of ['/__lager/session', '/__lager/users?ids=x', '/__lager/runtime.js', '/__lager/badge.js', '/__lager/nothing-here', '/__lager/manifest.webmanifest']) {
+      const res = await request(h.app).get(url).set('Host', W);
+      expect(res.headers['x-content-type-options'], url).toBe('nosniff');
+    }
+    const refused = await request(h.app).post('/__lager/db').set('Host', W).send({ op: 'get', path: 'a/b' });
+    expect(refused.status).toBe(403);
+    expect(refused.headers['content-type']).toMatch(/json/);
+    expect(refused.headers['x-content-type-options']).toBe('nosniff');
+    // A disabled instance answers its API with a JSON error as well.
+    h.core.apps.setInstanceDisabled(h.core.apps.getInstanceBySlug('workout')!.id, true);
+    expect((await request(h.app).get('/__lager/session').set('Host', W)).headers['x-content-type-options']).toBe('nosniff');
+  });
+
   it('private instance redirects anonymous to the platform', async () => {
     const { h } = setup();
     const res = await request(h.app).get('/').set('Host', W);
