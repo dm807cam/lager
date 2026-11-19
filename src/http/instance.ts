@@ -17,7 +17,6 @@ import { mountPwaRoutes } from './instance-pwa.js';
 import { mountAssetRoutes } from './instance-assets.js';
 import { mountRoomRoutes, STREAM_LIMITS } from './instance-room.js';
 import { mountCompleteRoutes } from './instance-complete.js';
-import { addressKey } from './client-address.js';
 import { assertOwnOrigin } from './origin.js';
 import { RateLimiter } from './ratelimit.js';
 import { StreamLimiter } from './stream-limit.js';
