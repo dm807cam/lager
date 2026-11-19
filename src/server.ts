@@ -1,4 +1,4 @@
-import { loadConfig } from './config.js';
+import { loadConfig, type Config } from './config.js';
 import { createCore } from './core.js';
 import { adminExtension } from './http/admin.js';
 import { apiExtension } from './http/api.js';
@@ -8,15 +8,18 @@ import { manageExtension } from './http/manage.js';
 import { staticExtension } from './http/static.js';
 import { createHttpApp } from './http/app.js';
 import { startTrashPurge } from './data/trash.js';
+import { applyProxyTimeouts, createShutdown, startupError } from './lifecycle.js';
 import { backfillIcons } from './mcp/tools.js';
 import { mcpExtension } from './mcp/http.js';
 
-const config = loadConfig(process.env);
+let config: Config;
 let core: ReturnType<typeof createCore>;
 try {
+  // Both refuse a configuration they cannot run with, in a message that names the variable.
+  config = loadConfig(process.env);
   core = createCore(config);
 } catch (e) {
-  console.error(e instanceof Error ? e.message : e);
+  console.error(startupError(e));
   process.exit(1);
 }
 const app = createHttpApp(core, [staticExtension, authExtension, adminExtension, apiExtension, mcpExtension, dashboardExtension, manageExtension]);
@@ -28,6 +31,7 @@ const onListening = (err?: Error): void => {
   void backfillIcons(core);
 };
 const server = config.host ? app.listen(config.port, config.host, onListening) : app.listen(config.port, onListening);
+applyProxyTimeouts(server);
 server.on('error', (e) => {
   console.error(`Lager could not listen on ${config.host ?? '*'}:${config.port}: ${e.message}`);
   process.exit(1);
@@ -35,14 +39,7 @@ server.on('error', (e) => {
 
 const stopTrashPurge = startTrashPurge(config.dataDir, config.trashDays ?? 30);
 
-function shutdown(): void {
-  stopTrashPurge();
-  server.close(() => {
-    core.close();
-    process.exit(0);
-  });
-  server.closeAllConnections();
-}
+const shutdown = createShutdown({ stopJobs: stopTrashPurge, server, closeCore: () => core.close(), exit: (code) => process.exit(code) });
 /** A bug that escaped every handler: say so with a timestamp, close the databases cleanly and let the supervisor restart the process. */
 function crash(kind: string, err: unknown): void {
   console.error(`${new Date().toISOString()} Lager is stopping after an ${kind}:`, err);

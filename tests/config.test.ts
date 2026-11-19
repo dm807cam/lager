@@ -97,4 +97,66 @@ describe('config', () => {
     expect(d.smtpUrl).toBe('smtp://u:p@mail.example.org:587');
     expect(d.mailFrom).toBe('X <x@example.org>');
   });
+
+  describe('refuses values it cannot run with, naming the variable', () => {
+    const base = { LAGER_PUBLIC_URL: 'https://lager.example.org', LAGER_APPS_DOMAIN: 'apps.example.org', LAGER_DATA_DIR: tmp };
+    const load = (extra: Record<string, string>) => loadConfig({ ...base, ...extra });
+
+    it('LAGER_PUBLIC_URL: http or https, host and port only', () => {
+      for (const v of ['lager.example.org', 'ftp://lager.example.org', 'https://lager.example.org/lager', 'https://lager.example.org/?a=1',
+        'https://lager.example.org/#top', 'https://user:pw@lager.example.org', 'https://', 'localhost:8080']) {
+        expect(() => load({ LAGER_PUBLIC_URL: v }), v).toThrow(/^LAGER_PUBLIC_URL must /);
+      }
+      for (const v of ['https://lager.example.org', 'https://lager.example.org/', 'http://localhost:8080', 'HTTP://Lager.Example.org:9443', 'http://[::1]:8080', 'http://192.168.1.20:8080']) {
+        expect(load({ LAGER_PUBLIC_URL: v }).publicUrl.pathname, v).toBe('/');
+      }
+    });
+
+    it('LAGER_APPS_DOMAIN: a bare host name, nothing cut off silently', () => {
+      for (const v of ['https://apps.example.org', '*.apps.example.org', '.apps.example.org', 'apps.example.org:8080', 'apps.example.org/', 'apps.example.org.',
+        'apps example.org', 'apps_x.example.org', '-apps.example.org', `${'a'.repeat(64)}.example.org`]) {
+        expect(() => load({ LAGER_APPS_DOMAIN: v }), v).toThrow(/^LAGER_APPS_DOMAIN must /);
+      }
+      expect(load({ LAGER_APPS_DOMAIN: ' Apps.Example.org ' }).appsDomain).toBe('apps.example.org');
+      for (const v of ['apps.localhost', 'localhost', 'example.com', 'apps.192.168.1.20.nip.io']) expect(load({ LAGER_APPS_DOMAIN: v }).appsDomain, v).toBe(v);
+    });
+
+    it('numbers: whole, written in digits and within their range', () => {
+      const bad: Array<[string, string[]]> = [
+        ['LAGER_PORT', ['0', '65536', '80.5', '-1', '8080abc', '0x50', '1e3']],
+        ['LAGER_SNAPSHOT_KEEP', ['0', '1.5', '-3', 'many']],
+        ['LAGER_INSTANCE_QUOTA_MB', ['0', '0.5', '50MB']],
+        ['LAGER_TRASH_DAYS', ['-1', '2.5', 'never']],
+        ['LAGER_AI_TIMEOUT_SECONDS', ['0', '4', '601', '90s', '1.5']],
+      ];
+      for (const [name, values] of bad) for (const v of values) expect(() => load({ [name]: v }), `${name}=${v}`).toThrow(new RegExp(`^${name} must be a whole number`));
+      expect(load({ LAGER_PORT: '1', LAGER_SNAPSHOT_KEEP: '1', LAGER_TRASH_DAYS: '0', LAGER_AI_TIMEOUT_SECONDS: '5' }))
+        .toMatchObject({ port: 1, snapshotKeep: 1, trashDays: 0, aiTimeoutSeconds: 5 });
+      expect(load({ LAGER_PORT: '65535', LAGER_AI_TIMEOUT_SECONDS: ' 600 ' })).toMatchObject({ port: 65535, aiTimeoutSeconds: 600 });
+      expect(load({})).toMatchObject({ port: 8080, snapshotKeep: 20, trashDays: 30, aiTimeoutSeconds: 90 });
+    });
+
+    it('LAGER_SMTP_URL: an smtp or smtps address, and the value is not printed', () => {
+      for (const v of ['mail.example.org', 'mail.example.org:587', 'https://mail.example.org', 'smtp://', 'smtp://user:p@ss/word@:587']) {
+        const err = (() => { try { load({ LAGER_SMTP_URL: v }); return null; } catch (e) { return e as Error; } })();
+        expect(err?.message, v).toMatch(/^LAGER_SMTP_URL must look like /);
+        expect(err?.message, v).not.toContain('p@ss');
+      }
+      for (const v of ['smtp://mail.example.org', 'smtps://user:p%40ss@smtp.example.com:465', 'smtp://localhost:1025']) expect(load({ LAGER_SMTP_URL: v }).smtpUrl).toBe(v);
+      expect(load({ LAGER_SMTP_URL: '  ' }).smtpUrl).toBeUndefined();
+    });
+
+    it('accepts every value of .env.example', () => {
+      const example = fs.readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+      const env = Object.fromEntries([...example.matchAll(/^(LAGER_[A-Z_]+)=(.*)$/gm)].map((m) => [m[1], m[2]]));
+      expect(Object.keys(env)).toContain('LAGER_AI_TIMEOUT_SECONDS');
+      expect(loadConfig({ ...env, LAGER_DATA_DIR: tmp })).toMatchObject({ port: 8080, appsDomain: 'apps.localhost', aiTimeoutSeconds: 90 });
+    });
+
+    it('a refused configuration does not create the data directory', () => {
+      const dir = path.join(tmp, 'never-created');
+      expect(() => loadConfig({ ...base, LAGER_DATA_DIR: dir, LAGER_PORT: 'http' })).toThrow(/LAGER_PORT/);
+      expect(fs.existsSync(dir)).toBe(false);
+    });
+  });
 });
