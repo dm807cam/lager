@@ -1,6 +1,72 @@
 # Installation
 
-How to run Lager on your own server, configure it and put it behind a reverse proxy.
+How to run Lager on your own server: with one command, or by hand with Docker Compose and a reverse proxy.
+
+## One-command install
+
+For a Raspberry Pi or any 64-bit Linux server, one command installs, configures and starts Lager:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | sudo bash
+```
+
+**Run it again to update.** The second run asks nothing. It takes a backup of the running server, downloads the newest image and restarts Lager, keeping settings and data. The script lives in the repository as [`install.sh`](../install.sh); read it before you pipe it into a shell.
+
+### What it does
+
+1. **Checks the system:** root, Linux, a 64-bit processor (amd64 or arm64). On a Raspberry Pi that means the 64-bit Raspberry Pi OS.
+2. **Installs Docker** with Docker's official script if it is missing.
+3. **Asks how Lager should be reached** (only on the first run):
+
+   | Choice | Addresses | Good for |
+   | --- | --- | --- |
+   | **Cloudflare** (recommended) | `https://<domain>` and `https://<app>.<domain>` | Use from anywhere with https, without opening ports or handling certificates |
+   | **This network only** | `http://lager.<ip>.sslip.io:8080` and `http://<app>.apps.<ip>.sslip.io:8080` | Trying Lager at home. AI assistants connect with an [API token](connecting-ai.md#the-connector-address); claude.ai and ChatGPT need https |
+   | **Own reverse proxy** | the addresses you enter | You already run a proxy with TLS and wildcard DNS (see [Running behind Nginx Proxy Manager](#running-behind-nginx-proxy-manager)) |
+
+4. **Asks for the administrator's email address** and generates a password, which it shows once at the end. Change it on the Account page.
+5. **Writes** `/opt/lager/.env` (your settings, kept on every run) and `/opt/lager/docker-compose.yml` (rewritten on every run), then starts Lager and waits until it answers.
+
+### Cloudflare
+
+You need a free Cloudflare account and a domain whose DNS Cloudflare manages. Use a domain for Lager alone (for example `mylager.net`). The platform lives on the domain itself and every app directly below it, because Cloudflare's free certificate covers exactly the domain and one level of subdomains. A layout such as `*.apps.example.com` would need a paid certificate.
+
+The installer runs [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) in a second container:
+
+1. It shows a link. Open it on any device, sign in to Cloudflare, choose the domain and confirm. The installer continues by itself.
+2. It creates a tunnel named `lager-<hostname>` and points `<domain>` and `*.<domain>` at it.
+3. It writes `/opt/lager/cloudflared/config.yml` and starts the tunnel together with Lager.
+
+No port on your router has to be opened, and the server's address stays private. Live updates in apps work through the tunnel. If Cloudflare refuses the wildcard DNS record, the installer tells you the one record to add by hand: CNAME `*`, target `<tunnel id>.cfargotunnel.com`, proxied.
+
+### Answering ahead of time
+
+Set the answers as environment variables to install without questions, for example on many machines:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh \
+  | sudo LAGER_MODE=cloudflare LAGER_DOMAIN=mylager.net LAGER_ADMIN_EMAIL=me@example.com bash
+```
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `LAGER_MODE` | `cloudflare`, `local` or `proxy` | asked |
+| `LAGER_DOMAIN` | Cloudflare mode: the domain | asked |
+| `LAGER_PUBLIC_URL`, `LAGER_APPS_DOMAIN` | Proxy mode: the addresses | asked |
+| `LAGER_ADMIN_EMAIL` | The first administrator | asked |
+| `LAGER_NONINTERACTIVE` | `1` never asks and fails when an answer is missing | `0` |
+| `LAGER_RECONFIGURE` | `1` asks the questions again (data and the administrator stay) | `0` |
+| `LAGER_DIR` | Where everything lives | `/opt/lager` |
+| `LAGER_IMAGE` | The image to run, for example `ghcr.io/dm807cam/lager:edge` for the development version | `ghcr.io/dm807cam/lager:latest` |
+| `LAGER_BACKUPS_KEEP` | Backups kept from updates | `5` |
+
+### Files, backups and removal
+
+- `/opt/lager/data/`: all data (see [Backup](data-and-backup.md#backup)).
+- `/opt/lager/backups/`: one backup per update, the newest five kept.
+- `/opt/lager/.env`: settings. Edit it and run the installer again to apply them.
+- **Logs:** `cd /opt/lager && docker compose logs -f lager`.
+- **Removal:** `cd /opt/lager && docker compose down`, then delete the folder. With Cloudflare, also delete the tunnel and its DNS records in the Cloudflare dashboard.
 
 ## Docker Compose
 
