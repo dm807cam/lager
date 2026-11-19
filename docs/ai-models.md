@@ -1,6 +1,6 @@
 # Bring your own model
 
-Artifacts built on claude.ai often call `window.claude.complete(prompt)` to ask Claude something from inside the page: a recipe app suggests a meal, a journal summarizes the week. On Lager that call goes to a language model **you** connect, paid with your own API key.
+Artifacts built on claude.ai often call `window.claude.complete(prompt)` to ask Claude something from inside the page: a recipe app suggests a meal, a journal summarizes the week. On Lager that call goes to a language model **you** connect, paid with your own API key. This does not depend on which assistant built the app: an app that ChatGPT wrote calls the same model as one Claude wrote.
 
 Under **Administration → AI model**:
 

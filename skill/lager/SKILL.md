@@ -3,30 +3,30 @@ name: lager
 description: Use this skill when the user wants an artifact, a small app or a tool built and a Lager connector is available. The result is published on their own Lager server with durable data storage instead of as a claude.ai artifact.
 ---
 
-Lager is a self-hosted server for Claude artifacts: every app gets its own subdomain, numbered versions with rollback, and durable data storage per instance.
-Build the artifact exactly like a Claude artifact: a single HTML file, with scripts and styles inline or from a CDN.
+Lager is a self-hosted server for small web apps that you build for the user: every app gets its own subdomain, numbered versions with rollback, and durable data storage per instance.
+Build each app as one self-contained HTML file (the format of Claude artifacts), with scripts and styles inline or from a CDN. It reaches Lager only through the `window.claude` runtime, whichever AI writes it.
 Keep durable data only through `const db = await claude.use("db")` – never `localStorage`, `sessionStorage` or `indexedDB`, which are lost when the device changes.
 Information about the user comes from `await claude.use("user")`.
 When deploying, pass the `capabilities` the artifact uses, usually `{"db": {}, "user": {}}`.
-Deploy with the `deploy_app` tool (slug, html, title, capabilities, note) instead of publishing a claude.ai artifact.
+Deploy with the `deploy_app` tool (slug, html, title, capabilities, note); do not hand the user a file or a chat artifact instead.
 When you deploy a new app, always pass `icon_svg`, `description` and `theme_color` too (rules: section "Icon and home screen" in `get_guide`).
 If you have a shell and a `LAGER_TOKEN`, upload the file directly instead of sending its content as an argument:
 `curl -X PUT -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: text/html" --data-binary @index.html "<Lager-address>/api/apps/<slug>?title=...&capabilities=..."`
 Afterwards tell the user the URL that comes back and every warning in `warnings`.
 Sharing: the same instance with `share_instance` (shared data) or a separate instance with `create_instance` (separate data); the section "Sharing and instances" in `get_guide` explains the difference.
-To move an existing claude.ai artifact here: first `check_artifact` (best effort: it sees only `claude.use("…")` calls written with a string literal), then follow the section "Moving existing artifacts" in `get_guide`.
+To move an existing artifact here (from claude.ai or elsewhere): first `check_artifact` (best effort: it sees only `claude.use("…")` calls written with a string literal), then follow the section "Moving existing artifacts" in `get_guide`.
 To change an app that already exists (also one from an earlier conversation), first fetch its code with `get_version` and edit that; redeploy with the capabilities it returns.
-Details (rules, limits, versions, instances, pre-filling data): the `get_guide` tool.
+Before your first app, read the `get_guide` tool: the runtime API with a complete example, rules, limits, versions, instances, pre-filling data.
 
 ---
 
-# Lager – guide for Claude
+# Lager – guide for building apps
 
 ## Capabilities
 
 `window.claude.use(name)` returns a promise for a namespace or `null` and never throws. A namespace appears only when the active version declares it in `capabilities`; names Lager does not know always return `null`. So declare every namespace you use and check the result for `null`; `check_artifact` shows what is missing before the deploy.
 
-- `db` (`{"db": {}}`, rules in `db.rules`) – document database following the contract of Claude artifacts: `db.collection("tasks")`, `db.doc("tasks/t1")`, `get/set/update/delete/add`, `where/orderBy/limit`, `onSnapshot` (live updates), `acquire` (lock with an expiry). `null` without an access level on the instance.
+- `db` (`{"db": {}}`, rules in `db.rules`) – document database with live updates (signatures under "Runtime API" below): `db.collection("tasks")`, `db.doc("tasks/t1")`, `get/set/update/delete/add`, `where/orderBy/limit`, `onSnapshot` (live updates), `acquire` (lock with an expiry). `null` without an access level on the instance.
 - `user` (`{"user": {}}`) – `id`, `name`, `email` (only with `user: {scopes: ["email"]}`), `isOwner`, `canEdit`, `can`, `me`, `profiles`, `search`, `avatarUrl`. `search` needs `user: {scopes: ["profile"]}`. Every member of `user` is an asynchronous function, `name` too: `const name = await user.name();`.
 - `permissions` (no declaration needed) – `state`, `request`, `manage`; shows the available namespaces as granted and everything else as `unavailable`.
 - `assets` (`{"assets": {}}`) – `upload(blob, {type?})`, `list()`, `delete(idOrUrl)`; files live at `/_blob/<id>` and count toward the instance's storage. Managers and owners may upload; with `{"assets": {"upload": "interact"}}` contributors may too. Otherwise `null`. Limits: 20 MiB per file (CSS and JavaScript 16 MiB, SVG 2 MiB), at most 2000 files per instance; allowed are images, video, audio, PDF, fonts, CSS, JavaScript, CSV, Markdown, JSON and text.
@@ -36,6 +36,73 @@ Details (rules, limits, versions, instances, pre-filling data): the `get_guide` 
 - Everything else (for example `sample`, `tts`) returns `null`. Build the artifact so that it works without these namespaces: check for `null` and hide the feature.
 
 `window.claude.complete(prompt, options?)` asks a language model the server's administrator set up (Claude, OpenAI, OpenRouter, DeepSeek, Gemini, Mistral, Groq, Ollama or another OpenAI-compatible server; the administrator decides per person which model answers and how many requests per hour they get) and resolves the answer as a string, like on claude.ai. Declare it with `{"complete": {}}`. `prompt` is a string or a list of `{role: "user" | "assistant" | "system", content: string}` for a conversation; `options` may carry `system` (a system prompt), `maxTokens` (the administrator's limit always applies) and `full: true`, which makes it resolve `{text, model, stopReason, truncated}` instead of the bare string; `truncated` is `true` when the answer hit the length limit, so check it before parsing. A `<think>…</think>` block at the start of the answer (what reasoning models on OpenAI-compatible servers send) is removed from the text, and an unclosed one leaves it empty with `truncated: true`; other tags such as `<thinking>` are left alone. Only signed-in viewers with at least contributor access may call it; for guests and viewers the call rejects. It also rejects (an `Error` with `code`) when no model is set up or none is available to this person (`not_configured`), the app does not declare it (`not_declared`), the person sent too many requests this hour (`rate_limited`), the model declined (`refused`) or the provider failed (`provider_error`, `timeout`). So catch the error and show a short message instead of breaking the page. Which model answers is the administrator's choice, so don't rely on the abilities of one particular model; ask for structured output in plain words and parse it defensively.
+
+## Runtime API
+
+Lager injects `window.claude` into every page before the page's own scripts run, so no import or script tag is needed. The name comes from Claude artifacts; the API is the same whichever AI writes the app. Everything below is asynchronous unless it says otherwise.
+
+**`db`** (`const db = await claude.use("db")`):
+
+- `db.collection(path)` returns a collection reference (odd number of segments, `tasks` or `lists/l1/items`); `db.doc(path)` a document reference (even number, `tasks/t1`). Both are synchronous and throw a `TypeError` for an invalid path.
+- Collection reference: `.doc(id?)` (synchronous; without `id` a new random id), `.add(data)` resolves the new document reference, and the query methods below.
+- Query (chainable, synchronous): `.where(field, op, value)` with `op` one of `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not-in`, `array-contains`, `array-contains-any` (`field` may be a dotted path such as `"author.id"`), `.orderBy(field, "asc" | "desc")`, `.limit(n)`. Then `.get()` resolves a query snapshot, or `.onSnapshot(next, error?)` listens.
+- Document reference: `.id`, `.path`, `.get()` resolves a document snapshot, `.set(data)` replaces the document, `.update(data)` merges deeply into it (creating it if needed), `.delete()` removes it (not its sub-collections), `.collection(name)`, `.onSnapshot(next, error?)`, `.acquire({holder, ttlMs?, data?})` takes a lease (default 30 s, at most 300 s) and resolves `{acquired, version, expiresAt}`.
+- Document snapshot: `.id`, `.exists`, `.data()` (the stored object, frozen; `undefined` when the document does not exist).
+- Query snapshot: `.docs` (document snapshots), `.size`, `.empty`, `.docChanges()` (`[{type: "added" | "modified" | "removed", doc, oldIndex, newIndex}]`).
+- `onSnapshot` calls `next` once right away with the current state and again after every change, including changes by other viewers, and returns a function that stops listening. Calls reject with an object `{code, message}`, where `code` is `not_granted` (the viewer's level does not allow it), `quota_exceeded`, `invalid_argument` or `unavailable` (network or server; retry later).
+- Store plain JSON: strings, finite numbers, booleans, `null`, arrays and objects. Store times as `Date.now()` numbers or ISO strings, never `Date` objects.
+
+**`user`** (`const user = await claude.use("user")`): every member is an async function. `await user.name()`, `await user.id()`, `await user.isOwner()`, `await user.canEdit()`; the rest is listed under "Capabilities" above.
+
+**`claude.complete(prompt, options?)`**: see "Capabilities" above; always wrap it in `try`/`catch`.
+
+A complete app with shared, live data, a guard for the missing capability, and error handling (deploy with `{"db": {}, "user": {}}`):
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shared list</title>
+<style>body{font-family:system-ui,sans-serif;max-width:32rem;margin:2rem auto;padding:0 1rem}li{display:flex;justify-content:space-between;padding:.4rem 0}</style>
+</head>
+<body>
+<h1>Shared list</h1>
+<p id="status"></p>
+<form id="add"><input id="text" required placeholder="New item"> <button>Add</button></form>
+<ul id="items"></ul>
+<script>
+(async () => {
+  const status = document.getElementById("status");
+  const db = await claude.use("db");
+  const user = await claude.use("user");
+  if (!db) { status.textContent = "Storage is not available."; document.getElementById("add").hidden = true; return; }
+  const me = user ? await user.name() : "";
+  const items = db.collection("items");
+  items.orderBy("createdAt").onSnapshot((snap) => {
+    document.getElementById("items").replaceChildren(...snap.docs.map((d) => {
+      const li = document.createElement("li");
+      li.textContent = d.data().text + (d.data().by ? " (" + d.data().by + ")" : "");
+      const del = document.createElement("button");
+      del.textContent = "Delete";
+      del.onclick = () => items.doc(d.id).delete().catch((e) => { status.textContent = e.message; });
+      li.append(del);
+      return li;
+    }));
+  }, (e) => { status.textContent = e.message; });
+  document.getElementById("add").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = document.getElementById("text");
+    try {
+      await items.add({ text: input.value, by: me, createdAt: Date.now() });
+      input.value = "";
+    } catch (err) { status.textContent = err.code === "not_granted" ? "You can only read this list." : err.message; }
+  });
+})();
+</script>
+</body>
+</html>
+```
 
 ## Database access rules
 

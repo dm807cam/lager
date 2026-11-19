@@ -39,6 +39,7 @@ Ask Claude for a shopping list your family shares, a booking sheet for your club
 - 💾 **Data that stays.** Every app instance has its own document database with live updates, plus file uploads, so the app keeps its state across devices and people.
 - 👪 **Share with anyone.** Share one instance so everyone works in the same data, or hand out separate copies of the app. Your family and friends do not need an AI subscription.
 - ⏪ **Versions and rollback.** Every deploy is a numbered version. Lager takes a snapshot of the data before the active version changes, so you can always go back.
+- 🤝 **Works with your AI.** Claude, ChatGPT, Cursor, VS Code, Gemini CLI: any assistant that speaks MCP can build and deploy apps, and the apps run the same whoever built them.
 - 🧠 **Bring your own model.** Apps that call `claude.complete()` use a model you connect: Anthropic, OpenAI, OpenRouter, Mistral, a local Ollama, or any OpenAI-compatible server. You set the limits per person.
 - 📱 **Feels like a real app.** Icons, theme colours and home-screen install for every app, in light and dark mode.
 - 🔒 **Yours.** One Node.js process, SQLite and a data directory. No other services and no telemetry: the server only contacts the outside world when you set up mail or connect a model.
@@ -60,7 +61,7 @@ Ask Claude for a shopping list your family shares, a booking sheet for your club
                    your phone             your laptop        a friend without Claude
 ```
 
-Apps are ordinary Claude artifacts: a single HTML file. Instead of the browser's local storage they keep data through the same `claude.use("db")` interface artifacts use on claude.ai, and Lager provides it. So artifacts you already have can usually move to Lager with few changes, and Claude can do the move for you.
+Apps are single HTML files in the format of Claude artifacts. Instead of the browser's local storage they keep data through the same `claude.use("db")` interface artifacts use on claude.ai, and Lager provides it. The name is only the interface: an app written by ChatGPT or Gemini uses the same calls. Artifacts you already have can usually move to Lager with few changes, and your assistant can do the move for you.
 
 ## Quick start
 
@@ -77,14 +78,18 @@ Then open `LAGER_PUBLIC_URL`, sign in and copy the connector address from the da
 - **Reverse proxy, wildcard certificate, published images:** [Installation](docs/installation.md)
 - **Just trying it?** Run it on your own machine without DNS or certificates: [Running from source](docs/installation.md#running-from-source)
 
-### Connect Claude
+### Connect your AI
 
-| Client | How |
+Lager works with every assistant that supports remote MCP servers. Sign-in uses OAuth, so you only enter the address:
+
+| Assistant | How |
 | --- | --- |
 | claude.ai and Claude Desktop | Settings → Connectors → add a custom connector with `https://lager.example.com/mcp` |
 | Claude Code | `claude mcp add --transport http lager https://lager.example.com/mcp` |
+| ChatGPT | Developer mode → create a connector with `https://lager.example.com/mcp` and OAuth |
+| Cursor, VS Code, Gemini CLI, … | Add `https://lager.example.com/mcp` as an HTTP MCP server |
 
-Then ask Claude to build something, for example *"Build a shared groceries list for my family and put it on Lager."* Details, API tokens and the optional Lager skill: [Connecting Claude](docs/connecting-claude.md).
+Then ask for an app, for example *"Build a shared groceries list for my family and put it on Lager."* Configuration snippets for each assistant, API tokens and the optional Claude skill: [Connecting your AI](docs/connecting-ai.md).
 
 ## Features
 
@@ -93,7 +98,7 @@ Then ask Claude to build something, for example *"Build a shared groceries list 
 | **Apps** | Own subdomain per instance, numbered versions with rollback, notes per deploy, icons and descriptions, home-screen install, custom domains |
 | **Data** | Document database with live updates and access rules, file uploads, realtime rooms with presence, pages that save themselves, file downloads, snapshots, NDJSON export and import |
 | **People** | Several accounts with roles (administrator, publisher, user), invitations, open or closed registration, groups, four access levels per instance, public instances |
-| **Interfaces** | Browser dashboard, REST API, MCP endpoint with OAuth or API tokens |
+| **Interfaces** | Browser dashboard, REST API, MCP endpoint (Streamable HTTP) with OAuth 2.1 and dynamic client registration, or API tokens |
 | **AI** | `claude.complete()` routed to the providers you connect, AI groups with their own model and hourly limit per person, keys stored encrypted |
 | **Operations** | Single process, SQLite, one data directory, online backup command, trash with retention, multi-architecture Docker images |
 
@@ -103,7 +108,7 @@ What Lager deliberately does not do (no single sign-on, no built-in TLS, no repl
 
 All documentation lives in [`docs/`](docs/README.md):
 [Installation](docs/installation.md) ·
-[Connecting Claude](docs/connecting-claude.md) ·
+[Connecting your AI](docs/connecting-ai.md) ·
 [Building apps](docs/building-apps.md) ·
 [Bring your own model](docs/ai-models.md) ·
 [Users and sharing](docs/users-and-sharing.md) ·
