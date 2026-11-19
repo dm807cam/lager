@@ -6,7 +6,7 @@ import type { Config } from '../src/config.js';
 import { openPlatformDb } from '../src/platform/db.js';
 import { Accounts } from '../src/platform/accounts.js';
 import { t } from '../src/i18n/index.js';
-import { createMailer, MemoryMailer } from '../src/platform/mail.js';
+import { createMailer, maskAddress, MemoryMailer } from '../src/platform/mail.js';
 import { Settings, type RegistrationMode } from '../src/platform/settings.js';
 import { MAX_PASSWORD_LENGTH, Users } from '../src/platform/users.js';
 
@@ -42,6 +42,22 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); db.close(); });
 
 describe('Accounts', () => {
+  it('a mail that cannot be sent is logged with the recipient masked, also inside the mail server\'s answer', async () => {
+    mailer = Object.assign(new MemoryMailer(), { send: async (mail: { to: string }) => { throw new Error(`550 mailbox <${mail.to}> unknown; ${mail.to} rejected`); } });
+    setup('open');
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(' ')); });
+    try {
+      await accounts.createInvite({ email: 'jane.doe@example.com', role: 'user', createdBy: users.list()[0]?.id ?? 'x' });
+    } finally { spy.mockRestore(); }
+    expect(lines).toEqual(['Could not send mail to j***@example.com: Error: 550 mailbox <j***@example.com> unknown; j***@example.com rejected']);
+    expect(lines.join('\n')).not.toContain('jane');
+    expect(maskAddress('a@b.example')).toBe('a***@b.example');
+    expect(maskAddress('"odd@local"@example.org')).toBe('"***@example.org');
+    expect(maskAddress('no-at-sign')).toBe('***');
+    expect(maskAddress('@example.org')).toBe('***');
+  });
+
   it('open registration sends a verification mail', async () => {
     const r = await accounts.register({ name: 'Ann', email: 'ann@x.y', password: PW });
     expect(r.needsVerification).toBe(true);

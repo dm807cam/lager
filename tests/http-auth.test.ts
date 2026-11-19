@@ -5,8 +5,10 @@ import { RateLimiter } from '../src/http/ratelimit.js';
 import { csrfToken } from '../src/http/session.js';
 import { MemoryMailer } from '../src/platform/mail.js';
 import { MAX_PASSWORD_LENGTH } from '../src/platform/users.js';
-import { makeHarness, type Harness } from './support/http.js';
+import { makeHarness, withoutNonce, type Harness } from './support/http.js';
 import { t } from '../src/i18n/index.js';
+
+const page = withoutNonce;
 
 let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
@@ -121,7 +123,7 @@ describe('registration and verification', () => {
     const notice = t('en', 'auth.resend.sent.text');
     expect(known.text).toContain(notice);
     expect(unknown.status).toBe(known.status);
-    expect(unknown.text).toBe(known.text);
+    expect(page(unknown.text)).toBe(page(known.text));
     expect(s.mailer.sent).toHaveLength(2);
   });
 
@@ -257,7 +259,7 @@ describe('registration and verification', () => {
     const dup = await s.post('/register', { name: 'Zed', email: 'Ann@Example.org', password: 'another password' });
     // Status and page are those of a registration that worked: the form does not say which addresses have an account.
     expect(dup.status).toBe(fresh.status);
-    expect(dup.text).toBe(fresh.text);
+    expect(withoutNonce(dup.text)).toBe(withoutNonce(fresh.text));
     expect(dup.headers['set-cookie']).toBeUndefined();
     expect(s.mailer.sent).toHaveLength(1);
     expect(s.mailer.sent[0]).toMatchObject({ to: 'ann@example.org', subject: t('en', 'mail.exists.subject') });
@@ -388,7 +390,7 @@ describe('password reset', () => {
     expect(known.status).toBe(200);
     expect(known.text).toContain(FORGOT);
     expect(unknown.status).toBe(known.status);
-    expect(unknown.text).toBe(known.text);
+    expect(page(unknown.text)).toBe(page(known.text));
     expect(s.mailer.sent).toHaveLength(1);
     expect(s.mailer.sent[0].to).toBe('ann@example.org');
     expect((await s.get('/forgot')).text).toContain('action="/forgot"');
@@ -402,7 +404,7 @@ describe('password reset', () => {
     for (let i = 0; i < 4; i++) {
       const res = await s.post('/forgot', { email: 'ann@example.org' });
       expect(res.status).toBe(200);
-      bodies.push(res.text);
+      bodies.push(page(res.text));
     }
     expect(s.mailer.sent).toHaveLength(3);
     expect(new Set(bodies).size).toBe(1);

@@ -9,6 +9,7 @@ import { createInstanceRouter } from './instance.js';
 import { instanceHostPage, notFoundPage } from './pages.js';
 import { createPlatformRouter } from './platform.js';
 import { sessionUser } from './session.js';
+import { signedIn } from './ui.js';
 
 export { sessionUser };
 export interface PlatformExtension { (router: express.Router, core: Core): void }
@@ -29,6 +30,26 @@ export function requireUser(core: Core): RequestHandler {
     }
   };
 }
+
+/**
+ * Where a message or error page is shown to a signed-in viewer: inside the normal shell, with the navigation. The language
+ * switcher comes back to the same address after a GET; a failed form post has no address to come back to.
+ */
+export const shellFor = (core: Core, req: Request, user: User): ReturnType<typeof signedIn> =>
+  signedIn(core, user, null, req.method === 'GET' ? req.originalUrl : '/');
+
+/**
+ * Registered after every other extension: a signed-in visitor who asks for a page that does not exist gets "not found" with
+ * the navigation around it. Signed-out visitors and the API fall through to the platform's own answer.
+ */
+const signedInNotFound: PlatformExtension = (router, core) => {
+  router.use((req, res, next) => {
+    const user = req.path.startsWith('/api/') ? null : sessionUser(core, req);
+    if (!user) { next(); return; }
+    // The page names the account and carries its sign-out token.
+    res.status(404).set('Cache-Control', 'no-store').type('html').send(notFoundPage(requestLocale(core, req, user), shellFor(core, req, user)));
+  });
+};
 
 export function createHttpApp(core: Core, extensions: PlatformExtension[] = []): express.Express {
   const { config } = core;
@@ -52,13 +73,15 @@ export function createHttpApp(core: Core, extensions: PlatformExtension[] = []):
 
   const platformHost = config.publicUrl.hostname.toLowerCase();
   const suffix = '.' + config.appsDomain.toLowerCase();
-  const platform = createPlatformRouter(core, extensions);
+  const platform = createPlatformRouter(core, [...extensions, signedInNotFound]);
   const instances = createInstanceRouter(core);
 
   app.use((req: Request, res, next) => {
     // A request without a Host header (HTTP/1.0 probes, scanners) has no host name and ends as "not found" below.
     const host = (req.hostname ?? '').toLowerCase().replace(/\.$/, '');
     if (host === platformHost) {
+      // Pages, JSON and files of the platform all declare their type; a browser must never guess another one.
+      res.set('X-Content-Type-Options', 'nosniff');
       platform(req, res, next);
     } else if (host.endsWith(suffix) && host.length > suffix.length && !host.slice(0, -suffix.length).includes('.')) {
       res.locals.slug = host.slice(0, -suffix.length);

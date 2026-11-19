@@ -10,13 +10,13 @@ import type { App, Instance, SelfInstances, UsersLevel, Version, Visibility } fr
 import type { GrantLevel } from '../platform/access.js';
 import type { User } from '../platform/users.js';
 import { sendVersionDownload, streamExport, versionParam } from './api.js';
-import { requireUser, type PlatformExtension } from './app.js';
+import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { declaredModel, downloadableVersion, setAppModel } from '../mcp/tools.js';
 import {
   dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, formErrorPage, hiddenField, levelOptions, missingPage, noticeHtml, optionList, type Option, page,
   sizeText, visibilityLabel, visibilityOptions,
 } from './pages.js';
-import { appTile, avatar, badge, btn, named, card, dataTable, emptyState, icon, linkButton, meter, notice, signedIn, visibilityIcon } from './ui.js';
+import { appTile, avatar, badge, btn, named, card, dataTable, emptyState, icon, linkButton, meter, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashToken, readFlash, type Flash } from './session.js';
 
 const GRANT_LEVELS = ['view', 'interact', 'admin'] as const;
@@ -31,6 +31,8 @@ const NOTICES: Record<string, MessageKey> = {
   slug_retired: 'notice.slugRetired',
   rules_differ: 'notice.rulesDiffer',
   creation_rate: 'notice.creationRate',
+  creation_rate_others: 'notice.creationRateOthers',
+  owner_limit_half: 'notice.ownerLimitHalf',
   snapshot_rate: 'notice.snapshotRate',
   slug_invalid: 'notice.slugInvalid',
   slug_reserved: 'notice.slugInvalid',
@@ -98,7 +100,7 @@ function grantsCard(core: Core, locale: Locale, inst: Instance, base: string, cs
     const who = g.principalType === 'user' ? hiddenField('email', g.principalLabel) : hiddenField('group', g.principalId);
     const face = g.principalType === 'user' ? avatar({ id: g.principalId, name: '', email: g.principalLabel }, 'sm') : `<span class="tile tile-xs" aria-hidden="true">${icon('users', 'i-sm')}</span>`;
     return [
-      `<div class="cell-user">${face}<div><strong>${esc(g.principalLabel)}</strong></div></div>`,
+      `<div class="cell-user">${face}<div><strong title="${esc(g.principalLabel)}">${esc(g.principalLabel)}</strong></div></div>`,
       badge(t(locale, g.principalType === 'user' ? 'instance.grants.user' : 'instance.grants.group'), { icon: g.principalType === 'user' ? 'user' : 'users' }),
       `<form method="post" action="${base}/grants" class="inline-form">${hiddenField('csrf', csrf)}${who}
 <select name="level" aria-label="${esc(t(locale, 'instance.grants.levelOf', { name: g.principalLabel }))}">${optionList(grantLevels, g.level)}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
@@ -138,7 +140,7 @@ ${form(action, csrf, field('confirm', t(locale, 'instance.delete.confirm', { nam
 
 const fact = (label: string, value: string): string => `<div><dt>${esc(label)}</dt><dd>${value}</dd></div>`;
 const person = (u: User | null): string => (u
-  ? `<div class="cell-user">${avatar(u, 'sm')}<div><strong>${esc(u.name || u.email)}</strong><span>${esc(u.email)}</span></div></div>` : '–');
+  ? personCell(u, u.name || u.email) : '–');
 
 /** Everything the instance uses against its quota: data, uploaded files and the versions it saved itself. */
 const storageUsed = (core: Core, inst: Instance): number => core.data.usage(inst.id) + core.assets.usage(inst.id).bytes + core.apps.savedBytes(inst.id);
@@ -264,6 +266,8 @@ export const manageExtension: PlatformExtension = (router, core) => {
   const noStore: RequestHandler = (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); };
   const formBody = express.urlencoded({ extended: false, limit: '10kb' });
   const userOf = (res: Response): User => res.locals.user as User;
+  /** Error pages keep the navigation: the viewer is signed in on every route here. */
+  const shellOf = (res: Response): ReturnType<typeof shellFor> => shellFor(core, res.req, userOf(res));
   const param = (req: Request, name: string): string => String(req.params[name]);
   const field = (req: Request, name: string, max = MAX_FIELD): string => {
     const v = (req.body as Record<string, unknown> | undefined)?.[name];
@@ -308,15 +312,15 @@ export const manageExtension: PlatformExtension = (router, core) => {
     noStore, auth, formBody,
     (req, res) => {
       const user = userOf(res);
-      if (!csrfValid(core, user, field(req, 'csrf', 2000))) { send(res, 403, formErrorPage(localeOf(res), 'error.sessionExpired')); return; }
+      if (!csrfValid(core, user, field(req, 'csrf', 2000))) { send(res, 403, formErrorPage(localeOf(res), 'error.sessionExpired', undefined, shellOf(res))); return; }
       try {
         const target = run(req, user);
         res.redirect(target ?? back(req, user));
       } catch (e) {
         if (e instanceof Notice) { toPage(res, user, back(req, user), { error: e.key }); return; }
         if (!(e instanceof LagerError)) throw e;
-        if (e.code === 'forbidden') send(res, 403, forbiddenInstancePage(localeOf(res)));
-        else if (e.code === 'not_found') send(res, 404, missingPage(localeOf(res), 'notice.missing'));
+        if (e.code === 'forbidden') send(res, 403, forbiddenInstancePage(localeOf(res), shellOf(res)));
+        else if (e.code === 'not_found') send(res, 404, missingPage(localeOf(res), 'notice.missing', undefined, shellOf(res)));
         else toPage(res, user, back(req, user), { error: NOTICES[e.reason ?? ''] ?? 'validation.generic' });
       }
     },
@@ -327,16 +331,16 @@ export const manageExtension: PlatformExtension = (router, core) => {
   router.get('/instances/:slug', noStore, auth, (req, res) => {
     const user = userOf(res);
     const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
-    if (!inst) { send(res, 404, missingPage(localeOf(res), 'notice.instanceMissing')); return; }
-    if (!core.access.canManageInstance(inst, user) && !core.access.canDeleteInstance(inst, user)) { send(res, 403, forbiddenInstancePage(localeOf(res))); return; }
+    if (!inst) { send(res, 404, missingPage(localeOf(res), 'notice.instanceMissing', undefined, shellOf(res))); return; }
+    if (!core.access.canManageInstance(inst, user) && !core.access.canDeleteInstance(inst, user)) { send(res, 403, forbiddenInstancePage(localeOf(res), shellOf(res))); return; }
     send(res, 200, instancePage(core, localeOf(res), user, inst, readFlash(core, user, req.query.flash)));
   });
 
   router.get('/instances/:slug/export', noStore, auth, (req, res, next) => {
     const user = userOf(res);
     const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
-    if (!inst) { send(res, 404, missingPage(localeOf(res), 'notice.instanceMissing')); return; }
-    if (!core.access.canManageInstance(inst, user)) { send(res, 403, forbiddenInstancePage(localeOf(res))); return; }
+    if (!inst) { send(res, 404, missingPage(localeOf(res), 'notice.instanceMissing', undefined, shellOf(res))); return; }
+    if (!core.access.canManageInstance(inst, user)) { send(res, 403, forbiddenInstancePage(localeOf(res), shellOf(res))); return; }
     streamExport(core, user, inst, res).catch(next);
   });
 
@@ -347,8 +351,8 @@ export const manageExtension: PlatformExtension = (router, core) => {
       sendVersionDownload(res, slug, number, downloadableVersion(core, userOf(res), slug, number).html);
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
-      if (e.code === 'forbidden') send(res, 403, forbiddenAppPage(localeOf(res)));
-      else send(res, 404, missingPage(localeOf(res), 'notice.versionMissing'));
+      if (e.code === 'forbidden') send(res, 403, forbiddenAppPage(localeOf(res), shellOf(res)));
+      else send(res, 404, missingPage(localeOf(res), 'notice.versionMissing', undefined, shellOf(res)));
     }
   });
 
@@ -430,8 +434,8 @@ export const manageExtension: PlatformExtension = (router, core) => {
   router.get('/apps/:slug', noStore, auth, (req, res) => {
     const user = userOf(res);
     const app = core.apps.getApp(param(req, 'slug'));
-    if (!app) { send(res, 404, missingPage(localeOf(res), 'notice.appMissing')); return; }
-    if (!core.access.canReadApp(app, user)) { send(res, 403, forbiddenAppPage(localeOf(res))); return; }
+    if (!app) { send(res, 404, missingPage(localeOf(res), 'notice.appMissing', undefined, shellOf(res))); return; }
+    if (!core.access.canReadApp(app, user)) { send(res, 403, forbiddenAppPage(localeOf(res), shellOf(res))); return; }
     send(res, 200, appPage(core, localeOf(res), user, app, readFlash(core, user, req.query.flash)));
   });
 

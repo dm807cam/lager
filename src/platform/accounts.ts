@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Config } from '../config.js';
 import { LagerError } from '../errors.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
-import type { Mailer } from './mail.js';
+import { maskAddress, type Mailer } from './mail.js';
 import type { Settings } from './settings.js';
 import { hashSecret, sameHash } from './tokens.js';
 import { hashPassword, MAX_NAME_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, type Role, type User, type Users } from './users.js';
@@ -119,13 +119,15 @@ export class Accounts {
   /** A mail that counts against a budget is dropped once that budget is spent; callers that can tell the visitor check `mailBudgetSpent` first. */
   private async send(to: string, subject: string, text: string, budget: Budget | null): Promise<void> {
     if (budget && !this.mailBudget(budget, true)) {
-      console.warn(`Mail to ${to} was not sent: more than ${BUDGETS[budget]} ${budget} mails in an hour.`);
+      console.warn(`Mail to ${maskAddress(to)} was not sent: more than ${BUDGETS[budget]} ${budget} mails in an hour.`);
       return;
     }
     try {
       await this.mailer.send({ to, subject, text });
     } catch (e) {
-      console.error(`Could not send mail to ${to}:`, e);
+      // The log names the recipient only in masked form, also where the mail server's answer repeats the address.
+      const reason = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      console.error(`Could not send mail to ${maskAddress(to)}: ${reason.split(to).join(maskAddress(to))}`);
     }
   }
 

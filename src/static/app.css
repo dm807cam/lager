@@ -297,6 +297,9 @@ details.menu > summary::-webkit-details-marker { display: none; }
 form { margin: 0; }
 .stack { display: flex; flex-direction: column; gap: var(--s4); }
 .stack > button, .stack > .btn { align-self: flex-start; }
+/* A group of choices: the legend reads like a field label, without the browser's frame. */
+fieldset.stack { min-width: 0; margin: 0; padding: 0; border: 0; }
+fieldset.stack > legend { padding: 0; margin-bottom: var(--s3); font-size: 0.86rem; font-weight: 600; color: var(--ink); }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 label, .label { font-size: 0.86rem; font-weight: 600; color: var(--ink); }
 .hint { color: var(--ink-2); font-size: 0.82rem; line-height: 1.45; }
@@ -374,9 +377,12 @@ tbody tr:last-child td { border-bottom: 0; }
 td.actions { text-align: right; white-space: nowrap; }
 td.actions .btn-row { justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
 .cell-user { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.cell-user > div { min-width: 0; }
-.cell-user strong { display: block; font-weight: 600; }
-.cell-user > div > span { display: block; color: var(--ink-3); font-size: 0.82rem; overflow-wrap: anywhere; }
+/* Name and address stay on one line each: the column is as wide as they are, up to a share of the window, and what is longer
+   ends in an ellipsis (the title attribute holds the whole text). An address is never broken inside a word. */
+.cell-user > div { min-width: 0; max-width: clamp(11rem, 26vw, 22rem); }
+.cell-user strong, .cell-user > div > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-user strong { font-weight: 600; }
+.cell-user > div > span { color: var(--ink-3); font-size: 0.82rem; }
 @media (max-width: 640px) {
   .table-stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .table-stack, .table-stack tbody, .table-stack tr, .table-stack td { display: block; width: 100%; }
@@ -388,6 +394,8 @@ td.actions .btn-row { justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
   .table-stack td[data-label=""], .table-stack td:first-child { display: block; }
   .table-stack td[data-label=""]::before, .table-stack td:first-child::before { content: none; }
   .table-stack td:first-child { padding-bottom: var(--s2); font-weight: 600; }
+  /* In a card the person has the whole row: the text runs to the card's edge before it is cut. */
+  .table-stack .cell-user > div { flex: 1; max-width: none; }
   .table-stack td:first-child, .table-stack td:last-child { padding-left: 0; padding-right: 0; }
   .table-stack .inline-form { flex-wrap: wrap; }
   .table-stack td.actions { text-align: left; white-space: normal; padding-top: var(--s2); }

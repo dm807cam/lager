@@ -348,6 +348,26 @@ describe('app page', () => {
     expect(list.text).toContain('u@x.y');
   });
 
+  it('instances for others: the daily limit and the half of the receiver\'s limit are refused with their own notices', async () => {
+    const { p, u, pc } = await setup();
+    h.core.settings.setMaxInstancesPerUser(4);
+    for (const slug of ['for-u-1', 'for-u-2']) expect((await post(pc, p, '/ui/apps/notes/instances', { slug, owner_email: 'u@x.y' })).status).toBe(302);
+    const half = await post(pc, p, '/ui/apps/notes/instances', { slug: 'for-u-3', owner_email: 'u@x.y' });
+    expect((await follow(pc, half)).text).toContain(en('notice.ownerLimitHalf'));
+    expect(h.core.apps.getInstanceBySlug('for-u-3')).toBeNull();
+    expect(h.core.apps.listInstancesOwnedBy(u.id)).toHaveLength(2);
+    // Three more for three other people use up the five a day.
+    for (const n of ['a', 'b', 'c']) {
+      h.core.users.create({ email: `${n}@x.y`, name: n, password: 'pw-pw-pw-pw', role: 'user' });
+      await post(pc, p, '/ui/apps/notes/instances', { slug: `for-${n}`, owner_email: `${n}@x.y` });
+      expect(inst(`for-${n}`).ownerId).not.toBe(p.id);
+    }
+    h.core.users.create({ email: 'd@x.y', name: 'd', password: 'pw-pw-pw-pw', role: 'user' });
+    const sixth = await post(pc, p, '/ui/apps/notes/instances', { slug: 'for-d', owner_email: 'd@x.y' });
+    expect((await follow(pc, sixth)).text).toContain(en('notice.creationRateOthers'));
+    expect(h.core.apps.getInstanceBySlug('for-d')).toBeNull();
+  });
+
   it('shows taken and invalid names as notices', async () => {
     const { p, pc } = await setup();
     const taken = await post(pc, p, '/ui/apps/notes/instances', { slug: 'notes' });

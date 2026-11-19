@@ -132,6 +132,13 @@ const hue = (id: string): number => {
 export const avatar = (user: { id: string; name: string; email: string }, size: '' | 'sm' | 'lg' = ''): string =>
   `<span class="avatar av${hue(user.id)}${size ? ` avatar-${size}` : ''}" aria-hidden="true">${esc(initials(user.name, user.email))}</span>`;
 
+/**
+ * A person in a table cell: avatar, name and address. Text that does not fit its column is cut off with an ellipsis instead of
+ * being broken inside a word, and the tooltip shows it whole.
+ */
+export const personCell = (user: { id: string; name: string; email: string }, name = user.name): string =>
+  `<div class="cell-user">${avatar(user, 'sm')}<div><strong title="${esc(name)}">${esc(name)}</strong><span title="${esc(user.email)}">${esc(user.email)}</span></div></div>`;
+
 /** Path of an app's icon on the platform host (public, cached for good because the version is part of it). */
 export const appIconPath = (app: App, px: 64 | 192 | 512 = 192): string => `/app-icons/${encodeURIComponent(app.id)}/${app.iconVersion}/${px}.png`;
 

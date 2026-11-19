@@ -1,4 +1,30 @@
+import fs from 'node:fs';
 import type { Server } from 'node:http';
+
+/**
+ * Everything Lager writes belongs to the account it runs as and to nobody else: from here on directories are created with mode
+ * 700 and files with 600. Set for the whole process and not per call, so that it also holds for the files SQLite creates on
+ * its own (databases, their WAL and SHM files, snapshots) and for every place that writes a file in the future.
+ */
+export function restrictNewFiles(): void {
+  process.umask(0o077);
+}
+
+/**
+ * A data directory from before `restrictNewFiles`, which other accounts on the machine may still enter, is closed: one chmod of
+ * the top directory, which shuts everything below it without walking the tree. Only a directory this account owns is touched.
+ * Returns whether the mode changed, so the caller can say so once (a file system without modes keeps what it reports).
+ */
+export function closeDataDir(dataDir: string): boolean {
+  try {
+    const before = fs.statSync(dataDir);
+    if ((before.mode & 0o077) === 0 || typeof process.getuid !== 'function' || before.uid !== process.getuid()) return false;
+    fs.chmodSync(dataDir, 0o700);
+    return (fs.statSync(dataDir).mode & 0o077) === 0;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Reverse proxies keep connections to Lager open and reuse them (nginx for 60 seconds by default, Cloudflare Tunnel and

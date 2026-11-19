@@ -274,8 +274,13 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
     return Array.isArray(scopes) && scopes.includes('email');
   };
 
-  /** The question before the first sign-in to an instance. Cancel comes first, so Enter never continues. */
-  const signInPage = (locale: Locale, user: User, instance: Instance, host: string, email: boolean, fields: Record<string, string>): string => {
+  /**
+   * The question before the first sign-in to an instance. Cancel comes first, so Enter never continues. Both answers end on the
+   * instance at `origin` (the callback after Continue, the public page after Cancel) or on the platform: the page allows its
+   * form exactly those two origins, because browsers hold a form to `form-action` through the redirects after it.
+   */
+  const signInPage = (locale: Locale, user: User, instance: Instance, origin: string, email: boolean, fields: Record<string, string>): string => {
+    const host = new URL(origin).host;
     const app = core.apps.getApp(instance.appId)?.title || instance.slug;
     return page(locale, t(locale, 'signin.title'), authCard(`<div class="auth-icon">${icon('shield')}</div><h1>${esc(t(locale, 'signin.heading', { app }))}</h1>
 <div class="consent-who"><p>${esc(t(locale, 'signin.text', { app, host, user: user.name || user.email }))}</p>
@@ -284,7 +289,7 @@ export function createPlatformRouter(core: Core, extensions: PlatformExtension[]
 ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v]) => hiddenField(k, v)).join('')}
 <div class="consent-actions"><button type="submit" name="decision" value="cancel" class="${btn('secondary')}">${esc(t(locale, 'signin.cancel'))}</button>
 <button type="submit" name="decision" value="continue" class="${btn('primary')}">${esc(t(locale, 'signin.continue'))}</button></div>
-</form>`), { switcher: false });
+</form>`), { switcher: false, formTargets: [origin] });
   };
 
   // `same-origin` lets browsers send the real Origin on the login post (`no-referrer` would make it `null`, which the guard refuses).
@@ -328,8 +333,10 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
     const locale = requestLocale(core, req);
     const ip = addressKey(req.ip);
     const account = typeof body.email === 'string' ? body.email.trim().toLowerCase().slice(0, 254) : '';
+    // What was typed goes back into the field of every answer that is not a sign-in, the same way whatever the reason.
+    const email = typeof body.email === 'string' ? body.email.trim().slice(0, 254) : '';
     const tooMany = (): void => {
-      res.status(429).type('html').send(loginPage(locale, ret, t(locale, 'login.tooMany'), { registration: core.settings.registration }));
+      res.status(429).type('html').send(loginPage(locale, ret, t(locale, 'login.tooMany'), { registration: core.settings.registration, email }));
     };
     // Counted as a failure now, before the password is checked: of many attempts sent at once, only as many as the limits leave are looked at.
     const owner = core.users.getByEmail(account);
@@ -347,7 +354,7 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
         // Too many passwords are being checked at once: this one was not looked at, so it does not count either, and the
         // answer says that the server is busy, not that the visitor failed.
         limiter.release(attempt, false);
-        res.status(429).type('html').send(loginPage(locale, ret, t(locale, 'login.busy'), { registration: core.settings.registration }));
+        res.status(429).type('html').send(loginPage(locale, ret, t(locale, 'login.busy'), { registration: core.settings.registration, email }));
         return;
       }
     }
@@ -358,7 +365,7 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
       const message = reason === 'unverified' ? t(locale, 'login.unverified')
         : reason === 'disabled' ? t(locale, 'login.disabled') : t(locale, 'login.invalid');
       res.status(401).type('html').send(loginPage(locale, ret, message, {
-        registration: core.settings.registration, resendEmail: reason === 'unverified' ? account : undefined,
+        registration: core.settings.registration, resendEmail: reason === 'unverified' ? account : undefined, email,
       }));
       return;
     }
@@ -441,7 +448,7 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
     if (!core.access.signInConfirmed(instance, user, email)) {
       // The answer counts for what its page said: if the app began to ask for the address in between, the question comes again.
       if (!answer || (email && params.email !== '1')) {
-        res.type('html').send(signInPage(locale, user, instance, new URL(target).host, email,
+        res.type('html').send(signInPage(locale, user, instance, new URL(target).origin, email,
           { slug: instance.slug, ...(customHost ? { host: customHost } : {}), ...(nonce ? { n: nonce } : {}), return: back, email: email ? '1' : '0' }));
         return;
       }

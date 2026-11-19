@@ -8,12 +8,14 @@ import { localeOf, requestLocale } from './locale.js';
 import { MAX_NAME } from '../platform/groups.js';
 import type { CustomDomainsMode, RegistrationMode } from '../platform/settings.js';
 import { AiError, DEFAULT_GROUP, DEFAULT_HOURLY_LIMIT, HOURLY_LIMIT_MAX, MAX_MODEL_DESCRIPTION, MAX_TOKENS_LIMIT, PRESETS, PROVIDER_IDS, TEST_PROMPT, type AiGroup, type AiGroupInput, type AiModel, type AiModelInput, type AiProvider, type AiProviderInput, type ProviderId } from '../platform/ai.js';
+import type { OwnedPlan } from '../platform/account-removal.js';
 import type { Instance } from '../platform/apps.js';
 import type { Role, User } from '../platform/users.js';
-import { requireUser, type PlatformExtension } from './app.js';
+import { requireUser, shellFor, type PlatformExtension } from './app.js';
+import { loginLimiter } from './platform.js';
 import { noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, sizeText, visibilityLabel, type Option } from './pages.js';
 import { domainsBody } from './manage.js';
-import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, notice, signedIn, visibilityIcon } from './ui.js';
+import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid } from './session.js';
 
 const ROLES: readonly Role[] = ['admin', 'publisher', 'user'];
@@ -43,6 +45,9 @@ ${msg.ok ? notice('success', msg.ok) : ''}${msg.error ? notice('danger', msg.err
 <section class="card" aria-labelledby="admin-section"><h2 id="admin-section">${esc(title)}</h2>${body}</section>`, signedIn(core, admin, 'admin', returnPath));
 }
 
+const mono = (v: string): string => `<span class="mono">${esc(v)}</span>`;
+const none = '<span class="muted">–</span>';
+
 const STATUS_TONES = { disabled: 'danger', active: 'success', unverified: 'warning' } as const;
 
 function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
@@ -53,17 +58,55 @@ function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): strin
     const state = u.disabled ? 'disabled' : u.verified ? 'active' : 'unverified';
     const status = t(locale, u.disabled ? 'common.disabled' : u.verified ? 'common.active' : 'common.unverified');
     return [
-      `<div class="cell-user">${avatar(u, 'sm')}<div><strong>${esc(u.name)}</strong><span>${esc(u.email)}</span></div></div>`,
+      personCell(u),
       `<form method="post" action="${base}/role" class="inline-form">${hiddenField('csrf', csrf)}<select name="role" aria-label="${esc(t(locale, 'admin.users.roleOf', { email: u.email }))}">${roleOptions(locale, u.role)}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
       `<form method="post" action="${base}/ai-group" class="inline-form">${hiddenField('csrf', csrf)}<select name="group" aria-label="${esc(t(locale, 'admin.users.aiGroupOf', { email: u.email }))}">${optionList(aiGroups, core.ai.groupIdOf(u.id))}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
       badge(status, { tone: STATUS_TONES[state], dot: true }),
       `<span class="num">${dateText(locale, u.createdAt)}</span>`,
       `<div class="btn-row">${form(`${base}/disabled`, csrf, hiddenField('disabled', u.disabled ? '0' : '1'), esc(t(locale, u.disabled ? 'common.activate' : 'common.deactivate')), 'quiet', '', true)}
-${form(`${base}/reset-link`, csrf, '', esc(t(locale, 'admin.users.resetLink')), 'quiet', '', true)}</div>`,
+${form(`${base}/reset-link`, csrf, '', esc(t(locale, 'admin.users.resetLink')), 'quiet', '', true)}
+${u.disabled && u.id !== admin.id ? linkButton(`${base}/delete`, `${icon('trash')}${esc(t(locale, 'admin.users.delete'))}`, 'quiet', true, named(t(locale, 'admin.users.delete.of', { email: u.email }))) : ''}</div>`,
     ];
   });
   return shell(core, locale, admin, 'users', t(locale, 'admin.section.users'),
     dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.users.role'), t(locale, 'admin.users.aiGroup'), t(locale, 'common.status'), t(locale, 'common.created'), ''], rows), msg);
+}
+
+/** At most this many names of what an account owns are spelled out on the confirmation page; the counts are always complete. */
+const MAX_OWNED_SHOWN = 50;
+
+/**
+ * The page between "Delete account" and the deletion: what goes with the account, what it owns, what becomes of that, and
+ * the address to type. Null when the account does not exist.
+ */
+function deleteUserPage(core: Core, locale: Locale, admin: User, userId: string, msg?: Msg, answered: { owned?: string; transferTo?: string } = {}): string | null {
+  const target = core.users.get(userId);
+  if (!target) return null;
+  const csrf = csrfToken(core, admin);
+  const base = `/admin/users/${encodeURIComponent(target.id)}/delete`;
+  const { apps, instances } = core.removal.owned(target.id);
+  const names = (slugs: string[]): string => slugs.slice(0, MAX_OWNED_SHOWN).map(mono).join(', ') + (slugs.length > MAX_OWNED_SHOWN ? ', …' : '');
+  const group = (label: string, slugs: string[]): string =>
+    slugs.length ? `<div><dt>${esc(label)} <span class="count">${slugs.length}</span></dt><dd>${names(slugs)}</dd></div>` : '';
+  const owns = apps.length + instances.length === 0
+    ? `<p class="hint">${esc(t(locale, 'admin.users.delete.ownsNothing'))}</p>`
+    : `<h3>${esc(t(locale, 'admin.users.delete.owns'))}</h3><dl class="facts">${group(t(locale, 'admin.section.apps'), apps.map((a) => a.slug))}${group(t(locale, 'app.instances'), instances.map((i) => i.slug))}</dl>`;
+  // The safe choice comes first and is preselected: handing over loses nothing. After a refusal the page comes back with what
+  // was chosen and entered, so a second try does what the first one meant to do.
+  const trash = answered.owned === 'delete';
+  const choice = apps.length + instances.length === 0 ? '' : `<fieldset class="stack"><legend>${esc(t(locale, 'admin.users.delete.what'))}</legend>
+<label class="check"><input type="radio" name="owned" value="transfer"${trash ? '' : ' checked'}><span>${esc(t(locale, 'admin.users.delete.transfer'))}</span></label>
+${field('transfer-to', t(locale, 'admin.users.delete.transferEmail'), `<input id="transfer-to" name="transfer_to" type="email" maxlength="254" autocomplete="off" value="${esc(answered.transferTo ?? admin.email)}">`, t(locale, 'admin.users.delete.transferHint'))}
+<label class="check"><input type="radio" name="owned" value="delete"${trash ? ' checked' : ''}><span>${esc(t(locale, 'admin.users.delete.trash'))}</span></label></fieldset>`;
+  // Cancel is the first button and so the form's default: Enter in a field never deletes.
+  const body = `<p>${esc(t(locale, 'admin.users.delete.text', { name: target.name, email: target.email }))}</p>
+<div class="subsection">${owns}</div>
+<div class="subsection"><form method="post" action="${esc(base)}" class="stack">${hiddenField('csrf', csrf)}${choice}
+${field('confirm', t(locale, 'admin.users.delete.confirm', { email: target.email }), `<input id="confirm" name="confirm" required autocomplete="off" spellcheck="false" data-confirm="${esc(target.email)}">`)}
+<div class="btn-row"><button type="submit" name="decision" value="cancel" formnovalidate class="${btn('secondary')}">${esc(t(locale, 'signin.cancel'))}</button>
+<button type="submit" name="decision" value="delete" class="${btn('danger')}">${icon('trash')}${esc(t(locale, 'admin.users.delete.submit'))}</button></div></form></div>`;
+  return shell(core, locale, admin, 'users', t(locale, 'admin.users.delete.pageTitle', { email: target.email }), body, msg, base,
+    `<a class="back" href="/admin/users">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.section.users'))}</a>`);
 }
 
 function invitesSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
@@ -91,7 +134,7 @@ function groupsSection(core: Core, locale: Locale, admin: User, msg?: Msg): stri
   const csrf = csrfToken(core, admin);
   const groups = core.groups.list();
   const rows = groups.map((g) => [
-    `<div class="cell-user"><span class="tile tile-xs" aria-hidden="true">${icon('users', 'i-sm')}</span><div><a href="/admin/groups/${encodeURIComponent(g.id)}"><strong>${esc(g.name)}</strong></a></div></div>`,
+    `<div class="cell-user"><span class="tile tile-xs" aria-hidden="true">${icon('users', 'i-sm')}</span><div><a href="/admin/groups/${encodeURIComponent(g.id)}"><strong title="${esc(g.name)}">${esc(g.name)}</strong></a></div></div>`,
     `<span class="num">${g.memberCount}</span>`,
   ]);
   const body = `${groups.length ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.groups.members')], rows) : emptyState(t(locale, 'admin.groups.none'), 'users')}
@@ -107,7 +150,7 @@ function groupPage(core: Core, locale: Locale, admin: User, groupId: string, msg
   const base = `/admin/groups/${encodeURIComponent(group.id)}`;
   const members = core.groups.members(group.id);
   const rows = members.map((m) => [
-    `<div class="cell-user">${avatar(m, 'sm')}<div><strong>${esc(m.name)}</strong><span>${esc(m.email)}</span></div></div>`,
+    personCell(m),
     form(`${base}/members/${encodeURIComponent(m.id)}/remove`, csrf, '', `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true),
   ]);
   const body = `${form(`${base}/rename`, csrf, field('group-name', t(locale, 'common.name'), `<input id="group-name" name="name" required maxlength="${MAX_NAME}" value="${esc(group.name)}" autocomplete="off">`), esc(t(locale, 'common.rename')), 'secondary', 'form-row')}
@@ -159,8 +202,6 @@ ${settingRow('ai-base-url', t(locale, 'admin.ai.baseUrl'), t(locale, 'admin.ai.b
 </div>`;
 }
 
-const mono = (v: string): string => `<span class="mono">${esc(v)}</span>`;
-const none = '<span class="muted">–</span>';
 
 /** Catalog name (only when adding), provider, the provider's model name and what the model is good for. */
 function modelFields(core: Core, locale: Locale, m?: AiModel): string {
@@ -305,7 +346,7 @@ export function requireAdmin(core: Core): RequestHandler {
   return (req, res, next) => {
     auth(req, res, () => {
       if ((res.locals.user as User).role !== 'admin') {
-        res.status(403).type('html').send(forbiddenAdminPage(requestLocale(core, req, res.locals.user as User)));
+        res.status(403).type('html').send(forbiddenAdminPage(requestLocale(core, req, res.locals.user as User), shellFor(core, req, res.locals.user as User)));
         return;
       }
       next();
@@ -336,7 +377,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     async (req, res, next) => {
       const user = adminOf(res);
       if (!csrfValid(core, user, field(req, 'csrf', 2000))) {
-        send(res, 403, formErrorPage(localeOf(res), 'error.sessionExpired', backLink(localeOf(res), '/admin', t(localeOf(res), 'admin.back'))));
+        send(res, 403, formErrorPage(localeOf(res), 'error.sessionExpired', backLink(localeOf(res), '/admin', t(localeOf(res), 'admin.back')), shellFor(core, req, user)));
         return;
       }
       try {
@@ -347,12 +388,15 @@ export const adminExtension: PlatformExtension = (router, core) => {
     },
   ];
   /** Domain error in an action: render `view` again with a message in the viewer's language, status from the error code. */
+  /** "Does not exist" inside the administration shell; `back` is where the link below the message leads. */
+  const missing = (req: Request, res: Response, what: MessageKey, href: string, label: MessageKey): string =>
+    missingPage(localeOf(res), what, backLink(localeOf(res), href, t(localeOf(res), label)), shellFor(core, req, adminOf(res)));
   const failWith = (res: Response, e: unknown, view: (msg: Msg) => string | null, messages: Partial<Record<string, MessageKey>> = {}): void => {
     if (!(e instanceof LagerError)) throw e;
     const status = e.code === 'not_found' ? 404 : e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400;
     const locale = localeOf(res);
     const error = noticeText(locale, messages[e.code] ?? 'validation.generic');
-    send(res, status, view({ error }) ?? missingPage(locale, 'error.notFound.text', backLink(locale, '/admin', t(locale, 'admin.back'))));
+    send(res, status, view({ error }) ?? missing(res.req, res, 'error.notFound.text', '/admin', 'admin.back'));
   };
 
   const showUsers = (res: Response): void => send(res, 200, usersSection(core, localeOf(res), adminOf(res)));
@@ -362,7 +406,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
   router.get('/admin/groups', noStore, admin, (_req, res) => { send(res, 200, groupsSection(core, localeOf(res), adminOf(res))); });
   router.get('/admin/groups/:id', noStore, admin, (req, res) => {
     const html = groupPage(core, localeOf(res), adminOf(res), param(req, 'id'));
-    if (html === null) send(res, 404, missingPage(localeOf(res), 'admin.groups.missing', backLink(localeOf(res), '/admin/groups', t(localeOf(res), 'admin.groups.all'))));
+    if (html === null) send(res, 404, missing(req, res, 'admin.groups.missing', '/admin/groups', 'admin.groups.all'));
     else send(res, 200, html);
   });
   router.get('/admin/settings', noStore, admin, (_req, res) => { send(res, 200, settingsSection(core, localeOf(res), adminOf(res))); });
@@ -370,7 +414,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
   for (const [kind, view] of [['providers', aiProviderPage], ['models', aiModelPage], ['groups', aiGroupPage]] as const) {
     router.get(`/admin/ai/${kind}/:id`, noStore, admin, (req, res) => {
       const html = view(core, localeOf(res), adminOf(res), param(req, 'id'));
-      if (html === null) send(res, 404, missingPage(localeOf(res), 'admin.ai.notFound', backLink(localeOf(res), '/admin/ai', t(localeOf(res), 'admin.ai.all'))));
+      if (html === null) send(res, 404, missing(req, res, 'admin.ai.notFound', '/admin/ai', 'admin.ai.all'));
       else send(res, 200, html);
     });
   }
@@ -384,7 +428,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
   const showDomains = (res: Response, inst: Instance, status = 200, msg?: Msg): void => send(res, status, domainsPage(core, localeOf(res), adminOf(res), inst, msg));
   router.get('/admin/instances/:slug/domains', noStore, admin, (req, res) => {
     const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
-    if (!inst) send(res, 404, missingPage(localeOf(res), 'admin.instances.notFound', backLink(localeOf(res), '/admin/apps', t(localeOf(res), 'admin.section.apps'))));
+    if (!inst) send(res, 404, missing(req, res, 'admin.instances.notFound', '/admin/apps', 'admin.section.apps'));
     else showDomains(res, inst);
   });
   for (const [route, change] of [['', 'add'], ['/remove', 'remove']] as const) {
@@ -397,7 +441,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
         if (!(e instanceof LagerError)) throw e;
         const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
         const key = (e.reason !== undefined ? DOMAIN_NOTICES[e.reason] : undefined) ?? (e.code === 'not_found' ? 'admin.instances.notFound' : 'validation.generic');
-        if (!inst) send(res, 404, missingPage(localeOf(res), 'admin.instances.notFound', backLink(localeOf(res), '/admin/apps', t(localeOf(res), 'admin.section.apps'))));
+        if (!inst) send(res, 404, missing(req, res, 'admin.instances.notFound', '/admin/apps', 'admin.section.apps'));
         else showDomains(res, inst, e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400, { error: noticeText(localeOf(res), key) });
       }
     }));
@@ -428,6 +472,59 @@ export const adminExtension: PlatformExtension = (router, core) => {
       const link = core.accounts.createResetLink(param(req, 'id'));
       send(res, 200, usersSection(core, localeOf(res), user, { once: { title: t(localeOf(res), 'admin.users.resetLinkTitle'), link } }));
     } catch (e) { failWith(res, e, (m) => usersSection(core, localeOf(res), user, m), userMessages); }
+  }));
+
+  // Deleting an account: a page that says what goes with it, then the deletion itself. Not offered over REST or MCP.
+  const DELETE_NOTICES: Record<string, MessageKey> = {
+    delete_self: 'admin.users.delete.self', delete_active: 'admin.users.delete.active', transfer_target: 'admin.users.delete.target',
+    transfer_target_role: 'admin.users.delete.targetRole', other_users_instances: 'admin.users.delete.othersInstances', owned_choice: 'admin.users.delete.choose',
+    confirm: 'admin.users.delete.confirmWrong',
+  };
+  /** A refusal: on the confirmation page while the account can still be deleted, else on the list of users. */
+  const deleteRefused = (res: Response, user: User, id: string, e: unknown, answered?: { owned?: string; transferTo?: string }): void => {
+    if (!(e instanceof LagerError)) throw e;
+    const locale = localeOf(res);
+    const error = noticeText(locale, (e.reason !== undefined ? DELETE_NOTICES[e.reason] : undefined) ?? (e.code === 'not_found' ? 'admin.users.notFound' : 'validation.generic'));
+    const status = e.code === 'not_found' ? 404 : e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400;
+    const stays = e.reason !== 'delete_self' && e.reason !== 'delete_active';
+    send(res, status, (stays ? deleteUserPage(core, locale, user, id, { error }, answered) : null) ?? usersSection(core, locale, user, { error }));
+  };
+
+  router.get('/admin/users/:id/delete', noStore, admin, (req, res) => {
+    const user = adminOf(res);
+    const id = param(req, 'id');
+    try {
+      core.removal.removable(id, user);
+      send(res, 200, deleteUserPage(core, localeOf(res), user, id) ?? usersSection(core, localeOf(res), user));
+    } catch (e) { deleteRefused(res, user, id, e); }
+  });
+
+  router.post('/admin/users/:id/delete', ...action((req, res, user) => {
+    const id = param(req, 'id');
+    if (field(req, 'decision') !== 'delete') { res.redirect('/admin/users'); return; }
+    const choice = field(req, 'owned');
+    // Only what the form offers comes back in a re-rendered page.
+    const answered = { owned: choice === 'delete' || choice === 'transfer' ? choice : undefined, transferTo: (req.body as Record<string, unknown>).transfer_to === undefined ? undefined : field(req, 'transfer_to', 254) };
+    try {
+      const target = core.removal.removable(id, user);
+      if (field(req, 'confirm', 254) !== target.email) throw new LagerError('invalid_argument', 'The confirmation does not match.', 'confirm');
+      const { apps, instances } = core.removal.owned(id);
+      let plan: OwnedPlan = { delete: true };
+      if (apps.length + instances.length > 0 && choice !== 'delete') {
+        if (choice !== 'transfer') throw new LagerError('invalid_argument', 'owned must be transfer or delete.', 'owned_choice');
+        const to = core.users.getByEmail(field(req, 'transfer_to', 254));
+        if (!to) throw new LagerError('invalid_argument', 'No such account.', 'transfer_target');
+        plan = { transferTo: to.id };
+      }
+      const { cleanedUp } = core.removal.remove(id, user, plan);
+      // A pause the address had collected at the sign-in page does not wait for the next account of that name.
+      loginLimiter(core).succeed(target.email.trim().toLowerCase());
+      const locale = localeOf(res);
+      // The account is gone either way; files that could not be moved are the administrator's to look at, in the log.
+      send(res, 200, usersSection(core, locale, user, cleanedUp
+        ? { ok: t(locale, 'admin.users.delete.done', { email: target.email }) }
+        : { error: t(locale, 'admin.users.delete.cleanupFailed', { email: target.email }) }));
+    } catch (e) { deleteRefused(res, user, id, e, answered); }
   }));
 
   // --- invitations ---

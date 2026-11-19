@@ -3,7 +3,11 @@ const DEFAULT_THEME_COLOR = '#1f2a5c';
 const VIEWPORT = '<meta name="viewport" content="width=device-width, initial-scale=1">';
 
 /** What the page head needs to know about its app to be installable. */
-export interface PageMeta { title: string; themeColor: string; iconVersion: number }
+export interface PageMeta {
+  title: string; themeColor: string; iconVersion: number;
+  /** For an instance that is not public: the token that lets the icon links be fetched without the instance cookie (`iconToken`). */
+  iconToken?: string;
+}
 
 /** The "Made with Lager" badge, in the viewer's language; given only when this viewer should see it. */
 export interface BadgeText { label: string; linkLabel: string; close: string; href: string }
@@ -134,9 +138,12 @@ function installTags(tags: string[], meta: PageMeta): string {
   let out = '';
   // A page with its own manifest manages its install tags itself; otherwise each tag is added only if the page lacks it.
   if (!has.manifest) {
-    out += '<link rel="manifest" href="/__lager/manifest.webmanifest">';
-    if (!has.touchIcon) out += `<link rel="apple-touch-icon" href="/__lager/icon-180.png?v=${v}">`;
-    if (!has.icon) out += `<link rel="icon" type="image/png" href="/__lager/icon-192.png?v=${v}">`;
+    // Browsers fetch a manifest without cookies unless the link asks for them, and without them an instance that is not public
+    // answers with the generic manifest ("Lager", the bundled icon) instead of the app's name and icon.
+    out += '<link rel="manifest" href="/__lager/manifest.webmanifest" crossorigin="use-credentials">';
+    const t = meta.iconToken !== undefined && /^[A-Za-z0-9_-]+$/.test(meta.iconToken) ? `&amp;t=${meta.iconToken}` : '';
+    if (!has.touchIcon) out += `<link rel="apple-touch-icon" href="/__lager/icon-180.png?v=${v}${t}">`;
+    if (!has.icon) out += `<link rel="icon" type="image/png" href="/__lager/icon-192.png?v=${v}${t}">`;
     if (!has.themeColor) out += `<meta name="theme-color" content="${attr(color)}">`;
     out += '<meta name="apple-mobile-web-app-capable" content="yes">'
       + '<meta name="mobile-web-app-capable" content="yes">'

@@ -54,6 +54,28 @@ describe('the question before the first sign-in to an instance', () => {
     expect(s.confirmations()).toEqual([]);
   });
 
+  it('the page lets its form end on the platform and on this instance, and nowhere else', async () => {
+    const s = setup();
+    const cookie = await s.h.login('v@x.y', PW);
+    const policyOf = (html: string): string => /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/.exec(html)![1];
+    const page = await s.ask(cookie);
+    expect(policyOf(page.text)).toMatch(/; form-action 'self' http:\/\/workout\.apps\.localhost:8080$/);
+    // Continue and Cancel both leave the platform for exactly that origin, which a browser checks against the policy.
+    const fields = s.fieldsOf(page.text);
+    for (const decision of ['cancel', 'continue']) {
+      const res = await s.answer(cookie, { ...fields, decision });
+      expect(res.status, decision).toBe(302);
+      expect(new URL(res.headers.location).origin, decision).toBe('http://workout.apps.localhost:8080');
+    }
+    // On a custom domain the page names that domain instead.
+    s.h.core.domains.add(s.inst, 'workout.example.org', s.h.core.users.get(s.h.adminId)!, true);
+    const other = s.h.core.users.create({ email: 'w@x.y', name: 'Wim', password: PW, role: 'user' });
+    const custom = await s.ask(await s.h.login(other.email, PW), { host: 'workout.example.org' });
+    expect(policyOf(custom.text)).toMatch(/; form-action 'self' http:\/\/workout\.example\.org:8080$/);
+    const sent = await s.answer(await s.h.login(other.email, PW), { ...s.fieldsOf(custom.text), decision: 'continue' });
+    expect(new URL(sent.headers.location).origin).toBe('http://workout.example.org:8080');
+  });
+
   it('continue signs in and is remembered: the question comes once per instance', async () => {
     const s = setup();
     const cookie = await s.h.login('v@x.y', PW);

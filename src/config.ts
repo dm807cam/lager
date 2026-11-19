@@ -199,7 +199,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const defaultLocale = parseLocale(env.LAGER_DEFAULT_LOCALE);
   const smtpUrl = parseSmtpUrl(env.LAGER_SMTP_URL);
   const dataDir = path.resolve(env.LAGER_DATA_DIR?.trim() || './data');
-  fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const envSecret = env.LAGER_SECRET?.trim() || undefined;
   return {
     dataDir,

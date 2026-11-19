@@ -69,6 +69,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.error('Usage: node dist/backup.js <target directory>   (data directory: LAGER_DATA_DIR, default ./data)');
     process.exit(2);
   }
+  // A backup holds what the data directory holds: nothing in it is created readable by other accounts, not even for a moment.
+  process.umask(0o077);
   try {
     const r = backup(process.env.LAGER_DATA_DIR?.trim() || './data', target);
     console.log(`Backup written to ${path.resolve(target)}: ${r.databases} databases, ${r.files} files, ${(r.bytes / 1024 / 1024).toFixed(1)} MiB.`);

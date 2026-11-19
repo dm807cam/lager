@@ -24,7 +24,7 @@ import { requestLocale } from './locale.js';
 import { t as tr } from '../i18n/index.js';
 import { badCodePage, disabledPage, forbiddenPage, instanceHostPage, notFoundPage } from './pages.js';
 import { epochValid } from './session.js';
-import { signToken, verifyToken } from './tokens.js';
+import { iconToken, signToken, verifyToken } from './tokens.js';
 
 const RUNTIME_FILE = new URL('../runtime/runtime.js', import.meta.url);
 const BADGE_FILE = new URL('../runtime/badge.js', import.meta.url);
@@ -122,7 +122,10 @@ export function createInstanceRouter(core: Core): express.Router {
   const hasScope = (ctx: Ctx, scope: string): boolean => Array.isArray(ctx.caps.user?.scopes) && ctx.caps.user.scopes.includes(scope);
   const emailAllowed = (ctx: Ctx): boolean => hasScope(ctx, 'email');
 
-  mountPwaRoutes(router, core);
+  // Everything under /__lager/ is data, a script or an image with its type declared: never to be sniffed into something else.
+  router.use('/__lager', (_req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); next(); });
+
+  mountPwaRoutes(router, core, (req, instance) => core.access.levelFor(instance, instanceUser(core, req, instance)) !== 'none');
 
   router.use((req, res, next) => {
     const instance = core.apps.getInstanceBySlug(res.locals.slug as string);
@@ -146,7 +149,7 @@ export function createInstanceRouter(core: Core): express.Router {
       typeof req.query.code === 'string' ? req.query.code : undefined, config.secret);
     const user = t && typeof t.uid === 'string' ? core.users.get(t.uid) : null;
     // The code names the host it was issued for and is only good there: a code for the custom domain is not valid on the default host.
-    const host = req.hostname.toLowerCase().replace(/\.$/, '');
+    const host = (req.hostname ?? '').toLowerCase().replace(/\.$/, '');
     const nonce = readCookie(req, nonceCookieName(config));
     const sameBrowser = typeof nonce === 'string' && NONCE_RE.test(nonce) && typeof t?.n === 'string'
       && nonce.length === t.n.length && crypto.timingSafeEqual(Buffer.from(nonce), Buffer.from(t.n));
@@ -185,7 +188,11 @@ export function createInstanceRouter(core: Core): express.Router {
       badge = { label: tr(locale, 'badge.label'), linkLabel: tr(locale, 'badge.link'), close: tr(locale, 'badge.close'), href: PROJECT_URL };
     }
     const html = injectRuntime(core.apps.readVersionHtml(ctx.instance.appId, ctx.instance.activeVersion),
-      app ? { title: app.title, themeColor: app.themeColor, iconVersion: app.iconVersion } : undefined, badge);
+      app ? {
+        title: app.title, themeColor: app.themeColor, iconVersion: app.iconVersion,
+        // Phones fetch the home-screen icon on their own, often without cookies: the page hands them what opens it.
+        ...(ctx.instance.visibility === 'public' ? {} : { iconToken: iconToken(ctx.instance.id, app.iconVersion, config.secret) }),
+      } : undefined, badge);
     res.set({
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
