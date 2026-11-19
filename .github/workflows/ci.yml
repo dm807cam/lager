@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The lowest supported major (package.json "engines") and the one the Docker image uses.
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: lager:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          docker run -d --name lager -p 8080:8080 \
+            -e LAGER_PUBLIC_URL=http://localhost:8080 \
+            -e LAGER_APPS_DOMAIN=apps.localhost \
+            -e LAGER_ADMIN_EMAIL=admin@example.com \
+            -e LAGER_ADMIN_PASSWORD=ci-password-123 \
+            lager:ci
+          for i in $(seq 1 30); do
+            if curl -fsS -H 'Host: localhost:8080' http://127.0.0.1:8080/healthz; then
+              echo; echo "Lager is up."
+              curl -fsS -o /dev/null -H 'Host: localhost:8080' http://127.0.0.1:8080/login
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Lager did not become healthy in time." >&2
+          docker logs lager
+          exit 1
+
+      - name: Container log
+        if: always()
+        run: docker logs lager || true
+
+  dco:
+    name: DCO sign-off
+    # Every commit in a pull request needs a Signed-off-by line (see CONTRIBUTING.md).
+    # The repository owner holds the copyright already and is exempt.
+    if: github.event_name == 'pull_request' && github.event.pull_request.author_association != 'OWNER'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Check sign-off on every commit
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for sha in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            if ! git show -s --format=%B "$sha" | grep -qiE '^Signed-off-by: .+ <.+@.+>$'; then
+              echo "::error::Commit $(git show -s --format='%h %s' "$sha") has no Signed-off-by line."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo
+            echo "Sign off your commits with 'git rebase --signoff $(git rev-parse --short "$BASE")' and push again with --force-with-lease."
+            echo "Why we ask for it: https://github.com/${{ github.repository }}/blob/main/CONTRIBUTING.md#signing-off-your-work-dco"
+            exit 1
+          fi
+          echo "Every commit is signed off."
