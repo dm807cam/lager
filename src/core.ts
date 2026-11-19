@@ -63,16 +63,15 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   }
   // Checked only while the first administrator is about to be created: a later start never reads the password again.
   if (config.adminEmail && config.adminPassword !== undefined && fresh) {
-    if (ADMIN_PASSWORD_PLACEHOLDERS.includes(config.adminPassword)) {
-      if (!isLoopbackHost(config.publicUrl.hostname)) {
-        refuse(`LAGER_ADMIN_PASSWORD still has the example value "${config.adminPassword}". Set your own password before the first start, `
-          + `because Lager is reachable from other machines at ${config.publicUrl.host}. The admin account was not created.`);
-      }
+    const placeholder = ADMIN_PASSWORD_PLACEHOLDERS.includes(config.adminPassword);
+    if (placeholder && !isLoopbackHost(config.publicUrl.hostname)) {
+      refuse(`LAGER_ADMIN_PASSWORD still has the example value "${config.adminPassword}". Set your own password before the first start, `
+        + `because Lager is reachable from other machines at ${config.publicUrl.host}. The admin account was not created.`);
     }
     if (config.adminPassword.length < MIN_PASSWORD_LENGTH) {
       refuse(`LAGER_ADMIN_PASSWORD is too short: the administrator's password needs at least ${MIN_PASSWORD_LENGTH} characters. The admin account was not created.`);
     }
-    if (ADMIN_PASSWORD_PLACEHOLDERS.includes(config.adminPassword)) {
+    if (placeholder) {
       console.warn(`WARNING: the administrator ${config.adminEmail} is created with the example password "${config.adminPassword}". `
         + 'Change it on the Account page before anyone else can reach this server.');
     }

@@ -231,7 +231,8 @@ describe('registration and verification', () => {
     expect((await post('/verify', { token: third, password: PASSWORD }, '10.2.0.99')).status).toBe(429);
     // An invalid link is not a password guess and counts against nobody.
     for (let i = 0; i < 12; i++) expect((await post('/verify', { token: 'nope', password: 'x' }, '6.6.6.6')).status).toBe(400);
-  });
+  // About sixty scrypt hashes: well past the default five seconds on a slow CI runner.
+  }, 30_000);
 
   it('invite bound to an e-mail pre-fills and enforces it', async () => {
     const s = setup({ mode: 'invite' });

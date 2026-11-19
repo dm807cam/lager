@@ -116,7 +116,6 @@ export function isLoopbackHost(hostname: string): boolean {
   return h === 'localhost' || h.endsWith('.localhost') || h === '[::1]' || /^127(\.\d{1,3}){3}$/.test(h);
 }
 
-
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const publicUrl = new URL(required(env, 'LAGER_PUBLIC_URL'));
   const appsDomain = required(env, 'LAGER_APPS_DOMAIN').toLowerCase();
