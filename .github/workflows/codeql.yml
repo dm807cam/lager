@@ -30,7 +30,7 @@ jobs:
         run: echo "private=$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" >> "$GITHUB_OUTPUT"
 
       - if: steps.visibility.outputs.private == 'false'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - if: steps.visibility.outputs.private == 'false'
         uses: github/codeql-action/init@v4
