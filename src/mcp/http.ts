@@ -67,8 +67,9 @@ export const mcpExtension: PlatformExtension = (router, core) => {
     const server = buildMcpServer(core, res.locals.mcpUser);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => {
-      void transport.close();
-      void server.close();
+      // Closing must never end the process: an unhandled rejection stops Lager (see server.ts).
+      transport.close().catch((e: unknown) => { console.error('lager: closing an MCP transport failed:', e); });
+      server.close().catch((e: unknown) => { console.error('lager: closing an MCP server failed:', e); });
     });
     try {
       await server.connect(transport);
