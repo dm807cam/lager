@@ -436,6 +436,27 @@ describe('http', () => {
     expect((await db(h, cookie, { op: 'set', path: 'tasks/t1', data: {} }, '2001:db8:ffff::1')).status).toBe(200);
   });
 
+  it('the numbers: an anonymous address reads no more than an account, and all guests together eight times that', () => {
+    expect(DB_RATE).toMatchObject({ reads: 600, writes: 300, guestReads: 600, guestWrites: 150, guestTotalFactor: 8 });
+  });
+
+  it('while the guest total is used up, a refused guest does not drain their own budget', async () => {
+    const { h, instId } = setup(1);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    h.core.apps.setVisibility(instId, 'public', h.adminId);
+    const write = (from: string) => db(h, undefined, { op: 'set', path: 'tasks/t1', data: {} }, from);
+    await many(DB_RATE.guestWrites * DB_RATE.guestTotalFactor, (i) => write(`2001:db8:${(i + 1).toString(16)}::1`));
+    // Fifty seconds later the total is still full: the victim keeps asking and is refused every time.
+    vi.setSystemTime(Date.now() + 50_000);
+    const refused = await many(DB_RATE.guestWrites + 5, () => write('203.0.113.9'));
+    expect(refused.every((r) => r.status === 429)).toBe(true);
+    // The total's window passes; the victim's refused attempts are younger than a minute but were never counted.
+    vi.setSystemTime(Date.now() + 11_000);
+    const after = await many(DB_RATE.guestWrites, () => write('203.0.113.9'));
+    expect(after.every((r) => r.status === 403)).toBe(true);
+    expect((await write('203.0.113.9')).status).toBe(429);
+  });
+
   it('the database budget comes back when its window has passed', async () => {
     const { h } = setup();
     vi.useFakeTimers({ toFake: ['Date'] });

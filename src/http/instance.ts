@@ -43,10 +43,10 @@ const NONCE_SECONDS = 600;
 /**
  * Database operations per viewer, instance and minute. A page load makes one read per listener and every change at most one
  * more per listener every 250 ms (the runtime coalesces), so real apps stay far below. Guests are counted per client address
- * (an IPv6 /64 is one address): that address can stand for many people behind one router, who can only read, so it gets
- * more reads than a single account and fewer writes. All guests of an instance together get `guestTotalFactor` times that.
+ * (an IPv6 /64 is one address): an anonymous address gets as many reads as an account, never more, and fewer writes, which
+ * guests may not make anyway. All guests of an instance together get `guestTotalFactor` times that.
  */
-export const DB_RATE = { reads: 600, writes: 300, guestReads: 1200, guestWrites: 150, guestTotalFactor: 4, windowMs: 60_000 };
+export const DB_RATE = { reads: 600, writes: 300, guestReads: 600, guestWrites: 150, guestTotalFactor: 8, windowMs: 60_000 };
 const DB_READS = new Set(['get', 'query']);
 const RANK: Record<Level, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
 
@@ -290,11 +290,15 @@ export function createInstanceRouter(core: Core): express.Router {
     const guest = ctx.viewer.userId === null;
     const budget = guest ? (isRead ? DB_RATE.guestReads : DB_RATE.guestWrites) : (isRead ? DB_RATE.reads : DB_RATE.writes);
     const viewerKey = `${ctx.instance.id}\n${ctx.viewer.userId ?? `ip:${addressKey(req.ip)}`}`;
-    // Guests also share one budget per instance, so many addresses together stay bounded; a guest already at their own limit does not use it up.
-    if (!limiter.hit(viewerKey, budget) || (guest && !limiter.hit(`${ctx.instance.id}\nguests`, budget * DB_RATE.guestTotalFactor))) {
+    // Guests also share one budget per instance, so many addresses together stay bounded. It is checked first and recorded
+    // only for an admitted request: while it is used up, a guest's own budget does not drain, and a guest at their own limit does not use it up.
+    const guestsKey = `${ctx.instance.id}\nguests`;
+    const guestTotal = budget * DB_RATE.guestTotalFactor;
+    if ((guest && limiter.full(guestsKey, guestTotal)) || !limiter.hit(viewerKey, budget)) {
       res.set('Retry-After', '5');
       throw new LagerError('rate_limited', 'Too many database requests; try again shortly.');
     }
+    if (guest) limiter.hit(guestsKey, guestTotal);
     const body: unknown = req.body;
     if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new LagerError('invalid_argument', 'Request body must be a JSON object.');
     const { op, path, data, query, options } = body as Record<string, unknown>;
