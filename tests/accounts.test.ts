@@ -50,21 +50,21 @@ describe('Accounts', () => {
     expect(mailer.sent).toHaveLength(1);
     expect(mailer.sent[0].to).toBe('ann@x.y');
     expect(mailer.sent[0].subject).toBe(t('en', 'mail.verify.subject'));
-    expect(users.checkLogin('ann@x.y', PW)).toEqual({ ok: false, reason: 'unverified' });
+    expect(await users.checkLogin('ann@x.y', PW)).toEqual({ ok: false, reason: 'unverified' });
     const token = tokenIn(mailer.sent[0].text, 'token');
     expect(mailer.sent[0].text).toContain('/verify?token=');
-    expect(accounts.verifyEmail(token, PW).verified).toBe(true);
+    expect((await accounts.verifyEmail(token, PW)).verified).toBe(true);
     expect(users.get(r.user.id)?.verified).toBe(true);
-    expect(users.checkLogin('ann@x.y', PW).ok).toBe(true);
+    expect((await users.checkLogin('ann@x.y', PW)).ok).toBe(true);
   });
 
   it('verification link is single use and kind-bound', async () => {
     await accounts.register({ name: 'Ann', email: 'ann@x.y', password: PW });
     const token = tokenIn(mailer.sent[0].text, 'token');
-    expect(() => accounts.resetPassword(token, 'another-long-pw')).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
-    accounts.verifyEmail(token, PW);
-    expect(() => accounts.verifyEmail(token, PW)).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
-    expect(() => accounts.verifyEmail('garbage', PW)).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+    await expect(accounts.resetPassword(token, 'another-long-pw')).rejects.toEqual(expect.objectContaining({ code: 'invalid_argument' }));
+    await accounts.verifyEmail(token, PW);
+    await expect(accounts.verifyEmail(token, PW)).rejects.toEqual(expect.objectContaining({ code: 'invalid_argument' }));
+    await expect(accounts.verifyEmail('garbage', PW)).rejects.toEqual(expect.objectContaining({ code: 'invalid_argument' }));
   });
 
   it('the link alone confirms nothing: it takes the password of whoever registered', async () => {
@@ -72,13 +72,13 @@ describe('Accounts', () => {
     const r = await accounts.register({ name: 'Mallory', email: 'victim@x.y', password: 'the attacker knows this' });
     const token = tokenIn(mailer.sent[0].text, 'token');
     for (const guess of ['', 'the victim guesses', undefined as unknown as string]) {
-      expect(() => accounts.verifyEmail(token, guess)).toThrow(expect.objectContaining({ code: 'forbidden', reason: 'password_wrong' }));
+      await expect(accounts.verifyEmail(token, guess)).rejects.toEqual(expect.objectContaining({ code: 'forbidden', reason: 'password_wrong' }));
     }
     expect(users.get(r.user.id)?.verified).toBe(false);
-    expect(users.checkLogin('victim@x.y', 'the attacker knows this')).toEqual({ ok: false, reason: 'unverified' });
+    expect(await users.checkLogin('victim@x.y', 'the attacker knows this')).toEqual({ ok: false, reason: 'unverified' });
     // A wrong password did not spend the link.
     expect(accounts.checkVerificationToken(token)).toBe(true);
-    expect(accounts.verifyEmail(token, 'the attacker knows this').verified).toBe(true);
+    expect((await accounts.verifyEmail(token, 'the attacker knows this')).verified).toBe(true);
   });
 
   it('a disabled account gets the invalid-link answer, also with the right password', async () => {
@@ -86,32 +86,32 @@ describe('Accounts', () => {
     users.create({ email: 'root@x.y', name: 'R', password: 'x', role: 'admin' });
     users.setDisabled(r.user.id, true);
     const token = tokenIn(mailer.sent[0].text, 'token');
-    expect(() => accounts.verifyEmail(token, PW)).toThrow(expect.objectContaining({ reason: 'link_invalid' }));
+    await expect(accounts.verifyEmail(token, PW)).rejects.toEqual(expect.objectContaining({ reason: 'link_invalid' }));
     expect(users.get(r.user.id)?.verified).toBe(false);
   });
 
   it('a long password is stored whole; one over the limit is refused, never shortened', async () => {
     const long = 'x'.repeat(MAX_PASSWORD_LENGTH);
     const r = await accounts.register({ name: 'Ann', email: 'ann@x.y', password: long });
-    accounts.verifyEmail(tokenIn(mailer.sent[0].text, 'token'), long);
-    expect(users.checkLogin('ann@x.y', long).ok).toBe(true);
-    expect(users.checkLogin('ann@x.y', long.slice(0, 300)).ok).toBe(false);
+    await accounts.verifyEmail(tokenIn(mailer.sent[0].text, 'token'), long);
+    expect((await users.checkLogin('ann@x.y', long)).ok).toBe(true);
+    expect((await users.checkLogin('ann@x.y', long.slice(0, 300))).ok).toBe(false);
     const tooLong = long + 'x';
     await expect(accounts.register({ name: 'Bob', email: 'bob@x.y', password: tooLong })).rejects.toMatchObject({ code: 'invalid_argument', reason: 'password_long' });
     expect(users.getByEmail('bob@x.y')).toBeNull();
-    expect(() => users.setPassword(r.user.id, tooLong)).toThrow(expect.objectContaining({ reason: 'password_long' }));
+    await expect(users.setPassword(r.user.id, tooLong)).rejects.toEqual(expect.objectContaining({ reason: 'password_long' }));
     const reset = tokenIn(accounts.createResetLink(r.user.id), 'token');
-    expect(() => accounts.resetPassword(reset, tooLong)).toThrow(expect.objectContaining({ reason: 'password_long' }));
+    await expect(accounts.resetPassword(reset, tooLong)).rejects.toEqual(expect.objectContaining({ reason: 'password_long' }));
     // The refused password did not spend the reset link.
-    expect(accounts.resetPassword(reset, PW).id).toBe(r.user.id);
+    expect((await accounts.resetPassword(reset, PW)).id).toBe(r.user.id);
   });
 
   it('a reset link confirms the address of an account that never did', async () => {
     const r = await accounts.register({ name: 'Ann', email: 'ann@x.y', password: PW });
     await accounts.requestPasswordReset('ann@x.y');
-    accounts.resetPassword(tokenIn(mailer.sent[1].text, 'token'), 'a brand new password');
+    await accounts.resetPassword(tokenIn(mailer.sent[1].text, 'token'), 'a brand new password');
     expect(users.get(r.user.id)?.verified).toBe(true);
-    expect(users.checkLogin('ann@x.y', 'a brand new password').ok).toBe(true);
+    expect((await users.checkLogin('ann@x.y', 'a brand new password')).ok).toBe(true);
   });
 
   it('expired tokens fail', async () => {
@@ -125,10 +125,10 @@ describe('Accounts', () => {
     const invite = tokenIn((await accounts.createInvite({ email: 'inv@x.y', role: 'user', createdBy: admin.id })).url, 'invite');
 
     vi.setSystemTime(Date.now() + HOUR + 1000);
-    expect(() => accounts.resetPassword(reset, 'another-long-pw')).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+    await expect(accounts.resetPassword(reset, 'another-long-pw')).rejects.toEqual(expect.objectContaining({ code: 'invalid_argument' }));
     expect(accounts.getInvite(invite)).not.toBeNull();
     vi.setSystemTime(new Date('2026-01-02T00:00:01Z'));
-    expect(() => accounts.verifyEmail(verify, PW)).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+    await expect(accounts.verifyEmail(verify, PW)).rejects.toEqual(expect.objectContaining({ code: 'invalid_argument' }));
     vi.setSystemTime(new Date('2026-01-08T00:00:01Z'));
     expect(accounts.getInvite(invite)).toBeNull();
     await expect(accounts.register({ name: 'I', email: 'inv@x.y', password: PW, inviteToken: invite }))
@@ -163,7 +163,7 @@ describe('Accounts', () => {
     expect(r.needsVerification).toBe(true);
     expect(mailer.sent).toHaveLength(1);
     expect(mailer.sent[0]).toMatchObject({ to: 'a@x.y', subject: t('en', 'mail.verify.subject') });
-    expect(users.checkLogin('a@x.y', PW)).toEqual({ ok: false, reason: 'unverified' });
+    expect(await users.checkLogin('a@x.y', PW)).toEqual({ ok: false, reason: 'unverified' });
     expect(accounts.getInvite(token)).toBeNull();
     expect(accounts.listInvites().find((i) => i.id === id)?.used).toBe(true);
     await expect(accounts.register({ name: 'B', email: 'b@x.y', password: PW, inviteToken: token })).rejects.toMatchObject({ code: 'forbidden' });
@@ -219,13 +219,13 @@ describe('Accounts', () => {
     expect(mailer.sent[0]).toMatchObject({ to: 'ann@x.y', subject: t('en', 'mail.reset.subject') });
     expect(mailer.sent[0].text).toContain('/reset?token=');
     const token = tokenIn(mailer.sent[0].text, 'token');
-    expect(() => accounts.resetPassword(token, 'short')).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
-    const r = accounts.resetPassword(token, 'brand-new-password');
+    await expect(accounts.resetPassword(token, 'short')).rejects.toEqual(expect.objectContaining({ code: 'invalid_argument' }));
+    const r = await accounts.resetPassword(token, 'brand-new-password');
     expect(r.verified).toBe(true);
     expect(users.get(u.id)?.sessionEpoch).toBe(1);
-    expect(users.verifyPassword('ann@x.y', 'old-password')).toBeNull();
-    expect(users.verifyPassword('ann@x.y', 'brand-new-password')?.id).toBe(u.id);
-    expect(() => accounts.resetPassword(token, 'yet-another-password')).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+    expect(await users.verifyPassword('ann@x.y', 'old-password')).toBeNull();
+    expect((await users.verifyPassword('ann@x.y', 'brand-new-password'))?.id).toBe(u.id);
+    await expect(accounts.resetPassword(token, 'yet-another-password')).rejects.toEqual(expect.objectContaining({ code: 'invalid_argument' }));
   });
 
   it('reset and resend do not reveal unknown addresses', async () => {
@@ -240,12 +240,12 @@ describe('Accounts', () => {
     expect(mailer.sent[0].subject).toBe(t('en', 'mail.verify.subject'));
   });
 
-  it('admin reset link works', () => {
+  it('admin reset link works', async () => {
     const u = users.create({ email: 'ann@x.y', name: 'Ann', password: 'old-password', role: 'user' });
     const url = accounts.createResetLink(u.id);
     expect(url).toMatch(/^http:\/\/lager\.test\/reset\?token=/);
-    accounts.resetPassword(tokenIn(url, 'token'), 'brand-new-password');
-    expect(users.verifyPassword('ann@x.y', 'brand-new-password')?.id).toBe(u.id);
+    await accounts.resetPassword(tokenIn(url, 'token'), 'brand-new-password');
+    expect((await users.verifyPassword('ann@x.y', 'brand-new-password'))?.id).toBe(u.id);
     expect(() => accounts.createResetLink('missing')).toThrow(expect.objectContaining({ code: 'not_found' }));
   });
 
@@ -271,21 +271,21 @@ describe('Accounts', () => {
     const reset = tokenIn(accounts.createResetLink(u.id), 'token');
     const invite = tokenIn((await accounts.createInvite({ role: 'user', createdBy: admin.id })).url, 'invite');
     const bad = expect.objectContaining({ code: 'invalid_argument' });
-    expect(() => accounts.verifyEmail(reset, PW)).toThrow(bad);
-    expect(() => accounts.verifyEmail(invite, PW)).toThrow(bad);
-    expect(() => accounts.resetPassword(invite, 'brand-new-password')).toThrow(bad);
+    await expect(accounts.verifyEmail(reset, PW)).rejects.toEqual(bad);
+    await expect(accounts.verifyEmail(invite, PW)).rejects.toEqual(bad);
+    await expect(accounts.resetPassword(invite, 'brand-new-password')).rejects.toEqual(bad);
     expect(accounts.getInvite(reset)).toBeNull();
     // none of the failed attempts consumed anything
-    expect(accounts.resetPassword(reset, 'brand-new-password').id).toBe(u.id);
+    expect((await accounts.resetPassword(reset, 'brand-new-password')).id).toBe(u.id);
     expect(accounts.getInvite(invite)).not.toBeNull();
   });
 
-  it('using a reset link invalidates other outstanding reset links', () => {
+  it('using a reset link invalidates other outstanding reset links', async () => {
     const u = users.create({ email: 'ann@x.y', name: 'Ann', password: 'old-password', role: 'user' });
     const a = tokenIn(accounts.createResetLink(u.id), 'token');
     const b = tokenIn(accounts.createResetLink(u.id), 'token');
-    accounts.resetPassword(a, 'brand-new-password');
-    expect(() => accounts.resetPassword(b, 'another-new-password')).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+    await accounts.resetPassword(a, 'brand-new-password');
+    await expect(accounts.resetPassword(b, 'another-new-password')).rejects.toEqual(expect.objectContaining({ code: 'invalid_argument' }));
   });
 
   it('reset and resend do not wait for delivery', async () => {

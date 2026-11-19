@@ -14,7 +14,7 @@ let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
 
 const setup = (): Harness => (h = makeHarness({ extensions: [dashboardExtension, manageExtension] }));
-const csrfOf = (hh: Harness, userId: string): string => signToken({ uid: userId, k: 'ui' }, hh.core.config.secret, 3600);
+const csrfOf = (hh: Harness, userId: string): string => signToken({ uid: userId, k: 'ui', ep: hh.core.users.get(userId)?.sessionEpoch }, hh.core.config.secret, 3600);
 const csrfFor = (hh: Harness): string => csrfOf(hh, hh.adminId);
 const get = (hh: Harness, cookie: string, path = '/') => request(hh.app).get(path).set('Host', hh.host).set('Cookie', cookie);
 const post = (hh: Harness, cookie: string, path: string, body: Record<string, string>) =>

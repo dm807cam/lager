@@ -7,6 +7,7 @@ import { AssetError, ASSET_LIMITS, isTextType, type AssetInfo } from '../data/as
 import { LagerError } from '../errors.js';
 import { discardBody, sendError, sendNotFound } from './errors.js';
 import type { Ctx } from './instance.js';
+import { addressKey } from './client-address.js';
 import { assertOwnOrigin } from './origin.js';
 
 const BODY_LIMIT = ASSET_LIMITS.maxBytes + 1;
@@ -87,7 +88,7 @@ export function mountAssetRoutes(
       }
       const left = core.assets.maxBytes(ctx.instance.id) - core.assets.usage(ctx.instance.id).bytes;
       if (length > left) { discardBody(req); throw new LagerError('quota_exceeded', 'This instance\'s storage is full.'); }
-      const key = `${ctx.instance.id}\n${ctx.viewer.userId ?? `ip:${req.ip ?? ''}`}`;
+      const key = `${ctx.instance.id}\n${ctx.viewer.userId ?? `ip:${addressKey(req.ip)}`}`;
       const open = uploading.get(key) ?? 0;
       if (open >= MAX_CONCURRENT_UPLOADS) {
         discardBody(req);
