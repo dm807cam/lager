@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { assertSlug } from '../config.js';
+import { assertSlug, assertSlugShape } from '../config.js';
 import { LagerError } from '../errors.js';
 import { checkApp } from './check.js';
 import { DEFAULT_THEME_COLOR } from './icons.js';
@@ -61,6 +61,11 @@ const MAX_HTML_BYTES = 16 * 1024 * 1024;
 const SELF_PUBLISHED_NOTE = 'saved by the instance itself';
 /** An instance keeps this many self-published versions; older ones are removed when a newer one is saved. */
 export const MAX_SAVED_VERSIONS = 20;
+/**
+ * An app keeps its newest this many deployed versions (each up to 16 MiB). An older one stays for as long as an instance runs it,
+ * which is also where a pinned instance (automatic updates off) stands.
+ */
+export const MAX_DEPLOYED_VERSIONS = 100;
 const VISIBILITIES: Visibility[] = ['private', 'users', 'public'];
 const USERS_LEVELS: UsersLevel[] = ['view', 'interact'];
 const SELF_INSTANCES: SelfInstances[] = ['off', 'users'];
@@ -88,6 +93,17 @@ const toApp = (r: AppRow): App => ({
 });
 
 export const MAX_DESCRIPTION = 200;
+export const MAX_TITLE = 100;
+export const MAX_NOTE = 500;
+
+/** A title or version note: one line of plain text of at most `max` characters; line breaks and runs of whitespace become one space. */
+function normalizeLine(value: unknown, field: string, max: number): string {
+  if (typeof value !== 'string') throw new LagerError('invalid_argument', `${field} must be a string.`);
+  const text = value.trim().replace(/\s+/g, ' ');
+  if (/[\u0000-\u001F\u007F]/.test(text)) throw new LagerError('invalid_argument', `${field} must be plain text.`);
+  if ([...text].length > max) throw new LagerError('invalid_argument', `${field} must be at most ${max} characters.`);
+  return text;
+}
 
 /** Trimmed, whitespace collapsed to single spaces, at most 200 characters, no control characters. */
 export function normalizeDescription(value: unknown): string {
@@ -133,12 +149,24 @@ export class Apps {
   private deleteHooks: Array<(instance: Instance) => void> = [];
   private checks: AccessChecks | null = null;
   private quota: { bytes: number; otherUsage: (instanceId: string) => number } | null = null;
+  private reservedSlugs = new Set<string>();
 
   constructor(private db: DatabaseSync, private dataDir: string, private users: Users, private settings?: Settings) {}
 
   /** Who may deploy, activate versions and change visibility or the users level (owner, collaborators, instance managers). */
   setChecks(checks: AccessChecks): void {
     this.checks = checks;
+  }
+
+  /** Keeps a name out of use whose address under the apps domain is already taken, i.e. the platform's own host name. */
+  reserveSlug(slug: string): void {
+    this.reservedSlugs.add(slug);
+  }
+
+  /** For a name that is about to be taken. Apps and instances that exist are never checked against the reserved names. */
+  private assertSlugFree(slug: string): void {
+    assertSlug(slug);
+    if (this.reservedSlugs.has(slug)) throw new LagerError('invalid_argument', `Slug "${slug}" is reserved.`, 'slug_reserved');
   }
 
   /** Saved pages count against the instance quota together with `otherUsage` (documents and assets); 0 = unlimited. */
@@ -232,7 +260,7 @@ export class Apps {
     /** Left out on a redeploy = unchanged. */
     description?: string; themeColor?: string;
   }): DeployResult {
-    assertSlug(input.slug);
+    assertSlugShape(input.slug);
     if (typeof input.html !== 'string' || input.html.trim() === '') {
       throw new LagerError('invalid_argument', 'HTML must not be empty.');
     }
@@ -248,12 +276,15 @@ export class Apps {
     if (user.disabled) throw new LagerError('forbidden', 'This account is disabled.');
     const description = input.description === undefined ? undefined : normalizeDescription(input.description);
     const themeColor = input.themeColor === undefined ? undefined : normalizeThemeColor(input.themeColor);
+    const title = input.title === undefined ? '' : normalizeLine(input.title, 'title', MAX_TITLE);
+    const note = input.note === undefined ? null : normalizeLine(input.note, 'note', MAX_NOTE) || null;
     const capabilities = input.capabilities ?? {};
     const capabilitiesJson = canonicalJson(capabilities);
     const sha256 = crypto.createHash('sha256').update(input.html).digest('hex');
     const warnings = checkApp(input.html, capabilities).warnings;
 
     const updated: Instance[] = [];
+    let pruned: number[] = [];
     const result = this.transaction(() => {
       const now = new Date().toISOString();
       const existing = this.db.prepare('SELECT * FROM apps WHERE slug = ?').get(input.slug) as AppRow | undefined;
@@ -263,22 +294,23 @@ export class Apps {
         app = toApp(existing);
         const allowed = this.checks ? this.checks.canDeploy(app, user.id) : app.ownerId === user.id;
         if (!allowed) throw new LagerError('forbidden', `You are not allowed to deploy "${app.slug}".`);
-        if (input.title && input.title !== app.title) {
-          this.db.prepare('UPDATE apps SET title = ? WHERE id = ?').run(input.title, app.id);
-          app = { ...app, title: input.title };
+        if (title && title !== app.title) {
+          this.db.prepare('UPDATE apps SET title = ? WHERE id = ?').run(title, app.id);
+          app = { ...app, title };
         }
         if ((description !== undefined && description !== app.description) || (themeColor !== undefined && themeColor !== app.themeColor)) {
           app = { ...app, description: description ?? app.description, themeColor: themeColor ?? app.themeColor };
           this.db.prepare('UPDATE apps SET description = ?, theme_color = ? WHERE id = ?').run(app.description, app.themeColor, app.id);
         }
       } else {
+        this.assertSlugFree(input.slug);
         if (this.db.prepare('SELECT 1 FROM instances WHERE slug = ?').get(input.slug)) {
           throw new LagerError('conflict', `Instance slug "${input.slug}" is already taken.`, 'slug_taken');
         }
         this.claimSlug(input.slug, user.id);
         this.countCreation(user);
         app = {
-          id: crypto.randomUUID(), slug: input.slug, title: input.title || input.slug, ownerId: user.id, createdAt: now, selfInstances: 'off',
+          id: crypto.randomUUID(), slug: input.slug, title: title || input.slug, ownerId: user.id, createdAt: now, selfInstances: 'off',
           description: description ?? '', themeColor: themeColor ?? DEFAULT_THEME_COLOR, iconVersion: 0, aiModelId: null,
         };
         this.db
@@ -298,7 +330,7 @@ export class Apps {
       } else {
         version = {
           appId: app.id, number: this.allocateVersion(app.id), sha256, sizeBytes, instanceId: null,
-          capabilities: JSON.parse(capabilitiesJson) as Capabilities, note: input.note ?? null,
+          capabilities: JSON.parse(capabilitiesJson) as Capabilities, note,
           createdBy: user.id, createdAt: now,
         };
         this.db
@@ -328,11 +360,27 @@ export class Apps {
         pinned = (this.db.prepare('SELECT * FROM instances WHERE app_id = ? AND auto_update = 0 AND active_version != ? ORDER BY created_at, slug')
           .all(app.id, version.number) as unknown as InstanceRow[]).map(toInstance);
       }
+      if (createdVersion) pruned = this.pruneDeployedVersions(app.id);
 
       return { app, version, instances: this.listInstances(app.id), warnings, pinned, createdApp, createdVersion };
     });
+    this.deleteVersionFiles(result.app.id, pruned);
     this.fireActivated(updated);
     return result;
+  }
+
+  /**
+   * Removes the rows of deployed versions beyond the newest MAX_DEPLOYED_VERSIONS and returns their numbers. A version an instance
+   * runs is kept however old it is, so nothing that is in use, pinned or just deployed ever goes.
+   */
+  private pruneDeployedVersions(appId: string): number[] {
+    const old = (this.db.prepare(
+      `SELECT number FROM versions WHERE app_id = ? AND instance_id IS NULL
+         AND number NOT IN (SELECT active_version FROM instances WHERE app_id = ?)
+         AND number NOT IN (SELECT number FROM versions WHERE app_id = ? AND instance_id IS NULL ORDER BY number DESC LIMIT ?)`,
+    ).all(appId, appId, appId, MAX_DEPLOYED_VERSIONS) as unknown as Array<{ number: number }>).map((r) => r.number);
+    for (const n of old) this.db.prepare('DELETE FROM versions WHERE app_id = ? AND number = ?').run(appId, n);
+    return old;
   }
 
   /** Changes the description and/or theme colour. Owner or collaborator (the same people who may deploy). */
@@ -406,7 +454,7 @@ export class Apps {
 
   /** `createdBy` is the account that asked for the instance when it is not the owner; the creation rate is charged to it. */
   createInstance(input: { appId: string; slug: string; ownerId: string; visibility?: Visibility; createdBy?: string }): Instance {
-    assertSlug(input.slug);
+    this.assertSlugFree(input.slug);
     const visibility = input.visibility ?? 'private';
     if (!VISIBILITIES.includes(visibility)) throw new LagerError('invalid_argument', `Invalid visibility "${visibility}".`);
     return this.transaction(() => {
@@ -584,7 +632,7 @@ export class Apps {
     return { version: out.version, instance: out.instance };
   }
 
-  /** Pruned saved versions are deleted outright: the trash is not counted by any quota, so nothing may pile up there. */
+  /** Pruned versions are deleted outright: the trash is not counted by any quota, so nothing may pile up there. */
   private deleteVersionFiles(appId: string, numbers: number[]): void {
     for (const n of numbers) fs.rmSync(path.dirname(this.versionFile(appId, n)), { recursive: true, force: true });
   }
@@ -604,9 +652,10 @@ export class Apps {
   /** Whether the instance follows new deploys. Turning it on moves the instance to the latest deployed version right away. */
   setAutoUpdate(instanceId: string, on: boolean, userId: string): Instance {
     const instance = this.managedInstance(instanceId, userId);
-    this.db.prepare('UPDATE instances SET auto_update = ? WHERE id = ?').run(on ? 1 : 0, instance.id);
     const latest = on ? this.latestDeployedVersion(instance.appId) : null;
-    if (latest && latest.number !== instance.activeVersion) return this.activate(instance.id, latest.number, userId);
+    // Activate first: when that is refused (a manager and other data rules), the flag stays as it was.
+    if (latest && latest.number !== instance.activeVersion) this.activate(instance.id, latest.number, userId);
+    this.db.prepare('UPDATE instances SET auto_update = ? WHERE id = ?').run(on ? 1 : 0, instance.id);
     return this.getInstance(instance.id)!;
   }
 
@@ -691,8 +740,21 @@ export class Apps {
       this.removeInstanceRows(inst);
       return { instance: inst, saved: numbers };
     });
-    for (const hook of this.deleteHooks) hook(instance);
-    this.trashVersionFiles(instance.appId, saved);
+    this.afterDelete([instance], () => this.trashVersionFiles(instance.appId, saved));
+  }
+
+  /**
+   * The rows are gone for good at this point, so every clean-up step runs even when an earlier one fails (a trash directory
+   * that cannot be written, say). Every failure is logged, and the first one is reported to the caller afterwards.
+   */
+  private afterDelete(instances: Instance[], moveFiles: () => void): void {
+    const steps = [...instances.flatMap((i) => this.deleteHooks.map((hook) => () => hook(i))), moveFiles];
+    const failures: unknown[] = [];
+    for (const step of steps) {
+      try { step(); } catch (e) { failures.push(e); }
+    }
+    for (const e of failures.slice(1)) console.error('lager: a further clean-up step after a deletion failed:', e);
+    if (failures.length > 0) throw failures[0];
   }
 
   /** Removes the rows of the instance and reserves its slug for the owner (see `claimSlug`). */
@@ -717,13 +779,13 @@ export class Apps {
       this.db.prepare('DELETE FROM apps WHERE id = ?').run(a.id);
       return { app: a, instances: all };
     });
-    for (const hook of this.deleteHooks) for (const i of instances) hook(i);
-    const source = path.join(this.dataDir, 'apps', app.id);
-    if (fs.existsSync(source)) {
+    this.afterDelete(instances, () => {
+      const source = path.join(this.dataDir, 'apps', app.id);
+      if (!fs.existsSync(source)) return;
       const trash = path.join(this.dataDir, 'trash');
       fs.mkdirSync(trash, { recursive: true });
       const stamp = new Date().toISOString().replace(/[-:.]/g, '');
       fs.renameSync(source, path.join(trash, `app-${app.id}-${stamp}`));
-    }
+    });
   }
 }

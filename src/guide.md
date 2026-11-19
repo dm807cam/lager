@@ -136,11 +136,14 @@ A path the viewer may write but not read (a drop box, for example `{"path": "inb
 - Document: at most 256 KiB as JSON and 32 levels deep; numbers must be finite.
 - Queries: at most 1000 results.
 - HTML: at most 16 MiB.
+- `title`: at most 100 characters; `note`: at most 500; `description`: at most 200. Each is one line of plain text (line breaks become spaces); a longer one is refused.
+- Slugs: lowercase letters, digits and hyphens, at most 63 characters. New apps and instances cannot take names such as `www`, `api`, `admin`, `login`, `auth`, `account`, `mail`, `static`, `assets`, `cdn`, `status`, `support` or `security` (`Slug "…" is reserved`): pick a more specific name.
+- Deploys: at most 60 per app and hour, counted for `deploy_app` and the REST API together. When a deploy is refused for that reason, tell the user and wait instead of retrying in a loop; test changes with `check_app` rather than with extra deploys.
 - Import: REST at most 20 MiB (a JSON array 5 MiB) and 100000 documents per call, one import per instance at a time; `import_data` at most 1000 documents. Export: `export_data` returns 200 documents by default, at most 1000, and may stop earlier (it also stops at about 8 MiB): when `truncated` is true there is more, so narrow `prefix` and ask again. Both follow the app's rules at your level; the owner is unrestricted.
 
 ## Versions and rollback
 
-Every deploy with changed content or changed capabilities creates the next version and activates it on all instances with automatic updates. Identical content creates no new version (`createdVersion: false`).
+Every deploy with changed content or changed capabilities creates the next version and activates it on all instances with automatic updates. Identical content creates no new version (`createdVersion: false`). An app keeps its newest 100 deployed versions; an older one is deleted for good, unless an instance still runs it.
 
 - `get_app {slug}` shows all versions and instances.
 - `get_version {app, version?}` returns the complete HTML of a version (default: the latest deployed one) together with its capabilities and the app's title; `get_version {instance}` returns the version active on that instance, which may be one the page saved itself (`savedByInstance`). Use it whenever you continue work on an existing app: never rebuild an app from memory or from its description. If `get_app` shows an instance whose `activeVersion` is not `latestVersion` (pinned, rolled back or saved by the page itself), ask the user which code to build on before you deploy: a deploy moves every instance that follows deploys to the new version. Redeploy the edited HTML with the same `capabilities` (or deliberately changed ones), because a deploy without `capabilities` declares none. From a shell, `GET /api/apps/<slug>/versions/<n>` with the bearer token saves the HTML to a file instead.
