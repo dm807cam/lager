@@ -1,4 +1,4 @@
-import { ADMIN_PASSWORD_PLACEHOLDERS, type Config } from './config.js';
+import { ADMIN_PASSWORD_PLACEHOLDERS, isLoopbackHost, MIN_SECRET_LENGTH, type Config } from './config.js';
 import { InstanceAssets } from './data/assets.js';
 import { Hub } from './data/hub.js';
 import { Rooms } from './data/rooms.js';
@@ -15,7 +15,7 @@ import { Groups } from './platform/groups.js';
 import { createMailer, type Mailer } from './platform/mail.js';
 import { Settings } from './platform/settings.js';
 import { ApiTokens } from './platform/tokens.js';
-import { Users } from './platform/users.js';
+import { MIN_PASSWORD_LENGTH, Users } from './platform/users.js';
 
 export interface Core {
   config: Config; users: Users; apps: Apps; data: InstanceData; hub: Hub;
@@ -47,10 +47,34 @@ export interface Core {
 export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typeof fetch }): Core {
   const db = openPlatformDb(config.dataDir);
   const users = new Users(db);
-  if (config.adminPassword !== undefined && ADMIN_PASSWORD_PLACEHOLDERS.includes(config.adminPassword) && config.publicUrl.protocol === 'https:' && users.count() === 0) {
-    db.close();
-    throw new Error(`LAGER_ADMIN_PASSWORD still has the example value "${config.adminPassword}". Set your own password before the first start, `
-      + 'because Lager is reachable publicly over https. The admin account was not created.');
+  const fresh = users.count() === 0;
+  const refuse = (message: string): never => { db.close(); throw new Error(message); };
+  // The secret signs sessions and derives the key that encrypts AI provider keys. A short one is refused only while nothing depends
+  // on it yet: on an installation with accounts, replacing it would sign everyone out and make the stored keys unreadable.
+  if (config.weakSecret) {
+    const short = `LAGER_SECRET is shorter than ${MIN_SECRET_LENGTH} characters, too short for the key that signs sessions and encrypts stored AI provider keys.`;
+    if (fresh) {
+      refuse(`${short} Set at least ${MIN_SECRET_LENGTH} random characters (for example the output of "openssl rand -hex 32"), or leave it empty `
+        + 'and Lager generates a secret and keeps it in the data directory. Decide now: changing the secret later signs everyone out '
+        + 'and makes stored AI provider keys unreadable, so they have to be entered again.');
+    }
+    console.warn(`WARNING: ${short} Lager keeps using it, because changing the secret signs everyone out and makes stored AI provider keys `
+      + `unreadable, so they have to be entered again. Replace it with at least ${MIN_SECRET_LENGTH} random characters when that is acceptable.`);
+  }
+  // Checked only while the first administrator is about to be created: a later start never reads the password again.
+  if (config.adminEmail && config.adminPassword !== undefined && fresh) {
+    const placeholder = ADMIN_PASSWORD_PLACEHOLDERS.includes(config.adminPassword);
+    if (placeholder && !isLoopbackHost(config.publicUrl.hostname)) {
+      refuse(`LAGER_ADMIN_PASSWORD still has the example value "${config.adminPassword}". Set your own password before the first start, `
+        + `because Lager is reachable from other machines at ${config.publicUrl.host}. The admin account was not created.`);
+    }
+    if (config.adminPassword.length < MIN_PASSWORD_LENGTH) {
+      refuse(`LAGER_ADMIN_PASSWORD is too short: the administrator's password needs at least ${MIN_PASSWORD_LENGTH} characters. The admin account was not created.`);
+    }
+    if (placeholder) {
+      console.warn(`WARNING: the administrator ${config.adminEmail} is created with the example password "${config.adminPassword}". `
+        + 'Change it on the Account page before anyone else can reach this server.');
+    }
   }
   users.ensureAdmin(config.adminEmail, config.adminPassword);
   const mailer = opts?.mailer ?? createMailer(config);
@@ -60,8 +84,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   const oauth = new OAuthStore(db, users);
   const accounts = new Accounts(db, users, settings, mailer, config);
   // Credentials do not outlive the password they were issued under; layering keeps Users free of OAuth/token code.
-  users.onPasswordChanged((id) => { oauth.revokeUser(id); accounts.deleteResetLinks(id); });
-  accounts.onPasswordReset((id) => { tokens.revokeAll(id); });
+  users.onPasswordChanged((id) => { oauth.revokeUser(id); tokens.revokeAll(id); accounts.deleteResetLinks(id); });
   users.onDisabled((id) => { oauth.revokeUser(id); });
   users.onDemoted((id) => { accounts.deleteInvitesBy(id); });
   const icons = new AppIcons(config.dataDir);

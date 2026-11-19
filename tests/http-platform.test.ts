@@ -18,7 +18,7 @@ describe('platform host', () => {
 
   it('login sets an HttpOnly host-only cookie', async () => {
     h = makeHarness();
-    const res = await request(h.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email: 'admin@x.y', password: 'pw' });
+    const res = await request(h.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email: 'admin@x.y', password: 'admin-password-1' });
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe('/');
     const cookie = ([] as string[]).concat(res.headers['set-cookie']).find((c) => c.startsWith('lager_session='))!;
@@ -43,18 +43,18 @@ describe('platform host', () => {
       const r = await request(h.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email: 'admin@x.y', password: 'nope' });
       expect(r.status).toBe(401);
     }
-    const res = await request(h.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email: 'admin@x.y', password: 'pw' });
+    const res = await request(h.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email: 'admin@x.y', password: 'admin-password-1' });
     expect(res.status).toBe(429);
   });
 
   it('return must be a local path', async () => {
     h = makeHarness();
     for (const ret of ['https://evil.example', '//evil.example', '/\\evil']) {
-      const res = await request(h.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email: 'admin@x.y', password: 'pw', return: ret });
+      const res = await request(h.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email: 'admin@x.y', password: 'admin-password-1', return: ret });
       expect(res.status).toBe(302);
       expect(res.headers.location).toBe('/');
     }
-    const ok = await request(h.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email: 'admin@x.y', password: 'pw', return: '/apps?x=1' });
+    const ok = await request(h.app).post('/login').set('Host', PLATFORM_HOST).type('form').send({ email: 'admin@x.y', password: 'admin-password-1', return: '/apps?x=1' });
     expect(ok.headers.location).toBe('/apps?x=1');
   });
 
@@ -167,7 +167,7 @@ describe('platform host', () => {
   it('__Host- cookie names on https, plain-named cookies are ignored there', async () => {
     h = makeHarness({ publicUrl: 'https://lager.example.org' });
     const host = h.host;
-    const res = await request(h.app).post('/login').set('Host', host).type('form').send({ email: 'admin@x.y', password: 'pw' });
+    const res = await request(h.app).post('/login').set('Host', host).type('form').send({ email: 'admin@x.y', password: 'admin-password-1' });
     const cookie = ([] as string[]).concat(res.headers['set-cookie'])[0];
     expect(cookie.startsWith('__Host-lager_session=')).toBe(true);
     expect(cookie).toContain('Secure');
@@ -204,11 +204,11 @@ describe('login rate limit behind a proxy', () => {
     h = makeHarness({ trustProxy: 1 });
     for (let i = 0; i < 10; i++) expect((await attempt(h, `5.6.7.${i}`)).status).toBe(401);
     // An address that has not failed on this account still gets in with the right password: nobody can lock the owner out.
-    expect((await attempt(h, '8.8.8.8', 'admin@x.y', 'pw')).status).toBe(302);
+    expect((await attempt(h, '8.8.8.8', 'admin@x.y', 'admin-password-1')).status).toBe(302);
     // A new address gets three guesses on the hot account instead of ten, however the e-mail is spelled.
     for (let i = 0; i < 3; i++) expect((await attempt(h, '9.9.9.9', i === 1 ? 'ADMIN@x.y ' : 'admin@x.y')).status).toBe(401);
-    expect((await attempt(h, '9.9.9.9', 'admin@x.y', 'pw')).status).toBe(429);
-    expect((await attempt(h, '9.9.9.9', 'ADMIN@x.y ', 'pw')).status).toBe(429);
+    expect((await attempt(h, '9.9.9.9', 'admin@x.y', 'admin-password-1')).status).toBe(429);
+    expect((await attempt(h, '9.9.9.9', 'ADMIN@x.y ', 'admin-password-1')).status).toBe(429);
     // The same address is still free to sign in to another account.
     expect((await attempt(h, '9.9.9.9', 'nobody@x.y')).status).toBe(401);
   });

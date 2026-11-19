@@ -46,6 +46,7 @@ export const de: Record<MessageKey, string> = {
   'validation.generic': 'Die Eingabe ist ungültig.',
 
   'auth.password.short': 'Das Passwort braucht mindestens {min} Zeichen.',
+  'auth.password.long': 'Das Passwort darf höchstens {limit} Zeichen haben.',
   'auth.password.hint': 'Mindestens {min} Zeichen.',
   'auth.link.invalid.title': 'Link ungültig',
   'auth.link.invalid': 'Der Link ist ungültig oder abgelaufen.',
@@ -64,6 +65,8 @@ export const de: Record<MessageKey, string> = {
 
   'auth.verify.title': 'E-Mail-Adresse bestätigen',
   'auth.verify.submit': 'E-Mail-Adresse bestätigen',
+  'auth.verify.hint': 'Gib das Passwort ein, das du bei der Registrierung gewählt hast. Danach kannst du dich anmelden.',
+  'auth.verify.wrong': 'Das Passwort ist falsch.',
   'auth.resend.button': 'Bestätigungs-E-Mail erneut senden',
   'auth.resend.sent.text': 'Falls die Adresse bei uns registriert und noch nicht bestätigt ist, haben wir eine neue E-Mail geschickt.',
 
@@ -84,7 +87,7 @@ export const de: Record<MessageKey, string> = {
   'account.locale.saved': 'Sprache gespeichert.',
   'account.password.title': 'Passwort ändern',
   'account.password.current': 'Aktuelles Passwort',
-  'account.password.hint': 'Mindestens {min} Zeichen. Danach werden alle anderen Geräte abgemeldet und alle Verbindungen zu KI-Assistenten getrennt; API-Tokens bleiben gültig.',
+  'account.password.hint': 'Mindestens {min} Zeichen. Danach werden alle anderen Geräte abgemeldet, alle Verbindungen zu KI-Assistenten getrennt und alle API-Tokens dieses Kontos widerrufen.',
   'account.password.submit': 'Passwort ändern',
   'account.password.changed': 'Passwort geändert.',
   'account.password.wrong': 'Das aktuelle Passwort ist falsch.',
@@ -276,6 +279,7 @@ export const de: Record<MessageKey, string> = {
   'admin.users.notFound': 'Nutzer nicht gefunden.',
   'admin.users.lastAdmin': 'Der letzte aktive Administrator kann nicht herabgestuft oder deaktiviert werden.',
   'admin.invites.email': 'E-Mail (optional)',
+  'admin.invites.unbound': 'Mit E-Mail-Adresse ist das neue Konto nach der Registrierung sofort angemeldet. Ohne Adresse bestätigt die Person zuerst ihre eigene Adresse über einen Link, den wir ihr schicken.',
   'admin.invites.role': 'Rolle',
   'admin.invites.create': 'Einladung erstellen',
   'admin.invites.validUntil': 'Gültig bis',
