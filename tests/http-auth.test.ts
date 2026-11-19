@@ -5,11 +5,10 @@ import { RateLimiter } from '../src/http/ratelimit.js';
 import { csrfToken } from '../src/http/session.js';
 import { MemoryMailer } from '../src/platform/mail.js';
 import { MAX_PASSWORD_LENGTH } from '../src/platform/users.js';
-import { makeHarness, type Harness } from './support/http.js';
+import { makeHarness, withoutNonce, type Harness } from './support/http.js';
 import { t } from '../src/i18n/index.js';
 
-/** A page without what is new in every response (the script nonce): two answers that must not differ are compared like this. */
-const page = (html: string): string => html.replace(/nonce(="|-)[A-Za-z0-9+/=]+/g, 'nonce$1…');
+const page = withoutNonce;
 
 let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
@@ -260,7 +259,7 @@ describe('registration and verification', () => {
     const dup = await s.post('/register', { name: 'Zed', email: 'Ann@Example.org', password: 'another password' });
     // Status and page are those of a registration that worked: the form does not say which addresses have an account.
     expect(dup.status).toBe(fresh.status);
-    expect(dup.text).toBe(fresh.text);
+    expect(withoutNonce(dup.text)).toBe(withoutNonce(fresh.text));
     expect(dup.headers['set-cookie']).toBeUndefined();
     expect(s.mailer.sent).toHaveLength(1);
     expect(s.mailer.sent[0]).toMatchObject({ to: 'ann@example.org', subject: t('en', 'mail.exists.subject') });

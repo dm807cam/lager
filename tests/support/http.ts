@@ -12,6 +12,9 @@ import type { Mailer } from '../../src/platform/mail.js';
 
 export const PLATFORM_HOST = 'lager.localhost';
 
+/** A page without what is new in every response (the script nonce): two answers that must not differ are compared like this. */
+export const withoutNonce = (html: string): string => html.replace(/nonce(="|-)[A-Za-z0-9+/=]+/g, 'nonce$1…');
+
 /** A sign-in nonce as an instance would put it into its cookie, and the cookie pair that carries it (http and https name). */
 export const NONCE = 'n'.repeat(22);
 export const NONCE_COOKIE = `lager_nonce=${NONCE}`;

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { LoginLimiter } from '../src/http/platform.js';
 import { csrfToken } from '../src/http/session.js';
-import { makeHarness, NONCE, NONCE_COOKIE_HTTPS, PLATFORM_HOST, type Harness } from './support/http.js';
+import { makeHarness, NONCE, NONCE_COOKIE_HTTPS, PLATFORM_HOST, type Harness, withoutNonce } from './support/http.js';
 import { t } from '../src/i18n/index.js';
 
 let h: Harness | undefined;
@@ -213,7 +213,7 @@ describe('login rate limit behind a proxy', () => {
     const check = vi.spyOn(h.core.users, 'checkLogin');
     const paused = await attempt(h, '8.8.8.8', 'admin@x.y', 'admin-password-1');
     expect(paused.status).toBe(wrong.status);
-    expect(paused.text).toBe(wrong.text);
+    expect(withoutNonce(paused.text)).toBe(withoutNonce(wrong.text));
     expect(paused.headers['set-cookie']).toBeUndefined();
     expect(check).not.toHaveBeenCalled();
     // A device cookie of another account does not help.
