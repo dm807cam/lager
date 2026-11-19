@@ -236,15 +236,63 @@ describe('Apps with the access model', () => {
 
   it('creating an instance for someone else spends the creator\'s daily budget, not the owner\'s', () => {
     const r = core.apps.deploy({ slug: 'demo', html: '<p>1</p>', userId: own.id });
-    let made = 0;
-    let refused = '';
-    while (made < 50 && refused === '') {
-      try { core.apps.createInstance({ appId: r.app.id, slug: `gift-${made}`, ownerId: usr.id, createdBy: own.id }); made++; }
-      catch (e) { refused = (e as LagerError).reason ?? 'other'; }
+    const others = ['a', 'b', 'c'].map((n) => core.users.create({ email: `${n}@x.y`, name: n, password: 'pw', role: 'user' }));
+    // Two gifts each to three people, then the publisher's own instances: all from the one budget of ten a day (the deploy was the first).
+    const reasons: string[] = [];
+    const attempt = (slug: string, ownerId: string): void => {
+      try { core.apps.createInstance({ appId: r.app.id, slug, ownerId, createdBy: own.id }); reasons.push('ok'); }
+      catch (e) { reasons.push((e as LagerError).reason ?? 'other'); }
+    };
+    for (let i = 0; i < 5; i++) attempt(`gift-${i}`, others[i % 3].id);
+    for (let i = 0; i < 5; i++) attempt(`own-${i}`, own.id);
+    expect(reasons).toEqual([...Array<string>(9).fill('ok'), 'creation_rate']);
+    // The publisher ran out; the recipients' own budgets are untouched.
+    for (const o of others) expect(core.apps.createInstance({ appId: r.app.id, slug: `mine-${o.name}`, ownerId: o.id }).ownerId).toBe(o.id);
+  });
+
+  it('a non-administrator creates at most five instances a day for other accounts, in total', () => {
+    const r = core.apps.deploy({ slug: 'demo', html: '<p>1</p>', userId: own.id });
+    const others = ['a', 'b', 'c', 'd', 'e', 'f'].map((n) => core.users.create({ email: `${n}@x.y`, name: n, password: 'pw', role: 'user' }));
+    for (const o of others.slice(0, 5)) core.apps.createInstance({ appId: r.app.id, slug: `gift-${o.name}`, ownerId: o.id, createdBy: own.id });
+    // The sixth is refused whoever it is for, also someone who has received nothing yet.
+    for (const o of [others[5], others[0]]) {
+      expect(() => core.apps.createInstance({ appId: r.app.id, slug: `more-${o.name}`, ownerId: o.id, createdBy: own.id }))
+        .toThrow(expect.objectContaining({ code: 'conflict', reason: 'creation_rate_others' }));
     }
-    expect(refused).toBe('creation_rate');
-    // The publisher ran out; the recipient's own budget is untouched.
-    expect(core.apps.createInstance({ appId: r.app.id, slug: 'mine', ownerId: usr.id }).slug).toBe('mine');
+    expect(core.apps.getInstanceBySlug('more-f')).toBeNull();
+    // Instances of their own are still theirs to create, another publisher has their own budget, and an administrator has no limit.
+    expect(core.apps.createInstance({ appId: r.app.id, slug: 'still-mine', ownerId: own.id, createdBy: own.id }).ownerId).toBe(own.id);
+    core.apps.addCollaborator(r.app.id, col.id, own.id);
+    expect(core.apps.createInstance({ appId: r.app.id, slug: 'from-col', ownerId: others[5].id, createdBy: col.id }).ownerId).toBe(others[5].id);
+    for (let i = 0; i < 7; i++) core.apps.createInstance({ appId: r.app.id, slug: `adm-${i}`, ownerId: usr.id, createdBy: adm.id });
+    // A day later the budget is back.
+    (core.apps as unknown as { db: { exec(sql: string): void } }).db.exec("UPDATE instance_creations SET created_at = '2000-01-01T00:00:00.000Z'");
+    expect(core.apps.createInstance({ appId: r.app.id, slug: 'next-day', ownerId: others[0].id, createdBy: own.id }).ownerId).toBe(others[0].id);
+  });
+
+  it('others can fill an account\'s instance limit only to half; the owner and an administrator can use the rest', () => {
+    core.settings.setMaxInstancesPerUser(6);
+    const r = core.apps.deploy({ slug: 'demo', html: '<p>1</p>', userId: own.id });
+    for (let i = 0; i < 2; i++) core.apps.createInstance({ appId: r.app.id, slug: `gift-${i}`, ownerId: usr.id, createdBy: own.id });
+    // Two of six: one more brings the account to half, and from there on a publisher is refused.
+    core.apps.createInstance({ appId: r.app.id, slug: 'gift-2', ownerId: usr.id, createdBy: own.id });
+    const refused = (() => { try { core.apps.createInstance({ appId: r.app.id, slug: 'gift-3', ownerId: usr.id, createdBy: own.id }); return null; } catch (e) { return e as LagerError; } })();
+    expect(refused).toMatchObject({ code: 'conflict', reason: 'owner_limit_half' });
+    expect(refused!.message).toMatch(/Ask its owner .* or ask an administrator/);
+    expect(core.apps.getInstanceBySlug('gift-3')).toBeNull();
+    // A refusal costs the creator nothing of their daily budget.
+    const spent = (): number => ((core.apps as unknown as { db: { prepare(sql: string): { get(): { c: number } } } }).db.prepare('SELECT COUNT(*) AS c FROM instance_creations').get()).c;
+    const before = spent();
+    expect(() => core.apps.createInstance({ appId: r.app.id, slug: 'gift-4', ownerId: usr.id, createdBy: own.id })).toThrow(expect.objectContaining({ reason: 'owner_limit_half' }));
+    expect(spent()).toBe(before);
+    // The other half is the owner's, and an administrator may still hand out instances up to the limit.
+    core.apps.setSelfInstances(r.app.id, 'users', own.id);
+    expect(core.apps.createInstance({ appId: r.app.id, slug: 'own-1', ownerId: usr.id, createdBy: usr.id }).ownerId).toBe(usr.id);
+    expect(core.apps.createInstance({ appId: r.app.id, slug: 'adm-1', ownerId: usr.id, createdBy: adm.id }).ownerId).toBe(usr.id);
+    expect(core.apps.createInstance({ appId: r.app.id, slug: 'adm-2', ownerId: usr.id, createdBy: adm.id }).ownerId).toBe(usr.id);
+    expect(() => core.apps.createInstance({ appId: r.app.id, slug: 'adm-3', ownerId: usr.id, createdBy: adm.id })).toThrow(expect.objectContaining({ reason: 'instance_limit' }));
+    // An administrator's own account has no limit, so nothing of it can be used up.
+    for (let i = 0; i < 2; i++) expect(core.apps.createInstance({ appId: r.app.id, slug: `for-adm-${i}`, ownerId: adm.id, createdBy: own.id }).ownerId).toBe(adm.id);
   });
 
   it('instance admin grantee can activate and change visibility', () => {

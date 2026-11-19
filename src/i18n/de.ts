@@ -162,6 +162,8 @@ export const de: Record<MessageKey, string> = {
   'notice.slugRetired': 'Dieser Name wurde bereits verwendet und ist gesperrt.',
   'notice.rulesDiffer': 'Nur der Eigentümer kann diese Version aktivieren: Ihre Datenregeln weichen von der aktiven ab.',
   'notice.creationRate': 'Du hast heute zu viele Instanzen angelegt. Versuche es morgen wieder.',
+  'notice.creationRateOthers': 'Du hast heute zu viele Instanzen für andere angelegt. Versuche es morgen wieder oder frage einen Administrator.',
+  'notice.ownerLimitHalf': 'Dieses Konto besitzt bereits die Hälfte der Instanzen, die es haben darf. Bitte die Person, die Instanz selbst anzulegen, oder frage einen Administrator.',
   'notice.snapshotRate': 'Wiederherstellen und Versionswechsel sind pro Instanz auf 10 Mal pro Stunde begrenzt. Versuche es später wieder.',
   'notice.slugInvalid': 'Ungültiger Name: Kleinbuchstaben, Ziffern und Bindestriche, höchstens {max} Zeichen.',
   'notice.collaboratorsInvalid': 'Mitarbeiter müssen aktive Administratoren oder Publisher sein.',

@@ -18,6 +18,7 @@ An installation that ran a build from before the first release will notice these
 - **Home-screen install of private instances:** the manifest and icons of an instance that is not public show the app's name, description and icon only to a viewer with access; anyone else gets a manifest named "Lager" with the placeholder icon. Apps that bring their own `rel="manifest"` link need `crossorigin="use-credentials"` on it to keep their name when installed.
 - **Content security policy:** platform pages now allow scripts only from Lager's own files or with a per-response nonce, and send `X-Content-Type-Options: nosniff`. A reverse proxy that injects its own inline script into the platform's pages (an analytics snippet, say) will find it blocked. The platform also answers `/robots.txt` with "disallow everything".
 - **Data directory is private:** Lager now creates directories with mode 700 and files with 600, and at the next start changes an existing data directory it owns to mode 700 (one log line says so). Scripts on the host that read the data directory as another user, for example a `cp -a` or `rsync` of a bind-mounted `./data`, need to run as the owner or with `sudo`. `node dist/backup.js` is not affected.
+- **Instances for other accounts:** a publisher can create at most 5 instances per day for other accounts, and none for an account that already owns half of the instances it may own; an administrator is not limited.
 - **Title and note:** a new app title takes at most 100 characters and a version note at most 500, one line each.
 
 ## [0.1.0] - unreleased

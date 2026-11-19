@@ -160,6 +160,8 @@ export const en = {
   'notice.slugRetired': 'This name was used before and is reserved.',
   'notice.rulesDiffer': 'Only the owner can activate this version: its data rules differ from the active one.',
   'notice.creationRate': 'You have created too many instances today. Try again tomorrow.',
+  'notice.creationRateOthers': 'You have created too many instances for other people today. Try again tomorrow, or ask an administrator.',
+  'notice.ownerLimitHalf': 'This account already owns half of the instances it may have. Ask that person to create the instance themselves, or ask an administrator.',
   'notice.snapshotRate': 'Restoring and changing versions is limited to 10 times per hour for an instance. Try again later.',
   'notice.slugInvalid': 'Invalid name: lowercase letters, digits and hyphens, at most {max} characters.',
   'notice.collaboratorsInvalid': 'Collaborators must be active administrators or publishers.',

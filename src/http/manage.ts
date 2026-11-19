@@ -31,6 +31,8 @@ const NOTICES: Record<string, MessageKey> = {
   slug_retired: 'notice.slugRetired',
   rules_differ: 'notice.rulesDiffer',
   creation_rate: 'notice.creationRate',
+  creation_rate_others: 'notice.creationRateOthers',
+  owner_limit_half: 'notice.ownerLimitHalf',
   snapshot_rate: 'notice.snapshotRate',
   slug_invalid: 'notice.slugInvalid',
   slug_reserved: 'notice.slugInvalid',

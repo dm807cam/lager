@@ -162,6 +162,8 @@ export const es: Record<MessageKey, string> = {
   'notice.slugRetired': 'Este nombre ya se usó antes y está reservado.',
   'notice.rulesDiffer': 'Solo el propietario puede activar esta versión: sus reglas de datos difieren de la activa.',
   'notice.creationRate': 'Hoy has creado demasiadas instancias. Inténtalo de nuevo mañana.',
+  'notice.creationRateOthers': 'Hoy has creado demasiadas instancias para otras personas. Inténtalo de nuevo mañana o pídeselo a un administrador.',
+  'notice.ownerLimitHalf': 'Esta cuenta ya tiene la mitad de las instancias que puede tener. Pide a esa persona que cree la instancia ella misma, o pídeselo a un administrador.',
   'notice.snapshotRate': 'Restaurar y cambiar de versión está limitado a 10 veces por hora por instancia. Inténtalo de nuevo más tarde.',
   'notice.slugInvalid': 'Nombre no válido: letras minúsculas, dígitos y guiones, como máximo {max} caracteres.',
   'notice.collaboratorsInvalid': 'Los colaboradores deben ser administradores o Publisher activos.',

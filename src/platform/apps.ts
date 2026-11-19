@@ -72,6 +72,10 @@ const SELF_INSTANCES: SelfInstances[] = ['off', 'users'];
 /** Non-administrators may create this many instances per rolling window, deleted ones included (create-fill-delete loops fill the disk). */
 export const CREATIONS_PER_WINDOW = 10;
 const CREATION_WINDOW_MS = 24 * 3600_000;
+/** Of those, at most this many may be instances for other accounts: nobody chose to receive them. */
+export const CREATIONS_FOR_OTHERS_PER_WINDOW = 5;
+/** Marks the rows of `instance_creations` that count the instances an account created for others. */
+const forOthersKey = (userId: string): string => `for-others:${userId}`;
 
 interface AppRow {
   id: string; slug: string; title: string; owner_id: string; created_at: string; self_instances: SelfInstances;
@@ -231,15 +235,24 @@ export class Apps {
     this.db.prepare('DELETE FROM retired_slugs WHERE slug = ?').run(slug);
   }
 
-  /** Enforces and records the creation rate of a new instance for `owner`; platform administrators are exempt. */
-  private countCreation(owner: User): void {
-    if (owner.role === 'admin') return;
+  /**
+   * Enforces and records the creation rate of a new instance for `creator`; platform administrators are exempt. An instance
+   * for another account (`forOther`) also counts against the smaller budget for those.
+   */
+  private countCreation(creator: User, forOther = false): void {
+    if (creator.role === 'admin') return;
     const now = Date.now();
     const since = new Date(now - CREATION_WINDOW_MS).toISOString();
     this.db.prepare('DELETE FROM instance_creations WHERE created_at <= ?').run(since);
-    const recent = (this.db.prepare('SELECT COUNT(*) AS c FROM instance_creations WHERE user_id = ? AND created_at > ?').get(owner.id, since) as { c: number }).c;
-    if (recent >= CREATIONS_PER_WINDOW) throw new LagerError('conflict', 'You have created too many instances today. Try again tomorrow.', 'creation_rate');
-    this.db.prepare('INSERT INTO instance_creations (user_id, created_at) VALUES (?, ?)').run(owner.id, new Date(now).toISOString());
+    const recent = (key: string): number =>
+      (this.db.prepare('SELECT COUNT(*) AS c FROM instance_creations WHERE user_id = ? AND created_at > ?').get(key, since) as { c: number }).c;
+    if (recent(creator.id) >= CREATIONS_PER_WINDOW) throw new LagerError('conflict', 'You have created too many instances today. Try again tomorrow.', 'creation_rate');
+    if (forOther && recent(forOthersKey(creator.id)) >= CREATIONS_FOR_OTHERS_PER_WINDOW) {
+      throw new LagerError('conflict', 'You have created too many instances for other people today. Try again tomorrow, or ask an administrator.', 'creation_rate_others');
+    }
+    const insert = this.db.prepare('INSERT INTO instance_creations (user_id, created_at) VALUES (?, ?)');
+    insert.run(creator.id, new Date(now).toISOString());
+    if (forOther) insert.run(forOthersKey(creator.id), new Date(now).toISOString());
   }
 
   /** The next version number of the app. Numbers come from a counter and are never reused, also after saved versions were pruned. */
@@ -483,16 +496,23 @@ export class Apps {
       }
       const owner = this.users.get(input.ownerId);
       if (!owner) throw new LagerError('not_found', 'Owner not found.');
+      const creator = (input.createdBy !== undefined ? this.users.get(input.createdBy) : null) ?? owner;
+      // An administrator hands out instances as they see fit; anyone else gives away something the receiver never asked for.
+      const forOther = creator.id !== owner.id && creator.role !== 'admin';
       if (this.settings && owner.role !== 'admin') {
         const owned = (this.db.prepare('SELECT COUNT(*) AS c FROM instances WHERE owner_id = ?').get(owner.id) as { c: number }).c;
         if (owned >= this.settings.maxInstancesPerUser) throw new LagerError('conflict', 'Instance limit reached.', 'instance_limit');
+        // The limit is the owner's to use up. Others may fill it to half at most, so nobody can leave an account unable to create its own.
+        if (forOther && owned * 2 >= this.settings.maxInstancesPerUser) {
+          throw new LagerError('conflict', 'This account already owns half of the instances it may have. Ask its owner to create the instance, or ask an administrator.', 'owner_limit_half');
+        }
       }
       if (this.db.prepare('SELECT 1 FROM instances WHERE slug = ?').get(input.slug)) {
         throw new LagerError('conflict', `Instance slug "${input.slug}" is already taken.`, 'slug_taken');
       }
       this.claimSlug(input.slug, owner.id);
       // Whoever creates the instance spends their own budget, so nobody can use up another account's.
-      this.countCreation((input.createdBy !== undefined ? this.users.get(input.createdBy) : null) ?? owner);
+      this.countCreation(creator, forOther);
       // New instances start on the latest deployed version, never on another instance's self-published one.
       const latest = this.latestDeployedVersion(input.appId);
       if (!latest) throw new LagerError('not_found', 'App has no versions.');
