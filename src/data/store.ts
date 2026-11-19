@@ -32,7 +32,7 @@ export const SNAPSHOT_QUOTA_FACTOR = 3;
 /** The newest snapshot at least this old is never pruned, so a burst of new snapshots cannot push out every earlier state. */
 export const SNAPSHOT_OLD_MS = 24 * 60 * 60_000;
 
-/** Documents of a deleted account's private area removed from one instance in one go. */
+/** Documents of a deleted account's private area removed from one instance in one call; a larger area takes several (see `PrivatePurge`). */
 export const PRIVATE_PURGE_LIMIT = 50_000;
 
 const SCHEMA = `
@@ -329,7 +329,7 @@ export class InstanceData {
   /**
    * Deletes the private area of `userId` in the instance (`data/users/<id>/…`), which nobody else can read or remove; for an
    * account that no longer exists. At most `limit` documents per call, so one instance never holds the server for long;
-   * returns how many went. Nobody is listening on these paths any more, so no change is announced.
+   * returns how many went, and the caller comes back while that is `limit`. Nobody is listening on these paths any more, so no change is announced.
    */
   purgePrivateArea(instanceId: string, userId: string, limit = PRIVATE_PURGE_LIMIT): number {
     const db = this.open(instanceId, false);

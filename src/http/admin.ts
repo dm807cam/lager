@@ -69,7 +69,7 @@ ${u.disabled && u.id !== admin.id ? linkButton(`${base}/delete`, `${icon('trash'
     ];
   });
   return shell(core, locale, admin, 'users', t(locale, 'admin.section.users'),
-    dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.users.role'), t(locale, 'admin.users.aiGroup'), t(locale, 'common.status'), t(locale, 'common.created'), ''], rows), msg);
+    dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.users.role'), t(locale, 'admin.users.aiGroup'), t(locale, 'common.status'), t(locale, 'common.created'), ''], rows, 'table-dense'), msg);
 }
 
 /** At most this many names of what an account owns are spelled out on the confirmation page; the counts are always complete. */

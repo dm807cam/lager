@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { MAX_REGISTRATIONS_PER_HOUR } from '../src/http/auth.js';
 import { addressKey } from '../src/http/client-address.js';
-import { LoginLimiter, loginLimiter } from '../src/http/platform.js';
+import { LoginLimiter, loginLimiter, MAX_KNOWN_FAILURES } from '../src/http/platform.js';
 import { csrfToken, csrfValid } from '../src/http/session.js';
 import { MAX_ACCOUNT_MAILS_PER_HOUR, MAX_RESET_MAILS_PER_HOUR } from '../src/platform/accounts.js';
 import { MemoryMailer } from '../src/platform/mail.js';
@@ -537,6 +537,10 @@ describe('what must get through while guesses flood the server', () => {
     h = makeHarness({ trustProxy: 1, mailer });
     const { users, accounts } = h.core;
     const order: string[] = [];
+    // The order in which hashes START is what the queue decides; they finish on parallel threads in whatever order those like.
+    const hashes = vi.spyOn(crypto, 'scrypt');
+    // Made before the flood starts: everything that asks for priority must be queued in the same tick, or a waiting guess takes a free slot first.
+    const invite = new URL((await accounts.createInvite({ role: 'user', createdBy: h.adminId })).url).searchParams.get('invite')!;
     // The ordinary lane is full: two hashes run, 32 wait.
     const flood = Array.from({ length: MAX_HASHES_IN_FLIGHT + MAX_HASHES_WAITING }, (_, i) => users.checkLogin(`u${i}@x.y`, 'nope').then(() => { order.push('guess'); }));
     await expect(users.checkLogin('admin@x.y', 'admin-password-1')).rejects.toMatchObject({ code: 'rate_limited' });
@@ -546,10 +550,14 @@ describe('what must get through while guesses flood the server', () => {
     const urgent = [
       accounts.resetPassword(link, 'a brand new password').then(() => { order.push('reset'); }),
       users.checkLogin('admin@x.y', 'admin-password-1', true).then(() => { order.push('known'); }),
-      accounts.register({ name: 'N', email: 'n@x.y', password: PW, inviteToken: new URL((await accounts.createInvite({ role: 'user', createdBy: h.adminId })).url).searchParams.get('invite')! }).then(() => { order.push('register'); }),
+      accounts.register({ name: 'N', email: 'n@x.y', password: PW, inviteToken: invite }).then(() => { order.push('register'); }),
     ];
     await Promise.all([...urgent, ...flood]);
-    expect(order.slice(0, 5).filter((o) => o !== 'guess').sort()).toEqual(['known', 'register', 'reset']);
+    const started = hashes.mock.calls.map((c) => String(c[0]));
+    // Two guesses were already running; the next three hashes to start are the three that asked for priority, ahead of 32 waiting guesses.
+    expect(started.slice(0, 2)).toEqual(['nope', 'nope']);
+    expect(started.slice(2, 5).sort()).toEqual(['a brand new password', 'admin-password-1', PW].sort());
+    expect(order.filter((o) => o !== 'guess').sort()).toEqual(['known', 'register', 'reset']);
     expect(order.filter((o) => o === 'guess')).toHaveLength(MAX_HASHES_IN_FLIGHT + MAX_HASHES_WAITING);
     expect((await users.checkLogin('admin@x.y', 'a brand new password')).ok).toBe(true);
   });
@@ -569,6 +577,85 @@ describe('what must get through while guesses flood the server', () => {
     expect(busy.status).toBe(429);
     expect(busy.text).toContain(t('en', 'login.busy'));
     expect(busy.text).not.toContain(t('en', 'login.tooMany'));
+  });
+
+  it('one account has one sign-in ahead of the queue at a time; a second one at the same moment waits with everyone else and is not refused', async () => {
+    h = makeHarness({ trustProxy: 1 });
+    const first = await form(h, '/login', '1.2.1.1', { email: 'admin@x.y', password: 'admin-password-1' });
+    const device = ([] as string[]).concat(first.headers['set-cookie']).find((c) => c.startsWith('lager_device='))!.split(';')[0];
+    const other = h.core.users.create({ email: 'o@x.y', name: 'O', password: PW, role: 'user' });
+    const otherDevice = ([] as string[]).concat((await form(h, '/login', '1.2.1.2', { email: other.email, password: PW })).headers['set-cookie'])
+      .find((c) => c.startsWith('lager_device='))!.split(';')[0];
+    // Every check is held until all four have arrived, as hashes are while the server is busy.
+    const real = h.core.users.checkLogin.bind(h.core.users);
+    const lanes: Array<[string, boolean]> = [];
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => { open = resolve; });
+    vi.spyOn(h.core.users, 'checkLogin').mockImplementation(async (email, password, priority) => {
+      lanes.push([email, priority === true]);
+      await gate;
+      return real(email, password, priority);
+    });
+    const sent = [
+      form(h, '/login', '1.2.2.1', { email: 'admin@x.y', password: 'wrong' }).set('Cookie', device),
+      form(h, '/login', '1.2.2.2', { email: 'admin@x.y', password: 'admin-password-1' }).set('Cookie', device),
+      form(h, '/login', '1.2.2.3', { email: 'admin@x.y', password: 'wrong' }).set('Cookie', device),
+      form(h, '/login', '1.2.2.4', { email: other.email, password: PW }).set('Cookie', otherDevice),
+    ].map((r) => r.then((res) => res));
+    await vi.waitFor(() => { expect(lanes).toHaveLength(4); });
+    // Of the three for one account exactly one is ahead; another account's known browser is not held back by them.
+    expect(lanes.filter(([email, ahead]) => email === 'admin@x.y' && ahead)).toHaveLength(1);
+    expect(lanes.filter(([email]) => email === 'admin@x.y')).toHaveLength(3);
+    expect(lanes.find(([email]) => email === other.email)).toEqual([other.email, true]);
+    open();
+    // The ones that were not let ahead were checked all the same.
+    expect((await Promise.all(sent)).map((r) => r.status)).toEqual([401, 302, 401, 302]);
+    // The place is free again once the check is over, also after one that ended with "busy".
+    lanes.length = 0;
+    await form(h, '/login', '1.2.3.1', { email: 'admin@x.y', password: 'admin-password-1' }).set('Cookie', device);
+    vi.mocked(h.core.users.checkLogin).mockImplementationOnce(async (email, _password, priority) => { lanes.push([email, priority === true]); throw new LagerError('rate_limited', 'busy', 'busy'); });
+    expect((await form(h, '/login', '1.2.3.2', { email: 'admin@x.y', password: 'admin-password-1' }).set('Cookie', device)).status).toBe(429);
+    await form(h, '/login', '1.2.3.3', { email: 'admin@x.y', password: 'admin-password-1' }).set('Cookie', device);
+    expect(lanes.map(([, ahead]) => ahead)).toEqual([true, true, true]);
+  });
+
+  it(`after ${MAX_KNOWN_FAILURES} wrong passwords in a row from known browsers the device cookie no longer goes ahead, until a right password`, async () => {
+    h = makeHarness({ trustProxy: 1 });
+    const cookieOf = (res: { headers: Record<string, unknown> }): string => ([] as string[]).concat(res.headers['set-cookie'] as string[]).find((c) => c.startsWith('lager_device='))!.split(';')[0];
+    let device = cookieOf(await form(h, '/login', '1.3.1.1', { email: 'admin@x.y', password: 'admin-password-1' }));
+    const other = h.core.users.create({ email: 'o@x.y', name: 'O', password: PW, role: 'user' });
+    const otherDevice = cookieOf(await form(h, '/login', '1.3.1.2', { email: other.email, password: PW }));
+    const check = vi.spyOn(h.core.users, 'checkLogin');
+    const lanes = (): unknown[] => { const seen = check.mock.calls.map((c) => c[2]); check.mockClear(); return seen; };
+    let n = 0;
+    const signIn = (password: string, cookie?: string, email = 'admin@x.y') => {
+      const req = form(h!, '/login', `1.3.2.${++n}`, { email, password });
+      return cookie ? req.set('Cookie', cookie) : req;
+    };
+    // Wrong passwords without the cookie are the ordinary lane's and do not count here.
+    for (let i = 0; i < 2; i++) await signIn('wrong');
+    for (let i = 0; i < MAX_KNOWN_FAILURES + 2; i++) expect((await signIn('wrong', device)).status).toBe(401);
+    expect(lanes()).toEqual([false, false, ...Array.from({ length: MAX_KNOWN_FAILURES }, () => true), false, false]);
+    // Another account keeps its place.
+    await signIn(PW, otherDevice, other.email);
+    expect(lanes()).toEqual([true]);
+    // The right password is still taken (in the ordinary lane) and gives the place back.
+    expect((await signIn('admin-password-1', device)).status).toBe(302);
+    await signIn('wrong', device);
+    expect(lanes()).toEqual([false, true]);
+    // A failure between two successes does not add up: the count is of failures in a row.
+    for (let i = 0; i < MAX_KNOWN_FAILURES - 2; i++) await signIn('wrong', device);
+    await signIn('admin-password-1', device);
+    for (let i = 0; i < MAX_KNOWN_FAILURES; i++) await signIn('wrong', device);
+    expect(lanes()).toEqual(Array.from({ length: 2 * MAX_KNOWN_FAILURES - 1 }, () => true));
+    await signIn('wrong', device);
+    expect(lanes()).toEqual([false]);
+    // A new password starts afresh as well (the old cookie no longer counts; the browser that set it gets a new one).
+    await h.core.users.setPassword(h.adminId, 'a brand new password');
+    device = cookieOf(await signIn('a brand new password'));
+    check.mockClear();
+    await signIn('wrong', device);
+    expect(lanes()).toEqual([true]);
   });
 
   it('a paused account still gets its reset mail when the hourly reset mails are spent, and the form answers alike for a name without an account', async () => {

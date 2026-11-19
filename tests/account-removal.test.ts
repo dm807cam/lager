@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { JSDOM } from 'jsdom';
 import request from 'supertest';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { adminExtension } from '../src/http/admin.js';
 import { apiExtension } from '../src/http/api.js';
 import { dashboardExtension } from '../src/http/dashboard.js';
@@ -12,14 +12,15 @@ import { loginLimiter } from '../src/http/platform.js';
 import { csrfToken } from '../src/http/session.js';
 import { LOCALES, t, type MessageKey } from '../src/i18n/index.js';
 import { mcpExtension } from '../src/mcp/http.js';
-import type { Core } from '../src/core.js';
+import { createCore, type Core } from '../src/core.js';
+import { PrivatePurge, PURGE_INSTANCES_PER_TURN } from '../src/data/private-purge.js';
 import type { User } from '../src/platform/users.js';
 import { makeHarness, type Harness } from './support/http.js';
 
 const PASSWORD = 'correct horse battery';
 const en = (key: MessageKey, params?: Record<string, string | number>): string => esc(t('en', key, params));
 let h: Harness | undefined;
-afterEach(() => { h?.core.close(); h = undefined; });
+afterEach(() => { vi.restoreAllMocks(); h?.core.close(); h = undefined; });
 
 const dbOf = (core: Core): DatabaseSync => (core.apps as unknown as { db: DatabaseSync }).db;
 
@@ -236,6 +237,9 @@ describe('deleting an account', () => {
     expect(paths().filter((p) => p.startsWith(`data/users/${w.pia.id}/`))).toHaveLength(2);
     const before = w.core.data.usage(notes.id);
     expect(w.core.removal.remove(w.pia.id, w.admin, { transferTo: w.admin.id })).toEqual({ cleanedUp: true });
+    // Not within the administrator's request: the pass over every instance runs afterwards.
+    expect(paths().filter((p) => p.startsWith(`data/users/${w.pia.id}/`))).toHaveLength(2);
+    await w.core.privatePurge.idle();
     expect(paths().sort()).toEqual([`data/users/${w.uwe.id}/settings`, `datax/users/${w.pia.id}/settings`, 'notes/by-pia'].sort());
     // Paths that merely look like hers are nobody's private area and are not touched.
     for (const p of [`data/users/${w.pia.id}x/settings`, `datax/users/${w.pia.id}/settings`]) expect(w.core.data.get(notes.id, p), p).not.toBeNull();
@@ -247,6 +251,103 @@ describe('deleting an account', () => {
     expect(w.core.data.purgePrivateArea(own.id, 'gone', 3)).toBe(2);
     expect(w.core.data.purgePrivateArea(own.id, 'gone', 3)).toBe(0);
     expect(w.core.data.purgePrivateArea('00000000-0000-4000-8000-000000000000', 'gone')).toBe(0);
+  });
+
+  describe('the pass over every instance', () => {
+    const quiet = (): { log: (...a: unknown[]) => void; error: (...a: unknown[]) => void; lines: string[]; errors: unknown[][] } => {
+      const lines: string[] = [];
+      const errors: unknown[][] = [];
+      return { lines, errors, log: (...a) => { lines.push(String(a[0])); }, error: (...a) => { errors.push(a); } };
+    };
+    const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => `i${i}`);
+    /** Records what else gets a turn of the event loop while a pass runs. */
+    const ticking = (into: string[], until: () => boolean, each?: () => void): void => {
+      const tick = (): void => { if (until()) return; into.push('tick'); each?.(); setImmediate(tick); };
+      setImmediate(tick);
+    };
+
+    it('an area larger than one call removes is continued until nothing is left', async () => {
+      const w = await world();
+      const board = w.core.apps.getInstanceBySlug('board')!;
+      for (let i = 0; i < 8; i++) w.core.data.set(board.id, `data/users/gone/i${i}`, { i }, null);
+      w.core.data.set(board.id, 'data/users/gonex/keep', {}, null);
+      const calls: number[] = [];
+      const out = quiet();
+      const purge = new PrivatePurge((instanceId, userId) => { const n = w.core.data.purgePrivateArea(instanceId, userId, 3); calls.push(n); return n; }, 3, out);
+      purge.start('gone', [board.id]);
+      // Nothing happens before the caller's own turn is over.
+      expect(calls).toEqual([]);
+      await purge.idle();
+      expect(calls).toEqual([3, 3, 2]);
+      expect(w.core.data.purgePrivateArea(board.id, 'gone')).toBe(0);
+      expect(w.core.data.get(board.id, 'data/users/gonex/keep')).not.toBeNull();
+      expect(out.lines).toHaveLength(1);
+      expect(out.lines[0]).toContain('8 documents in 1 instances');
+      expect(out.errors).toEqual([]);
+    });
+
+    it(`lets other work run after every ${PURGE_INSTANCES_PER_TURN} instances and between two calls on one instance`, async () => {
+      const order: string[] = [];
+      let done = false;
+      let big = 2;
+      const purge = new PrivatePurge((instanceId) => { order.push(instanceId); return instanceId === 'i3' && big-- > 0 ? 5 : 0; }, 5, quiet());
+      purge.start('gone', ids(2 * PURGE_INSTANCES_PER_TURN + 5));
+      ticking(order, () => done);
+      await purge.idle();
+      done = true;
+      const runs = order.join(' ').split('tick').map((r) => r.trim().split(' ').filter(Boolean));
+      // i3 is called three times, with a turn for everyone else between the calls; then the rest of its ten, then ten, then five.
+      expect(runs.filter((r) => r.length > 0).map((r) => r.length)).toEqual([4, 1, 7, PURGE_INSTANCES_PER_TURN, 5]);
+      expect(order.filter((o) => o === 'i3')).toHaveLength(3);
+      expect(order.filter((o) => o !== 'tick' && o !== 'i3')).toEqual(ids(2 * PURGE_INSTANCES_PER_TURN + 5).filter((i) => i !== 'i3'));
+    });
+
+    it('stops between two calls at shutdown, says so once, and a failure in one instance does not keep it from the others', async () => {
+      const seen: string[] = [];
+      const out = quiet();
+      const purge = new PrivatePurge((instanceId) => { seen.push(instanceId); return 0; }, 5, out);
+      purge.start('gone', ids(3 * PURGE_INSTANCES_PER_TURN));
+      let stopped = false;
+      ticking([], () => stopped, () => { stopped = true; purge.stop(); });
+      await purge.idle();
+      expect(seen).toEqual(ids(PURGE_INSTANCES_PER_TURN));
+      expect(out.lines).toHaveLength(1);
+      expect(out.lines[0]).toMatch(/interrupted by the shutdown after 10 of 30 instances.*not continued after a restart/);
+      expect(out.errors).toEqual([]);
+
+      const failing = quiet();
+      const visited: string[] = [];
+      const second = new PrivatePurge((instanceId) => { visited.push(instanceId); if (instanceId === 'i1' || instanceId === 'i2') throw new Error(`broken ${instanceId}`); return 1; }, 5, failing);
+      second.start('gone', ids(4));
+      await second.idle();
+      expect(visited).toEqual(ids(4));
+      expect(failing.lines).toEqual([]);
+      expect(failing.errors).toHaveLength(1);
+      expect(String(failing.errors[0][0])).toContain('failed in 2 of 4 instances');
+      expect(failing.errors[0][1]).toEqual(new Error('broken i1'));
+    });
+
+    it('closing the server while a pass waits for its turn touches no database afterwards', async () => {
+      const w = await world();
+      const notes = w.core.apps.getInstanceBySlug('notes')!;
+      const purged = vi.spyOn(w.core.data, 'purgePrivateArea');
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
+      w.core.removal.remove(w.pia.id, w.admin, { transferTo: w.admin.id });
+      w.core.close();
+      const dataDir = w.core.config.dataDir;
+      h = undefined;
+      await w.core.privatePurge.idle();
+      expect(purged).not.toHaveBeenCalled();
+      expect(errors).not.toHaveBeenCalled();
+      expect(logs.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('interrupted by the shutdown'))).toHaveLength(1);
+      // What it had not reached is still there, and nothing takes it up at the next start.
+      const again = createCore({ ...w.core.config, dataDir });
+      try {
+        await again.privatePurge.idle();
+        expect([...again.data.exportDocs(notes.id, { includePrivateOf: w.pia.id })].filter((d) => d.path.startsWith(`data/users/${w.pia.id}/`))).toHaveLength(2);
+      } finally { again.close(); }
+    });
   });
 
   it('when moving the files to the trash fails, the account is still gone and the administrator is told to look at the log', async () => {

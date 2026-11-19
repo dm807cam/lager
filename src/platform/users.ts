@@ -39,7 +39,7 @@ let hashing = 0;
 const waiting: Array<() => void> = [];
 /**
  * Served before `waiting`, with a queue of its own: hashes whose number something else already bounds (a reset link, a session, an invitation
- * or the registration cap, the device cookie of the account). A flood of guessed sign-ins fills `waiting`; it must not keep out the
+ * or the registration cap, the device cookie of the account, which buys one hash at a time: see `PriorityLane`). A flood of guessed sign-ins fills `waiting`; it must not keep out the
  * owner who sets a new password or signs in from a known browser.
  */
 const urgent: Array<() => void> = [];
@@ -209,9 +209,7 @@ export class Users {
     return toUser(this.require(id));
   }
 
-  /** Replaces the password and invalidates existing sessions. */
-  /** `passwordHash` is what `hashPassword` returned for `password`, for a caller that must hash before it commits to anything. */
-  async setPassword(id: string, password: string, passwordHash?: string): Promise<void> {
+  private assertNewPassword(id: string, password: string): void {
     if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
       throw new LagerError('invalid_argument', `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`, 'password_short');
     }
@@ -219,8 +217,21 @@ export class Users {
       throw new LagerError('invalid_argument', `Password must be at most ${MAX_PASSWORD_LENGTH} characters.`, 'password_long');
     }
     this.require(id);
-    const hash = passwordHash ?? await hashPassword(password);
-    this.db.prepare('UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?').run(hash, id);
+  }
+
+  /** Replaces the password and invalidates existing sessions. */
+  async setPassword(id: string, password: string): Promise<void> {
+    this.assertNewPassword(id, password);
+    this.setPasswordHashed(id, password, await hashPassword(password));
+  }
+
+  /**
+   * `setPassword` with the hash already computed (`passwordHash` is what `hashPassword` returned for `password`). Nothing is
+   * awaited, so a caller can run it inside a transaction of its own; the hooks run inside that transaction too.
+   */
+  setPasswordHashed(id: string, password: string, passwordHash: string): void {
+    this.assertNewPassword(id, password);
+    this.db.prepare('UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?').run(passwordHash, id);
     for (const hook of this.passwordHooks) hook(id);
   }
 

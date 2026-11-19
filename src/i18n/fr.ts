@@ -306,7 +306,7 @@ export const fr: Record<MessageKey, string> = {
   'admin.users.delete.trash': 'Les supprimer : les applications et les instances vont dans la corbeille du serveur',
   'admin.users.delete.confirm': 'Pour confirmer, saisissez l’adresse e-mail « {email} »',
   'admin.users.delete.submit': 'Supprimer définitivement le compte',
-  'admin.users.delete.done': 'Le compte {email} a été supprimé.',
+  'admin.users.delete.done': 'Le compte {email} a été supprimé. Ses données privées dans les instances d’autres personnes sont supprimées en arrière-plan.',
   'admin.users.delete.cleanupFailed': 'Le compte {email} a été supprimé, mais le nettoyage de ses fichiers a échoué. Consultez le journal du serveur.',
   'admin.users.delete.self': 'Vous ne pouvez pas supprimer votre propre compte.',
   'admin.users.delete.active': 'Désactivez d’abord le compte. Seul un compte désactivé peut être supprimé.',

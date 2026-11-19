@@ -153,7 +153,7 @@ git clone https://github.com/dm807cam/lager.git && cd lager
 npm ci
 cp .env.example .env && set -a && . ./.env && set +a
 LAGER_DATA_DIR=./data npm run dev    # platform at http://localhost:8080, apps at http://<slug>.apps.localhost:8080
-npm test                             # about 900 tests, under a minute (Node 22.22+)
+npm test                             # about 1150 tests, under a minute (Node 22.22+)
 ```
 
 ## Security

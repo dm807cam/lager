@@ -262,10 +262,18 @@ export class Accounts {
     return this.once(row, async () => {
       // Hashed before the link is used up: if the server is too busy to hash, the link still works afterwards.
       const passwordHash = await hashPassword(password);
-      if (!this.consume(row)) throw invalidToken();
-      await this.users.setPassword(userId, password, passwordHash);
-      this.deleteResetLinks(userId);
-      this.users.markVerified(userId);
+      // One step: a link that is used up has set the password. If setting it fails, the link works again.
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        if (!this.consume(row)) throw invalidToken();
+        this.users.setPasswordHashed(userId, password, passwordHash);
+        this.deleteResetLinks(userId);
+        this.users.markVerified(userId);
+        this.db.exec('COMMIT');
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
+      }
       return this.users.get(userId)!;
     });
   }

@@ -306,7 +306,7 @@ export const de: Record<MessageKey, string> = {
   'admin.users.delete.trash': 'Löschen: Die Apps und Instanzen landen im Papierkorb des Servers',
   'admin.users.delete.confirm': 'Gib zur Bestätigung die E-Mail-Adresse „{email}“ ein',
   'admin.users.delete.submit': 'Konto endgültig löschen',
-  'admin.users.delete.done': 'Das Konto {email} wurde gelöscht.',
+  'admin.users.delete.done': 'Das Konto {email} wurde gelöscht. Seine privaten Daten in den Instanzen anderer werden im Hintergrund entfernt.',
   'admin.users.delete.cleanupFailed': 'Das Konto {email} wurde gelöscht, aber das Aufräumen seiner Dateien ist fehlgeschlagen. Näheres steht im Server-Log.',
   'admin.users.delete.self': 'Du kannst dein eigenes Konto nicht löschen.',
   'admin.users.delete.active': 'Deaktiviere das Konto zuerst. Nur ein deaktiviertes Konto kann gelöscht werden.',
