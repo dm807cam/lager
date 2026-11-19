@@ -20,6 +20,3 @@ The first public release.
 - **Operations:** a single Node.js process with SQLite and one data directory, no telemetry, an online backup command, a trash with retention, optional mail over SMTP.
 - **Installation:** a one-command installer and updater for Raspberry Pi and 64-bit Linux servers, with Cloudflare Tunnel, a mode for the local network or your own reverse proxy, and a backup before every update.
 - **Images:** multi-architecture Docker images (`linux/amd64`, `linux/arm64`) on the GitHub Container Registry: `:latest` and version tags for releases, `:edge` for the `main` branch.
-
-[Unreleased]: https://github.com/dm807cam/lager/commits/main
-[0.1.0]: https://github.com/dm807cam/lager/releases/tag/v0.1.0

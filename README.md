@@ -73,7 +73,7 @@ curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | su
 
 The installer sets up Docker if needed, asks three short questions and starts Lager. The easiest choice is **Cloudflare**: you get https on your own domain, reachable from anywhere, without opening ports or handling certificates. When asked, open the link it shows on your phone or laptop and pick your domain. That is the only step outside the terminal.
 
-**Updating** is the same command again. It keeps your settings and data, takes a backup first (and stops if the backup fails) and starts the newest release, the image tagged `:latest`. Works on a fresh Raspberry Pi 3, 4, 5 or Zero 2 with the 64-bit Raspberry Pi OS, and on any 64-bit Linux server. Details: [One-command install](docs/installation.md#one-command-install).
+**Updating** is the same command again. It keeps your settings and data, takes a backup first (and stops if the backup fails) and starts the most recently published release, the image tagged `:latest`. Works on a fresh Raspberry Pi 3, 4, 5 or Zero 2 with the 64-bit Raspberry Pi OS, and on any 64-bit Linux server. Details: [One-command install](docs/installation.md#one-command-install).
 
 ### By hand with Docker Compose
 
@@ -89,7 +89,7 @@ Then open `LAGER_PUBLIC_URL`, sign in and copy the connector address from the da
 
 - **What the reverse proxy must do** (pass `Host` on, body size, timeouts), with nginx and Caddy examples: [Reverse proxy requirements](docs/installation.md#reverse-proxy-requirements)
 - **Wildcard certificate, Nginx Proxy Manager, configuration:** [Installation](docs/installation.md)
-- **Published images:** `ghcr.io/dm807cam/lager:latest` is the newest release (written when a `v*.*.*` tag is pushed, together with the version tags such as `:0.1.0` and `:0.1`), and `:edge` follows the `main` branch. [Published images](docs/installation.md#published-images)
+- **Published images:** `ghcr.io/dm807cam/lager:latest` is the most recently published release (written when a release tag `v*.*.*` is pushed, together with the version tags such as `:0.1.0` and `:0.1`; pre-release tags such as `v0.2.0-rc.1` do not move it), and `:edge` follows the `main` branch. [Published images](docs/installation.md#published-images)
 - **Just trying it?** Run it on your own machine without DNS or certificates: [Running from source](docs/installation.md#running-from-source)
 
 ### Connect your AI

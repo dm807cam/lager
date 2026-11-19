@@ -54,13 +54,16 @@ An installation made with the [one-command installer](installation.md#one-comman
 cd /opt/lager && docker compose exec -T lager node dist/backup.js /backups/$(date +%Y-%m-%d-%H%M%S)
 ```
 
-An upload or a version that arrives while the backup runs may be missing from it; run it at a quiet time or accept that the last seconds are not included. The command exits with a non-zero status on failure, so a scheduler notices when it fails. Lager ships no scheduled backup: you create the schedule yourself. An example line for root's crontab (`sudo crontab -e`) that backs up an installer-made installation every night at 03:00 (cron needs `%` written as `\%`):
+An upload or a version that arrives while the backup runs may be missing from it; run it at a quiet time or accept that the last seconds are not included. The command exits with a non-zero status on failure, so a scheduler notices when it fails. Lager ships no scheduled backup: you create the schedule yourself. Two example lines for root's crontab (`sudo crontab -e`) for an installer-made installation: the first takes a backup every night at 03:00 (cron needs `%` written as `\%`), the second removes backups older than 14 days half an hour later:
 
 ```cron
 0 3 * * * cd /opt/lager && docker compose exec -T lager node dist/backup.js /backups/$(date +\%Y-\%m-\%d-\%H\%M\%S)
+30 3 * * * find /opt/lager/backups/* -prune -type d -name '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]' -mtime +14 -exec rm -rf {} +
 ```
 
-A systemd timer that runs the same command works as well. Nothing removes these backups except the installer's next update, which keeps the newest `LAGER_BACKUPS_KEEP` (default 5) folders with such a name, so with a nightly job the folder holds about a week at most. Copy backups to another machine if they should survive the loss of this one.
+The second line touches only folders directly in `/opt/lager/backups` whose name is such a timestamp, and judges their age by the time they were written. A systemd timer that runs the same commands works as well.
+
+Without the second line the folder grows without bound: Lager never removes backups while it runs. The only other pruning happens when the installer updates Lager. It then keeps the newest `LAGER_BACKUPS_KEEP` (default 5) timestamp-named folders in total, whoever made them, so an update also removes all but the last five nightly backups. Set `LAGER_BACKUPS_KEEP` on the update to keep more (at most 9999). Copy backups to another machine if they should survive the loss of this one.
 
 To restore, stop Lager and copy the contents back (or unpack the archive into an empty volume). Keep `secret.key` (or `LAGER_SECRET`) together with the data. Without it all sessions become invalid, and the keys of the AI providers stored in the database can no longer be decrypted: every provider that has a key stops working until an administrator enters the key again.
 

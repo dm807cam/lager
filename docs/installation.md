@@ -10,7 +10,7 @@ For a Raspberry Pi or any 64-bit Linux server, one command installs, configures 
 curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | sudo bash
 ```
 
-**Run it again to update.** The second run asks nothing. It takes a backup of the running server, pulls the image this installation uses (by default `:latest`, the newest release; see [Published images](#published-images)) and restarts Lager, keeping settings and data. If the backup fails, the installer shows the error and stops before it downloads or restarts anything, so Lager keeps running as it was; `LAGER_SKIP_BACKUP=1` updates without a backup. If Lager is not running at that moment, no backup can be taken and the installer says so. The script lives in the repository as [`install.sh`](../install.sh); read it before you pipe it into a shell.
+**Run it again to update.** The second run asks nothing. It takes a backup of the running server, pulls the image this installation uses (by default `:latest`, the most recently published release; see [Published images](#published-images)) and restarts Lager, keeping settings and data. If the backup fails, the installer shows the error and stops before it changes anything (the backup is the first step of an update, before settings, the Compose file or the tunnel are written), so Lager keeps running as it was; `LAGER_SKIP_BACKUP=1` updates without a backup. If Lager is not running at that moment, no backup can be taken and the installer says so. The script lives in the repository as [`install.sh`](../install.sh); read it before you pipe it into a shell.
 
 ### What it does
 
@@ -59,7 +59,7 @@ curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh \
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
-| `LAGER_MODE` | `cloudflare`, `local` or `proxy` | asked |
+| `LAGER_MODE` | `cloudflare`, `local` or `proxy`. Like the domain and the addresses below, it is read on the first run and with `LAGER_RECONFIGURE=1` only; a plain update keeps what was set up, and says so if you pass something else | asked |
 | `LAGER_DOMAIN` | Cloudflare mode: the domain | asked |
 | `LAGER_PUBLIC_URL`, `LAGER_APPS_DOMAIN` | Proxy mode: the addresses | asked |
 | `LAGER_ADMIN_EMAIL` | The first administrator | asked |
@@ -110,11 +110,12 @@ Images are built for `linux/amd64` and `linux/arm64` (so a Raspberry Pi works to
 
 | Pushed | Tags written | Use it for |
 | --- | --- | --- |
-| A release tag `v1.2.3` | `:1.2.3`, `:1.2`, `:1`, `:latest` and `:sha-<commit>` | `:latest` is the newest release. `:1.2.3` pins one exact release, `:1.2` and `:1` follow a release line |
+| A release tag `v1.2.3` | `:1.2.3`, `:1.2`, `:1`, `:latest` and `:sha-<commit>` | `:latest` follows the releases. `:1.2.3` pins one exact release, `:1.2` and `:1` follow a release line |
 | A release tag `v0.4.1` | `:0.4.1`, `:0.4`, `:latest` and `:sha-<commit>` | While Lager is 0.x there is no `:0`, because every minor release may break: pin `:0.4` or `:0.4.1` |
+| A pre-release tag `v1.2.3-rc.1` | `:1.2.3-rc.1` and `:sha-<commit>` | Trying a release candidate. It moves neither `:latest` nor `:1.2` or `:1` |
 | A commit on `main` | `:edge` and `:sha-<commit>` | The development version, for testing. It can be ahead of `:latest` and may break |
 
-`:latest` moves only when a release tag `v*.*.*` is pushed, never on a commit to `main`. Until the first release is tagged, `:latest` does not exist and `:edge` is the only moving tag.
+`:latest` points at the release whose tag was pushed most recently, which is not necessarily the highest version: if a fix for an older line (`v1.1.5`) is tagged after `v1.2.0`, `:latest` and `:1` move to it until the next release is tagged. `:latest` never moves on a commit to `main` or on a pre-release tag. Until the first release is tagged, `:latest` does not exist and `:edge` is the only moving tag.
 
 To run a published image, replace `build: .` in `docker-compose.yml` with `image: ghcr.io/dm807cam/lager:latest` and start with `docker compose up -d`. To update, run `docker compose pull && docker compose up -d`. Your data stays in the volume. Back it up before a major version change (see [Backup](data-and-backup.md#backup)).
 
@@ -168,7 +169,7 @@ Lager speaks plain HTTP on one port and expects a reverse proxy with TLS in fron
 | Requirement | Why | nginx default |
 | --- | --- | --- |
 | Pass the `Host` header on unchanged | Lager decides by the host name whether a request goes to the platform or to which app. With a changed host it answers 404. If the proxy sends `X-Forwarded-Host`, it must carry the same original host name, because Lager prefers it | replaced by the upstream's name: set `proxy_set_header Host $http_host` |
-| Set `X-Forwarded-Proto` | Lager learns from it that the visitor uses https, and compares the browser's `Origin` header with that address. Without it, Lager refuses live updates and other requests from the app's own page as cross-origin (403) | not set |
+| Set `X-Forwarded-Proto` | The two event streams of live updates (`/__lager/db/events`, `/__lager/room/events`) compare the browser's `Origin` header with the address the request arrived at, and take its scheme from this header. Without it Lager sees `http`, the `Origin` of an https page does not match, and both streams are refused with 403: apps load and save, but changes by others and presence no longer arrive live. Nothing else reads the header: cookies, sign-in and OAuth follow `LAGER_PUBLIC_URL` | not set |
 | Set `X-Forwarded-For` | Lager takes the client address from it, for the limit on sign-in attempts, the limits for anonymous visitors and the access log. Without it, all visitors share the proxy's address | not set |
 | Allow request bodies of 24 MiB | The largest body Lager accepts is 24 MiB: a deploy sent as JSON through the REST API or MCP (the HTML itself may be 16 MiB). Uploads (`assets`) are at most 20 MiB and imports at most 20 MiB | 1 MiB (`client_max_body_size`): larger deploys and uploads fail with 413 |
 | Wait at least 30 seconds for the next bytes of a response | Live updates (`/__lager/db/events`, `/__lager/room/events`) are Server-Sent Events that stay open. Lager writes a ping every 25 seconds, so the connection is never silent for longer | 60 s (`proxy_read_timeout`): enough |
