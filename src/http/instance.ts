@@ -17,6 +17,7 @@ import { mountAssetRoutes } from './instance-assets.js';
 import { mountRoomRoutes, STREAM_LIMITS } from './instance-room.js';
 import { mountCompleteRoutes } from './instance-complete.js';
 import { assertOwnOrigin } from './origin.js';
+import { RateLimiter } from './ratelimit.js';
 import { StreamLimiter } from './stream-limit.js';
 import { requestLocale } from './locale.js';
 import { t as tr } from '../i18n/index.js';
@@ -38,6 +39,12 @@ const PING_MS = 25_000;
 const MAX_BUFFERED_BYTES = 1024 * 1024;
 /** How long a started sign-in may take before its nonce lapses. */
 const NONCE_SECONDS = 600;
+/**
+ * Database operations per viewer, instance and minute. A page load makes one read per listener and every change one more,
+ * so real apps stay far below; guests are counted per client address and get half.
+ */
+export const DB_RATE = { reads: 600, writes: 300, guestShare: 0.5, windowMs: 60_000 };
+const DB_READS = new Set(['get', 'query']);
 const RANK: Record<Level, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
 
 function instanceUser(core: Core, req: Request, instance: Instance): User | null {
@@ -48,7 +55,7 @@ function instanceUser(core: Core, req: Request, instance: Instance): User | null
 }
 
 function activeCapabilities(core: Core, instance: Instance): Capabilities {
-  return core.apps.listVersions(instance.appId).find((v) => v.number === instance.activeVersion)?.capabilities ?? {};
+  return core.apps.getVersion(instance.appId, instance.activeVersion)?.capabilities ?? {};
 }
 
 /** `customHost` is the custom domain the visitor came in on; the platform sends the code back to exactly that host. */
@@ -267,10 +274,20 @@ export function createInstanceRouter(core: Core): express.Router {
     res.set('Cache-Control', 'no-store').json({ profiles });
   });
 
+  const dbReads = new RateLimiter(DB_RATE.reads, DB_RATE.windowMs);
+  const dbWrites = new RateLimiter(DB_RATE.writes, DB_RATE.windowMs);
+
   router.post('/__lager/db', express.json({ limit: '512kb' }), (req, res) => {
     if (req.get('X-Lager-Request') !== '1') throw new LagerError('forbidden', 'Missing X-Lager-Request header.');
     const ctx = ctxOf(res);
     requireAccess(ctx);
+    // Counted before anything is read or parsed further: every query loads its whole collection.
+    const isRead = DB_READS.has((req.body as { op?: unknown } | undefined)?.op as string);
+    const budget = (isRead ? DB_RATE.reads : DB_RATE.writes) * (ctx.viewer.userId === null ? DB_RATE.guestShare : 1);
+    if (!(isRead ? dbReads : dbWrites).hit(`${ctx.instance.id}\n${ctx.viewer.userId ?? `ip:${req.ip ?? ''}`}`, budget)) {
+      res.set('Retry-After', '5');
+      throw new LagerError('rate_limited', 'Too many database requests; try again shortly.');
+    }
     const body: unknown = req.body;
     if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new LagerError('invalid_argument', 'Request body must be a JSON object.');
     const { op, path, data, query, options } = body as Record<string, unknown>;

@@ -400,6 +400,8 @@ describe('db', () => {
     await expect(db.doc('err/quota_exceeded').set({})).rejects.toEqual({ code: 'quota_exceeded', message: 'boom quota_exceeded' });
     await expect(db.doc('err/conflict').delete()).rejects.toEqual({ code: 'unavailable', message: 'boom conflict' });
     await expect(db.doc('err/unauthenticated').get()).rejects.toMatchObject({ code: 'unavailable' });
+    // Too many requests is transient like a server failure: listeners retry it, single calls report it as such.
+    await expect(db.doc('err/rate_limited').get()).rejects.toEqual({ code: 'unavailable', message: 'boom rate_limited' });
     await expect(db.collection('err').doc('forbidden').get()).rejects.toMatchObject({ code: 'not_granted' });
     g.fetch = async (u: string) => { if (u === '/__lager/db') throw new TypeError('offline'); return fakeFetch(u); };
     await expect(db.doc('tasks/x').get()).rejects.toMatchObject({ code: 'unavailable' });

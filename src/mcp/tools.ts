@@ -8,6 +8,7 @@ import { assertDocData, parseDocPath } from '../data/paths.js';
 import type { QuerySpec } from '../data/query.js';
 import { canRead, canWrite, type Viewer } from '../data/rules.js';
 import { LagerError } from '../errors.js';
+import { countSnapshotAction } from '../http/snapshot-limit.js';
 import type { GrantLevel } from '../platform/access.js';
 import { normalizeDescription, normalizeThemeColor, type App, type Capabilities, type DbRule, type DeployResult, type Instance, type Version, type Visibility } from '../platform/apps.js';
 import { MODEL_ID_RE } from '../platform/ai.js';
@@ -487,7 +488,7 @@ export function dbAccess(core: Core, user: User, inst: Instance): { viewer: View
   const level = core.access.levelFor(inst, user);
   const viewer: Viewer = { userId: user.id, level };
   if (level === 'owner') return { viewer, rules: [] };
-  const caps = core.apps.listVersions(inst.appId).find((v) => v.number === inst.activeVersion)?.capabilities;
+  const caps = core.apps.getVersion(inst.appId, inst.activeVersion)?.capabilities;
   return { viewer, rules: caps?.db?.rules };
 }
 
@@ -626,7 +627,11 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   server.registerTool('activate_version', { ...toolMeta('activate_version'),
     description: 'Activate any existing version on an instance (roll back or forward). A snapshot of the instance data is taken first.',
     inputSchema: { instance: slugArg, version: z.number().int().positive() },
-  }, ({ instance, version }) => run(() => instanceJson(core, core.apps.activate(managedInstance(core, user, instance).id, version, user.id))));
+  }, ({ instance, version }) => run(() => {
+    const inst = managedInstance(core, user, instance);
+    if (version !== inst.activeVersion) countSnapshotAction(core, inst.id);
+    return instanceJson(core, core.apps.activate(inst.id, version, user.id));
+  }));
 
   server.registerTool('create_instance', { ...toolMeta('create_instance'),
     description: 'Create another instance of an app with its own subdomain and its own data.',
@@ -789,6 +794,7 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }, ({ instance, snapshot }) => run(() => {
     const inst = managedInstance(core, user, instance);
     if (!core.access.canRestoreInstance(inst, user)) throw new LagerError('forbidden', `Only the owner of instance "${instance}" may restore a snapshot.`);
+    countSnapshotAction(core, inst.id);
     core.data.restore(inst.id, snapshot);
     return { restored: snapshot };
   }));

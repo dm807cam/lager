@@ -13,6 +13,7 @@ import type { Instance, Visibility } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 import type { PlatformExtension } from './app.js';
 import { discardBody, sendError } from './errors.js';
+import { countSnapshotAction } from './snapshot-limit.js';
 import { sessionUser } from './session.js';
 
 const MAX_HTML = '16mb';
@@ -281,6 +282,7 @@ export const apiExtension: PlatformExtension = (router, core) => {
     const version = bodyObject(req).version;
     if (typeof version !== 'number' || !Number.isInteger(version)) throw new LagerError('invalid_argument', 'version must be an integer.');
     const inst = managedInstance(core, user, req.params.slug as string);
+    if (version !== inst.activeVersion) countSnapshotAction(core, inst.id);
     res.json(instanceJson(core, core.apps.activate(inst.id, version, user.id)));
   });
 

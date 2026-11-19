@@ -2,9 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { LagerError } from '../errors.js';
+import { HandleCache } from './handles.js';
 import type { Hub } from './hub.js';
 import { assertCollectionPath, assertDocData, parseDocPath } from './paths.js';
-import { runQuery, type QuerySpec } from './query.js';
+import { queryLimit, runQuery, type QuerySpec } from './query.js';
 
 export interface Doc {
   path: string; id: string; data: Record<string, unknown>; version: number;
@@ -26,6 +27,8 @@ const SNAPSHOT_ID_RE = /^\d{8}T\d{9}Z-[a-z0-9-]{1,64}$/;
 const EXPORT_BATCH = 500;
 const DEFAULT_TTL_MS = 30_000;
 const MAX_TTL_MS = 300_000;
+/** All snapshots of an instance together may take this many times its quota; they do not count against the quota itself. */
+export const SNAPSHOT_QUOTA_FACTOR = 3;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS docs (
@@ -88,12 +91,19 @@ function stampToIso(stamp: string): string {
 }
 
 export class InstanceData {
-  private dbs = new Map<string, DatabaseSync>();
+  private dbs: HandleCache;
   private lastStamp = 0;
   private extraUsage: (instanceId: string) => number = () => 0;
 
   /** `quotaBytes` caps the size of one instance's data (0 = unlimited). */
-  constructor(private dataDir: string, private hub: Hub, private snapshotKeep: number, private quotaBytes = 0) {}
+  constructor(private dataDir: string, private hub: Hub, private snapshotKeep: number, private quotaBytes = 0, maxOpen?: number) {
+    this.dbs = new HandleCache(maxOpen);
+  }
+
+  /** How many instance databases are open right now. */
+  get openHandles(): number {
+    return this.dbs.size;
+  }
 
   private instanceDir(instanceId: string): string {
     if (typeof instanceId !== 'string' || !INSTANCE_ID_RE.test(instanceId)) {
@@ -137,15 +147,17 @@ export class InstanceData {
   /** Closes the instance database and moves its directory (data and snapshots) to `<dataDir>/trash`. */
   trash(instanceId: string): void {
     const dir = this.instanceDir(instanceId);
-    this.dbs.get(instanceId)?.close();
-    this.dbs.delete(instanceId);
+    this.dbs.close(instanceId);
     if (!fs.existsSync(dir)) return;
     const trash = path.join(this.dataDir, 'trash');
     fs.mkdirSync(trash, { recursive: true });
     fs.renameSync(dir, path.join(trash, `${instanceId}-${formatStamp(Date.now())}`));
   }
 
-  /** Opens (and caches) the instance database; reads pass create=false so they never create files. */
+  /**
+   * Opens (and caches) the instance database; reads pass create=false so they never create files. The cache closes handles
+   * that were not used for a while, so use the result right away and never keep it across an `await` or a `yield`.
+   */
   private open(instanceId: string, create: boolean): DatabaseSync | null {
     const cached = this.dbs.get(instanceId);
     if (cached) return cached;
@@ -248,13 +260,22 @@ export class InstanceData {
 
   query(instanceId: string, collectionPath: string, spec: QuerySpec = {}, visible?: (path: string) => boolean): Doc[] {
     assertCollectionPath(collectionPath);
-    const db = this.open(instanceId, false);
     // validate the spec even when there is nothing to query
-    if (!db) { runQuery([], spec); return []; }
-    const rows = db.prepare('SELECT * FROM docs WHERE parent = ?').all(collectionPath) as unknown as DocRow[];
-    // Documents the caller may not see are dropped before filtering, sorting and limiting, so they cannot shape the result.
-    const docs = rows.map(toDoc).filter((d) => !visible || visible(d.path));
-    return runQuery(docs, spec);
+    const limit = queryLimit(spec);
+    const db = this.open(instanceId, false);
+    if (!db) return [];
+    // Without a filter or an order of its own the result is the first documents by id, which SQLite can pick itself
+    // (ids are ASCII, so its order is the one runQuery uses); everything else is evaluated in JavaScript.
+    const plain = !spec.where?.length && !spec.orderBy?.length;
+    let rows = (plain
+      ? (visible
+        ? db.prepare('SELECT * FROM docs WHERE parent = ? ORDER BY id').all(collectionPath)
+        : db.prepare('SELECT * FROM docs WHERE parent = ? ORDER BY id LIMIT ?').all(collectionPath, limit))
+      : db.prepare('SELECT * FROM docs WHERE parent = ?').all(collectionPath)) as unknown as DocRow[];
+    // Documents the caller may not see are dropped before parsing, filtering, sorting and limiting, so they cannot shape the result.
+    if (visible) rows = rows.filter((r) => visible(r.path));
+    if (plain) rows = rows.slice(0, limit);
+    return runQuery(rows.map(toDoc), spec);
   }
 
   acquire(
@@ -307,10 +328,11 @@ export class InstanceData {
    * Everything under `data/users/` is left out except the area of `includePrivateOf`.
    */
   *exportDocs(instanceId: string, opts: { includePrivateOf?: string; filter?: (path: string) => boolean } = {}): Generator<{ path: string; data: Record<string, unknown> }> {
-    const db = this.open(instanceId, false);
-    if (!db) return;
     let after = '';
     for (;;) {
+      // Fetched anew for every batch: the consumer may be a slow download, and an idle handle can be closed in between.
+      const db = this.open(instanceId, false);
+      if (!db) return;
       const rows = db.prepare('SELECT path, data FROM docs WHERE path > ? ORDER BY path LIMIT ?').all(after, EXPORT_BATCH) as unknown as Array<{ path: string; data: string }>;
       for (const r of rows) {
         const owner = privateAreaOwner(r.path.split('/'));
@@ -334,6 +356,7 @@ export class InstanceData {
     opts: { allowPrivateOf?: string } = {},
   ): { imported: number } {
     const checked = new Map<string, { parent: string; id: string; json: string }>();
+    let sharedPath: string | undefined;
     for (const d of docs) {
       if (typeof d?.path !== 'string') throw new LagerError('invalid_argument', 'Path must be a non-empty string.');
       // The private-area check comes first so a malformed path under data/users/ is refused as such.
@@ -344,6 +367,7 @@ export class InstanceData {
       const { parent, id } = parseDocPath(d.path);
       assertDocData(d.data);
       checked.set(d.path, { parent, id, json: JSON.stringify(d.data) });
+      if (owner === undefined) sharedPath = d.path;
     }
     if (checked.size === 0) return { imported: 0 };
     this.assertQuota(instanceId);
@@ -355,7 +379,8 @@ export class InstanceData {
          ON CONFLICT(path) DO UPDATE SET data = excluded.data, version = docs.version + 1, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       );
       for (const [p, d] of checked) upsert.run(p, d.parent, d.id, d.json, now, now, by);
-      for (const p of checked.keys()) this.recordAuthor(db, p, by);
+      // The author is the same for every document: one entry is enough, and only if something landed outside the private areas.
+      if (sharedPath !== undefined) this.recordAuthor(db, sharedPath, by);
       if (this.quotaBytes > 0 && this.usage(instanceId) + this.extraUsage(instanceId) > this.quotaBytes) {
         throw new LagerError('quota_exceeded', 'This instance\'s storage is full.');
       }
@@ -407,11 +432,20 @@ export class InstanceData {
     return out.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
   }
 
+  /** Bytes all snapshots of the instance take on disk; they are outside the quota. */
+  snapshotBytes(instanceId: string): number {
+    return this.listSnapshots(instanceId).reduce((sum, s) => sum + s.sizeBytes, 0);
+  }
+
+  /** Drops the oldest snapshots beyond `snapshotKeep` and beyond the byte budget; the newest one always stays. */
   private prune(instanceId: string): void {
     const keep = Math.max(1, Math.floor(this.snapshotKeep));
-    for (const s of this.listSnapshots(instanceId).slice(keep)) {
-      fs.rmSync(path.join(this.snapshotDir(instanceId), `${s.id}.sqlite`), { force: true });
-    }
+    const budget = this.quotaBytes > 0 ? this.quotaBytes * SNAPSHOT_QUOTA_FACTOR : Infinity;
+    let bytes = 0;
+    this.listSnapshots(instanceId).forEach((s, i) => {
+      bytes += s.sizeBytes;
+      if (i > 0 && (i >= keep || bytes > budget)) fs.rmSync(path.join(this.snapshotDir(instanceId), `${s.id}.sqlite`), { force: true });
+    });
   }
 
   restore(instanceId: string, snapshotId: string): void {
@@ -427,8 +461,7 @@ export class InstanceData {
     fs.copyFileSync(source, staged);
     try {
       this.snapshot(instanceId, 'pre-restore');
-      this.dbs.get(instanceId)?.close();
-      this.dbs.delete(instanceId);
+      this.dbs.close(instanceId);
       fs.rmSync(`${file}-wal`, { force: true });
       fs.rmSync(`${file}-shm`, { force: true });
       fs.renameSync(staged, file);
@@ -439,7 +472,6 @@ export class InstanceData {
   }
 
   close(): void {
-    for (const db of this.dbs.values()) db.close();
-    this.dbs.clear();
+    this.dbs.closeAll();
   }
 }

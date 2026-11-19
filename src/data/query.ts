@@ -6,6 +6,11 @@ export interface Row { id: string; data: Record<string, unknown> }
 
 const OPS: WhereOp[] = ['==', '!=', '<', '<=', '>', '>=', 'in', 'not-in', 'array-contains', 'array-contains-any'];
 const MAX_LIMIT = 1000;
+const MAX_WHERE = 10;
+const MAX_ORDER_BY = 5;
+/** Longest list an `in`, `not-in` or `array-contains-any` clause may carry: every entry is compared with every document. */
+const MAX_LIST = 30;
+const LIST_OPS: WhereOp[] = ['in', 'not-in', 'array-contains-any'];
 
 function jsonType(v: unknown): string {
   if (v === null) return 'null';
@@ -76,11 +81,14 @@ function validate(spec: QuerySpec): number {
   const bad = (m: string) => new LagerError('invalid_argument', m);
   if (spec.where !== undefined && !Array.isArray(spec.where)) throw bad('where must be a list of [field, op, value] clauses.');
   if (spec.orderBy !== undefined && !Array.isArray(spec.orderBy)) throw bad('orderBy must be a list of [field, "asc"|"desc"] entries.');
+  if ((spec.where?.length ?? 0) > MAX_WHERE) throw bad(`A query takes at most ${MAX_WHERE} where clauses.`);
+  if ((spec.orderBy?.length ?? 0) > MAX_ORDER_BY) throw bad(`A query takes at most ${MAX_ORDER_BY} orderBy fields.`);
   for (const w of spec.where ?? []) {
     if (!Array.isArray(w) || w.length !== 3 || typeof w[0] !== 'string' || w[0] === '') throw bad('Each where clause must be [field, op, value].');
     if (!OPS.includes(w[1])) throw bad(`Unknown where operator "${String(w[1])}".`);
-    if ((w[1] === 'in' || w[1] === 'not-in' || w[1] === 'array-contains-any') && !Array.isArray(w[2])) {
-      throw bad(`Operator "${w[1]}" needs an array value.`);
+    if (LIST_OPS.includes(w[1])) {
+      if (!Array.isArray(w[2])) throw bad(`Operator "${w[1]}" needs an array value.`);
+      if (w[2].length > MAX_LIST) throw bad(`Operator "${w[1]}" takes at most ${MAX_LIST} values.`);
     }
   }
   for (const o of spec.orderBy ?? []) {
@@ -91,6 +99,11 @@ function validate(spec: QuerySpec): number {
   const limit = spec.limit ?? MAX_LIMIT;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) throw bad(`limit must be an integer between 1 and ${MAX_LIMIT}.`);
   return limit;
+}
+
+/** Validates the query and returns its limit (the maximum when none is given); throws `invalid_argument`. */
+export function queryLimit(spec: QuerySpec = {}): number {
+  return validate(spec);
 }
 
 /** Filters, sorts and limits rows. Default order is by id ascending, which is also the tie-breaker. */
