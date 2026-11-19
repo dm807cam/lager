@@ -144,7 +144,7 @@ describe('multi-user end to end', () => {
     expect((await home(call, uSession)).status).toBe(200);
     // The user role cannot deploy.
     const uHome = (await home(call, uSession)).body;
-    expect(uHome).not.toContain('Claude verbinden');
+    expect(uHome).not.toContain('KI verbinden');
 
     // 3. The publisher creates an API token over HTTP and deploys the example as "notes".
     const tokenRes = await call(PLATFORM, 'POST', '/api/tokens', { headers: { ...API, Cookie: pSession }, body: JSON.stringify({ name: 'e2e' }) });

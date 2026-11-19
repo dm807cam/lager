@@ -32,15 +32,15 @@ describe('catalogs', () => {
     }
   });
 
-  it('brand copy keeps the names Claude and Lager in every locale', () => {
+  it('brand copy names Lager and no particular AI in every locale', () => {
     for (const locale of LOCALES) {
-      expect(t(locale, 'brand.tagline'), locale).toContain('Claude');
-      expect(t(locale, 'brand.tagline'), locale).toContain('Lager');
-      expect(t(locale, 'brand.pitch'), locale).toContain('Claude');
-      expect(t(locale, 'brand.pitch'), locale).toContain('Lager');
+      for (const key of ['brand.tagline', 'brand.pitch'] as const) {
+        expect(t(locale, key), `${locale}:${key}`).toContain('Lager');
+        expect(t(locale, key), `${locale}:${key}`).not.toMatch(/Claude|ChatGPT|Gemini/);
+      }
     }
-    expect(t('en', 'brand.tagline')).toBe("The only two apps you'll ever need: Claude + Lager.");
-    expect(t('en', 'brand.pitch')).toBe('We used to buy apps. Now Claude builds any app you can imagine, on the spot. Lager is where they run — on your server, with your data staying yours.');
+    expect(t('en', 'brand.tagline')).toBe("The only two apps you'll ever need: your AI + Lager.");
+    expect(t('en', 'brand.pitch')).toBe('We used to buy apps. Now your AI builds any app you can imagine, on the spot. Lager is where they run — on your server, with your data staying yours.');
   });
 
   it('translations differ from English for the main strings', () => {
