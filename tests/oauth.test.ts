@@ -99,7 +99,50 @@ describe('oauth', () => {
     const pr = await request(h.app).get('/.well-known/oauth-protected-resource').set('Host', h.host)
       .set('X-Forwarded-Host', 'evil.example').set('X-Forwarded-Proto', 'https');
     expect(pr.status).toBe(200);
-    expect(pr.body).toMatchObject({ resource: `${BASE}/`, authorization_servers: [`${BASE}/`] });
+    expect(pr.body).toMatchObject({ resource: `${BASE}/mcp`, authorization_servers: [`${BASE}/`] });
+    // RFC 9728 path-aware location for the resource https://…/mcp, which the 401 challenge names.
+    const pathAware = await request(h.app).get('/.well-known/oauth-protected-resource/mcp').set('Host', h.host);
+    expect(pathAware.status).toBe(200);
+    expect(pathAware.body).toMatchObject({ resource: `${BASE}/mcp`, authorization_servers: [`${BASE}/`] });
+    expect(pathAware.headers['access-control-allow-origin']).toBe('*');
+    expect(pr.headers['access-control-allow-origin']).toBe('*');
+  });
+
+  it('native apps may register a private-use redirect scheme and complete the flow (Cursor)', async () => {
+    const h = setup();
+    const cookie = await h.login();
+    const redirect = 'cursor://anysphere.cursor-mcp/oauth/callback';
+    const reg = await request(h.app).post('/register').set('Host', h.host)
+      .send({ redirect_uris: [redirect], client_name: 'Cursor', token_endpoint_auth_method: 'none' });
+    expect(reg.status).toBe(201);
+    const { verifier, challenge } = pkce();
+    const q = authorizeQuery(reg.body.client_id, challenge, { redirect_uri: redirect, resource: `${BASE}/mcp` });
+    const consent = await request(h.app).get(`/authorize?${q}`).set('Host', h.host).set('Cookie', cookie);
+    expect(consent.status).toBe(200);
+    expect(consent.text).toContain('cursor://anysphere.cursor-mcp');
+    const approve = await request(h.app).post('/authorize').set('Host', h.host).set('Cookie', cookie).type('form')
+      .send({ ...hiddenFields(consent.text), decision: 'approve' });
+    expect(approve.status).toBe(302);
+    expect(approve.headers.location.startsWith(`${redirect}?`)).toBe(true);
+    const code = new URL(approve.headers.location).searchParams.get('code')!;
+    const res = await exchange(h, {
+      grant_type: 'authorization_code', code, code_verifier: verifier, client_id: reg.body.client_id, redirect_uri: redirect, resource: `${BASE}/mcp`,
+    });
+    expect(res.status).toBe(200);
+    expect((await initialize(h, res.body.access_token)).status).toBe(200);
+  });
+
+  it('registration refuses schemes that do not open a native app', async () => {
+    const h = setup();
+    for (const uri of ['javascript:alert(1)', 'data:text/html,hi', 'file:///etc/passwd', 'vbscript:x', 'blob:https://x/y', 'ftp://example.com/cb',
+      'myapp://user:pw@host/cb', 'cursor://x/cb#frag', 'not a uri']) {
+      const res = await request(h.app).post('/register').set('Host', h.host)
+        .send({ redirect_uris: [uri], token_endpoint_auth_method: 'none' });
+      expect(res.status, uri).toBe(400);
+    }
+    const reverseDomain = await request(h.app).post('/register').set('Host', h.host)
+      .send({ redirect_uris: ['com.example.app:/oauth2redirect'], token_endpoint_auth_method: 'none' });
+    expect(reverseDomain.status).toBe(201);
   });
 
   it('full code flow with PKCE yields a token that works on /mcp', async () => {

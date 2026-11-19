@@ -72,6 +72,36 @@ describe('mcp endpoint', () => {
     expect(g.json.guide).toBe(guide);
   });
 
+  it('tools carry titles and annotations, and schemas that other MCP clients accept', async () => {
+    const r = await start();
+    const client = await connect(r);
+    const { tools } = await client.listTools();
+    for (const tool of tools) {
+      expect(tool.title, tool.name).toBeTruthy();
+      expect(tool.annotations?.openWorldHint, tool.name).toBe(false);
+      // `propertyNames` (what z.record emits) is refused by some clients and model providers.
+      expect(JSON.stringify(tool.inputSchema), tool.name).not.toContain('propertyNames');
+    }
+    const readOnly = tools.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name).sort();
+    expect(readOnly).toEqual(['check_artifact', 'export_data', 'get_app', 'get_guide', 'get_version', 'list_apps', 'list_shares', 'list_snapshots', 'db_read'].sort());
+    const destructive = tools.filter((t) => t.annotations?.destructiveHint === true).map((t) => t.name).sort();
+    expect(destructive).toEqual(['db_write', 'import_data', 'remove_domain', 'restore_snapshot', 'unshare_instance']);
+    const deploy = tools.find((t) => t.name === 'deploy_app')!;
+    const caps = (deploy.inputSchema.properties as Record<string, { properties?: Record<string, unknown> }>).capabilities;
+    expect(Object.keys(caps.properties ?? {})).toEqual(['db', 'user', 'assets', 'room', 'artifact', 'downloads', 'complete']);
+    expect(deploy.description).toContain('get_guide');
+  });
+
+  it('deploy_app accepts capabilities beyond the listed ones, such as the self alias', async () => {
+    const r = await start();
+    const client = await connect(r);
+    const res = await call(client, 'deploy_app', { slug: 'selfie', html: '<!doctype html><p>hi</p>', capabilities: { self: {}, db: { rules: [] } } });
+    expect(res.isError).toBe(false);
+    const version = await client.callTool({ name: 'get_version', arguments: { app: 'selfie' } });
+    const meta = JSON.parse((version.content as Array<{ text: string }>)[0].text);
+    expect(Object.keys(meta.capabilities).sort()).toEqual(['db', 'self']);
+  });
+
   it('deploy_app then get_app', async () => {
     const r = await start();
     const client = await connect(r);
@@ -661,7 +691,7 @@ describe('mcp endpoint', () => {
     for (const auth of [undefined, 'Bearer lgr_wrong', 'Bearer wrong']) {
       const res = await fetch(`${r.base}/mcp`, { method: 'POST', body, headers: auth ? { ...headers, Authorization: auth } : headers });
       expect(res.status).toBe(401);
-      expect(res.headers.get('www-authenticate')).toBe(`Bearer resource_metadata="${r.base}/.well-known/oauth-protected-resource"`);
+      expect(res.headers.get('www-authenticate')).toBe(`Bearer resource_metadata="${r.base}/.well-known/oauth-protected-resource/mcp"`);
     }
     const get = await fetch(`${r.base}/mcp`, { headers: { Authorization: `Bearer ${r.token}` } });
     expect(get.status).toBe(405);

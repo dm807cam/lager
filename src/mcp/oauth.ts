@@ -41,11 +41,27 @@ const randomSecret = (): string => crypto.randomBytes(32).toString('base64url');
 const isoIn = (seconds: number): string => new Date(Date.now() + seconds * 1000).toISOString();
 const expired = (iso: string): boolean => iso <= new Date().toISOString();
 
+/** Schemes that open something other than a native app: never a redirect target, whatever the client claims. */
+const UNSAFE_SCHEMES = new Set(['javascript:', 'data:', 'vbscript:', 'file:', 'blob:', 'about:', 'filesystem:', 'ftp:', 'ws:', 'wss:', 'chrome:', 'mailto:', 'tel:', 'sms:']);
+
+/**
+ * https anywhere, http only on the loopback interface, and the private-use URI schemes of native apps
+ * (RFC 8252 §7.1, for example `cursor://…` or `com.example.app:/callback`), which PKCE protects.
+ */
 function redirectUriAllowed(uri: string): boolean {
   let u: URL;
   try { u = new URL(uri); } catch { return false; }
   if (u.hash) return false;
-  return u.protocol === 'https:' || (u.protocol === 'http:' && LOOPBACK.has(u.hostname));
+  if (u.protocol === 'https:') return true;
+  if (u.protocol === 'http:') return LOOPBACK.has(u.hostname);
+  return /^[a-z][a-z0-9+.-]*:$/.test(u.protocol) && !UNSAFE_SCHEMES.has(u.protocol) && !u.username && !u.password;
+}
+
+/** What the consent page shows as the destination: the host for web redirects, scheme and host for an app's own scheme. */
+export function redirectTarget(uri: string): string {
+  const u = new URL(uri);
+  if (u.protocol === 'https:' || u.protocol === 'http:') return u.host;
+  return u.host ? `${u.protocol}//${u.host}` : u.protocol;
 }
 
 /** Persistence for OAuth clients, authorization codes and tokens. Codes and tokens are stored as SHA-256 only. */
@@ -56,7 +72,7 @@ export class OAuthStore {
 
   registerClient(client: OAuthClientInformationFull): OAuthClientInformationFull {
     if (!client.redirect_uris.length || !client.redirect_uris.every(redirectUriAllowed)) {
-      throw new InvalidClientMetadataError('redirect_uris must use https (http only for localhost).');
+      throw new InvalidClientMetadataError('redirect_uris must use https, http on localhost, or a private-use scheme of a native app.');
     }
     const { client_id, client_secret, client_secret_expires_at, client_id_issued_at, ...metadata } = client;
     this.db
@@ -247,7 +263,7 @@ export class LagerOAuthProvider implements OAuthServerProvider {
 
     if (req.method !== 'POST') {
       const csrf = signToken({ uid: user.id, k: 'consent', q }, config.secret, CONSENT_TTL_S);
-      res.type('html').send(consentPage(requestLocale(this.core, req, user), client.client_name || client.client_id, new URL(params.redirectUri).host, user.name || user.email,
+      res.type('html').send(consentPage(requestLocale(this.core, req, user), client.client_name || client.client_id, redirectTarget(params.redirectUri), user.name || user.email,
         { ...fields, csrf }));
       return;
     }

@@ -1,5 +1,6 @@
 import express from 'express';
 import type { RequestHandler } from 'express';
+import { metadataHandler } from '@modelcontextprotocol/sdk/server/auth/handlers/metadata.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { bearerUser } from '../http/api.js';
@@ -24,13 +25,18 @@ const methodNotAllowed: RequestHandler = (_req, res) => {
 export const mcpExtension: PlatformExtension = (router, core) => {
   const { config } = core;
   const origin = config.publicUrl.origin;
-  const challenge = `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"`;
+  // The protected resource is the MCP endpoint itself (RFC 9728, MCP authorization spec), so clients that
+  // compare the resource with the URL they connect to find an exact match.
+  const resourceUrl = new URL('/mcp', origin);
+  const metadataUrl = `${origin}/.well-known/oauth-protected-resource/mcp`;
+  const challenge = `Bearer resource_metadata="${metadataUrl}"`;
 
   let auth: RequestHandler | null = null;
   try {
     auth = mcpAuthRouter({
       provider: new LagerOAuthProvider(core),
       issuerUrl: new URL(origin),
+      resourceServerUrl: resourceUrl,
       resourceName: 'Lager',
       authorizationOptions: { rateLimit: RATE_LIMIT },
       tokenOptions: { rateLimit: RATE_LIMIT },
@@ -44,6 +50,9 @@ export const mcpExtension: PlatformExtension = (router, core) => {
   }
   if (auth) {
     router.post(['/token', '/revoke'], ...clientAuthentication(core));
+    // Connections made before the resource moved to /mcp, and clients that only try the root, still find the metadata.
+    router.use('/.well-known/oauth-protected-resource',
+      metadataHandler({ resource: resourceUrl.href, authorization_servers: [`${origin}/`], resource_name: 'Lager' }));
     router.use(auth);
   }
 
