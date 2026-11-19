@@ -714,7 +714,7 @@ describe('mcp endpoint', () => {
   it('the SDK client completes OAuth discovery, consent and token exchange on its own', async () => {
     const r = await start();
     const login = await fetch(`${r.base}/login`, {
-      method: 'POST', redirect: 'manual', body: new URLSearchParams({ email: 'admin@x.y', password: 'pw' }),
+      method: 'POST', redirect: 'manual', body: new URLSearchParams({ email: 'admin@x.y', password: 'admin-password-1' }),
     });
     const cookie = login.headers.getSetCookie().find((c) => c.startsWith('lager_session='))!.split(';')[0];
     let code = '';

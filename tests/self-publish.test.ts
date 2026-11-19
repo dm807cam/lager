@@ -17,7 +17,7 @@ let usr: User;
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-selfpub-'));
   const config: Config = {
-    dataDir: dir, port: 0, defaultLocale: 'en', publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test', adminEmail: 'adm@x.y', adminPassword: 'pw',
+    dataDir: dir, port: 0, defaultLocale: 'en', publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test', adminEmail: 'adm@x.y', adminPassword: 'admin-password-1',
     secret: 's', snapshotKeep: 20, trustProxy: false, instanceQuotaBytes: 50 * 1024 * 1024,
   };
   core = createCore(config);
@@ -205,7 +205,7 @@ describe('saved version limits', () => {
     core.close();
     const small: Config = {
       dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'lager-selfpub-q-')), port: 0, defaultLocale: 'en', publicUrl: new URL('http://lager.test'), appsDomain: 'apps.test',
-      adminEmail: 'adm@x.y', adminPassword: 'pw', secret: 's', snapshotKeep: 20, trustProxy: false, instanceQuotaBytes: 1500,
+      adminEmail: 'adm@x.y', adminPassword: 'admin-password-1', secret: 's', snapshotKeep: 20, trustProxy: false, instanceQuotaBytes: 1500,
     };
     core = createCore(small);
     admin = core.users.getByEmail('adm@x.y')!;

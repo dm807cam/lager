@@ -125,7 +125,7 @@ describe('building blocks end to end', () => {
     const adminSession = await login('admin@x.y', 'admin-password-1');
     const adminCsrf = csrfIn((await call(PLATFORM, 'GET', '/admin/invites', { headers: { Cookie: adminSession } })).body);
     const register = async (role: string, name: string, email: string, password: string): Promise<string> => {
-      const inv = await call(PLATFORM, 'POST', '/admin/invites', { headers: { ...FORM, Cookie: adminSession }, body: form({ csrf: adminCsrf, role }) });
+      const inv = await call(PLATFORM, 'POST', '/admin/invites', { headers: { ...FORM, Cookie: adminSession }, body: form({ csrf: adminCsrf, role, email }) });
       expect(inv.status).toBe(200);
       const link = /(https?:\/\/[^\s<]*\/register\?invite=[\w-]+)/.exec(inv.body)![1];
       const reg = await call(PLATFORM, 'POST', '/register', { headers: FORM, body: form({ invite: new URL(link).searchParams.get('invite')!, name, email, password }) });

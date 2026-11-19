@@ -1,4 +1,4 @@
-import { ADMIN_PASSWORD_PLACEHOLDERS, type Config } from './config.js';
+import { ADMIN_PASSWORD_PLACEHOLDERS, isLoopbackHost, type Config } from './config.js';
 import { InstanceAssets } from './data/assets.js';
 import { Hub } from './data/hub.js';
 import { Rooms } from './data/rooms.js';
@@ -15,7 +15,7 @@ import { Groups } from './platform/groups.js';
 import { createMailer, type Mailer } from './platform/mail.js';
 import { Settings } from './platform/settings.js';
 import { ApiTokens } from './platform/tokens.js';
-import { Users } from './platform/users.js';
+import { MIN_PASSWORD_LENGTH, Users } from './platform/users.js';
 
 export interface Core {
   config: Config; users: Users; apps: Apps; data: InstanceData; hub: Hub;
@@ -47,10 +47,16 @@ export interface Core {
 export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typeof fetch }): Core {
   const db = openPlatformDb(config.dataDir);
   const users = new Users(db);
-  if (config.adminPassword !== undefined && ADMIN_PASSWORD_PLACEHOLDERS.includes(config.adminPassword) && config.publicUrl.protocol === 'https:' && users.count() === 0) {
-    db.close();
-    throw new Error(`LAGER_ADMIN_PASSWORD still has the example value "${config.adminPassword}". Set your own password before the first start, `
-      + 'because Lager is reachable publicly over https. The admin account was not created.');
+  // Checked only while the first administrator is about to be created: a later start never reads the password again.
+  if (config.adminEmail && config.adminPassword !== undefined && users.count() === 0) {
+    const refuse = (message: string): never => { db.close(); throw new Error(`${message} The admin account was not created.`); };
+    if (ADMIN_PASSWORD_PLACEHOLDERS.includes(config.adminPassword) && !isLoopbackHost(config.publicUrl.hostname)) {
+      refuse(`LAGER_ADMIN_PASSWORD still has the example value "${config.adminPassword}". Set your own password before the first start, `
+        + `because Lager is reachable from other machines at ${config.publicUrl.host}.`);
+    }
+    if (config.adminPassword.length < MIN_PASSWORD_LENGTH) {
+      refuse(`LAGER_ADMIN_PASSWORD is too short: the administrator's password needs at least ${MIN_PASSWORD_LENGTH} characters.`);
+    }
   }
   users.ensureAdmin(config.adminEmail, config.adminPassword);
   const mailer = opts?.mailer ?? createMailer(config);
@@ -60,7 +66,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   const oauth = new OAuthStore(db, users);
   const accounts = new Accounts(db, users, settings, mailer, config);
   // Credentials do not outlive the password they were issued under; layering keeps Users free of OAuth/token code.
-  users.onPasswordChanged((id) => { oauth.revokeUser(id); accounts.deleteResetLinks(id); });
+  users.onPasswordChanged((id) => { oauth.revokeUser(id); tokens.revokeAll(id); accounts.deleteResetLinks(id); });
   accounts.onPasswordReset((id) => { tokens.revokeAll(id); });
   users.onDisabled((id) => { oauth.revokeUser(id); });
   users.onDemoted((id) => { accounts.deleteInvitesBy(id); });

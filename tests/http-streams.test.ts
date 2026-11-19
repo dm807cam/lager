@@ -96,12 +96,20 @@ describe('db event stream limits', () => {
 });
 
 describe('language switch', () => {
-  it('does not store the language of a signed-in account on a cross-site request, but sets the cookie', async () => {
+  it('does not store the language of a signed-in account on a cross-site or same-site request, but sets the cookie', async () => {
     h = makeHarness();
     const cookie = await h.login();
     const cross = await request(h.app).get('/lang/de').set('Host', h.host).set('Cookie', cookie).set('Sec-Fetch-Site', 'cross-site');
     expect(cross.headers['set-cookie'].join(';')).toMatch(/lager_lang=de/);
     expect(h.core.users.get(h.adminId)!.locale).not.toBe('de');
+    // An instance is same-site with the platform, and its code is not the account's owner either.
+    await request(h.app).get('/lang/de').set('Host', h.host).set('Cookie', cookie).set('Sec-Fetch-Site', 'same-site');
+    expect(h.core.users.get(h.adminId)!.locale).not.toBe('de');
+    // A typed address or a bookmark ("none") and a browser that sends no header at all still switch.
+    await request(h.app).get('/lang/fr').set('Host', h.host).set('Cookie', cookie).set('Sec-Fetch-Site', 'none');
+    expect(h.core.users.get(h.adminId)!.locale).toBe('fr');
+    await request(h.app).get('/lang/es').set('Host', h.host).set('Cookie', cookie);
+    expect(h.core.users.get(h.adminId)!.locale).toBe('es');
     await request(h.app).get('/lang/de').set('Host', h.host).set('Cookie', cookie).set('Sec-Fetch-Site', 'same-origin');
     expect(h.core.users.get(h.adminId)!.locale).toBe('de');
   });

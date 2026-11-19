@@ -3,7 +3,7 @@ import type { Request, RequestHandler, Response } from 'express';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import { isLocale, LOCALE_NAMES, LOCALES, t, type Locale, type MessageKey } from '../i18n/index.js';
-import { MAX_NAME_LENGTH, MIN_PASSWORD_LENGTH, type User } from '../platform/users.js';
+import { MAX_NAME_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, type User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
 import { requestLocale } from './locale.js';
 import { sameOriginGuard } from './origin.js';
@@ -26,10 +26,11 @@ const REASON_KEYS: Record<string, MessageKey> = {
   name_invalid: 'validation.name',
   email_invalid: 'validation.email',
   password_short: 'auth.password.short',
+  password_long: 'auth.password.long',
   link_invalid: 'auth.link.invalid',
 };
 const reasonText = (locale: Locale, e: LagerError): string =>
-  t(locale, REASON_KEYS[e.reason ?? ''] ?? 'validation.generic', { min: MIN_PASSWORD_LENGTH, max: MAX_NAME_LENGTH });
+  t(locale, REASON_KEYS[e.reason ?? ''] ?? 'validation.generic', { min: MIN_PASSWORD_LENGTH, max: MAX_NAME_LENGTH, limit: MAX_PASSWORD_LENGTH });
 
 const notice = (locale: Locale, title: string, text: string, extra = ''): string => messagePage(locale, title, text, extra);
 const errorLine = (message?: string): string => (message ? noticeBox('danger', message) : '');
@@ -64,9 +65,11 @@ ${field('password', t(locale, 'auth.reset.label'), `<input id="password" name="p
 <button type="submit" class="${btn('primary')}">${esc(t(locale, 'auth.reset.submit'))}</button>
 </form>`), { switcher: false });
 
-const verifyForm = (locale: Locale, token: string): string => page(locale, t(locale, 'auth.verify.title'), authCard(`<div class="auth-icon is-success">${icon('check')}</div><h1>${esc(t(locale, 'auth.verify.title'))}</h1>
+const verifyForm = (locale: Locale, token: string, error?: string): string => page(locale, t(locale, 'auth.verify.title'), authCard(`<div class="auth-icon is-success">${icon('check')}</div><h1>${esc(t(locale, 'auth.verify.title'))}</h1>
+${errorLine(error)}
 <form method="post" action="/verify" class="stack">
 <input type="hidden" name="token" value="${esc(token)}">
+${field('password', t(locale, 'common.password'), '<input id="password" name="password" type="password" autocomplete="current-password" required autofocus>', t(locale, 'auth.verify.hint'))}
 <button type="submit" class="${btn('primary')}">${esc(t(locale, 'auth.verify.submit'))}</button>
 </form>`), { switcher: false });
 
@@ -103,11 +106,15 @@ export const authExtension: PlatformExtension = (router, core) => {
   const resendEmail = new RateLimiter(3, HOUR_MS);
   // Guessing the current password through the account page needs a session already, but is still capped.
   const passwordTries = new RateLimiter(10, 15 * 60_000);
+  // The confirmation form checks a password as well.
+  const verifyTries = new RateLimiter(10, 15 * 60_000);
 
   const field = (req: Request, name: string, max = MAX_FIELD): string => {
     const v = (req.body as Record<string, unknown> | undefined)?.[name];
     return typeof v === 'string' ? v.slice(0, max) : '';
   };
+  /** A password is never cut: a shortened one would be stored but never match at sign-in. Too long a one is refused where it is set. */
+  const secret = (req: Request, name: string): string => field(req, name, Infinity);
   const emailKey = (req: Request): string => field(req, 'email', 254).trim().toLowerCase();
   const ipOf = (req: Request): string => req.ip ?? 'unknown';
   const html = (res: Response, status: number, body: string): void => { res.status(status).type('html').send(body); };
@@ -157,10 +164,10 @@ export const authExtension: PlatformExtension = (router, core) => {
     if (!token && mode === 'invite') { html(res, 403, inviteOnlyPage(locale)); return; }
     const bound = token ? core.accounts.getInvite(token)?.email ?? null : null;
     const again = (status: number, error: string): void => html(res, status, registerForm(locale, values, token, bound, error));
-    if (field(req, 'password').length < MIN_PASSWORD_LENGTH) { again(400, t(locale, 'auth.password.short', { min: MIN_PASSWORD_LENGTH })); return; }
+    if (secret(req, 'password').length < MIN_PASSWORD_LENGTH) { again(400, t(locale, 'auth.password.short', { min: MIN_PASSWORD_LENGTH })); return; }
     try {
       const { user, needsVerification } = await core.accounts.register({
-        name: values.name, email: values.email, password: field(req, 'password'), inviteToken: token || undefined, locale,
+        name: values.name, email: values.email, password: secret(req, 'password'), inviteToken: token || undefined, locale,
       });
       if (needsVerification) {
         html(res, 200, notice(locale, t(locale, 'auth.register.sent.title'), t(locale, 'auth.register.sent.text'), toLogin(locale)));
@@ -184,15 +191,19 @@ export const authExtension: PlatformExtension = (router, core) => {
     html(res, 200, verifyForm(locale, token));
   });
 
+  // The link proves the mailbox, the password proves who registered: only both together confirm the account.
   router.post('/verify', ...publicForm, (req, res) => {
+    const locale = localeOf(req);
+    const token = field(req, 'token', MAX_TOKEN);
+    if (!verifyTries.hit(ipOf(req))) { tooMany(req, res); return; }
     try {
-      core.accounts.verifyEmail(field(req, 'token', MAX_TOKEN));
+      core.accounts.verifyEmail(token, secret(req, 'password'));
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
-      html(res, 400, invalidLinkPage(localeOf(req)));
+      html(res, 400, e.reason === 'password_wrong' ? verifyForm(locale, token, t(locale, 'auth.verify.wrong')) : invalidLinkPage(locale));
       return;
     }
-    // No session is issued: whoever clicked the link proved the mailbox, not the password.
+    // No session is issued here: signing in stays the one place that does, with its own limits.
     res.redirect('/login?verified=1');
   });
 
@@ -223,14 +234,14 @@ export const authExtension: PlatformExtension = (router, core) => {
   router.post('/reset', ...publicForm, (req, res) => {
     const locale = localeOf(req);
     const token = field(req, 'token', MAX_TOKEN);
-    const password = field(req, 'password');
+    const password = secret(req, 'password');
     try {
       core.accounts.resetPassword(token, password);
       html(res, 200, notice(locale, t(locale, 'auth.reset.done.title'), t(locale, 'auth.reset.done'), toLogin(locale)));
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
       // The token is judged before the password, so any other complaint is about the password and keeps the form.
-      html(res, 400, e.reason === 'link_invalid' ? invalidLinkPage(locale) : resetForm(locale, token, t(locale, 'auth.password.short', { min: MIN_PASSWORD_LENGTH })));
+      html(res, 400, e.reason === 'link_invalid' ? invalidLinkPage(locale) : resetForm(locale, token, reasonText(locale, e)));
     }
   });
 
@@ -283,16 +294,19 @@ export const authExtension: PlatformExtension = (router, core) => {
       html(res, 429, accountPage(core, locale, user, { error: t(locale, 'account.tooMany') }));
       return;
     }
-    if (!core.users.checkLogin(user.email, field(req, 'current')).ok) {
+    if (!core.users.checkLogin(user.email, secret(req, 'current')).ok) {
       html(res, 400, accountPage(core, locale, user, { error: t(locale, 'account.password.wrong') }));
       return;
     }
-    if (field(req, 'password').length < MIN_PASSWORD_LENGTH) {
-      html(res, 400, accountPage(core, locale, user, { error: t(locale, 'auth.password.short', { min: MIN_PASSWORD_LENGTH }) }));
+    const password = secret(req, 'password');
+    if (password.length < MIN_PASSWORD_LENGTH || password.length > MAX_PASSWORD_LENGTH) {
+      const error = password.length < MIN_PASSWORD_LENGTH
+        ? t(locale, 'auth.password.short', { min: MIN_PASSWORD_LENGTH }) : t(locale, 'auth.password.long', { limit: MAX_PASSWORD_LENGTH });
+      html(res, 400, accountPage(core, locale, user, { error }));
       return;
     }
     passwordTries.reset(user.id);
-    core.users.setPassword(user.id, field(req, 'password'));
+    core.users.setPassword(user.id, password);
     // setPassword moved the epoch on, ending every other session; this browser gets a fresh one.
     const fresh = core.users.get(user.id)!;
     issueSession(core, res, fresh);

@@ -46,6 +46,7 @@ export const fr: Record<MessageKey, string> = {
   'validation.generic': "La saisie n’est pas valide.",
 
   'auth.password.short': 'Le mot de passe doit comporter au moins {min} caractères.',
+  'auth.password.long': 'Le mot de passe peut comporter au maximum {limit} caractères.',
   'auth.password.hint': 'Au moins {min} caractères.',
   'auth.link.invalid.title': 'Lien non valide',
   'auth.link.invalid': "Le lien n’est pas valide ou a expiré.",
@@ -64,6 +65,8 @@ export const fr: Record<MessageKey, string> = {
 
   'auth.verify.title': "Confirmer l’adresse e-mail",
   'auth.verify.submit': "Confirmer l’adresse e-mail",
+  'auth.verify.hint': "Saisissez le mot de passe choisi lors de l’inscription. Vous pourrez ensuite vous connecter.",
+  'auth.verify.wrong': 'Le mot de passe est incorrect.',
   'auth.resend.button': "Renvoyer l’e-mail de confirmation",
   'auth.resend.sent.text': 'Si cette adresse est enregistrée chez nous et pas encore confirmée, nous vous avons envoyé un nouvel e-mail.',
 
@@ -84,7 +87,7 @@ export const fr: Record<MessageKey, string> = {
   'account.locale.saved': 'Langue enregistrée.',
   'account.password.title': 'Modifier le mot de passe',
   'account.password.current': 'Mot de passe actuel',
-  'account.password.hint': 'Au moins {min} caractères. Ensuite, tous les autres appareils seront déconnectés et toutes les connexions aux assistants IA seront coupées ; les jetons d’API restent valides.',
+  'account.password.hint': 'Au moins {min} caractères. Ensuite, tous les autres appareils seront déconnectés, toutes les connexions aux assistants IA seront coupées et tous les jetons d’API de ce compte seront révoqués.',
   'account.password.submit': 'Modifier le mot de passe',
   'account.password.changed': 'Mot de passe modifié.',
   'account.password.wrong': 'Le mot de passe actuel est incorrect.',

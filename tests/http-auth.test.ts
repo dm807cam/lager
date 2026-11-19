@@ -4,6 +4,7 @@ import { dashboardExtension } from '../src/http/dashboard.js';
 import { RateLimiter } from '../src/http/ratelimit.js';
 import { csrfToken } from '../src/http/session.js';
 import { MemoryMailer } from '../src/platform/mail.js';
+import { MAX_PASSWORD_LENGTH } from '../src/platform/users.js';
 import { makeHarness, type Harness } from './support/http.js';
 import { t } from '../src/i18n/index.js';
 
@@ -36,7 +37,7 @@ function setup(opts: { mode?: 'open' | 'invite' | 'closed' } = {}) {
     post('/register', { name: 'Ann', email, password: PASSWORD, ...extra });
   const registerVerified = async (email = 'ann@example.org'): Promise<string> => {
     await register(email);
-    await post('/verify', { token: new URL(linkOf(), 'http://x').searchParams.get('token')! });
+    await post('/verify', { token: new URL(linkOf(), 'http://x').searchParams.get('token')!, password: PASSWORD });
     return await h!.login(email, PASSWORD);
   };
   return { h, mailer, post, get, linkOf, register, registerVerified };
@@ -60,7 +61,17 @@ describe('registration and verification', () => {
     expect(cookieOf(shown)).toBeUndefined();
     expect(h!.core.users.getByEmail('ann@example.org')!.verified).toBe(false);
     expect((await s.get(link)).status).toBe(200);
-    const verify = await s.post('/verify', { token });
+    expect(shown.text).toContain('name="password"');
+    // The link alone confirms nothing, and a wrong password leaves it usable.
+    for (const body of [{ token }, { token, password: 'not the password' }]) {
+      const refused = await s.post('/verify', body);
+      expect(refused.status).toBe(400);
+      expect(refused.text).toContain(t('en', 'auth.verify.wrong'));
+      expect(refused.text).toContain('action="/verify"');
+      expect(cookieOf(refused)).toBeUndefined();
+    }
+    expect(h!.core.users.getByEmail('ann@example.org')!.verified).toBe(false);
+    const verify = await s.post('/verify', { token, password: PASSWORD });
     expect(verify.status).toBe(302);
     expect(verify.headers.location).toBe('/login?verified=1');
     expect(([] as string[]).concat(verify.headers['set-cookie'] ?? [])).toEqual([]);
@@ -70,14 +81,14 @@ describe('registration and verification', () => {
     expect((await s.get('/', cookie)).status).toBe(200);
     // The link is spent now.
     expect((await s.get(link)).text).toContain(t('en', 'auth.link.invalid'));
-    expect((await s.post('/verify', { token })).status).toBe(400);
+    expect((await s.post('/verify', { token, password: PASSWORD })).status).toBe(400);
   });
 
   it('verify refuses a reset token and cross-origin posts', async () => {
     const s = setup();
     await s.registerVerified();
     const reset = new URL(h!.core.accounts.createResetLink(h!.core.users.getByEmail('ann@example.org')!.id)).searchParams.get('token')!;
-    const res = await s.post('/verify', { token: reset });
+    const res = await s.post('/verify', { token: reset, password: PASSWORD });
     expect(res.status).toBe(400);
     expect(res.text).toContain(t('en', 'auth.link.invalid'));
     expect((await s.get(`/verify?token=${reset}`)).status).toBe(400);
@@ -135,12 +146,66 @@ describe('registration and verification', () => {
     const invite = new URL(url).searchParams.get('invite')!;
     const form = await s.get(`/register?invite=${invite}`);
     expect(form.text).toContain('action="/register"');
+    // An invitation without an address proves no mailbox: the account gets the role, but confirms its address first.
     const res = await s.register('pub@example.org', { invite });
+    expect(res.status).toBe(200);
+    expect(res.text).toContain(t('en', 'auth.register.sent.text'));
+    expect(cookieOf(res)).toBeUndefined();
+    expect(h!.core.users.getByEmail('pub@example.org')).toMatchObject({ role: 'publisher', verified: false });
+    expect(s.mailer.sent.at(-1)!.to).toBe('pub@example.org');
+    await s.post('/verify', { token: new URL(s.linkOf(), 'http://x').searchParams.get('token')!, password: PASSWORD });
+    expect((await s.get('/', await h!.login('pub@example.org', PASSWORD))).status).toBe(200);
+  });
+
+  it('an invitation sent to an address signs that address in at once', async () => {
+    const s = setup({ mode: 'invite' });
+    const { url } = await h!.core.accounts.createInvite({ email: 'bound@example.org', role: 'publisher', createdBy: h!.adminId });
+    const res = await s.register('bound@example.org', { invite: new URL(url).searchParams.get('invite')! });
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe('/');
-    const cookie = cookieOf(res)!;
-    expect(h!.core.users.getByEmail('pub@example.org')?.role).toBe('publisher');
-    expect((await s.get('/', cookie)).status).toBe(200);
+    expect((await s.get('/', cookieOf(res)!)).status).toBe(200);
+    expect(h!.core.users.getByEmail('bound@example.org')).toMatchObject({ role: 'publisher', verified: true });
+  });
+
+  it('a password longer than 300 characters is kept whole from registration to sign-in', async () => {
+    const s = setup();
+    const long = 'correct horse '.repeat(30); // 420 characters
+    expect((await s.post('/register', { name: 'Ann', email: 'ann@example.org', password: long })).status).toBe(200);
+    const token = new URL(s.linkOf(), 'http://x').searchParams.get('token')!;
+    expect((await s.post('/verify', { token, password: long })).status).toBe(302);
+    expect((await s.post('/login', { email: 'ann@example.org', password: long })).status).toBe(302);
+    expect((await s.post('/login', { email: 'ann@example.org', password: long.slice(0, 300) })).status).toBe(401);
+
+    // Reset and the account page keep it whole as well, and all three refuse one over the limit instead of cutting it.
+    const user = h!.core.users.getByEmail('ann@example.org')!;
+    const tooLong = 'x'.repeat(MAX_PASSWORD_LENGTH + 1);
+    const message = t('en', 'auth.password.long', { limit: MAX_PASSWORD_LENGTH });
+    const refusedRegister = await s.post('/register', { name: 'Bob', email: 'bob@example.org', password: tooLong });
+    expect(refusedRegister.status).toBe(400);
+    expect(refusedRegister.text).toContain(message);
+    expect(h!.core.users.getByEmail('bob@example.org')).toBeNull();
+    const reset = new URL(h!.core.accounts.createResetLink(user.id)).searchParams.get('token')!;
+    const refusedReset = await s.post('/reset', { token: reset, password: tooLong });
+    expect(refusedReset.status).toBe(400);
+    expect(refusedReset.text).toContain(message);
+    const long2 = 'battery staple '.repeat(30);
+    expect((await s.post('/reset', { token: reset, password: long2 })).status).toBe(200);
+    const cookie = await h!.login('ann@example.org', long2);
+    const csrf = csrfToken(h!.core, h!.core.users.get(user.id)!);
+    const refusedChange = await s.post('/account/password', { current: long2, password: tooLong, csrf }, { cookie });
+    expect(refusedChange.status).toBe(400);
+    expect(refusedChange.text).toContain(message);
+    expect((await s.post('/account/password', { current: long2, password: long, csrf }, { cookie })).status).toBe(200);
+    expect((await s.post('/login', { email: 'ann@example.org', password: long })).status).toBe(302);
+  });
+
+  it('password guesses on the confirmation form are limited per client address', async () => {
+    const s = setup();
+    await s.register();
+    const token = new URL(s.linkOf(), 'http://x').searchParams.get('token')!;
+    for (let i = 0; i < 10; i++) expect((await s.post('/verify', { token, password: `guess number ${i}` })).status).toBe(400);
+    expect((await s.post('/verify', { token, password: PASSWORD })).status).toBe(429);
+    expect(h!.core.users.getByEmail('ann@example.org')!.verified).toBe(false);
   });
 
   it('invite bound to an e-mail pre-fills and enforces it', async () => {
@@ -212,7 +277,7 @@ describe('registration and verification', () => {
     expect(h!.core.users.getByEmail('ann@example.org')).not.toBeNull();
     expect((await s.post('/forgot', { email: 'ann@example.org' }, { origin: own })).status).toBe(200);
     const token = new URL(s.linkOf(0), 'http://x').searchParams.get('token')!;
-    expect((await s.post('/verify', { token }, { origin: own })).status).toBe(302);
+    expect((await s.post('/verify', { token, password: PASSWORD }, { origin: own })).status).toBe(302);
     const reset = new URL(h!.core.accounts.createResetLink(h!.core.users.getByEmail('ann@example.org')!.id)).searchParams.get('token')!;
     expect((await s.post('/reset', { token: reset, password: 'a brand new password' }, { origin: own })).status).toBe(200);
     for (const path of ['/register', '/forgot', '/reset', '/verify', '/verify/resend']) {
@@ -224,7 +289,7 @@ describe('registration and verification', () => {
 
   it('POST /login: platform origin and no Origin work, foreign origin and Origin null are refused', async () => {
     const s = setup();
-    const creds = { email: 'admin@x.y', password: 'pw' };
+    const creds = { email: 'admin@x.y', password: 'admin-password-1' };
     expect((await s.post('/login', creds, { origin: 'http://lager.localhost:8080' })).status).toBe(302);
     expect((await s.post('/login', creds)).status).toBe(302);
     for (const origin of ['https://evil.example', 'null', 'http://other.apps.localhost:8080']) {

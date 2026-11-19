@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { assertSlug, instanceUrl, loadConfig } from '../src/config.js';
+import { assertSlug, instanceUrl, isLoopbackHost, loadConfig } from '../src/config.js';
 import { LagerError } from '../src/errors.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-config-'));
@@ -49,8 +49,25 @@ describe('config', () => {
   });
 
   it('takes the secret from LAGER_SECRET when set', () => {
-    const c = loadConfig({ LAGER_PUBLIC_URL: 'http://lager.localhost:8080', LAGER_APPS_DOMAIN: 'apps.localhost', LAGER_DATA_DIR: tmp, LAGER_SECRET: ' from-env ' });
-    expect(c.secret).toBe('from-env');
+    const secret = 'from-env-'.repeat(4);
+    const c = loadConfig({ LAGER_PUBLIC_URL: 'http://lager.localhost:8080', LAGER_APPS_DOMAIN: 'apps.localhost', LAGER_DATA_DIR: tmp, LAGER_SECRET: ` ${secret} ` });
+    expect(c.secret).toBe(secret);
+  });
+
+  it('refuses a LAGER_SECRET shorter than 32 characters, and still generates one when it is empty', () => {
+    const base = { LAGER_PUBLIC_URL: 'http://lager.localhost:8080', LAGER_APPS_DOMAIN: 'apps.localhost', LAGER_DATA_DIR: tmp };
+    expect(() => loadConfig({ ...base, LAGER_SECRET: 'x'.repeat(31) })).toThrow(/LAGER_SECRET must be at least 32 characters/);
+    expect(() => loadConfig({ ...base, LAGER_SECRET: `  ${'x'.repeat(31)}  ` })).toThrow(/LAGER_SECRET/);
+    expect(loadConfig({ ...base, LAGER_SECRET: 'x'.repeat(32) }).secret).toHaveLength(32);
+    const generated = loadConfig({ ...base, LAGER_SECRET: '  ' }).secret;
+    expect(generated).toMatch(/^[0-9a-f]{64}$/);
+    // The generated secret is read back from the data directory and passes the same door.
+    expect(loadConfig(base).secret).toBe(generated);
+  });
+
+  it('knows the host names that only reach this machine', () => {
+    for (const h of ['localhost', 'LOCALHOST', 'lager.localhost', '127.0.0.1', '127.1.2.3', '[::1]']) expect(isLoopbackHost(h), h).toBe(true);
+    for (const h of ['lager.example.org', 'localhost.example.org', '192.168.1.5', '10.0.0.1', '0.0.0.0', 'lager.test', '1127.0.0.1']) expect(isLoopbackHost(h), h).toBe(false);
   });
 
   it('requires LAGER_PUBLIC_URL and LAGER_APPS_DOMAIN', () => {

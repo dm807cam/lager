@@ -46,6 +46,7 @@ export const es: Record<MessageKey, string> = {
   'validation.generic': 'Los datos introducidos no son válidos.',
 
   'auth.password.short': 'La contraseña debe tener al menos {min} caracteres.',
+  'auth.password.long': 'La contraseña puede tener como máximo {limit} caracteres.',
   'auth.password.hint': 'Al menos {min} caracteres.',
   'auth.link.invalid.title': 'Enlace no válido',
   'auth.link.invalid': 'El enlace no es válido o ha caducado.',
@@ -64,6 +65,8 @@ export const es: Record<MessageKey, string> = {
 
   'auth.verify.title': 'Confirmar correo electrónico',
   'auth.verify.submit': 'Confirmar correo electrónico',
+  'auth.verify.hint': 'Introduce la contraseña que elegiste al registrarte. Después podrás iniciar sesión.',
+  'auth.verify.wrong': 'La contraseña no es correcta.',
   'auth.resend.button': 'Reenviar el correo de confirmación',
   'auth.resend.sent.text': 'Si la dirección está registrada y aún sin confirmar, te hemos enviado un nuevo correo.',
 
@@ -84,7 +87,7 @@ export const es: Record<MessageKey, string> = {
   'account.locale.saved': 'Idioma guardado.',
   'account.password.title': 'Cambiar contraseña',
   'account.password.current': 'Contraseña actual',
-  'account.password.hint': 'Al menos {min} caracteres. Después se cerrará la sesión en todos los demás dispositivos y se desconectarán todas las conexiones con asistentes de IA; los tokens de API siguen siendo válidos.',
+  'account.password.hint': 'Al menos {min} caracteres. Después se cerrará la sesión en todos los demás dispositivos, se desconectarán todas las conexiones con asistentes de IA y se revocarán todos los tokens de API de esta cuenta.',
   'account.password.submit': 'Cambiar contraseña',
   'account.password.changed': 'Contraseña cambiada.',
   'account.password.wrong': 'La contraseña actual no es correcta.',

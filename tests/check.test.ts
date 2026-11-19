@@ -117,7 +117,7 @@ describe('checkApp', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-check-'));
     core = createCore({
       dataDir: dir, port: 0, defaultLocale: 'en', publicUrl: new URL('http://lager.localhost:8080'), appsDomain: 'apps.localhost',
-      adminEmail: 'admin@x.y', adminPassword: 'pw', secret: 's', snapshotKeep: 20, trustProxy: false, instanceQuotaBytes: 1 << 20,
+      adminEmail: 'admin@x.y', adminPassword: 'admin-password-1', secret: 's', snapshotKeep: 20, trustProxy: false, instanceQuotaBytes: 1 << 20,
     });
     const adminId = core.users.list()[0].id;
     const r = core.apps.deploy({

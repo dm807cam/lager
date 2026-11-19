@@ -98,8 +98,28 @@ function parseLocale(raw: string | undefined): Locale {
   return v;
 }
 
-/** Example values shipped in .env.example and earlier releases; never acceptable on a public https instance. */
-export const ADMIN_PASSWORD_PLACEHOLDERS: readonly string[] = ['change-me', 'bitte-aendern'];
+/** Example values shipped in .env.example and earlier releases; acceptable only where the public URL is this machine itself. */
+export const ADMIN_PASSWORD_PLACEHOLDERS: readonly string[] = ['change-me-please', 'change-me', 'bitte-aendern'];
+
+/** Shortest LAGER_SECRET accepted from the environment; the generated one has 64 characters. */
+export const MIN_SECRET_LENGTH = 32;
+
+/** True for host names that only ever reach this machine: localhost, *.localhost and the loopback addresses. */
+export function isLoopbackHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return h === 'localhost' || h.endsWith('.localhost') || h === '[::1]' || /^127(\.\d{1,3}){3}$/.test(h);
+}
+
+/** The secret signs sessions and derives the key that encrypts AI provider keys, so a short one from the environment is refused. */
+function envSecret(env: NodeJS.ProcessEnv): string | undefined {
+  const v = env.LAGER_SECRET?.trim();
+  if (!v) return undefined;
+  if (v.length < MIN_SECRET_LENGTH) {
+    throw new Error(`LAGER_SECRET must be at least ${MIN_SECRET_LENGTH} characters long (for example the output of "openssl rand -hex 32"). `
+      + 'Leave it empty to let Lager generate a secret and keep it in the data directory.');
+  }
+  return v;
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const publicUrl = new URL(required(env, 'LAGER_PUBLIC_URL'));
@@ -117,7 +137,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     appsDomain,
     adminEmail: env.LAGER_ADMIN_EMAIL?.trim() || undefined,
     adminPassword: env.LAGER_ADMIN_PASSWORD || undefined,
-    secret: env.LAGER_SECRET?.trim() || loadSecret(dataDir),
+    secret: envSecret(env) ?? loadSecret(dataDir),
     snapshotKeep: parseIntEnv(env, 'LAGER_SNAPSHOT_KEEP', 20),
     trustProxy: parseTrustProxy(env.LAGER_TRUST_PROXY),
     smtpUrl: env.LAGER_SMTP_URL?.trim() || undefined,

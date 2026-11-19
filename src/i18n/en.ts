@@ -44,6 +44,7 @@ export const en = {
   'validation.generic': 'The input is not valid.',
 
   'auth.password.short': 'The password needs at least {min} characters.',
+  'auth.password.long': 'The password may have at most {limit} characters.',
   'auth.password.hint': 'At least {min} characters.',
   'auth.link.invalid.title': 'Link invalid',
   'auth.link.invalid': 'The link is invalid or has expired.',
@@ -62,6 +63,8 @@ export const en = {
 
   'auth.verify.title': 'Confirm email address',
   'auth.verify.submit': 'Confirm email address',
+  'auth.verify.hint': 'Enter the password you chose when you registered. You can sign in afterwards.',
+  'auth.verify.wrong': 'The password is wrong.',
   'auth.resend.button': 'Send confirmation email again',
   'auth.resend.sent.text': 'If the address is registered with us and not yet confirmed, we sent a new email.',
 
@@ -82,7 +85,7 @@ export const en = {
   'account.locale.saved': 'Language saved.',
   'account.password.title': 'Change password',
   'account.password.current': 'Current password',
-  'account.password.hint': 'At least {min} characters. Afterwards all other devices are signed out and all connections to AI assistants are disconnected; API tokens stay valid.',
+  'account.password.hint': 'At least {min} characters. Afterwards all other devices are signed out, all connections to AI assistants are disconnected and all API tokens of this account are revoked.',
   'account.password.submit': 'Change password',
   'account.password.changed': 'Password changed.',
   'account.password.wrong': 'The current password is wrong.',
