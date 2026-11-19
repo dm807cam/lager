@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { LagerError } from '../errors.js';
+import { HandleCache } from './handles.js';
 
 export interface AssetInfo { id: string; contentType: string; sizeBytes: number; createdAt: string; uploadedBy: string | null }
 
@@ -122,16 +123,24 @@ const toInfo = (r: AssetRow): AssetInfo => ({
 });
 
 export class InstanceAssets {
-  private dbs = new Map<string, DatabaseSync>();
+  private dbs: HandleCache;
 
   /** `quotaBytes` caps documents plus assets of one instance (0 = unlimited); `dbUsage` reports the document bytes. */
-  constructor(private dataDir: string, private quotaBytes: number, private dbUsage: (instanceId: string) => number) {}
+  constructor(private dataDir: string, private quotaBytes: number, private dbUsage: (instanceId: string) => number, maxOpen?: number) {
+    this.dbs = new HandleCache(maxOpen);
+  }
+
+  /** How many asset databases are open right now. */
+  get openHandles(): number {
+    return this.dbs.size;
+  }
 
   private instanceDir(instanceId: string): string {
     if (typeof instanceId !== 'string' || !INSTANCE_ID_RE.test(instanceId)) throw new LagerError('invalid_argument', 'Invalid instance id.');
     return path.join(this.dataDir, 'instances', instanceId);
   }
 
+  /** Opens (and caches) the asset database. The cache closes idle handles, so use the result right away and never keep it across an `await`. */
   private open(instanceId: string, create: boolean): DatabaseSync | null {
     const cached = this.dbs.get(instanceId);
     if (cached) return cached;
@@ -217,12 +226,10 @@ export class InstanceAssets {
 
   /** Releases the cached handle of one instance (before its directory is moved away). */
   drop(instanceId: string): void {
-    this.dbs.get(instanceId)?.close();
-    this.dbs.delete(instanceId);
+    this.dbs.close(instanceId);
   }
 
   close(): void {
-    for (const db of this.dbs.values()) db.close();
-    this.dbs.clear();
+    this.dbs.closeAll();
   }
 }
