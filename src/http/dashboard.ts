@@ -10,7 +10,7 @@ import { localeOf } from './locale.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { MAX_NAME } from '../platform/tokens.js';
 import { dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, visibilityLabel } from './pages.js';
-import { appCard, badge, btn, named, callout, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
+import { aiBadge, appCard, badge, btn, named, callout, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, readFlash, type Flash } from './session.js';
 
 const deploys = (user: User): boolean => user.role === 'admin' || user.role === 'publisher';
@@ -23,12 +23,23 @@ function instanceActions(core: Core, locale: Locale, i: Instance, title: string,
   return open + admin;
 }
 
+/** Whether a version may ask a language model: it declares `complete` (what `lager.complete()` needs). */
+function usesAi(core: Core, appId: string, version: number | undefined): boolean {
+  if (version === undefined) return false;
+  const complete = core.apps.getVersion(appId, version)?.capabilities.complete;
+  return complete !== null && typeof complete === 'object';
+}
+
+/** The AI badge for a card, or nothing; instance cards ask about their active version, app cards about the latest deploy. */
+const aiCorner = (core: Core, locale: Locale, appId: string, version: number | undefined): string | undefined =>
+  usesAi(core, appId, version) ? aiBadge(t(locale, 'card.ai'), t(locale, 'card.ai.hint')) : undefined;
+
 function instanceCard(core: Core, locale: Locale, i: Instance, extra: { badges?: string[]; manage: boolean }): string {
   const app = core.apps.getApp(i.appId);
   const title = app?.title ?? i.slug;
   const state = i.disabled ? badge(t(locale, 'common.disabled'), { tone: 'danger', icon: 'alert' }) : badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) });
   return appCard({
-    app, title, slug: i.slug, description: app?.description,
+    app, title, slug: i.slug, description: app?.description, corner: aiCorner(core, locale, i.appId, i.activeVersion),
     badges: [state, badge(`v${i.activeVersion}`), ...(extra.badges ?? [])],
     actions: instanceActions(core, locale, i, title, extra.manage),
   });
@@ -56,7 +67,7 @@ function catalogSection(core: Core, locale: Locale, csrf: string, catalog: Retur
   const instCards = instances.map((i) => {
     const app = core.apps.getApp(i.appId);
     return appCard({
-      app, title: i.appTitle, slug: i.slug, description: app?.description,
+      app, title: i.appTitle, slug: i.slug, description: app?.description, corner: aiCorner(core, locale, i.appId, i.activeVersion),
       badges: [badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) }), badge(i.ownerName, { icon: 'user' })],
       actions: linkButton(instanceUrl(core.config, i.slug), `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary', true, named(t(locale, 'card.open', { title: i.appTitle }))),
     });
@@ -68,6 +79,7 @@ function catalogSection(core: Core, locale: Locale, csrf: string, catalog: Retur
       esc(t(locale, 'dash.createOwn')), 'primary', '', true);
     return appCard({
       app: a, title: a.title, slug: a.slug, description: a.description, badges: [],
+      corner: aiCorner(core, locale, a.id, core.apps.latestDeployedVersion(a.id)?.number),
       actions: `<details class="getown"><summary class="${btn('secondary', true)} btn-block">${icon('plus')}${esc(t(locale, 'dash.getOwn'))}</summary>${create}</details>`,
     });
   });
@@ -79,7 +91,7 @@ function appsSection(core: Core, locale: Locale, apps: App[]): string {
     const latest = core.apps.latestDeployedVersion(a.id)?.number ?? 0;
     const count = core.apps.listInstances(a.id).length;
     return appCard({
-      app: a, title: a.title, slug: a.slug, description: a.description,
+      app: a, title: a.title, slug: a.slug, description: a.description, corner: aiCorner(core, locale, a.id, latest || undefined),
       badges: [`<span class="badge"><span class="sr-only">${esc(t(locale, 'dash.latestVersion'))} </span>v${latest}</span>`,
         badge(t(locale, plural(count, 'dash.instanceCount.one', 'dash.instanceCount.other'), { count }), { icon: 'grid' })],
       actions: linkButton(`/apps/${encodeURIComponent(a.slug)}`, `${icon('settings')}${esc(t(locale, 'common.manage'))}`, 'secondary', true, named(t(locale, 'card.manage', { title: a.title }))),

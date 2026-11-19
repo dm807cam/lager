@@ -6,6 +6,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AiError, AiModels, DEFAULT_GROUP, DEFAULT_HOURLY_LIMIT, DEFAULT_MAX_TOKENS, HOURLY_LIMIT_MAX, MAX_TOKENS_LIMIT, isTruncated, stripReasoning, type AiRoute, type ProviderId } from '../src/platform/ai.js';
 import { openPlatformDb } from '../src/platform/db.js';
 
+/** The catalog entry for a provider's model, named after the model; created on first use. */
+function entry(ai: AiModels, providerId: string, model: string): string {
+  const id = model.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^[^a-z0-9]+/, '') || 'm';
+  return (ai.getModel(id) ?? ai.createModel({ id, providerId, model })).id;
+}
+
+
 interface Sent { url: string; headers: Record<string, string>; body: any }
 
 let db: DatabaseSync | undefined;
@@ -28,10 +35,11 @@ const json = (body: unknown, status = 200): Response => new Response(JSON.string
 /** Connects one provider and points the default AI group at it; returns the route everyone gets. */
 function use(ai: AiModels, opts: { type: ProviderId; model: string; apiKey?: string; baseUrl?: string; maxTokens?: number }): AiRoute {
   for (const g of ai.listGroups()) if (!g.isDefault) ai.deleteGroup(g.id);
-  ai.updateGroup(DEFAULT_GROUP, { name: '', providerId: null, hourlyLimit: DEFAULT_HOURLY_LIMIT });
+  ai.updateGroup(DEFAULT_GROUP, { name: '', modelId: null, hourlyLimit: DEFAULT_HOURLY_LIMIT });
+  for (const m of ai.listModels()) ai.deleteModel(m.id);
   for (const p of ai.listProviders()) ai.deleteProvider(p.id);
   const p = ai.createProvider({ name: 'P', type: opts.type, apiKey: opts.apiKey, baseUrl: opts.baseUrl });
-  ai.updateGroup(DEFAULT_GROUP, { name: '', providerId: p.id, model: opts.model, hourlyLimit: DEFAULT_HOURLY_LIMIT });
+  ai.updateGroup(DEFAULT_GROUP, { name: '', modelId: entry(ai, p.id, opts.model), hourlyLimit: DEFAULT_HOURLY_LIMIT });
   if (opts.maxTokens !== undefined) ai.setMaxTokens(opts.maxTokens);
   return ai.routeFor('anyone')!;
 }
@@ -46,7 +54,8 @@ describe('AI providers', () => {
     const { ai } = setup();
     expect(ai.configured).toBe(false);
     expect(ai.listProviders()).toEqual([]);
-    expect(ai.listGroups()).toEqual([{ id: DEFAULT_GROUP, name: '', providerId: null, model: '', hourlyLimit: DEFAULT_HOURLY_LIMIT, memberCount: 0, isDefault: true }]);
+    expect(ai.listGroups()).toEqual([{ id: DEFAULT_GROUP, name: '', modelId: null, allowed: [], hourlyLimit: DEFAULT_HOURLY_LIMIT, memberCount: 0, isDefault: true }]);
+    expect(ai.listModels()).toEqual([]);
     expect(ai.maxTokens).toBe(DEFAULT_MAX_TOKENS);
     expect(ai.routeFor('anyone')).toBeNull();
   });
@@ -91,58 +100,149 @@ describe('AI providers', () => {
     expect(ai.listProviders()).toEqual([]);
   });
 
-  it('cannot be deleted while an AI group uses them', () => {
+  it('cannot be deleted while a catalog model uses them', () => {
     const { ai } = setup();
     const p = ai.createProvider({ name: 'Local', type: 'ollama' });
-    const g = ai.createGroup({ name: 'Kids', providerId: p.id, model: 'llama3.2', hourlyLimit: 5 });
-    expect(ai.groupsUsing(p.id).map((x) => x.name)).toEqual(['Kids']);
+    entry(ai, p.id, 'llama3.2');
+    expect(ai.modelsUsing(p.id).map((x) => x.id)).toEqual(['llama3.2']);
     expect(() => ai.deleteProvider(p.id)).toThrow(expect.objectContaining({ code: 'conflict', reason: 'ai_provider_in_use' }));
-    ai.deleteGroup(g.id);
+    ai.deleteModel('llama3.2');
     ai.deleteProvider(p.id);
     expect(ai.listProviders()).toEqual([]);
     expect(() => ai.deleteProvider(p.id)).toThrow(expect.objectContaining({ code: 'not_found' }));
   });
 });
 
-describe('AI groups', () => {
-  it('need a model when they have a provider, and a limit in range', () => {
+describe('Model catalog', () => {
+  it('names models apps can ask for; the name is fixed, the rest can change', () => {
     const { ai } = setup();
     const p = ai.createProvider({ name: 'Local', type: 'ollama' });
-    expect(() => ai.createGroup({ name: 'Fam', providerId: p.id, model: '', hourlyLimit: 5 })).toThrow(/model/);
-    expect(() => ai.createGroup({ name: 'Fam', providerId: p.id, model: 'has space', hourlyLimit: 5 })).toThrow(/model/);
-    expect(() => ai.createGroup({ name: 'Fam', providerId: p.id, model: 'm', hourlyLimit: 0 })).toThrow();
-    expect(() => ai.createGroup({ name: 'Fam', providerId: p.id, model: 'm', hourlyLimit: HOURLY_LIMIT_MAX + 1 })).toThrow();
-    expect(() => ai.createGroup({ name: 'Fam', providerId: p.id, model: 'm', hourlyLimit: 1.5 })).toThrow();
-    expect(() => ai.createGroup({ name: 'Fam', providerId: 'nope', model: 'm', hourlyLimit: 5 })).toThrow(expect.objectContaining({ code: 'not_found' }));
+    const q = ai.createProvider({ name: 'Other', type: 'ollama', baseUrl: 'http://10.0.0.9:11434/v1' });
+    expect(ai.createModel({ id: 'fast', providerId: p.id, model: 'llama3.2', description: '  Short   replies ' }))
+      .toMatchObject({ id: 'fast', providerId: p.id, model: 'llama3.2', description: 'Short replies' });
+    expect(() => ai.createModel({ id: 'fast', providerId: p.id, model: 'x' })).toThrow(expect.objectContaining({ code: 'conflict' }));
+    for (const id of ['', 'Fast', '-x', 'has space', 'a'.repeat(41), 'ünï']) {
+      expect(() => ai.createModel({ id, providerId: p.id, model: 'x' })).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+    }
+    expect(() => ai.createModel({ id: 'b', providerId: p.id, model: '' })).toThrow(/model name/);
+    expect(() => ai.createModel({ id: 'b', providerId: p.id, model: 'has space' })).toThrow(/model name/);
+    expect(() => ai.createModel({ id: 'b', providerId: p.id, model: 'm', description: 'x'.repeat(201) })).toThrow(/description/);
+    expect(() => ai.createModel({ id: 'b', providerId: 'nope', model: 'm' })).toThrow(expect.objectContaining({ code: 'not_found' }));
+    expect(ai.updateModel('fast', { id: 'renamed', providerId: q.id, model: 'qwen3' })).toMatchObject({ id: 'fast', providerId: q.id, model: 'qwen3', description: '' });
+    expect(() => ai.updateModel('ghost', { providerId: q.id, model: 'm' })).toThrow(expect.objectContaining({ code: 'not_found' }));
+    expect(ai.listModels().map((m) => m.id)).toEqual(['fast']);
+  });
+
+  it('cannot delete a group default; deleting another one clears allowed lists and app choices', () => {
+    const { ai, db } = setup();
+    const p = ai.createProvider({ name: 'Local', type: 'ollama' });
+    ai.createModel({ id: 'fast', providerId: p.id, model: 'small' });
+    ai.createModel({ id: 'smart', providerId: p.id, model: 'big' });
+    const g = ai.createGroup({ name: 'Kids', modelId: 'fast', allowed: ['smart', 'fast', 'smart'], hourlyLimit: 5 });
+    expect(g.allowed).toEqual(['smart']);
+    addUser(db, 'owner');
+    db.prepare("INSERT INTO apps (id, slug, title, owner_id, created_at, ai_model_id) VALUES ('a1', 'app', 'App', 'owner', '2026-01-01', 'smart')").run();
+    expect(ai.groupsDefaultingTo('fast').map((x) => x.name)).toEqual(['Kids']);
+    expect(() => ai.deleteModel('fast')).toThrow(expect.objectContaining({ code: 'conflict', reason: 'ai_model_in_use' }));
+    ai.deleteModel('smart');
+    expect(ai.getGroup(g.id)!.allowed).toEqual([]);
+    expect((db.prepare("SELECT ai_model_id FROM apps WHERE id = 'a1'").get() as { ai_model_id: string | null }).ai_model_id).toBeNull();
+    expect(() => ai.deleteModel('smart')).toThrow(expect.objectContaining({ code: 'not_found' }));
+  });
+});
+
+describe('Model choice per app', () => {
+  function catalog() {
+    const env = setup();
+    const { ai, db } = env;
+    const local = ai.createProvider({ name: 'Local', type: 'ollama' });
+    const work = ai.createProvider({ name: 'Work', type: 'anthropic', apiKey: 'sk-ant-1' });
+    ai.createModel({ id: 'fast', providerId: local.id, model: 'llama3.2', description: 'Quick' });
+    ai.createModel({ id: 'smart', providerId: work.id, model: 'claude-opus-5-5' });
+    ai.createModel({ id: 'code', providerId: work.id, model: 'claude-sonnet-5-5' });
+    const kids = ai.createGroup({ name: 'Kids', modelId: 'fast', hourlyLimit: 5 });
+    ai.updateGroup(DEFAULT_GROUP, { name: '', modelId: 'fast', allowed: ['smart'], hourlyLimit: 20 });
+    const adult = addUser(db, 'adult');
+    const kid = addUser(db, 'kid');
+    ai.assign(kid, kids.id);
+    return { ...env, local, work, kids, adult, kid };
+  }
+
+  it('uses the model the app asks for where the group allows it, else the group default', () => {
+    const { ai, work, local, kids, adult, kid } = catalog();
+    expect(ai.routeFor(adult, 'smart')).toEqual({ groupId: DEFAULT_GROUP, modelId: 'smart', providerId: work.id, model: 'claude-opus-5-5', hourlyLimit: 20 });
+    expect(ai.routeFor(adult, null)).toMatchObject({ modelId: 'fast', providerId: local.id });
+    expect(ai.routeFor(adult, 'code')).toMatchObject({ modelId: 'fast' });
+    expect(ai.routeFor(adult, 'ghost')).toMatchObject({ modelId: 'fast' });
+    expect(ai.routeFor(kid, 'smart')).toEqual({ groupId: kids.id, modelId: 'fast', providerId: local.id, model: 'llama3.2', hourlyLimit: 5 });
+  });
+
+  it('falls back to the default when the wanted model cannot be reached, and to the wanted one when the default cannot', () => {
+    const { ai, db, adult, work } = catalog();
+    db.prepare('UPDATE ai_providers SET key_enc = ? WHERE id = ?').run('v1:broken:x:y', work.id);
+    expect(ai.routeFor(adult, 'smart')).toMatchObject({ modelId: 'fast' });
+    expect(ai.configured).toBe(true);
+    const fresh = catalog();
+    fresh.ai.updateGroup(DEFAULT_GROUP, { name: '', modelId: 'smart', allowed: ['fast'], hourlyLimit: 20 });
+    fresh.db.prepare('UPDATE ai_providers SET key_enc = ? WHERE id = ?').run('v1:broken:x:y', fresh.work.id);
+    expect(fresh.ai.routeFor(fresh.adult, 'fast')).toMatchObject({ modelId: 'fast' });
+    expect(fresh.ai.routeFor(fresh.adult, null)).toBeNull();
+    // Only the default model counts: apps that ask for none would fail, so the status says so.
+    fresh.ai.updateGroup(fresh.kids.id, { name: 'Kids', modelId: 'smart', allowed: ['fast'], hourlyLimit: 5 });
+    expect(fresh.ai.configured).toBe(false);
+  });
+
+  it('lists what each person may choose, default first, and nothing while the group is off', () => {
+    const { ai, adult, kid, kids } = catalog();
+    expect(ai.allowedModelsFor(adult).map((m) => [m.id, m.providerName, m.isDefault])).toEqual([['fast', 'Local', true], ['smart', 'Work', false]]);
+    expect(ai.allowedModelsFor(kid).map((m) => m.id)).toEqual(['fast']);
+    expect(ai.mayUse(adult, 'smart')).toBe(true);
+    expect(ai.mayUse(kid, 'smart')).toBe(false);
+    ai.updateGroup(kids.id, { name: 'Kids', modelId: null, allowed: ['smart'], hourlyLimit: 5 });
+    expect(ai.allowedModelsFor(kid)).toEqual([]);
+    expect(ai.mayUse(kid, 'smart')).toBe(false);
+    expect(ai.routeFor(kid, 'smart')).toBeNull();
+  });
+});
+
+describe('AI groups', () => {
+  it('need a catalog model that exists, and a limit in range', () => {
+    const { ai } = setup();
+    const p = ai.createProvider({ name: 'Local', type: 'ollama' });
+    expect(() => ai.createGroup({ name: 'Fam', modelId: 'ghost', hourlyLimit: 5 })).toThrow(expect.objectContaining({ code: 'not_found' }));
+    expect(() => ai.createGroup({ name: 'Fam', modelId: null, allowed: ['ghost'], hourlyLimit: 5 })).toThrow(expect.objectContaining({ code: 'not_found' }));
+    expect(() => ai.createGroup({ name: 'Fam', modelId: entry(ai, p.id, 'm'), hourlyLimit: 0 })).toThrow();
+    expect(() => ai.createGroup({ name: 'Fam', modelId: entry(ai, p.id, 'm'), hourlyLimit: HOURLY_LIMIT_MAX + 1 })).toThrow();
+    expect(() => ai.createGroup({ name: 'Fam', modelId: entry(ai, p.id, 'm'), hourlyLimit: 1.5 })).toThrow();
     expect(ai.listGroups()).toHaveLength(1);
-    expect(ai.createGroup({ name: 'Fam', providerId: null, model: '', hourlyLimit: 5 })).toMatchObject({ name: 'Fam', providerId: null, isDefault: false });
-    expect(() => ai.createGroup({ name: 'FAM', providerId: null, hourlyLimit: 5 })).toThrow(expect.objectContaining({ code: 'conflict' }));
+    expect(ai.createGroup({ name: 'Fam', modelId: null, hourlyLimit: 5 })).toMatchObject({ name: 'Fam', modelId: null, allowed: [], isDefault: false });
+    expect(() => ai.createGroup({ name: 'FAM', modelId: null, hourlyLimit: 5 })).toThrow(expect.objectContaining({ code: 'conflict' }));
   });
 
   it('list the default last; it cannot be deleted or renamed', () => {
     const { ai } = setup();
-    ai.createGroup({ name: 'Zeta', providerId: null, hourlyLimit: 5 });
-    ai.createGroup({ name: 'Alpha', providerId: null, hourlyLimit: 5 });
+    ai.createGroup({ name: 'Zeta', modelId: null, hourlyLimit: 5 });
+    ai.createGroup({ name: 'Alpha', modelId: null, hourlyLimit: 5 });
     expect(ai.listGroups().map((g) => g.name)).toEqual(['Alpha', 'Zeta', '']);
     expect(() => ai.deleteGroup(DEFAULT_GROUP)).toThrow(expect.objectContaining({ code: 'forbidden' }));
-    expect(ai.updateGroup(DEFAULT_GROUP, { name: 'X', providerId: null, hourlyLimit: 9 })).toMatchObject({ name: '', hourlyLimit: 9, isDefault: true });
+    expect(ai.updateGroup(DEFAULT_GROUP, { name: 'X', modelId: null, hourlyLimit: 9 })).toMatchObject({ name: '', hourlyLimit: 9, isDefault: true });
   });
 
   it('assign each person to one group and resolve their route', () => {
     const { ai, db } = setup();
     const p = ai.createProvider({ name: 'Local', type: 'ollama' });
-    const g = ai.createGroup({ name: 'Kids', providerId: p.id, model: 'm-small', hourlyLimit: 7 });
+    const g = ai.createGroup({ name: 'Kids', modelId: entry(ai, p.id, 'm-small'), hourlyLimit: 7 });
     const a = addUser(db, 'a');
     const b = addUser(db, 'b');
     ai.assign(a, g.id);
     expect(ai.groupIdOf(a)).toBe(g.id);
     expect(ai.getGroup(g.id)!.memberCount).toBe(1);
-    expect(ai.routeFor(a)).toEqual({ groupId: g.id, providerId: p.id, model: 'm-small', hourlyLimit: 7 });
+    expect(ai.routeFor(a)).toEqual({ groupId: g.id, modelId: 'm-small', providerId: p.id, model: 'm-small', hourlyLimit: 7 });
     expect(ai.groupIdOf(b)).toBe(DEFAULT_GROUP);
     expect(ai.routeFor(b)).toBeNull();
     expect(ai.configured).toBe(true);
-    ai.updateGroup(DEFAULT_GROUP, { name: '', providerId: p.id, model: 'm-big', hourlyLimit: 3 });
-    expect(ai.routeFor(b)).toEqual({ groupId: DEFAULT_GROUP, providerId: p.id, model: 'm-big', hourlyLimit: 3 });
+    ai.updateGroup(DEFAULT_GROUP, { name: '', modelId: entry(ai, p.id, 'm-big'), hourlyLimit: 3 });
+    expect(ai.routeFor(b)).toEqual({ groupId: DEFAULT_GROUP, modelId: 'm-big', providerId: p.id, model: 'm-big', hourlyLimit: 3 });
     ai.assign(a, DEFAULT_GROUP);
     expect((db.prepare('SELECT ai_group_id FROM users WHERE id = ?').get(a) as { ai_group_id: string | null }).ai_group_id).toBeNull();
     ai.assign(a, g.id);
@@ -162,7 +262,7 @@ describe('AI groups', () => {
   it('a key that no longer decrypts makes the route unavailable', async () => {
     const first = setup();
     const p = first.ai.createProvider({ name: 'Work', type: 'openai', apiKey: 'sk-abcd' });
-    first.ai.updateGroup(DEFAULT_GROUP, { name: '', providerId: p.id, model: 'gpt-5', hourlyLimit: 5 });
+    first.ai.updateGroup(DEFAULT_GROUP, { name: '', modelId: entry(first.ai, p.id, 'gpt-5'), hourlyLimit: 5 });
     const route = first.ai.routeFor('anyone')!;
     const other = new AiModels(first.db, 'another-secret', first.fake);
     expect(other.getProvider(p.id)!.keyHint).toBeNull();
@@ -175,7 +275,7 @@ describe('AI groups', () => {
   it('a saved key that no longer decrypts blocks a provider even when its type needs none', async () => {
     const first = setup();
     const p = first.ai.createProvider({ name: 'Proxy', type: 'custom', baseUrl: 'http://10.0.0.5:8000/v1', apiKey: 'sk-proxy-1' });
-    first.ai.updateGroup(DEFAULT_GROUP, { name: '', providerId: p.id, model: 'm', hourlyLimit: 5 });
+    first.ai.updateGroup(DEFAULT_GROUP, { name: '', modelId: entry(first.ai, p.id, 'm'), hourlyLimit: 5 });
     const route = first.ai.routeFor('anyone')!;
     const other = new AiModels(first.db, 'another-secret', first.fake);
     expect(other.routeFor('anyone')).toBeNull();
@@ -189,8 +289,8 @@ describe('AI groups', () => {
       : json({ choices: [{ message: { content: 'o' } }] }));
     const pa = ai.createProvider({ name: 'A', type: 'anthropic', apiKey: 'sk-ant-1' });
     const po = ai.createProvider({ name: 'O', type: 'openai', apiKey: 'sk-oa-2' });
-    const ga = ai.createGroup({ name: 'GA', providerId: pa.id, model: 'claude-haiku-5-5', hourlyLimit: 5 });
-    const go = ai.createGroup({ name: 'GO', providerId: po.id, model: 'gpt-5', hourlyLimit: 5 });
+    const ga = ai.createGroup({ name: 'GA', modelId: entry(ai, pa.id, 'claude-haiku-5-5'), hourlyLimit: 5 });
+    const go = ai.createGroup({ name: 'GO', modelId: entry(ai, po.id, 'gpt-5'), hourlyLimit: 5 });
     const ua = addUser(db, 'ua');
     const uo = addUser(db, 'uo');
     ai.assign(ua, ga.id);
@@ -203,11 +303,11 @@ describe('AI groups', () => {
     expect(JSON.stringify(sent[1].headers)).not.toContain('sk-ant-1');
   });
 
-  it('test route uses the first group model for the provider, else the preset example', () => {
+  it('test route uses the first catalog model of the provider, else the preset example', () => {
     const { ai } = setup();
     const p = ai.createProvider({ name: 'Local', type: 'ollama' });
     expect(ai.testRoute(p.id)).toMatchObject({ providerId: p.id, model: 'llama3.2' });
-    ai.createGroup({ name: 'B', providerId: p.id, model: 'qwen3', hourlyLimit: 5 });
+    entry(ai, p.id, 'qwen3');
     expect(ai.testRoute(p.id).model).toBe('qwen3');
     expect(() => ai.testRoute('nope')).toThrow(expect.objectContaining({ code: 'not_found' }));
   });
@@ -332,7 +432,7 @@ describe('AiModels.complete', () => {
 
   it('refuses to run unconfigured', async () => {
     const { ai, sent } = setup();
-    await expect(ai.complete({ groupId: DEFAULT_GROUP, providerId: 'nope', model: 'm', hourlyLimit: 1 }, [{ role: 'user', content: 'x' }])).rejects.toMatchObject({ reason: 'not_configured', status: 503 });
+    await expect(ai.complete({ groupId: DEFAULT_GROUP, modelId: 'm', providerId: 'nope', model: 'm', hourlyLimit: 1 }, [{ role: 'user', content: 'x' }])).rejects.toMatchObject({ reason: 'not_configured', status: 503 });
     expect(sent).toHaveLength(0);
   });
 });

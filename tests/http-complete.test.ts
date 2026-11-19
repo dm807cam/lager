@@ -8,6 +8,13 @@ import { AiModels, DEFAULT_GROUP, type ProviderId } from '../src/platform/ai.js'
 import { RateLimiter } from '../src/http/ratelimit.js';
 import { makeHarness, type Harness } from './support/http.js';
 
+/** The catalog entry for a provider's model, named after the model; created on first use. */
+function entry(ai: AiModels, providerId: string, model: string): string {
+  const id = model.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^[^a-z0-9]+/, '') || 'm';
+  return (ai.getModel(id) ?? ai.createModel({ id, providerId, model })).id;
+}
+
+
 let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
 
@@ -43,7 +50,7 @@ function setup(opts: { declare?: boolean; reply?: (body: any) => Response | Prom
 /** Connects one provider and points the default AI group at it. */
 function useModel(core: Core, opts: { type: ProviderId; model: string; apiKey?: string; hourlyLimit?: number }): void {
   const p = core.ai.createProvider({ name: `P-${core.ai.listProviders().length}`, type: opts.type, apiKey: opts.apiKey });
-  core.ai.updateGroup(DEFAULT_GROUP, { name: '', providerId: p.id, model: opts.model, hourlyLimit: opts.hourlyLimit ?? 60 });
+  core.ai.updateGroup(DEFAULT_GROUP, { name: '', modelId: entry(core.ai, p.id, opts.model), hourlyLimit: opts.hourlyLimit ?? 60 });
 }
 
 describe('POST /__lager/complete', () => {
@@ -102,8 +109,8 @@ describe('POST /__lager/complete', () => {
     const env = setup({ reply: () => json({ choices: [{ message: { content: 'ok' } }] }) });
     const pa = env.core.ai.createProvider({ name: 'A', type: 'ollama' });
     const pb = env.core.ai.createProvider({ name: 'B', type: 'custom', baseUrl: 'http://10.0.0.9:8000/v1' });
-    const ga = env.core.ai.createGroup({ name: 'GA', providerId: pa.id, model: 'a-model', hourlyLimit: 5 });
-    const gb = env.core.ai.createGroup({ name: 'GB', providerId: pb.id, model: 'b-model', hourlyLimit: 5 });
+    const ga = env.core.ai.createGroup({ name: 'GA', modelId: entry(env.core.ai, pa.id, 'a-model'), hourlyLimit: 5 });
+    const gb = env.core.ai.createGroup({ name: 'GB', modelId: entry(env.core.ai, pb.id, 'b-model'), hourlyLimit: 5 });
     const u1 = env.mk('u1@x.y', 'interact');
     const u2 = env.mk('u2@x.y', 'interact');
     env.core.ai.assign(env.core.users.getByEmail('u1@x.y')!.id, ga.id);
@@ -117,7 +124,7 @@ describe('POST /__lager/complete', () => {
   it('a person whose AI group is Off gets not_configured', async () => {
     const env = setup();
     useModel(env.core, { type: 'ollama', model: 'llama3.2' });
-    const off = env.core.ai.createGroup({ name: 'None', providerId: null, hourlyLimit: 5 });
+    const off = env.core.ai.createGroup({ name: 'None', modelId: null, hourlyLimit: 5 });
     const cookie = env.mk('off@x.y', 'interact');
     env.core.ai.assign(env.core.users.getByEmail('off@x.y')!.id, off.id);
     const res = await env.ask(cookie, { messages: 'hi' });
@@ -129,7 +136,7 @@ describe('POST /__lager/complete', () => {
   it('applies the AI group\'s hourly limit at once when it changes', async () => {
     const env = setup({ reply: () => json({ choices: [{ message: { content: 'ok' } }] }) });
     useModel(env.core, { type: 'ollama', model: 'llama3.2', hourlyLimit: 2 });
-    const limit = (n: number) => env.core.ai.updateGroup(DEFAULT_GROUP, { name: '', providerId: env.core.ai.listProviders()[0].id, model: 'llama3.2', hourlyLimit: n });
+    const limit = (n: number) => env.core.ai.updateGroup(DEFAULT_GROUP, { name: '', modelId: entry(env.core.ai, env.core.ai.listProviders()[0].id, 'llama3.2'), hourlyLimit: n });
     expect((await env.ask(env.owner, { messages: 'a' })).status).toBe(200);
     expect((await env.ask(env.owner, { messages: 'b' })).status).toBe(200);
     const third = await env.ask(env.owner, { messages: 'c' });

@@ -10,7 +10,7 @@ import type { GrantLevel } from '../platform/access.js';
 import type { User } from '../platform/users.js';
 import { sendVersionDownload, streamExport, versionParam } from './api.js';
 import { requireUser, type PlatformExtension } from './app.js';
-import { downloadableVersion } from '../mcp/tools.js';
+import { declaredModel, downloadableVersion, setAppModel } from '../mcp/tools.js';
 import {
   dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, formErrorPage, hiddenField, levelOptions, missingPage, noticeHtml, optionList, type Option, page,
   sizeText, visibilityLabel, visibilityOptions,
@@ -34,6 +34,7 @@ const NOTICES: Record<string, MessageKey> = {
   slug_reserved: 'notice.slugInvalid',
   collaborators_invalid: 'notice.collaboratorsInvalid',
   owner_in_charge: 'notice.ownerInCharge',
+  model_not_allowed: 'notice.modelNotAllowed',
   owner_full_access: 'notice.ownerFullAccess',
   host_invalid: 'notice.hostInvalid',
   host_taken: 'notice.hostTaken',
@@ -221,7 +222,7 @@ function appPage(core: Core, locale: Locale, user: User, app: App, flash: Flash)
       field('self-mode', t(locale, 'app.self.label'), `<select id="self-mode" name="mode">${optionList(selfModes, app.selfInstances)}</select>`), esc(t(locale, 'common.save')), 'secondary', 'stack', true));
     del = dangerZone(locale, t(locale, 'app.delete.title'), t(locale, 'app.delete.text'), `${base}/delete`, csrf, app.slug, t(locale, 'app.delete.submit'));
   }
-  const details = `<section class="card"><h2>${esc(t(locale, 'instance.details'))}</h2><dl class="facts">${fact(t(locale, 'common.owner'), person(core.users.get(app.ownerId)))}${selfService}</dl></section>`;
+  const details = `<section class="card"><h2>${esc(t(locale, 'instance.details'))}</h2><dl class="facts">${fact(t(locale, 'common.owner'), person(core.users.get(app.ownerId)))}${selfService}${modelFact(core, locale, user, app, base, csrf)}</dl></section>`;
   const count = instances.length;
   return shell(core, locale, user, t(locale, 'app.pageTitle', { title: app.title }), `${hero(app, app.title, `<span class="url">${esc(app.slug)}</span>`,
     [`<span class="badge"><span class="sr-only">${esc(t(locale, 'dash.latestVersion'))} </span>v${latest}</span>`, badge(t(locale, count === 1 ? 'dash.instanceCount.one' : 'dash.instanceCount.other', { count }), { icon: 'grid' })], '', app.description)}
@@ -232,6 +233,24 @@ function appPage(core: Core, locale: Locale, user: User, app: App, flash: Flash)
     `${field('new-slug', t(locale, 'instance.slugLabel'), `<input id="new-slug" name="slug" required maxlength="${MAX_SLUG_LENGTH}" autocomplete="off" spellcheck="false">`)}${ownerField}`,
     `${icon('plus')}${esc(t(locale, 'app.newInstance'))}`, 'primary', 'form-row')}</div></section>
 ${collaborators}${del}</div><aside class="side-col" aria-label="${esc(t(locale, 'instance.details'))}">${details}</aside></div>`, flash, `/apps/${encodeURIComponent(app.slug)}`, 'publish');
+}
+
+/**
+ * The language model of an app that calls lager.complete, for those who deploy it: the models their own AI group allows,
+ * plus the current choice even when it is not open to them, so saving the form unchanged never changes it.
+ */
+function modelFact(core: Core, locale: Locale, user: User, app: App, base: string, csrf: string): string {
+  const latest = core.apps.latestDeployedVersion(app.id);
+  const usesModel = latest !== null && latest.capabilities.complete !== null && typeof latest.capabilities.complete === 'object';
+  if (!core.access.canDeploy(app, user) || (!usesModel && app.aiModelId === null)) return '';
+  const declared = declaredModel(core, app);
+  const allowed = core.ai.allowedModelsFor(user.id);
+  const choices: Option[] = [['', declared ? t(locale, 'app.model.declared', { model: declared }) : t(locale, 'app.model.viewerDefault')],
+    ...allowed.map((m): Option => [m.id, m.description ? `${m.id} – ${m.description}` : m.id])];
+  if (app.aiModelId && !allowed.some((m) => m.id === app.aiModelId)) choices.push([app.aiModelId, t(locale, 'app.model.unavailable', { model: app.aiModelId })]);
+  return fact(t(locale, 'app.model.title'), form(`${base}/model`, csrf,
+    field('app-model', t(locale, 'app.model.label'), `<select id="app-model" name="model">${optionList(choices, app.aiModelId ?? '')}</select>`)
+      + `<p class="hint">${esc(t(locale, 'app.model.hint'))}</p>`, esc(t(locale, 'common.save')), 'secondary', 'stack', true));
 }
 
 /** Pages and forms for one instance (sharing, versions, snapshots, deletion) and for one app (instances, collaborators). */
@@ -432,6 +451,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
 
   router.post('/ui/apps/:slug/self-instances', ...action(appBack, (req, user) => {
     core.apps.setSelfInstances(ownedApp(user, param(req, 'slug')).id, field(req, 'mode') as SelfInstances, user.id);
+  }));
+
+  router.post('/ui/apps/:slug/model', ...action(appBack, (req, user) => {
+    setAppModel(core, user, appOf(param(req, 'slug')), field(req, 'model', 100) || null);
   }));
 
   router.post('/ui/apps/:slug/delete', ...action(appBack, (req, user) => {

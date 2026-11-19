@@ -57,7 +57,9 @@ export const MIGRATIONS: string[] = [
     next_version INTEGER NOT NULL DEFAULT 1,
     description TEXT NOT NULL DEFAULT '',
     theme_color TEXT NOT NULL DEFAULT '#1f2a5c',
-    icon_version INTEGER NOT NULL DEFAULT 0
+    icon_version INTEGER NOT NULL DEFAULT 0,
+    -- The owner's choice of catalog model; NULL follows the version's \`complete.model\` declaration.
+    ai_model_id TEXT REFERENCES ai_models(id) ON DELETE SET NULL
   );
   CREATE TABLE app_collaborators (
     app_id TEXT NOT NULL,
@@ -172,18 +174,32 @@ export const MIGRATIONS: string[] = [
     key_enc TEXT,
     created_at TEXT NOT NULL
   );
+  -- The model catalog: \`id\` is the name apps declare (\`complete: {model: "fast"}\`) and never changes.
+  CREATE TABLE ai_models (
+    id TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL REFERENCES ai_providers(id),
+    model TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+  );
+  -- \`model_id\` is the group's default model; NULL turns the language model off for the group.
   CREATE TABLE ai_groups (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    provider_id TEXT,
-    model TEXT NOT NULL DEFAULT '',
+    model_id TEXT REFERENCES ai_models(id),
     hourly_limit INTEGER NOT NULL,
     created_at TEXT NOT NULL
   );
+  -- Further catalog models an app may pick for the people of a group, besides its default model.
+  CREATE TABLE ai_group_models (
+    group_id TEXT NOT NULL REFERENCES ai_groups(id) ON DELETE CASCADE,
+    model_id TEXT NOT NULL REFERENCES ai_models(id) ON DELETE CASCADE,
+    PRIMARY KEY (group_id, model_id)
+  );
   CREATE UNIQUE INDEX ai_groups_name ON ai_groups(name COLLATE NOCASE) WHERE id != 'default';
-  -- "Everyone else": the AI group of every person not assigned to another one; off until a provider is chosen.
-  INSERT INTO ai_groups (id, name, provider_id, model, hourly_limit, created_at)
-    VALUES ('default', '', NULL, '', 60, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+  -- "Everyone else": the AI group of every person not assigned to another one; off until a model is chosen.
+  INSERT INTO ai_groups (id, name, model_id, hourly_limit, created_at)
+    VALUES ('default', '', NULL, 60, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
   `,
 ];
 

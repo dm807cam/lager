@@ -10,6 +10,7 @@ import { canRead, canWrite, type Viewer } from '../data/rules.js';
 import { LagerError } from '../errors.js';
 import type { GrantLevel } from '../platform/access.js';
 import { normalizeDescription, normalizeThemeColor, type App, type Capabilities, type DbRule, type DeployResult, type Instance, type Version, type Visibility } from '../platform/apps.js';
+import { MODEL_ID_RE } from '../platform/ai.js';
 import { checkApp, type AppCheck } from '../platform/check.js';
 import type { User } from '../platform/users.js';
 
@@ -66,9 +67,25 @@ export function appSummary(core: Core, user: User, app: App): object {
   };
 }
 
+/**
+ * The catalog model the latest deployed version asks for in `complete.model`, if any. An instance that runs an older
+ * version (pinned, rolled back or saved by the page) follows the declaration of that version instead.
+ */
+export function declaredModel(core: Core, app: App): string | null {
+  const model = core.apps.latestDeployedVersion(app.id)?.capabilities.complete?.model;
+  return typeof model === 'string' && model ? model : null;
+}
+
+/** The language model part of an app: what its owner chose, what its latest version declares, and which applies. */
+function modelJson(core: Core, app: App): object {
+  const declared = declaredModel(core, app);
+  return { chosen: app.aiModelId, declared, applies: app.aiModelId ?? declared };
+}
+
 export function appDetail(core: Core, user: User, app: App): object {
   return {
     ...appSummary(core, user, app),
+    model: modelJson(core, app),
     // Self-published versions hold one instance's state and are not part of the app.
     versions: core.apps.listVersions(app.id).filter((v) => v.instanceId === null).map((v) => ({ number: v.number, createdAt: v.createdAt, note: v.note, sizeBytes: v.sizeBytes })),
   };
@@ -133,12 +150,18 @@ export async function deployWithIcon(core: Core, user: User, input: {
 }): Promise<object> {
   if (input.iconSvg !== undefined && typeof input.iconSvg !== 'string') throw new LagerError('invalid_argument', 'icon_svg must be a string.');
   const prior = core.apps.getApp(input.slug);
+  const declared = input.capabilities?.complete?.model;
+  // Someone who may not deploy this app learns that from the deploy itself, not from a model check that cannot help them.
+  if (declared !== undefined && (!prior || core.access.canDeploy(prior, user))) assertModelAllowed(core, user, declared);
   const result = core.apps.deploy({
     slug: input.slug, html: input.html, title: input.title, note: input.note, capabilities: input.capabilities, userId: user.id,
     description: input.description, themeColor: input.themeColor,
   });
   let app = result.app;
   const warnings = [...result.warnings];
+  if (declared !== undefined && app.aiModelId !== null && app.aiModelId !== declared) {
+    warnings.push(`The app's chosen model "${app.aiModelId}" applies instead of the declared "${declared}". Call set_app_model with null to follow the declaration.`);
+  }
   // The deploy is committed by now: whatever goes wrong with the icon is reported, never turned into a failed deploy.
   try {
     let drawn = false;
@@ -165,6 +188,30 @@ export async function deployWithIcon(core: Core, user: User, input: {
     app = core.apps.getApp(app.id) ?? app;
   }
   return describeDeploy(core, user, { ...result, app, warnings });
+}
+
+/** An app may ask only for a catalog model that the AI group of the person deploying or choosing it allows. */
+function assertModelAllowed(core: Core, user: User, model: string): void {
+  if (core.ai.mayUse(user.id, model)) return;
+  throw new LagerError('invalid_argument', `The model "${model}" is not available to you. Call list_models for the models you may choose, or leave the model out to use the default model of each viewer.`, 'model_not_allowed');
+}
+
+/** The models `user` may give an app, for `list_models` and the REST API. */
+export function modelsJson(core: Core, user: User): object {
+  return {
+    models: core.ai.allowedModelsFor(user.id).map((m) => ({ name: m.id, description: m.description, provider: m.providerName, model: m.model, isDefault: m.isDefault })),
+  };
+}
+
+/**
+ * `set_app_model` and its REST and page counterparts: owner or collaborator, choosing among the models their own AI group
+ * allows. `null` goes back to what the app's versions declare. Returns the app's model part.
+ */
+export function setAppModel(core: Core, user: User, app: App, model: string | null): object {
+  if (!core.access.canDeploy(app, user)) throw new LagerError('forbidden', `You may not change app "${app.slug}".`);
+  // Saving the current choice again is no change, even when the model is not open to this person.
+  if (model !== null && model !== app.aiModelId) assertModelAllowed(core, user, model);
+  return modelJson(core, core.apps.setAiModel(app.id, model));
 }
 
 /**
@@ -397,6 +444,10 @@ export function checkCapabilities(value: unknown): Capabilities | undefined {
     const publish = (caps.page as Record<string, unknown>).publish;
     if (publish !== undefined && typeof publish !== 'boolean') bad('page.publish must be true or false.');
   }
+  if (caps.complete !== undefined) {
+    const model = (caps.complete as Record<string, unknown>).model;
+    if (model !== undefined && (typeof model !== 'string' || !MODEL_ID_RE.test(model))) bad('complete.model must be the name of a model from list_models.');
+  }
   return caps as Capabilities;
 }
 
@@ -464,7 +515,7 @@ const capabilitiesArg = z.object({
   room: jsonObject().optional().describe('Realtime rooms with presence (lager.use("room")). Optional {"topics": {"<topic>": "interact"}}'),
   page: jsonObject().optional().describe('The page saves itself (lager.use("page")). {"publish": false} disables saving'),
   downloads: jsonObject().optional().describe('Offer files to save (lager.use("downloads"))'),
-  complete: jsonObject().optional().describe('Language model calls through lager.complete()'),
+  complete: jsonObject().optional().describe('Language model calls through lager.complete(). Optional {"model": "<name from list_models>"}; without it every viewer gets the default model of their AI group'),
 }).catchall(z.unknown())
   .describe('Every runtime capability the HTML uses, e.g. {"db":{},"user":{}}. A capability that is not declared is null at runtime.');
 
@@ -476,7 +527,7 @@ type ToolName =
   | 'deploy_app' | 'set_app_icon' | 'list_apps' | 'get_app' | 'get_version' | 'activate_version' | 'create_instance'
   | 'set_auto_update' | 'set_visibility' | 'share_instance' | 'unshare_instance' | 'list_shares' | 'add_domain'
   | 'remove_domain' | 'db_read' | 'db_write' | 'import_data' | 'export_data' | 'check_app' | 'list_snapshots'
-  | 'restore_snapshot' | 'get_guide';
+  | 'restore_snapshot' | 'list_models' | 'set_app_model' | 'get_guide';
 
 /**
  * Display titles and behaviour hints (MCP tool annotations). Clients use them to label tools and to decide which
@@ -506,6 +557,8 @@ const TOOL_META: Record<ToolName, { title: string; annotations: ToolAnnotations 
   check_app: { title: 'Check app HTML', annotations: { readOnlyHint: true } },
   list_snapshots: { title: 'List snapshots', annotations: { readOnlyHint: true } },
   restore_snapshot: { title: 'Restore snapshot', annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false } },
+  list_models: { title: 'List language models', annotations: { readOnlyHint: true } },
+  set_app_model: { title: 'Choose app model', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
   get_guide: { title: 'Read the Lager guide', annotations: { readOnlyHint: true } },
 };
 
@@ -544,6 +597,16 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     description: 'Show one of your apps (owned or collaborating) with instances and all versions.',
     inputSchema: { slug: slugArg },
   }, ({ slug }) => run(() => appDetail(core, user, readableApp(core, user, slug))));
+
+  server.registerTool('list_models', { ...toolMeta('list_models'),
+    description: 'List the language models you may give an app that calls lager.complete(): name, what the administrator says each is good for, provider and model. isDefault marks the model every viewer gets when an app names none. Pick by the task: a fast, cheap model for short replies, sorting or extraction; a stronger one for long texts, reasoning or code. Declare it as capabilities {"complete": {"model": "<name>"}} or set it later with set_app_model. An empty list means no language model is available to you.',
+    inputSchema: {},
+  }, () => run(() => modelsJson(core, user)));
+
+  server.registerTool('set_app_model', { ...toolMeta('set_app_model'),
+    description: 'Choose the language model of an app you own or collaborate on, without a new deploy: a name from list_models, or null to follow what the app\'s versions declare in complete.model again. The choice applies to every instance of the app. Viewers whose AI group does not allow the model get the default model of their group. Returns {chosen, declared, applies}; declared and applies describe the latest deployed version, while instances on an older version follow that version\'s declaration.',
+    inputSchema: { slug: slugArg, model: z.string().nullable().describe('Name from list_models, or null') },
+  }, ({ slug, model }) => run(() => setAppModel(core, user, readableApp(core, user, slug), model)));
 
   server.registerTool('get_version', { ...toolMeta('get_version'),
     description: 'Get the source of an app so you can continue developing it, e.g. in a new conversation: the complete HTML of a version plus its title and capabilities. Give app (with version, default the latest deployed one) or instance (the version active there, possibly one the page saved itself). Returns two text blocks: first JSON {app, title, version, createdAt, note, sizeBytes, capabilities, savedByInstance}, then the raw HTML. Edit that HTML and redeploy it with deploy_app, passing the same capabilities (or deliberately changed ones): a deploy without capabilities declares none.',

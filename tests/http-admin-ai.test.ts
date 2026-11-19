@@ -5,6 +5,14 @@ import { csrfToken } from '../src/http/session.js';
 import { DEFAULT_GROUP } from '../src/platform/ai.js';
 import { makeHarness, type Harness } from './support/http.js';
 
+import type { AiModels } from '../src/platform/ai.js';
+/** The catalog entry for a provider's model, named after the model; created on first use. */
+function entry(ai: AiModels, providerId: string, model: string): string {
+  const id = model.toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^[^a-z0-9]+/, '') || 'm';
+  return (ai.getModel(id) ?? ai.createModel({ id, providerId, model })).id;
+}
+
+
 let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
 
@@ -19,12 +27,17 @@ async function setup(reply: () => Response = () => json({ model: 'claude-opus-5-
   const cookie = await h.login();
   const csrf = csrfToken(core, admin);
   const get = (path: string) => request(h!.app).get(path).set('Host', h!.host).set('Cookie', cookie);
-  const post = (path: string, body: Record<string, string> = {}) => request(h!.app).post(path).set('Host', h!.host).set('Cookie', cookie).type('form').send({ csrf, ...body });
+  // Encoded by hand so a repeated field (several checked boxes) arrives as the browser sends it.
+  const post = (path: string, body: Record<string, string | string[]> = {}) => {
+    const form = new URLSearchParams({ csrf });
+    for (const [k, v] of Object.entries(body)) for (const one of Array.isArray(v) ? v : [v]) form.append(k, one);
+    return request(h!.app).post(path).set('Host', h!.host).set('Cookie', cookie).type('form').send(form.toString());
+  };
   return { core, admin, get, post, sent };
 }
 
 describe('/admin/ai', () => {
-  it('adds a provider and an AI group, then assigns a person', async () => {
+  it('adds a provider, models and an AI group, then assigns a person', async () => {
     const env = await setup();
     expect((await env.get('/admin/ai')).status).toBe(200);
     const add = await env.post('/admin/ai/providers', { name: 'Work', type: 'anthropic', apiKey: 'sk-ant-very-secret-1234', baseUrl: '' });
@@ -36,10 +49,17 @@ describe('/admin/ai', () => {
     expect(page.text).toContain('…1234');
     expect(page.text).not.toContain('very-secret');
 
-    expect((await env.post('/admin/ai/groups', { name: 'Family', provider: p.id, model: 'claude-haiku-5-5', hourlyLimit: '12' })).status).toBe(302);
+    expect(page.text).not.toContain('action="/admin/ai/groups"');
+    expect((await env.post('/admin/ai/models', { id: ' Fast ', provider: p.id, model: 'claude-haiku-5-5', description: 'Quick replies' })).status).toBe(302);
+    expect((await env.post('/admin/ai/models', { id: 'smart', provider: p.id, model: 'claude-opus-5-5', description: '' })).status).toBe(302);
+    expect(env.core.ai.getModel('fast')).toMatchObject({ providerId: p.id, model: 'claude-haiku-5-5', description: 'Quick replies' });
+    expect((await env.post('/admin/ai/groups', { name: 'Family', model: 'fast', allowed: ['fast', 'smart'], hourlyLimit: '12' })).status).toBe(302);
     const g = env.core.ai.listGroups().find((x) => x.name === 'Family')!;
-    expect(g).toMatchObject({ providerId: p.id, model: 'claude-haiku-5-5', hourlyLimit: 12 });
-    expect((await env.get('/admin/ai')).text).toContain('claude-haiku-5-5');
+    expect(g).toMatchObject({ modelId: 'fast', allowed: ['smart'], hourlyLimit: 12 });
+    const overview = (await env.get('/admin/ai')).text;
+    expect(overview).toContain('claude-haiku-5-5');
+    expect(overview).toContain('Quick replies');
+    expect(overview).toContain('href="/admin/ai/models/smart"');
 
     const u = env.core.users.create({ email: 'kid@x.y', name: 'Kid', password: 'pw-12345678', role: 'user' });
     expect((await env.post(`/admin/users/${u.id}/ai-group`, { group: g.id })).status).toBe(302);
@@ -56,17 +76,24 @@ describe('/admin/ai', () => {
     expect((await env.post(`/admin/ai/providers/${p.id}`, { name: 'Work 2', type: 'openai', apiKey: '', baseUrl: '' })).status).toBe(302);
     expect(env.core.ai.getProvider(p.id)).toMatchObject({ name: 'Work 2', keyHint: '…abcd' });
 
-    const g = env.core.ai.createGroup({ name: 'Fam', providerId: p.id, model: 'gpt-5', hourlyLimit: 5 });
+    const g = env.core.ai.createGroup({ name: 'Fam', modelId: entry(env.core.ai, p.id, 'gpt-5'), hourlyLimit: 5 });
     expect((await env.get(`/admin/ai/groups/${g.id}`)).status).toBe(200);
-    expect((await env.post(`/admin/ai/groups/${g.id}`, { name: 'Fam', provider: '', model: '', hourlyLimit: '3' })).status).toBe(302);
-    expect(env.core.ai.getGroup(g.id)).toMatchObject({ providerId: null, hourlyLimit: 3 });
+    expect((await env.get(`/admin/ai/groups/${g.id}`)).text).toContain('<option value="gpt-5" selected>');
+    expect((await env.post(`/admin/ai/groups/${g.id}`, { name: 'Fam', model: '', hourlyLimit: '3' })).status).toBe(302);
+    expect(env.core.ai.getGroup(g.id)).toMatchObject({ modelId: null, allowed: [], hourlyLimit: 3 });
+
+    const modelPage = await env.get('/admin/ai/models/gpt-5');
+    expect(modelPage.status).toBe(200);
+    expect(modelPage.text).not.toContain('name="id"');
+    expect((await env.post('/admin/ai/models/gpt-5', { provider: p.id, model: 'gpt-5-mini', description: 'Cheap' })).status).toBe(302);
+    expect(env.core.ai.getModel('gpt-5')).toMatchObject({ model: 'gpt-5-mini', description: 'Cheap' });
 
     const def = await env.get(`/admin/ai/groups/${DEFAULT_GROUP}`);
     expect(def.status).toBe(200);
     expect(def.text).not.toContain(`/admin/ai/groups/${DEFAULT_GROUP}/delete`);
     expect(def.text).not.toContain('name="name"');
-    expect((await env.post(`/admin/ai/groups/${DEFAULT_GROUP}`, { provider: p.id, model: 'gpt-5-mini', hourlyLimit: '8' })).status).toBe(302);
-    expect(env.core.ai.getGroup(DEFAULT_GROUP)).toMatchObject({ providerId: p.id, model: 'gpt-5-mini', hourlyLimit: 8 });
+    expect((await env.post(`/admin/ai/groups/${DEFAULT_GROUP}`, { model: 'gpt-5', allowed: 'gpt-5', hourlyLimit: '8' })).status).toBe(302);
+    expect(env.core.ai.getGroup(DEFAULT_GROUP)).toMatchObject({ modelId: 'gpt-5', allowed: [], hourlyLimit: 8 });
   });
 
   it('shows the form again with a message for bad input', async () => {
@@ -76,24 +103,37 @@ describe('/admin/ai', () => {
     expect(bad.text).toContain('API key');
     expect(env.core.ai.listProviders()).toEqual([]);
     const p = env.core.ai.createProvider({ name: 'Local', type: 'ollama' });
-    const noModel = await env.post('/admin/ai/groups', { name: 'G', provider: p.id, model: '', hourlyLimit: '5' });
-    expect(noModel.status).toBe(400);
+    for (const body of [{ id: 'Bad Name', provider: p.id, model: 'm' }, { id: 'ok', provider: p.id, model: '' }, { id: 'ok', provider: p.id, model: 'm', description: 'x'.repeat(201) }]) {
+      const res = await env.post('/admin/ai/models', body);
+      expect(res.status).toBe(400);
+      expect(res.text).toContain('lower case letters');
+    }
+    expect(env.core.ai.listModels()).toEqual([]);
+    entry(env.core.ai, p.id, 'm');
+    const badLimit = await env.post('/admin/ai/groups', { name: 'G', model: 'm', hourlyLimit: 'lots' });
+    expect(badLimit.status).toBe(400);
     expect(env.core.ai.listGroups()).toHaveLength(1);
   });
 
-  it('refuses to delete a provider in use and names the AI groups that use it', async () => {
+  it('refuses to delete a provider or a model in use and names what uses it', async () => {
     const env = await setup();
     const p = env.core.ai.createProvider({ name: 'Local', type: 'ollama' });
-    env.core.ai.createGroup({ name: 'Grandparents', providerId: p.id, model: 'llama3.2', hourlyLimit: 5 });
+    env.core.ai.createGroup({ name: 'Grandparents', modelId: entry(env.core.ai, p.id, 'llama3.2'), hourlyLimit: 5 });
     const res = await env.post(`/admin/ai/providers/${p.id}/delete`);
     expect(res.status).toBe(409);
-    expect(res.text).toContain('Grandparents');
+    expect(res.text).toContain('llama3.2');
     expect(env.core.ai.getProvider(p.id)).not.toBeNull();
+    const model = await env.post('/admin/ai/models/llama3.2/delete');
+    expect(model.status).toBe(409);
+    expect(model.text).toContain('Grandparents');
+    entry(env.core.ai, p.id, 'spare');
+    expect((await env.post('/admin/ai/models/spare/delete')).status).toBe(302);
+    expect(env.core.ai.getModel('spare')).toBeNull();
   });
 
   it('deletes an AI group and moves its people to Everyone else', async () => {
     const env = await setup();
-    const g = env.core.ai.createGroup({ name: 'Fam', providerId: null, hourlyLimit: 5 });
+    const g = env.core.ai.createGroup({ name: 'Fam', modelId: null, hourlyLimit: 5 });
     const u = env.core.users.create({ email: 'a@x.y', name: 'A', password: 'pw-12345678', role: 'user' });
     env.core.ai.assign(u.id, g.id);
     expect((await env.post(`/admin/ai/groups/${g.id}/delete`)).status).toBe(302);
@@ -102,9 +142,10 @@ describe('/admin/ai', () => {
 
   it('answers stale ids with a 404 notice', async () => {
     const env = await setup();
-    const g = env.core.ai.createGroup({ name: 'Fam', providerId: null, hourlyLimit: 5 });
+    const g = env.core.ai.createGroup({ name: 'Fam', modelId: null, hourlyLimit: 5 });
     env.core.ai.deleteGroup(g.id);
-    for (const res of [await env.post(`/admin/ai/groups/${g.id}/delete`), await env.post(`/admin/ai/groups/${g.id}`, { name: 'x', provider: '', hourlyLimit: '5' }),
+    for (const res of [await env.post(`/admin/ai/groups/${g.id}/delete`), await env.post(`/admin/ai/groups/${g.id}`, { name: 'x', model: '', hourlyLimit: '5' }),
+      await env.get('/admin/ai/models/nope'), await env.post('/admin/ai/models/nope', { provider: 'x', model: 'm' }),
       await env.get('/admin/ai/providers/nope'), await env.get(`/admin/ai/groups/${g.id}`), await env.post('/admin/ai/providers/nope/test')]) {
       expect(res.status).toBe(404);
       expect(res.text).toContain('no longer exists');
@@ -130,7 +171,7 @@ describe('/admin/ai', () => {
   it('tests a provider with the model of its AI group', async () => {
     const env = await setup();
     const p = env.core.ai.createProvider({ name: 'Work', type: 'anthropic', apiKey: 'sk-ant-1' });
-    env.core.ai.createGroup({ name: 'Fam', providerId: p.id, model: 'claude-haiku-5-5', hourlyLimit: 5 });
+    env.core.ai.createGroup({ name: 'Fam', modelId: entry(env.core.ai, p.id, 'claude-haiku-5-5'), hourlyLimit: 5 });
     const res = await env.post(`/admin/ai/providers/${p.id}/test`);
     expect(res.status).toBe(200);
     expect(res.text).toContain('claude-opus-5-5 answered: OK');

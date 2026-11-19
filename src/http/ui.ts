@@ -14,6 +14,7 @@ const ICONS: Record<string, string> = {
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  sparkle: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
   lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/>',
@@ -142,12 +143,16 @@ export function appTile(app: App | null, title: string, size: '' | 'lg' | 'sm' |
   return `<span class="tile${size ? ` tile-${size}` : ''}" aria-hidden="true"><span>${letter}</span>${img}</span>`;
 }
 
-/** The parts of an app card; markup fields are trusted. */
-export interface AppCardParts { app: App | null; title: string; slug: string; description?: string; badges: string[]; actions: string; label?: string }
+/** The parts of an app card; markup fields are trusted. `corner` sits in the top right corner (the AI badge). */
+export interface AppCardParts { app: App | null; title: string; slug: string; description?: string; badges: string[]; actions: string; label?: string; corner?: string }
+
+/** The small badge in the corner of the card of an app that may ask a language model (it declares `complete`). */
+export const aiBadge = (label: string, hint: string): string =>
+  `<span class="ai-badge" title="${esc(hint)}">${icon('sparkle')}<span aria-hidden="true">${esc(label)}</span><span class="sr-only">${esc(hint)}</span></span>`;
 
 export function appCard(p: AppCardParts): string {
   const desc = p.description?.trim() ? `<p class="app-desc">${esc(p.description)}</p>` : '';
-  return `<article class="app-card"${p.label ? ` aria-label="${esc(p.label)}"` : ''}><div class="app-card-head">${appTile(p.app, p.title)}<div><h3 class="app-title">${esc(p.title)}</h3><span class="slug">${esc(p.slug)}</span></div></div>
+  return `<article class="app-card${p.corner ? ' has-corner' : ''}"${p.label ? ` aria-label="${esc(p.label)}"` : ''}><div class="app-card-head">${appTile(p.app, p.title)}<div><h3 class="app-title">${esc(p.title)}</h3><span class="slug">${esc(p.slug)}</span></div>${p.corner ?? ''}</div>
 ${desc}${p.badges.length ? `<div class="badges">${p.badges.join('')}</div>` : ''}<div class="card-actions">${p.actions}</div></article>`;
 }
 
