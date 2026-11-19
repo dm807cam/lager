@@ -5,6 +5,8 @@ import { isLocale, type Locale } from '../i18n/index.js';
 
 export type Role = 'admin' | 'publisher' | 'user';
 export const MIN_PASSWORD_LENGTH = 10;
+/** Far above any passphrase, and well inside the 10 kB a form may carry. A longer password is refused, never shortened. */
+export const MAX_PASSWORD_LENGTH = 1024;
 const ROLES: readonly Role[] = ['admin', 'publisher', 'user'];
 const MAX_NAME = 80;
 export const MAX_NAME_LENGTH = MAX_NAME;
@@ -158,6 +160,9 @@ export class Users {
   setPassword(id: string, password: string): void {
     if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
       throw new LagerError('invalid_argument', `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`, 'password_short');
+    }
+    if (password.length > MAX_PASSWORD_LENGTH) {
+      throw new LagerError('invalid_argument', `Password must be at most ${MAX_PASSWORD_LENGTH} characters.`, 'password_long');
     }
     this.require(id);
     this.db.prepare('UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?').run(hashPassword(password), id);

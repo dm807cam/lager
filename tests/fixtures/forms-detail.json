@@ -1727,6 +1727,12 @@
       "method": "post",
       "fields": [
         {
+          "name": "password",
+          "type": "password",
+          "required": true,
+          "maxlength": null
+        },
+        {
           "name": "token",
           "type": "hidden",
           "required": false,

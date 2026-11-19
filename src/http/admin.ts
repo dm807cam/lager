@@ -82,7 +82,9 @@ ${field('invite-role', t(locale, 'admin.invites.role'), `<select id="invite-role
   const list = open.length
     ? dataTable(locale, [t(locale, 'common.email'), t(locale, 'admin.invites.role'), t(locale, 'common.created'), t(locale, 'admin.invites.validUntil'), ''], rows)
     : emptyState(t(locale, 'admin.invites.none'), 'users');
-  return shell(core, locale, admin, 'invites', t(locale, 'admin.section.invites'), `${create}<div class="subsection">${list}</div>`, msg);
+  // With mail on, a link without an address proves no mailbox, so whoever uses it confirms theirs like any registration.
+  const unbound = core.mailer.enabled ? `<p class="hint">${esc(t(locale, 'admin.invites.unbound'))}</p>` : '';
+  return shell(core, locale, admin, 'invites', t(locale, 'admin.section.invites'), `${create}${unbound}<div class="subsection">${list}</div>`, msg);
 }
 
 function groupsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
