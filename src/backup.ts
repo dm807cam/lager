@@ -2,7 +2,9 @@
  * Copies the data directory into a new directory while Lager keeps running: `node dist/backup.js <target>`.
  * A plain copy of a live SQLite database can be torn; every database is therefore written with `VACUUM INTO`,
  * which yields a consistent file. Everything else (versions, uploads, icons, the key) is written once and then
- * only renamed or deleted, so it is copied as it is. The trash is left out.
+ * only renamed or deleted, so it is copied as it is. In every directory the databases are copied before the files and
+ * sub-directories: a file that arrives during the backup is then merely extra, never one the copied database points to
+ * but the backup lacks. The trash is left out.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,7 +27,9 @@ function copyDatabase(from: string, to: string): void {
 
 function walk(from: string, to: string, result: BackupResult, top: boolean): void {
   fs.mkdirSync(to, { recursive: true, mode: 0o700 });
-  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+  const isDatabase = (e: fs.Dirent): boolean => e.isFile() && e.name.endsWith('.sqlite');
+  const entries = fs.readdirSync(from, { withFileTypes: true });
+  for (const entry of [...entries.filter(isDatabase), ...entries.filter((e) => !isDatabase(e))]) {
     const src = path.join(from, entry.name);
     const dst = path.join(to, entry.name);
     if (entry.isDirectory()) {

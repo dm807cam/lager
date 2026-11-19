@@ -56,7 +56,8 @@ export function createHttpApp(core: Core, extensions: PlatformExtension[] = []):
   const instances = createInstanceRouter(core);
 
   app.use((req: Request, res, next) => {
-    const host = req.hostname.toLowerCase().replace(/\.$/, '');
+    // A request without a Host header (HTTP/1.0 probes, scanners) has no host name and ends as "not found" below.
+    const host = (req.hostname ?? '').toLowerCase().replace(/\.$/, '');
     if (host === platformHost) {
       platform(req, res, next);
     } else if (host.endsWith(suffix) && host.length > suffix.length && !host.slice(0, -suffix.length).includes('.')) {
@@ -71,18 +72,22 @@ export function createHttpApp(core: Core, extensions: PlatformExtension[] = []):
         return;
       }
       res.locals.slug = instance.slug;
-      res.locals.customHost = host.replace(/\.$/, '');
+      res.locals.customHost = host;
       instances(req, res, next);
     }
   });
 
   app.use((err: unknown, _req: Request, res: express.Response, next: express.NextFunction) => {
     if (res.headersSent) { next(err); return; }
-    const e = err as { type?: string; status?: number };
+    const e = err as { type?: string; status?: number; expose?: boolean };
     if (e?.type === 'entity.too.large') {
       res.status(413).json({ error: { code: 'invalid_argument', message: 'Request body too large.' } });
     } else if (typeof e?.type === 'string' && e.type.startsWith('entity.') && e.status === 400) {
       res.status(400).json({ error: { code: 'invalid_argument', message: 'Malformed request body.' } });
+    } else if (typeof e?.status === 'number' && e.status >= 400 && e.status < 500 && (e.expose === true || err instanceof URIError)) {
+      // Express and the body parsers mark what the client got wrong (a malformed URL, an unsupported charset or encoding): answered
+      // with their status and not logged as a server error.
+      res.status(e.status).json({ error: { code: 'invalid_argument', message: 'The request is malformed.' } });
     } else {
       sendError(res, err);
     }
