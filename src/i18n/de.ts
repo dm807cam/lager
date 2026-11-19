@@ -374,6 +374,8 @@ export const de: Record<MessageKey, string> = {
   'home.step.appears.text': 'Öffne sie auf jedem Gerät, gib sie für andere frei oder lege sie auf deinen Startbildschirm.',
   'home.empty.user': 'Sobald jemand eine App für dich freigibt, erscheint sie hier.',
   'badge.shared': 'Freigegeben · {level}',
+  'card.ai': 'KI',
+  'card.ai.hint': 'Diese App nutzt ein KI-Modell.',
   'dash.getOwn': 'Eigene Instanz holen',
   'dash.instanceCount.one': '{count} Instanz',
   'dash.instanceCount.other': '{count} Instanzen',

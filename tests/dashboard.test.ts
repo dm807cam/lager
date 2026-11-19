@@ -240,3 +240,35 @@ describe('skill', () => {
     expect(skill.slice(m![0].length).trim()).toBe(guide.trim());
   });
 });
+
+describe('AI badge on app cards', () => {
+  const cardOf = (html: string, slug: string): string => {
+    const start = html.lastIndexOf('<article', html.indexOf(`<span class="slug">${slug}</span>`));
+    return html.slice(start, html.indexOf('</article>', start));
+  };
+
+  it('marks apps whose version declares complete, on the home and the publish page', async () => {
+    const hh = setup();
+    hh.core.apps.deploy({ slug: 'plain', html: '<p>p</p>', userId: hh.adminId, capabilities: { db: {} } });
+    hh.core.apps.deploy({ slug: 'smart', html: '<p>s</p>', userId: hh.adminId, capabilities: { db: {}, complete: {} } });
+    const cookie = await hh.login();
+    const home = (await get(hh, cookie)).text;
+    expect(cardOf(home, 'smart')).toContain('class="ai-badge"');
+    expect(cardOf(home, 'smart')).toContain(en('card.ai.hint'));
+    expect(cardOf(home, 'plain')).not.toContain('ai-badge');
+    const publish = (await get(hh, cookie, '/publish')).text;
+    expect(cardOf(publish, 'smart')).toContain('class="ai-badge"');
+    expect(cardOf(publish, 'plain')).not.toContain('ai-badge');
+  });
+
+  it('follows the version an instance runs, not the latest deploy', async () => {
+    const hh = setup();
+    const first = hh.core.apps.deploy({ slug: 'notes', html: '<p>1</p>', userId: hh.adminId, capabilities: { db: {} } });
+    const pinned = hh.core.apps.createInstance({ appId: first.app.id, slug: 'notes-old', ownerId: hh.adminId });
+    hh.core.apps.setAutoUpdate(pinned.id, false, hh.adminId);
+    hh.core.apps.deploy({ slug: 'notes', html: '<p>2</p>', userId: hh.adminId, capabilities: { db: {}, complete: {} } });
+    const home = (await get(hh, await hh.login())).text;
+    expect(cardOf(home, 'notes')).toContain('class="ai-badge"');
+    expect(cardOf(home, 'notes-old')).not.toContain('ai-badge');
+  });
+});

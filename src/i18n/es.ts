@@ -374,6 +374,8 @@ export const es: Record<MessageKey, string> = {
   'home.step.appears.text': 'Ábrela en cualquier dispositivo, compártela o añádela a tu pantalla de inicio.',
   'home.empty.user': 'Cuando alguien comparta una aplicación contigo, aparecerá aquí.',
   'badge.shared': 'Compartida · {level}',
+  'card.ai': 'IA',
+  'card.ai.hint': 'Esta aplicación usa un modelo de IA.',
   'dash.getOwn': 'Consigue tu propia instancia',
   'dash.instanceCount.one': '{count} instancia',
   'dash.instanceCount.other': '{count} instancias',

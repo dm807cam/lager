@@ -372,6 +372,8 @@ export const en = {
   'home.step.appears.text': 'Open it on any device, share it with others, or put it on your home screen.',
   'home.empty.user': 'When someone shares an app with you, it appears here.',
   'badge.shared': 'Shared · {level}',
+  'card.ai': 'AI',
+  'card.ai.hint': 'This app uses an AI model.',
   'dash.getOwn': 'Get your own instance',
   'dash.instanceCount.one': '{count} instance',
   'dash.instanceCount.other': '{count} instances',
