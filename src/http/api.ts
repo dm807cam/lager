@@ -13,6 +13,7 @@ import type { Instance, Visibility } from '../platform/apps.js';
 import type { User } from '../platform/users.js';
 import type { PlatformExtension } from './app.js';
 import { discardBody, sendError } from './errors.js';
+import { withSnapshotBudget } from './snapshot-limit.js';
 import { sessionUser } from './session.js';
 
 const MAX_HTML = '16mb';
@@ -281,7 +282,7 @@ export const apiExtension: PlatformExtension = (router, core) => {
     const version = bodyObject(req).version;
     if (typeof version !== 'number' || !Number.isInteger(version)) throw new LagerError('invalid_argument', 'version must be an integer.');
     const inst = managedInstance(core, user, req.params.slug as string);
-    res.json(instanceJson(core, core.apps.activate(inst.id, version, user.id)));
+    res.json(instanceJson(core, withSnapshotBudget(core, inst.id, () => core.apps.activate(inst.id, version, user.id))));
   });
 
   router.post('/api/instances/:slug/auto-update', noStore, auth, express.json({ limit: '10kb' }), (req, res) => {
@@ -289,7 +290,7 @@ export const apiExtension: PlatformExtension = (router, core) => {
     const on = bodyObject(req).on;
     if (typeof on !== 'boolean') throw new LagerError('invalid_argument', 'on must be true or false.');
     const inst = managedInstance(core, user, req.params.slug as string);
-    res.json(instanceJson(core, core.apps.setAutoUpdate(inst.id, on, user.id)));
+    res.json(instanceJson(core, on ? withSnapshotBudget(core, inst.id, () => core.apps.setAutoUpdate(inst.id, on, user.id)) : core.apps.setAutoUpdate(inst.id, on, user.id)));
   });
 
   router.post('/api/instances/:slug/badge', noStore, auth, express.json({ limit: '10kb' }), (req, res) => {

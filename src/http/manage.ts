@@ -3,6 +3,7 @@ import type { Request, RequestHandler, Response } from 'express';
 import { hostUrl, instanceUrl, MAX_SLUG_LENGTH } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
+import { withSnapshotBudget } from './snapshot-limit.js';
 import { formatSize, t, type Locale, type MessageKey } from '../i18n/index.js';
 import { localeOf } from './locale.js';
 import type { App, Instance, SelfInstances, UsersLevel, Version, Visibility } from '../platform/apps.js';
@@ -30,6 +31,7 @@ const NOTICES: Record<string, MessageKey> = {
   slug_retired: 'notice.slugRetired',
   rules_differ: 'notice.rulesDiffer',
   creation_rate: 'notice.creationRate',
+  snapshot_rate: 'notice.snapshotRate',
   slug_invalid: 'notice.slugInvalid',
   slug_reserved: 'notice.slugInvalid',
   collaborators_invalid: 'notice.collaboratorsInvalid',
@@ -166,6 +168,8 @@ ${notice('warning', t(locale, 'instance.disabledNotice'))}<div class="main-col">
   const storage = quota > 0
     ? meter(used, quota, t(locale, 'instance.storage.used', { used: formatSize(locale, used), quota: formatSize(locale, quota) }))
     : `<p class="num">${sizeText(locale, used)}</p>`;
+  const snapshotBytes = snapshots.reduce((sum, s) => sum + s.sizeBytes, 0);
+  const snapshotStorage = snapshotBytes > 0 ? `<p class="hint">${esc(t(locale, 'instance.storage.snapshots', { size: formatSize(locale, snapshotBytes) }))}</p>` : '';
   const details = `<section class="card"><h2>${esc(t(locale, 'instance.details'))}</h2><dl class="facts">
 ${fact(t(locale, 'common.owner'), person(core.users.get(inst.ownerId)))}
 ${fact(t(locale, 'instance.visibility.title'), form(`${base}/visibility`, csrf,
@@ -177,7 +181,7 @@ ${fact(t(locale, 'instance.autoUpdate.title'), form(`${base}/auto-update`, csrf,
 ${core.settings.madeWithBadge ? fact(t(locale, 'instance.badge.title'), form(`${base}/badge`, csrf,
     `${hiddenField('on', '0')}<label class="check"><input type="checkbox" class="switch" name="on" value="1"${inst.showBadge ? ' checked' : ''}><span><strong>${esc(t(locale, 'instance.badge.label'))}</strong><span class="hint">${esc(t(locale, 'instance.badge.hint'))}</span></span></label>`,
     esc(t(locale, 'common.save')), 'secondary', 'stack', true)) : ''}
-${fact(t(locale, 'instance.storage'), storage)}</dl></section>`;
+${fact(t(locale, 'instance.storage'), `${storage}${snapshotStorage}`)}</dl></section>`;
   const versions = `<section class="card"><div class="card-title"><h2>${esc(t(locale, 'instance.version'))}</h2>${badge(t(locale, 'instance.activeVersion', { number: inst.activeVersion }), { tone: 'success', dot: true })}</div>
 ${versionsList(core, locale, user, app, base, csrf, inst.activeVersion, inst.id)}</section>`;
   const data = `<section class="card"><h2>${esc(t(locale, 'instance.data.title'))}</h2>
@@ -353,14 +357,18 @@ export const manageExtension: PlatformExtension = (router, core) => {
   router.post('/ui/instances/:slug/activate', ...action(instBack, (req, user) => {
     const version = Number(field(req, 'version'));
     if (!Number.isInteger(version)) throw new LagerError('invalid_argument', 'Invalid version.');
-    core.apps.activate(managed(user, param(req, 'slug')).id, version, user.id);
+    const inst = managed(user, param(req, 'slug'));
+    withSnapshotBudget(core, inst.id, () => core.apps.activate(inst.id, version, user.id));
   }));
 
   router.post('/ui/instances/:slug/auto-update', ...action(instBack, (req, user) => {
     // The form sends a hidden "0" and, when ticked, a "1" as well.
     const raw = (req.body as Record<string, unknown> | undefined)?.on;
     const on = Array.isArray(raw) ? raw.includes('1') : raw === '1';
-    core.apps.setAutoUpdate(managed(user, param(req, 'slug')).id, on, user.id);
+    const inst = managed(user, param(req, 'slug'));
+    // Switching it on can move the instance to the latest version, which takes a snapshot like a manual activation.
+    if (on) withSnapshotBudget(core, inst.id, () => core.apps.setAutoUpdate(inst.id, on, user.id));
+    else core.apps.setAutoUpdate(inst.id, on, user.id);
   }));
 
   router.post('/ui/instances/:slug/badge', ...action(instBack, (req, user) => {
@@ -383,7 +391,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const inst = managed(user, param(req, 'slug'));
     // A restore also rolls back what the app's rules keep from a manager (other people's private areas, owner-only paths).
     if (!core.access.canRestoreInstance(inst, user)) throw new LagerError('forbidden', 'Only the owner may do this.');
-    core.data.restore(inst.id, field(req, 'snapshot'));
+    withSnapshotBudget(core, inst.id, () => core.data.restore(inst.id, field(req, 'snapshot')));
   }));
 
   router.post('/ui/instances/:slug/grants', ...action(instBack, (req, user) => {

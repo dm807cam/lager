@@ -28,9 +28,9 @@ export class RateLimiter {
   }
 
   /** True when the key has used up its budget; records nothing. */
-  full(key: string): boolean {
+  full(key: string, max = this.max): boolean {
     const cutoff = Date.now() - this.windowMs;
-    return (this.hits.get(key) ?? []).filter((t) => t > cutoff).length >= this.max;
+    return (this.hits.get(key) ?? []).filter((t) => t > cutoff).length >= max;
   }
 
   reset(key: string): void {

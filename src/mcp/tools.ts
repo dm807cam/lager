@@ -8,6 +8,7 @@ import { assertDocData, parseDocPath } from '../data/paths.js';
 import type { QuerySpec } from '../data/query.js';
 import { canRead, canWrite, type Viewer } from '../data/rules.js';
 import { LagerError } from '../errors.js';
+import { SNAPSHOT_ACTIONS_PER_HOUR, withSnapshotBudget } from '../http/snapshot-limit.js';
 import type { GrantLevel } from '../platform/access.js';
 import { normalizeDescription, normalizeThemeColor, type App, type Capabilities, type DbRule, type DeployResult, type Instance, type Version, type Visibility } from '../platform/apps.js';
 import { MODEL_ID_RE } from '../platform/ai.js';
@@ -457,6 +458,8 @@ function result(value: unknown, isError = false): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(value) }], ...(isError ? { isError: true } : {}) };
 }
 
+const SNAPSHOT_LIMIT_NOTE = `Restores, version changes and switching auto-update on share a limit of ${SNAPSHOT_ACTIONS_PER_HOUR} per instance and hour when they take a snapshot; beyond it the answer is rate_limited.`;
+
 function errorResult(e: unknown): CallToolResult {
   if (e instanceof LagerError) return result({ error: { code: e.code, message: e.message } }, true);
   console.error(e);
@@ -487,7 +490,7 @@ export function dbAccess(core: Core, user: User, inst: Instance): { viewer: View
   const level = core.access.levelFor(inst, user);
   const viewer: Viewer = { userId: user.id, level };
   if (level === 'owner') return { viewer, rules: [] };
-  const caps = core.apps.listVersions(inst.appId).find((v) => v.number === inst.activeVersion)?.capabilities;
+  const caps = core.apps.getVersion(inst.appId, inst.activeVersion)?.capabilities;
   return { viewer, rules: caps?.db?.rules };
 }
 
@@ -624,9 +627,12 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   });
 
   server.registerTool('activate_version', { ...toolMeta('activate_version'),
-    description: 'Activate any existing version on an instance (roll back or forward). A snapshot of the instance data is taken first.',
+    description: `Activate any existing version on an instance (roll back or forward). A snapshot of the instance data is taken first. ${SNAPSHOT_LIMIT_NOTE}`,
     inputSchema: { instance: slugArg, version: z.number().int().positive() },
-  }, ({ instance, version }) => run(() => instanceJson(core, core.apps.activate(managedInstance(core, user, instance).id, version, user.id))));
+  }, ({ instance, version }) => run(() => {
+    const inst = managedInstance(core, user, instance);
+    return instanceJson(core, withSnapshotBudget(core, inst.id, () => core.apps.activate(inst.id, version, user.id)));
+  }));
 
   server.registerTool('create_instance', { ...toolMeta('create_instance'),
     description: 'Create another instance of an app with its own subdomain and its own data.',
@@ -637,9 +643,12 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }, ({ app, slug, visibility, owner_email }) => run(() => instanceJson(core, createInstanceFor(core, user, { app, slug, ownerEmail: owner_email, visibility }))));
 
   server.registerTool('set_auto_update', { ...toolMeta('set_auto_update'),
-    description: 'Set whether an instance follows new deploys. Switching it on moves the instance to the latest deployed version right away; switching it off pins the instance to its current version.',
+    description: `Set whether an instance follows new deploys. Switching it on moves the instance to the latest deployed version right away (with a snapshot of the data first); switching it off pins the instance to its current version. ${SNAPSHOT_LIMIT_NOTE}`,
     inputSchema: { instance: slugArg, on: z.boolean() },
-  }, ({ instance, on }) => run(() => instanceJson(core, core.apps.setAutoUpdate(managedInstance(core, user, instance).id, on, user.id))));
+  }, ({ instance, on }) => run(() => {
+    const inst = managedInstance(core, user, instance);
+    return instanceJson(core, on ? withSnapshotBudget(core, inst.id, () => core.apps.setAutoUpdate(inst.id, on, user.id)) : core.apps.setAutoUpdate(inst.id, on, user.id));
+  }));
 
   server.registerTool('set_visibility', { ...toolMeta('set_visibility'),
     description: 'Set who can open an instance: private (the owner and those it is shared with), users (all signed-in users), public (anyone).',
@@ -784,12 +793,12 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }, ({ instance }) => run(() => ({ snapshots: core.data.listSnapshots(managedInstance(core, user, instance).id) })));
 
   server.registerTool('restore_snapshot', { ...toolMeta('restore_snapshot'),
-    description: 'Restore instance data from a snapshot (owner of the instance only: it rolls back all data, including what the app\'s rules keep from managers). The current data is saved as a snapshot first.',
+    description: `Restore instance data from a snapshot (owner of the instance only: it rolls back all data, including what the app's rules keep from managers). The current data is saved as a snapshot first. ${SNAPSHOT_LIMIT_NOTE}`,
     inputSchema: { instance: slugArg, snapshot: z.string().describe('Snapshot id from list_snapshots') },
   }, ({ instance, snapshot }) => run(() => {
     const inst = managedInstance(core, user, instance);
     if (!core.access.canRestoreInstance(inst, user)) throw new LagerError('forbidden', `Only the owner of instance "${instance}" may restore a snapshot.`);
-    core.data.restore(inst.id, snapshot);
+    withSnapshotBudget(core, inst.id, () => core.data.restore(inst.id, snapshot));
     return { restored: snapshot };
   }));
 
