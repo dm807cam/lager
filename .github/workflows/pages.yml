@@ -1,0 +1,55 @@
+name: Website
+
+# Publishes website/ to GitHub Pages. Pull requests only package the site, so a broken page shows up before the merge;
+# pushes to main also deploy it. Pages must use "GitHub Actions" as its source (Settings → Pages).
+
+on:
+  push:
+    branches: [main]
+    paths: ['website/**', '.github/workflows/pages.yml']
+  pull_request:
+    branches: [main]
+    paths: ['website/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time; a newer push waits instead of cancelling one that is half done.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Package website
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check that every local file the page refers to exists
+        run: |
+          missing=0
+          for ref in $(grep -oE '(src|href)="[^"#:]+"' website/index.html | sed -E 's/^[a-z]+="//; s/"$//' | sort -u); do
+            if [ ! -f "website/$ref" ]; then echo "::error file=website/index.html::Missing file: $ref"; missing=1; fi
+          done
+          exit "$missing"
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: website
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
