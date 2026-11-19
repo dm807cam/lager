@@ -221,7 +221,7 @@ let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
 
 /** Strips the pre-paint theme script, which legitimately contains braces. */
-const bodyOf = (html: string): string => html.replace(/<script id="theme-init">[\s\S]*?<\/script>/, '');
+const bodyOf = (html: string): string => html.replace(/<script id="theme-init"[^>]*>[\s\S]*?<\/script>/, '');
 
 describe('signed-in pages in every locale', () => {
   const SENTINELS: Record<string, MessageKey[]> = {

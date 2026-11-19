@@ -59,6 +59,8 @@ export function createHttpApp(core: Core, extensions: PlatformExtension[] = []):
     // A request without a Host header (HTTP/1.0 probes, scanners) has no host name and ends as "not found" below.
     const host = (req.hostname ?? '').toLowerCase().replace(/\.$/, '');
     if (host === platformHost) {
+      // Pages, JSON and files of the platform all declare their type; a browser must never guess another one.
+      res.set('X-Content-Type-Options', 'nosniff');
       platform(req, res, next);
     } else if (host.endsWith(suffix) && host.length > suffix.length && !host.slice(0, -suffix.length).includes('.')) {
       res.locals.slug = host.slice(0, -suffix.length);

@@ -58,7 +58,7 @@ describe('static assets', () => {
       expect(html, name).toContain(`<script src="${js}" defer></script>`);
       expect(html, name).not.toMatch(/<style[\s>]/);
       const inline = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>/g)].map((m) => m[0]);
-      expect(inline, name).toEqual(['<script id="theme-init">']);
+      expect(inline.map((tag) => tag.replace(/ nonce="[^"]*"/, '')), name).toEqual(['<script id="theme-init">']);
     }
     // Pages on instance hosts take the stylesheet from the platform host by absolute URL and carry no script at all.
     const ghost = await request(s.h.app).get('/').set('Host', 'ghost.apps.localhost').set('Accept', 'text/html');
@@ -70,6 +70,82 @@ describe('static assets', () => {
     expect(ghost.text).not.toContain('apple-touch-icon');
     expect(ghost.text).not.toMatch(/(?:src|href)="\/(?!\/)/);
     expect(ghost.text).toContain('<link rel="icon" type="image/webp" href="http://localhost:8080/icon.webp">');
+  });
+});
+
+describe('response hardening', () => {
+  const policyOf = (html: string): string => dom(html).querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute('content') ?? '';
+
+  it('every platform page carries a content security policy, and no inline script lacks its nonce', async () => {
+    s = await showcase();
+    const cookieOf = cookies(s);
+    const nonces = new Set<string>();
+    const visits: PageVisit[] = [...pageVisits(s), { name: 'not found', path: '/no/such/page', as: null, status: 404 }, { name: 'not found (signed in)', path: '/no/such/page', as: 'admin', status: 404 }];
+    const rendered: Array<{ name: string; html: string; signedIn: boolean }> = [{ name: 'consent', html: await consentHtml(s), signedIn: false }];
+    for (const v of visits) {
+      const res = await visit(s, v, cookieOf);
+      expect(res.status, v.name).toBe(v.status ?? 200);
+      expect(res.headers['x-content-type-options'], v.name).toBe('nosniff');
+      // Framing is refused by a header: a policy inside the page cannot say that.
+      expect(res.headers['content-security-policy'], v.name).toBe("frame-ancestors 'none'");
+      rendered.push({ name: v.name, html: res.text, signedIn: dom(res.text).querySelector('header.topbar') !== null });
+    }
+    for (const { name, html, signedIn } of rendered) {
+      const policy = policyOf(html);
+      const nonce = /'nonce-([A-Za-z0-9+/]{22}==)'/.exec(policy)?.[1];
+      expect(nonce, name).toBeDefined();
+      expect(policy, name).toBe(`script-src 'self' 'nonce-${nonce}'; object-src 'none'; base-uri 'none'${signedIn ? "; form-action 'self'" : ''}`);
+      expect(policy, name).not.toMatch(/unsafe-inline|unsafe-eval/);
+      // The policy comes before anything it governs.
+      expect(html.indexOf('http-equiv="Content-Security-Policy"'), name).toBeLessThan(html.indexOf('<script'));
+      const doc = dom(html);
+      const scripts = [...doc.querySelectorAll('script')];
+      expect(scripts.length, name).toBeGreaterThan(0);
+      for (const script of scripts) {
+        if (script.hasAttribute('src')) expect(script.getAttribute('src'), name).toMatch(/^\/static\//);
+        else expect(script.getAttribute('nonce'), name).toBe(nonce);
+      }
+      // What the policy would silently switch off must not be relied on anywhere: inline handlers, javascript: links, <base>, plug-ins.
+      for (const el of doc.querySelectorAll('*')) {
+        for (const attr of el.getAttributeNames()) expect(attr.startsWith('on'), `${name}: ${attr} on <${el.tagName.toLowerCase()}>`).toBe(false);
+      }
+      expect(doc.querySelectorAll('a[href^="javascript:" i], base, object, embed').length, name).toBe(0);
+      if (signedIn) for (const form of doc.querySelectorAll('form')) expect(form.getAttribute('action'), name).toMatch(/^\/(?!\/)/);
+      nonces.add(nonce!);
+    }
+    expect(rendered.some((r) => r.signedIn) && rendered.some((r) => !r.signedIn)).toBe(true);
+    // One nonce per response, never reused.
+    expect(nonces.size).toBe(rendered.length);
+  });
+
+  it('the sign-in and consent pages leave form-action open, because their posts end on another origin', async () => {
+    s = await showcase();
+    // Signing in on behalf of an instance: the post to /login is answered with a redirect chain that ends on the instance host.
+    const login = await request(s.h.app).post('/login').set('Host', s.h.host).type('form')
+      .send({ email: 'admin@x.y', password: 'admin-password-1', return: '/auth/instance?slug=notes&return=%2F' });
+    expect(login.status).toBe(302);
+    const next = await request(s.h.app).get(login.headers.location).set('Host', s.h.host).set('Cookie', await s.h.login());
+    expect(new URL(next.headers.location).host).toBe('notes.apps.localhost:8080');
+    expect(policyOf((await request(s.h.app).get('/login').set('Host', s.h.host)).text)).not.toContain('form-action');
+    expect(policyOf(await consentHtml(s))).not.toContain('form-action');
+  });
+
+  it('pages on instance hosts carry no script and so no script policy', async () => {
+    s = await showcase();
+    const ghost = await request(s.h.app).get('/').set('Host', 'ghost.apps.localhost').set('Accept', 'text/html');
+    expect(ghost.text).not.toContain('<script');
+    expect(ghost.text).not.toContain('nonce');
+  });
+
+  it('robots.txt keeps crawlers away from the platform', async () => {
+    h = makeHarness();
+    const res = await request(h.app).get('/robots.txt').set('Host', h.host);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/^text\/plain/);
+    expect(res.text).toBe('User-agent: *\nDisallow: /\n');
+    // An instance host has no such file of its own: what an app is indexed as is the app's business.
+    h.core.apps.deploy({ slug: 'open', html: '<p>1</p>', userId: h.adminId });
+    expect((await request(h.app).get('/robots.txt').set('Host', 'open.apps.localhost:8080')).text ?? '').not.toContain('Disallow');
   });
 });
 
@@ -152,7 +228,7 @@ describe('shell', () => {
     s = await showcase();
     const html = (await visit(s, { name: 'login', path: '/login', as: null }, cookies(s))).text;
     const head = html.slice(0, html.indexOf('</head>'));
-    const snippet = /<script id="theme-init">([\s\S]*?)<\/script>/.exec(head)![1];
+    const snippet = /<script id="theme-init"[^>]*>([\s\S]*?)<\/script>/.exec(head)![1];
     expect(head.indexOf('theme-init')).toBeLessThan(head.indexOf('rel="stylesheet"'));
     expect(snippet.length).toBeLessThan(200);
     const run = (stored: string | null, throws = false): string | null => {

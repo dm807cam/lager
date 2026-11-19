@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { MAX_SLUG_LENGTH } from '../config.js';
 import { MAX_NAME as MAX_GROUP_NAME } from '../platform/groups.js';
 import { MAX_NAME as MAX_TOKEN_NAME } from '../platform/tokens.js';
@@ -13,6 +14,17 @@ export const esc = (s: string): string =>
  * sets one attribute, and cannot throw (storage may be blocked).
  */
 const THEME_SNIPPET = 'try{var t=localStorage.getItem("lager-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}';
+
+/**
+ * The content security policy of a platform page, carried by the page itself so that every page of the shell has it, whichever
+ * route sends it (`frame-ancestors` cannot be set this way and stays a response header). Scripts run only from the platform's
+ * own files or with this response's nonce, which the one inline script (the theme snippet) carries: markup that slips into a
+ * page cannot run. Inline styles stay allowed, the pages use them for colours and meters.
+ * `form-action` is set on signed-in pages only. Browsers apply it to the redirects that follow a form post as well, and the
+ * signed-out forms end on other origins by design: signing in returns to an instance host, consenting to the connecting client.
+ */
+const contentSecurityPolicy = (nonce: string, signedIn: boolean): string =>
+  `script-src 'self' 'nonce-${nonce}'; object-src 'none'; base-uri 'none'${signedIn ? "; form-action 'self'" : ''}`;
 
 export interface PageOpts {
   /** Where the language switcher sends the visitor back to (a local path); the start page when left out. */
@@ -102,10 +114,13 @@ export function page(locale: Locale, title: string, body: string, opts: PageOpts
       : `<a class="brand" href="${esc(origin || '/')}"><img src="${origin}/icon.webp" alt="" width="32" height="32"><span>Lager</span></a>`;
     content = `${skip}<header class="auth-top${opts.hero ? ' is-hero' : ''}">${brand}</header><main id="main" class="auth">${body}</main>${footer(locale, switcherPath)}`;
   }
+  // A fresh nonce for every page, so one that leaked from an earlier response is worth nothing.
+  const nonce = crypto.randomBytes(16).toString('base64');
   // Instance hosts get no script and no platform manifest: those belong to the platform host.
   const head = origin
     ? `<link rel="stylesheet" href="${origin}${css}"><link rel="icon" type="image/webp" href="${origin}/icon.webp">`
-    : `<script id="theme-init">${THEME_SNIPPET}</script><link rel="stylesheet" href="${css}">
+    : `<meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy(nonce, opts.user !== undefined)}">
+<script id="theme-init" nonce="${nonce}">${THEME_SNIPPET}</script><link rel="stylesheet" href="${css}">
 <link rel="icon" type="image/webp" href="/icon.webp">
 <link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-180.png"><script src="${js}" defer></script>`;
   return `<!doctype html>

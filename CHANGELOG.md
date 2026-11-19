@@ -16,6 +16,7 @@ An installation that ran a build from before the first release will notice these
 - **Reserved names:** new apps and instances cannot be named `login`, `account`, `accounts`, `mail`, `smtp`, `ftp`, `assets`, `cdn`, `status`, `support` or `security`, nor like the platform's own host under the apps domain. Existing ones keep working.
 - **Custom domains:** a parent domain of the platform host or of the apps domain (`example.com` for a platform at `lager.example.com`) can no longer be attached to an instance. Domains that are already attached keep working.
 - **Home-screen install of private instances:** the manifest and icons of an instance that is not public show the app's name, description and icon only to a viewer with access; anyone else gets a manifest named "Lager" with the placeholder icon. Apps that bring their own `rel="manifest"` link need `crossorigin="use-credentials"` on it to keep their name when installed.
+- **Content security policy:** platform pages now allow scripts only from Lager's own files or with a per-response nonce, and send `X-Content-Type-Options: nosniff`. A reverse proxy that injects its own inline script into the platform's pages (an analytics snippet, say) will find it blocked. The platform also answers `/robots.txt` with "disallow everything".
 - **Title and note:** a new app title takes at most 100 characters and a version note at most 500, one line each.
 
 ## [0.1.0] - unreleased

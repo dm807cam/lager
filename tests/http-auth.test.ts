@@ -8,6 +8,9 @@ import { MAX_PASSWORD_LENGTH } from '../src/platform/users.js';
 import { makeHarness, type Harness } from './support/http.js';
 import { t } from '../src/i18n/index.js';
 
+/** A page without what is new in every response (the script nonce): two answers that must not differ are compared like this. */
+const page = (html: string): string => html.replace(/nonce(="|-)[A-Za-z0-9+/=]+/g, 'nonce$1…');
+
 let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; });
 
@@ -120,7 +123,7 @@ describe('registration and verification', () => {
     const notice = t('en', 'auth.resend.sent.text');
     expect(known.text).toContain(notice);
     expect(unknown.status).toBe(known.status);
-    expect(unknown.text).toBe(known.text);
+    expect(page(unknown.text)).toBe(page(known.text));
     expect(s.mailer.sent).toHaveLength(2);
   });
 
@@ -354,7 +357,7 @@ describe('password reset', () => {
     expect(known.status).toBe(200);
     expect(known.text).toContain(FORGOT);
     expect(unknown.status).toBe(known.status);
-    expect(unknown.text).toBe(known.text);
+    expect(page(unknown.text)).toBe(page(known.text));
     expect(s.mailer.sent).toHaveLength(1);
     expect(s.mailer.sent[0].to).toBe('ann@example.org');
     expect((await s.get('/forgot')).text).toContain('action="/forgot"');
@@ -368,7 +371,7 @@ describe('password reset', () => {
     for (let i = 0; i < 4; i++) {
       const res = await s.post('/forgot', { email: 'ann@example.org' });
       expect(res.status).toBe(200);
-      bodies.push(res.text);
+      bodies.push(page(res.text));
     }
     expect(s.mailer.sent).toHaveLength(3);
     expect(new Set(bodies).size).toBe(1);
