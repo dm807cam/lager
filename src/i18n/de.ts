@@ -172,7 +172,7 @@ export const de: Record<MessageKey, string> = {
   'notice.otherUsersInstances': 'Andere Nutzer haben Instanzen dieser App. Sie müssen zuerst gelöscht werden.',
   'notice.slugTaken': 'Dieser Name ist schon vergeben.',
   'notice.slugRetired': 'Dieser Name wurde bereits verwendet und ist gesperrt.',
-  'notice.rulesDiffer': 'Nur der Eigentümer kann diese Version aktivieren: Ihre Datenregeln weichen von der aktiven ab.',
+  'notice.rulesDiffer': 'Nur der Eigentümer kann diese Version aktivieren: Ihre Datenregeln oder ihre Endpunkte für Daten von außen weichen von der aktiven ab.',
   'notice.creationRate': 'Du hast heute zu viele Instanzen angelegt. Versuche es morgen wieder.',
   'notice.creationRateOthers': 'Du hast heute zu viele Instanzen für andere angelegt. Versuche es morgen wieder oder wende dich an einen Administrator.',
   'notice.ownerLimitHalf': 'Dieses Konto kann von dir gerade keine weitere Instanz annehmen. Bitte diese Person darum, die Instanz selbst anzulegen, oder wende dich an einen Administrator.',

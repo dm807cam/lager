@@ -125,11 +125,15 @@ describe('instance page: data from outside', () => {
 
   it('deleting the instance removes what was decided about its endpoints', async () => {
     const { inst, p } = await setup();
-    h.core.ingest.setOff(inst.id, 'hits', true);
+    const first = h.core.ingest.token(inst.id, 'weight');
+    h.core.ingest.setOff(inst.id, 'hits', false);
     h.core.ingest.rotateToken(inst.id, 'weight');
     h.core.ingest.note(inst.id, 'hits', 'refused');
+    expect(h.core.ingest.token(inst.id, 'weight')).not.toBe(first);
     h.core.apps.deleteInstance(inst.id, p.id);
-    expect(h.core.ingest.isOff(inst.id, 'hits')).toBe(false);
+    // The rows went with the instance: the count of replaced tokens is back at the start, and nothing says "on" any more.
+    expect(h.core.ingest.token(inst.id, 'weight')).toBe(first);
+    expect(h.core.ingest.isOff(inst.id, 'hits')).toBe(true);
     expect(h.core.ingest.countsOf(inst.id, 'hits')).toEqual({ accepted: 0, refused: 0, limited: 0 });
   });
 });

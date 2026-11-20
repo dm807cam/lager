@@ -35,6 +35,8 @@ function boot(capabilities: Record<string, unknown>, calls: Array<{ url: string;
     if (url === '/__lager/db') {
       const op = JSON.parse(String(init?.body)).op;
       if (op === 'query') return json({ docs: [{ path: 'cards/c1', data: { text: 'Milch kaufen', image: BLOB, createdAt: 1 }, createdAt: '', updatedAt: '', createdBy: 'u1' }] });
+      // The server makes up the id of an added document.
+      if (op === 'add') return json({ doc: {}, id: 'serverMadeId000000001' });
       return json({ doc: {} });
     }
     if (url === '/__lager/assets' && init?.method === 'POST') return json({ id: 'a'.repeat(32), url: BLOB, sizeBytes: 3, contentType: 'image/png' }, 201);
@@ -85,8 +87,8 @@ describe('examples/board.html with the real runtime', () => {
     ($('text') as HTMLInputElement).value = 'Neue Karte';
     Object.defineProperty($('file'), 'files', { value: [new File([new Uint8Array([1, 2, 3])], 'a.png', { type: 'image/png' })] });
     ($('add') as HTMLFormElement).dispatchEvent(new Event('submit', { cancelable: true }));
-    await until(() => calls.some((c) => c.url === '/__lager/db' && JSON.parse(String(c.init?.body)).op === 'set'));
-    const add = calls.map((c) => c.init?.body).filter((b) => typeof b === 'string').map((b) => JSON.parse(b as string)).find((b) => b.op === 'set' && b.path.startsWith('cards/'));
+    await until(() => calls.some((c) => c.url === '/__lager/db' && JSON.parse(String(c.init?.body)).op === 'add'));
+    const add = calls.map((c) => c.init?.body).filter((b) => typeof b === 'string').map((b) => JSON.parse(b as string)).find((b) => b.op === 'add' && b.path === 'cards');
     expect(add.data).toMatchObject({ text: 'Neue Karte', image: BLOB });
     expect(calls.some((c) => c.url === '/__lager/assets' && c.init?.method === 'POST')).toBe(true);
   });

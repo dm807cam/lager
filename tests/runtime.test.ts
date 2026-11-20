@@ -334,32 +334,36 @@ describe('db', () => {
     }
     expect(ids.size).toBe(50);
     expect(col.doc('fixed').path).toBe('tasks/fixed');
+    // add leaves the id to the server, for every viewer.
     const ref = await col.add({ title: 'x' });
-    expect(ref.id).toMatch(/^[A-Za-z0-9]{20}$/);
+    expect(ref.id).toMatch(/^serverMadeId/);
     expect(ref.path).toBe(`tasks/${ref.id}`);
-    expect(dbCalls()).toEqual([{ op: 'set', path: ref.path, data: { title: 'x' } }]);
+    expect(dbCalls()).toEqual([{ op: 'add', path: 'tasks', data: { title: 'x' } }]);
     expect((await ref.get()).data()).toEqual({ title: 'x' });
     expect(db.doc('boards/b1').collection('cols').path).toBe('boards/b1/cols');
     expect(db.collection('boards/b1/cols').doc('c1').path).toBe('boards/b1/cols/c1');
   });
 
-  it('a viewer who may only look lets the server make up the id of what they add', async () => {
-    for (const viewer of [{ id: null, name: '', email: null, level: 'view', isOwner: false, canEdit: false }, { ...OWNER, level: 'view', isOwner: false, canEdit: false }]) {
+  it('add asks the server whatever the viewer\'s level: the rules decide who writes and who may only append', async () => {
+    for (const viewer of [{ id: null, name: '', email: null, level: 'view', isOwner: false, canEdit: false }, { ...OWNER, level: 'view', isOwner: false, canEdit: false },
+      { ...OWNER, level: 'interact', isOwner: false, canEdit: false }, OWNER]) {
       calls = [];
       session = sessionOf(viewer);
       const db = await boot().use('db');
       const ref = await db.collection('rsvps').add({ name: 'Grace' });
-      expect(dbCalls()).toEqual([{ op: 'add', path: 'rsvps', data: { name: 'Grace' } }]);
+      expect(dbCalls(), String(viewer.level)).toEqual([{ op: 'add', path: 'rsvps', data: { name: 'Grace' } }]);
       expect(ref.path).toBe(`rsvps/${ref.id}`);
       expect(ref.id).toMatch(/^serverMadeId/);
       // Also where the document itself does not come back.
       expect((await db.collection('dropbox').add({ a: 1 })).path).toMatch(/^dropbox\/serverMadeId/);
     }
-    // Someone who writes keeps choosing the id in the page.
-    calls = [];
-    session = sessionOf({ ...OWNER, level: 'interact', isOwner: false, canEdit: false });
-    const ref = await (await boot().use('db')).collection('rsvps').add({ a: 1 });
-    expect(dbCalls()).toEqual([{ op: 'set', path: ref.path, data: { a: 1 } }]);
+  });
+
+  it('add rejects when the server answers without an id', async () => {
+    const db = await boot().use('db');
+    const original = g.fetch;
+    g.fetch = async (url: string, init?: any): Promise<Response> => (url === '/__lager/db' ? json({ doc: null }) : original(url, init));
+    await expect(db.collection('tasks').add({ a: 1 })).rejects.toEqual({ code: 'unavailable', message: 'Unexpected response.' });
   });
 
   it('rejects malformed paths synchronously with TypeError', async () => {
@@ -1028,10 +1032,12 @@ describe('path parity with the server validators', () => {
     const sent = dbCalls();
     expect(sent).toHaveLength(5);
     for (const c of sent) {
-      if (c.op === 'query') expect(() => assertCollectionPath(c.path), c.path).not.toThrow();
+      // A query and an add name the collection; everything else names a document.
+      if (c.op === 'query' || c.op === 'add') expect(() => assertCollectionPath(c.path), c.path).not.toThrow();
       else expect(() => parseDocPath(c.path), c.path).not.toThrow();
     }
     expect(sent.filter((c) => c.op === 'query').map((c) => c.path)).toEqual(['tasks']);
+    expect(sent.filter((c) => c.op === 'add').map((c) => c.path)).toEqual(['lists/l1/items']);
   });
 });
 

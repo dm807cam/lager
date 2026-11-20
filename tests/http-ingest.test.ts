@@ -231,6 +231,62 @@ describe('POST /_ingest/<name>: what it cannot do', () => {
   });
 });
 
+describe('endpoints on an instance somebody else owns', () => {
+  /** The administrator publishes `stats`; Uwe, who cannot deploy, owns an instance of it. */
+  function foreign() {
+    const { h, inst } = setup();
+    const uwe = h.core.users.create({ email: 'uwe@x.y', name: 'Uwe', password: 'password-123', role: 'user' });
+    const theirs = h.core.apps.createInstance({ appId: inst.appId, slug: 'stats-uwe', ownerId: uwe.id });
+    const send = (host = 'stats-uwe.apps.localhost') => request(h.app).post('/_ingest/hits').set('Host', host).set('Origin', BLOG).send({ a: 1 });
+    return { h, inst, theirs, uwe, send };
+  }
+
+  it('stay closed until someone who manages that instance switches them on', async () => {
+    const { h, inst, theirs, send } = foreign();
+    // The publisher's own instance takes data from the start; the other owner never asked for a way in.
+    expect((await send(HOST)).status).toBe(202);
+    expect(h.core.ingest.isOff(inst.id, 'hits')).toBe(false);
+    expect(h.core.ingest.isOff(theirs.id, 'hits')).toBe(true);
+    expect((await send()).status).toBe(404);
+    expect(docs(h, theirs.id)).toEqual([]);
+    h.core.ingest.setOff(theirs.id, 'hits', false);
+    expect((await send()).status).toBe(202);
+    // One endpoint switched on says nothing about the others.
+    expect(h.core.ingest.isOff(theirs.id, 'weight')).toBe(true);
+    h.core.ingest.setOff(theirs.id, 'hits', true);
+    expect((await send()).status).toBe(404);
+  });
+
+  it('a new deploy by the publisher does not open them either, and replacing a token does not switch one on', async () => {
+    const { h, theirs, send } = foreign();
+    h.core.apps.deploy({
+      slug: 'stats', html: '<p>v2</p>', userId: h.adminId,
+      capabilities: { db: {}, ingest: { endpoints: [...ENDPOINTS, { name: 'more', auth: 'none', origins: [BLOG] }] } } as never,
+    });
+    expect(h.core.apps.getInstance(theirs.id)!.activeVersion).toBe(2);
+    expect((await send()).status).toBe(404);
+    expect((await request(h.app).post('/_ingest/more').set('Host', 'stats-uwe.apps.localhost').set('Origin', BLOG).send({ a: 1 })).status).toBe(404);
+    h.core.ingest.rotateToken(theirs.id, 'weight');
+    expect(h.core.ingest.isOff(theirs.id, 'weight')).toBe(true);
+    const token = h.core.ingest.token(theirs.id, 'weight');
+    expect((await request(h.app).post('/_ingest/weight').set('Host', 'stats-uwe.apps.localhost').set('Authorization', `Bearer ${token}`).send({ kg: 1 })).status).toBe(404);
+  });
+
+  it('the page is told that they are off, and they are on from the start for someone who maintains the app', async () => {
+    const { h, inst, theirs, uwe } = foreign();
+    const cookie = await h.enter('stats-uwe', await h.login('uwe@x.y', 'password-123'));
+    const info = await request(h.app).get('/__lager/ingest').set('Host', 'stats-uwe.apps.localhost').set('Cookie', cookie);
+    expect(info.body.endpoints.map((e: { enabled: boolean }) => e.enabled)).toEqual([false, false]);
+    // A collaborator runs the app like its owner does: their own instance needs no switch.
+    const pia = h.core.users.create({ email: 'pia@x.y', name: 'Pia', password: 'password-123', role: 'publisher' });
+    h.core.apps.addCollaborator(inst.appId, pia.id, h.adminId);
+    const hers = h.core.apps.createInstance({ appId: inst.appId, slug: 'stats-pia', ownerId: pia.id });
+    expect(h.core.ingest.isOff(hers.id, 'hits')).toBe(false);
+    expect(h.core.ingest.isOff(theirs.id, 'hits')).toBe(true);
+    void uwe;
+  });
+});
+
 describe('POST /_ingest/<name>: what the server adds', () => {
   it('writes _receivedAt itself and drops what the client sends under the server\'s field names', async () => {
     const { h, inst } = setup();
@@ -348,6 +404,25 @@ describe('POST /_ingest/<name>: limits', () => {
     expect(h.core.ingest.countsOf(inst.id, 'hits')).toEqual({ accepted, refused: 120 - accepted, limited: 0 });
     // The owner still writes: what came from outside does not count against the instance's storage.
     expect(() => h.core.data.set(inst.id, 'notes/n1', { text: 'mine' }, h.adminId)).not.toThrow();
+  });
+
+  it('all endpoints and rules of an instance share the one ingest quota: one that is filled leaves no room for the others', async () => {
+    // How it is today, written down: a full inbox closes every endpoint that refuses, and one that rotates has nothing of its own to drop.
+    const { h, inst } = setup({
+      ingestQuotaBytes: 100_000, visibility: 'public', rules: [{ path: 'wall', write: 'anyone' }],
+      endpoints: [{ name: 'hits', auth: 'none', origins: [BLOG] }, { name: 'stream', auth: 'none', origins: [BLOG], onFull: 'rotate' }],
+    });
+    const guest = () => request(h.app).post('/__lager/db').set('Host', HOST).set('X-Lager-Request', '1').send({ op: 'add', path: 'wall', data: { text: 'x'.repeat(3000) } });
+    let added = 0;
+    for (let i = 0; i < 60; i++) if ((await guest()).status === 200) added++;
+    expect(added).toBeGreaterThan(5);
+    expect((await guest()).status).toBe(507);
+    expect((await hit(h, { text: 'x'.repeat(3000) })).status).toBe(507);
+    expect((await request(h.app).post('/_ingest/stream').set('Host', HOST).set('Origin', BLOG).send({ text: 'x'.repeat(3000) })).status).toBe(507);
+    // The instance's own data is untouched by all of it, and deleting what came in makes room for everyone again.
+    expect(() => h.core.data.set(inst.id, 'notes/n1', { mine: true }, h.adminId)).not.toThrow();
+    for (const d of h.core.data.query(inst.id, 'wall')) h.core.data.delete(inst.id, d.path);
+    expect((await hit(h, { text: 'x'.repeat(3000) })).status).toBe(202);
   });
 
   it('with onFull "rotate" the oldest received documents of the collection make room', async () => {

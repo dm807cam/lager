@@ -170,7 +170,7 @@ export const en = {
   'notice.otherUsersInstances': 'Other users have instances of this app. They must be deleted first.',
   'notice.slugTaken': 'This name is already taken.',
   'notice.slugRetired': 'This name was used before and is reserved.',
-  'notice.rulesDiffer': 'Only the owner can activate this version: its data rules differ from the active one.',
+  'notice.rulesDiffer': 'Only the owner can activate this version: its data rules or its endpoints for data from outside differ from the active one.',
   'notice.creationRate': 'You have created too many instances today. Try again tomorrow.',
   'notice.creationRateOthers': 'You have created too many instances for other people today. Try again tomorrow, or ask an administrator.',
   'notice.ownerLimitHalf': 'This account cannot take another instance from you right now. Ask that person to create it themselves, or ask an administrator.',

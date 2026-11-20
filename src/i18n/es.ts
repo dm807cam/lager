@@ -172,7 +172,7 @@ export const es: Record<MessageKey, string> = {
   'notice.otherUsersInstances': 'Otros usuarios tienen instancias de esta aplicación. Primero hay que eliminarlas.',
   'notice.slugTaken': 'Este nombre ya está en uso.',
   'notice.slugRetired': 'Este nombre ya se usó antes y está reservado.',
-  'notice.rulesDiffer': 'Solo el propietario puede activar esta versión: sus reglas de datos difieren de la activa.',
+  'notice.rulesDiffer': 'Solo el propietario puede activar esta versión: sus reglas de datos o sus puntos de recepción de datos del exterior difieren de la activa.',
   'notice.creationRate': 'Hoy has creado demasiadas instancias. Inténtalo de nuevo mañana.',
   'notice.creationRateOthers': 'Hoy has creado demasiadas instancias para otras personas. Inténtalo de nuevo mañana o pídeselo a un administrador.',
   'notice.ownerLimitHalf': 'Esta cuenta no puede recibir ahora otra instancia de tu parte. Pide a esa persona que la cree ella misma, o pídeselo a un administrador.',

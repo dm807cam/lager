@@ -417,22 +417,15 @@
       return makeDocRef(checkPath(path + '/' + (id === undefined ? autoId() : id), true));
     };
     q.add = function (data) {
-      // A viewer who may only look cannot write under an id of their own. Where a rule lets every visitor append
-      // (`write: "anyone"`), the server makes up the id, so nothing that exists can be overwritten.
-      if (dbLevel === 'view') {
-        return dbCall({ op: 'add', path: path, data: data }).then(function (r) {
-          if (typeof r.id !== 'string') throw { code: 'unavailable', message: 'Unexpected response.' };
-          return makeDocRef(checkPath(path + '/' + r.id, true));
-        });
-      }
-      var ref = q.doc();
-      return ref.set(data).then(function () { return ref; });
+      // The server makes up the id and decides by the rules whether this viewer writes here or may only append
+      // (`write: "anyone"`); the page cannot know which, and an id of its own choosing could name a document that exists.
+      return dbCall({ op: 'add', path: path, data: data }).then(function (r) {
+        if (typeof r.id !== 'string') throw { code: 'unavailable', message: 'Unexpected response.' };
+        return makeDocRef(checkPath(path + '/' + r.id, true));
+      });
     };
     return Object.freeze(q);
   }
-
-  /** The viewer's level, known once the page got `db` from `use`. */
-  var dbLevel = null;
 
   var db = Object.freeze({
     doc: function (path) { return makeDocRef(checkPath(path, true)); },
@@ -1370,7 +1363,7 @@
 
   function build(name) {
     return getSession().then(function (session) {
-      if (name === 'db') { dbLevel = levelOf(session); return dbLevel ? db : null; }
+      if (name === 'db') return levelOf(session) ? db : null;
       if (name === 'user') return buildUser(session);
       if (name === 'assets') return assetsAllowed(session) ? buildAssets() : null;
       if (name === 'room') return roomAvailable(session) ? buildRoom(session) : null;

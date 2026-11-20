@@ -5,7 +5,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { assertSlug, assertSlugShape } from '../config.js';
 import { LagerError } from '../errors.js';
 import { checkApp } from './check.js';
-import { effectiveRules } from './ingest.js';
+import { effectiveRules, ingestEndpoints } from './ingest.js';
 import { DEFAULT_THEME_COLOR } from './icons.js';
 import type { Settings } from './settings.js';
 import type { User, Users } from './users.js';
@@ -611,12 +611,16 @@ export class Apps {
       if (row.instance_id !== null && row.instance_id !== instance.id) {
         throw new LagerError('forbidden', 'This version was saved by another instance.');
       }
-      // The data rules come from the active version. A manager is held to them, so only the owner may switch to a version with other rules.
+      // The data rules come from the active version. A manager is held to them, so only the owner may switch to a version with other
+      // rules. The same goes for the endpoints that take data from outside: who may send what into the instance is the owner's to change.
       if (instance.ownerId !== userId && instance.activeVersion !== version) {
-        const rulesOf = (json: string | undefined): string => canonicalJson(effectiveRules(JSON.parse(json ?? '{}') as Capabilities) ?? []);
+        const rulesOf = (json: string | undefined): string => {
+          const caps = JSON.parse(json ?? '{}') as Capabilities;
+          return canonicalJson({ rules: effectiveRules(caps) ?? [], ingest: ingestEndpoints(caps) });
+        };
         const current = this.db.prepare('SELECT capabilities FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, instance.activeVersion) as { capabilities: string } | undefined;
         if (rulesOf(current?.capabilities) !== rulesOf(row.capabilities)) {
-          throw new LagerError('conflict', 'Only the instance owner can activate a version with different data rules.', 'rules_differ');
+          throw new LagerError('conflict', 'Only the instance owner can activate a version with different data rules or ingest endpoints.', 'rules_differ');
         }
       }
       if (instance.activeVersion !== version) {

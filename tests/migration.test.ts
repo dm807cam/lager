@@ -39,7 +39,7 @@ describe('platform database migrations', () => {
       expect(db.prepare('SELECT COUNT(*) AS n FROM instance_signins').get()).toMatchObject({ n: 1 });
       // Migration 3: the state of ingest endpoints, with its defaults.
       db.prepare('INSERT INTO ingest_endpoints (instance_id, name) VALUES (?, ?)').run('i1', 'hits');
-      expect({ ...db.prepare('SELECT disabled, token_generation FROM ingest_endpoints').get() }).toEqual({ disabled: 0, token_generation: 0 });
+      expect({ ...db.prepare('SELECT disabled, token_generation FROM ingest_endpoints').get() }).toEqual({ disabled: null, token_generation: 0 });
       expect(() => db.prepare('INSERT INTO ingest_endpoints (instance_id, name) VALUES (?, ?)').run('no-such-instance', 'hits')).toThrow();
       // The confirmation and the endpoint state go with their instance.
       db.prepare('DELETE FROM instances WHERE id = ?').run('i1');

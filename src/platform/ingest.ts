@@ -182,14 +182,27 @@ export class Ingest {
     return this.quotaBytes > 0;
   }
 
-  private row(instanceId: string, name: string): { disabled: number; token_generation: number } | undefined {
+  private row(instanceId: string, name: string): { disabled: number | null; token_generation: number } | undefined {
     return this.db.prepare('SELECT disabled, token_generation FROM ingest_endpoints WHERE instance_id = ? AND name = ?')
-      .get(instanceId, name) as { disabled: number; token_generation: number } | undefined;
+      .get(instanceId, name) as { disabled: number | null; token_generation: number } | undefined;
   }
 
-  /** Whether the people who manage the instance switched this endpoint off. */
+  /** Whether an endpoint nobody switched yet takes data; the core says so, because it knows who runs the app (see `setDefault`). */
+  private onByDefault: (instanceId: string) => boolean = () => true;
+
+  /**
+   * An endpoint is on from the start only on an instance whose owner also runs the app (owns it or maintains it): they
+   * deployed the declaration themselves. On anybody else's instance, a deploy by the app's publisher must not open a way in
+   * for strangers by itself: there an endpoint stays off until someone who manages the instance switches it on.
+   */
+  setDefault(onByDefault: (instanceId: string) => boolean): void {
+    this.onByDefault = onByDefault;
+  }
+
+  /** Whether the endpoint is closed: switched off by the people who manage the instance, or never switched on where that is needed. */
   isOff(instanceId: string, name: string): boolean {
-    return this.row(instanceId, name)?.disabled === 1;
+    const decided = this.row(instanceId, name)?.disabled;
+    return decided === null || decided === undefined ? !this.onByDefault(instanceId) : decided === 1;
   }
 
   setOff(instanceId: string, name: string, off: boolean): void {

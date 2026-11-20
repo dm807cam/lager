@@ -139,6 +139,12 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   // Every open view of the instance reloads when its active version changes.
   apps.onActivated((inst) => { hub.publish(inst.id, { type: 'reload', version: inst.activeVersion }); });
   const ingest = new Ingest(db, config.secret, ingestQuotaBytes, config.countryHeader);
+  ingest.setDefault((instanceId) => {
+    const instance = apps.getInstance(instanceId);
+    const owner = instance ? users.get(instance.ownerId) : null;
+    const app = instance ? apps.getApp(instance.appId) : null;
+    return owner !== null && app !== null && access.canReadApp(app, owner);
+  });
   apps.onInstanceDeleted((instance) => { ingest.forget(instance.id); });
   const removal = new AccountRemoval(db, users, apps);
   // The private area of a deleted account in other people's instances is closed to everyone else, yet counts against their

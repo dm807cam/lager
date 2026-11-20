@@ -145,6 +145,26 @@ describe('signed-in people and write: "anyone"', () => {
     expect((await db(h, cookie, { op: 'delete', path: `wall/${res.body.id}` })).status).toBe(200);
   });
 
+  it('where a broader rule keeps writing to managers, a contributor adds like every other visitor and changes nothing', async () => {
+    const { h, inst } = setup({ rules: [{ path: 'forms', read: 'admin', write: 'admin' }, { path: 'forms/f1/inbox', write: 'anyone' }] });
+    const ada = h.core.users.create({ email: 'ada@x.y', name: 'Ada', password: 'password-123', role: 'user' });
+    h.core.access.setGrant(inst, 'user', ada.id, 'interact', h.core.users.get(h.adminId)!);
+    const cookie = await h.enter('party', await h.login('ada@x.y', 'password-123'));
+    // What collection.add() sends, for every viewer: the server decides by the rules.
+    const added = await db(h, cookie, { op: 'add', path: 'forms/f1/inbox', data: { text: 'from Ada' } });
+    expect(added.status).toBe(200);
+    expect(added.body).toEqual({ doc: null, id: expect.stringMatching(/^[A-Za-z0-9]{20}$/) });
+    expect(h.core.data.get(inst.id, `forms/f1/inbox/${added.body.id}`)).toMatchObject({ data: { text: 'from Ada' }, updatedBy: ada.id });
+    // Choosing the id, changing and deleting stay with the managers, as the broader rule says.
+    expect((await db(h, cookie, { op: 'set', path: 'forms/f1/inbox/mine', data: { a: 1 } })).status).toBe(403);
+    expect((await db(h, cookie, { op: 'update', path: `forms/f1/inbox/${added.body.id}`, data: { a: 1 } })).status).toBe(403);
+    expect((await db(h, cookie, { op: 'delete', path: `forms/f1/inbox/${added.body.id}` })).status).toBe(403);
+    expect((await db(h, undefined, { op: 'add', path: 'forms/f1/inbox', data: { text: 'from a guest' } })).status).toBe(200);
+    const owner = await h.enter('party', await h.login());
+    expect((await db(h, owner, { op: 'query', path: 'forms/f1/inbox' })).body.docs).toHaveLength(2);
+    expect((await db(h, owner, { op: 'delete', path: `forms/f1/inbox/${added.body.id}` })).status).toBe(200);
+  });
+
   it('the owner approves and removes what a guest added; it never counts against the instance\'s own storage', async () => {
     const { h, inst } = setup();
     h.core.data.set(inst.id, 'notes/n1', { a: 1 }, h.adminId);

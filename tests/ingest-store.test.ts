@@ -217,7 +217,9 @@ describe('documents from outside in the store', () => {
     store.ingest('i1', 'hits/b', { n: 2 }, FROM_OUTSIDE);
     store.restore('i1', snap.id);
     expect(store.get('i1', 'notes/n1')?.data).toEqual({ v: 1 });
+    // Every received document is there under its path, once.
     expect(store.query('i1', 'hits').map((d) => d.id)).toEqual(['a', 'b']);
+    expect([...store.exportDocs('i1')].map((d) => d.path)).toEqual(['hits/a', 'hits/b', 'notes/n1']);
     // And it goes on taking documents afterwards.
     store.ingest('i1', 'hits/c', { n: 3 }, FROM_OUTSIDE);
     expect(store.query('i1', 'hits')).toHaveLength(3);
