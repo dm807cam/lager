@@ -12,7 +12,7 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 
 ### Security
 
-- **Docker image:** the runtime image no longer contains `npm`, `npx` or `corepack`. Lager never runs them, and npm's own bundled packages (brace-expansion, undici) carried known vulnerabilities that image scanners report. For an online backup inside the container, use `node dist/backup.js` as the documentation shows; `npm run backup` works only in a source checkout.
+- **Docker image:** the runtime image no longer contains `npm`, `npx`, `corepack` or `yarn`. Lager never runs them, and npm's own bundled packages (brace-expansion, undici) carried known vulnerabilities that image scanners report. For an online backup inside the container, use `node dist/backup.js` as the documentation shows; `npm run backup` works only in a source checkout.
 
 ## [0.1.0] - 2026-11-19
 

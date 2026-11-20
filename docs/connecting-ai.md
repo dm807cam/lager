@@ -61,7 +61,7 @@ Run **MCP: Add Server** from the command palette, choose **HTTP**, enter `https:
 }
 ```
 
-Sign in when VS Code asks; Copilot then calls Lager's tools when a request needs them. An older `.vscode/mcp.json` with a `servers` key still works with VS Code's Local harness, which VS Code has deprecated and will remove in February 2027.
+Sign in when VS Code asks. Use an agent that can make changes, such as **Agent**, and check that Lager's tools are turned on (the **Tools** tab of the Agent Customizations editor, or `#` in the chat input). An older `.vscode/mcp.json` with a `servers` key still works with VS Code's Local harness, which VS Code has deprecated and will remove in February 2027.
 
 ## Gemini CLI
 
