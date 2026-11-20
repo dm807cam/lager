@@ -4,6 +4,7 @@ description: We asked an assistant for blog analytics on Lager and hit a wall. O
 date: 2026-11-20
 author: The Lager team
 tags: [ingest, analytics, behind-the-scenes]
+ai: true
 ---
 
 At 16:40 on a Friday, the request was one sentence: *"Design and build a web analytics app like Umami that runs on Lager, with all the metrics important to bloggers."*

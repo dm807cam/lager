@@ -17,12 +17,14 @@ description: One sentence that makes someone click. It is the summary in the lis
 date: 2026-11-22
 author: The Lager team
 tags: [ingest, sensors, raspberry-pi]
+ai: true
 ---
 
 The post, in Markdown.
 ```
 
 - `title`, `description` and `date` are required. `author` defaults to "The Lager team". `tags`: two to four, lower case.
+- `ai: true` is required for every post an AI assistant wrote or helped write. It adds a small grey note under the title: "This post was created with the assistance of AI and reviewed by the Lager team." Leave it out only for posts a person wrote alone.
 - A post dated in the future stays hidden until that day, so a merged post can be scheduled. `draft: true` hides it for good.
 - Markdown: headings (`##` and below; the title is the page's only `#`), paragraphs, **bold**, *italic*, `code`, links, lists, block quotes, tables, fenced code blocks with a language (`json`, `js`, `html`, `sh`), and images on a line of their own (the alt text becomes the caption).
 - No raw HTML. It is shown as text, never run.
