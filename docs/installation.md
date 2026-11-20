@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | su
 
 You need a free Cloudflare account and a domain whose DNS Cloudflare manages. Use a domain for Lager alone (for example `mylager.net`). The platform lives on the domain itself and every app directly below it, because Cloudflare's free certificate covers exactly the domain and one level of subdomains. A layout such as `*.apps.example.com` would need a paid certificate.
 
-The installer runs [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) in a second container:
+The installer runs [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) in a second container:
 
 1. It shows a link. Open it on any device, sign in to Cloudflare, choose the domain and confirm. The installer continues by itself.
 2. It creates a tunnel named `lager-<hostname>` and points `<domain>` and `*.<domain>` at it.
