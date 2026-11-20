@@ -8,6 +8,11 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 
 - **Node.js 24 or newer** is needed to run Lager from source (it was 22.13). The Docker image and the installer already use Node 24, so they are not affected.
 - **Images:** commits on `main` publish only `:edge`, without a `:sha-<commit>` tag, and earlier edge builds are deleted after each publish. Release images and their tags stay.
+- **Docs:** the steps for adding Lager to claude.ai and Claude Desktop, ChatGPT and VS Code follow the current menus and configuration files of those products.
+
+### Security
+
+- **Docker image:** the runtime image no longer contains `npm`, `npx` or `corepack`. Lager never runs them, and npm's own bundled packages (brace-expansion, undici) carried known vulnerabilities that image scanners report. For an online backup inside the container, use `node dist/backup.js` as the documentation shows; `npm run backup` works only in a source checkout.
 
 ## [0.1.0] - 2026-11-19
 

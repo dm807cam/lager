@@ -13,7 +13,7 @@ There are two ways to sign in:
 
 ## Claude
 
-- **claude.ai and Claude Desktop:** Settings → Connectors → add a custom connector with the address `https://lager.example.com/mcp`. When connecting, you sign in to Lager and allow access.
+- **claude.ai and Claude Desktop:** Customize → Connectors → **+ Add** → **Add custom connector**, with the address `https://lager.example.com/mcp`. When connecting, you sign in to Lager and allow access. On Team and Enterprise plans an owner first adds the connector under Organization settings → Connectors; members then connect it under Customize → Connectors. The Free plan allows one custom connector.
 - **Claude Code:**
   ```sh
   claude mcp add --transport http lager https://lager.example.com/mcp
@@ -26,12 +26,12 @@ There are two ways to sign in:
 
 ## ChatGPT
 
-ChatGPT connects to custom MCP servers in **developer mode**:
+ChatGPT connects to custom MCP servers in **developer mode** (on Enterprise and Edu plans an administrator has to allow it first):
 
-1. Turn on developer mode in ChatGPT's settings (under Apps / Connectors → Advanced).
-2. Create a new connector, enter `https://lager.example.com/mcp` as the server address and choose OAuth as the authentication.
+1. Open **Plugins** in ChatGPT (chatgpt.com/plugins), click **+** and choose **Add custom MCP server**.
+2. Enter a name, `https://lager.example.com/mcp` as the server URL and OAuth as the authentication, then create it as a plugin.
 3. Sign in to Lager in the window that opens and allow access.
-4. In a chat, enable the Lager connector and ask for an app.
+4. In a chat, type **@**, select Lager and ask for an app.
 
 ChatGPT asks you to confirm tool calls that change something. Lager marks its reading tools as read-only, so only deploys, shares and data changes need a confirmation. Which ChatGPT plans may use connectors that write is OpenAI's decision and has changed over time; check OpenAI's current documentation if the connector only offers read access.
 
@@ -51,17 +51,17 @@ Cursor then offers to sign in. With an API token, add `"headers": { "Authorizati
 
 ## VS Code (GitHub Copilot)
 
-Add Lager to `.vscode/mcp.json` in your workspace, or run **MCP: Add Server** from the command palette:
+Run **MCP: Add Server** from the command palette, choose **HTTP**, enter `https://lager.example.com/mcp` and the id `lager`, and save it under **Global** → **Copilot Global**. Or add it by hand to `~/.copilot/mcp-config.json`:
 
 ```json
 {
-  "servers": {
+  "mcpServers": {
     "lager": { "type": "http", "url": "https://lager.example.com/mcp" }
   }
 }
 ```
 
-Start the server from the file or the MCP view and sign in when VS Code asks. Use Copilot Chat in agent mode, so it can call the tools.
+Sign in when VS Code asks; Copilot then calls Lager's tools when a request needs them. An older `.vscode/mcp.json` with a `servers` key still works with VS Code's Local harness, which VS Code has deprecated and will remove in February 2027.
 
 ## Gemini CLI
 
@@ -110,4 +110,4 @@ The deploy response contains the addresses of the instance (first the one under 
 The skill [`skill/lager/SKILL.md`](../skill/lager/SKILL.md) teaches Claude to build and deploy apps with Lager even before it calls a tool. Its content is the same guide that the MCP endpoint serves (`src/guide.md`).
 
 - **Claude Code:** `cp -r skill/lager ~/.claude/skills/lager`
-- **claude.ai and Desktop:** Pack the folder `skill/lager` as a ZIP and upload it under Settings → Skills.
+- **claude.ai and Desktop:** Pack the folder `skill/lager` as a ZIP and upload it under Customize → Skills → **+** → **Create skill** → **Upload a skill**.

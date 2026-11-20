@@ -99,9 +99,9 @@ Lager works with every assistant that supports remote MCP servers. Sign-in uses 
 
 | Assistant | How |
 | --- | --- |
-| claude.ai and Claude Desktop | Settings → Connectors → add a custom connector with `https://lager.example.com/mcp` |
+| claude.ai and Claude Desktop | Customize → Connectors → Add custom connector with `https://lager.example.com/mcp` |
 | Claude Code | `claude mcp add --transport http lager https://lager.example.com/mcp` |
-| ChatGPT | Developer mode → create a connector with `https://lager.example.com/mcp` and OAuth |
+| ChatGPT | Plugins → Add custom MCP server with `https://lager.example.com/mcp` and OAuth (developer mode) |
 | Cursor, VS Code, Gemini CLI, … | Add `https://lager.example.com/mcp` as an HTTP MCP server |
 
 Then ask for an app, for example *"Build a shared groceries list for my family and put it on Lager."* Configuration snippets for each assistant, API tokens and the optional skill for Claude: [Connecting your AI](docs/connecting-ai.md).

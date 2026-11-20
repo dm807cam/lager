@@ -12,7 +12,11 @@ FROM node:24-slim
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
-RUN npm ci --omit=dev
+# npm is needed only to install the dependencies: remove it (and npx, corepack) so the runtime image does not carry
+# npm's own bundled packages, which scanners flag and Lager never runs.
+RUN npm ci --omit=dev && npm cache clean --force \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+     /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 COPY --from=build /app/dist ./dist
 COPY LICENSE README.md ./
 ENV LAGER_DATA_DIR=/data LAGER_PORT=8080

@@ -41,7 +41,7 @@ docker compose start
 
 With a bind mount, stop the service as well and then `cp -a data data-backup-$(date +%F)`. Do not copy the directory while Lager runs: the databases are SQLite files in WAL mode, and a copy taken during a write can be unreadable.
 
-**Without stopping Lager:** `node dist/backup.js <target directory>` (or `npm run backup -- <target directory>`) writes a consistent copy of the data directory while the server keeps running. It reads `LAGER_DATA_DIR`, copies every database with SQLite's own snapshot mechanism and the other files as they are, and leaves the trash out. The target must be a new or empty directory outside the data directory. In the container, mount a directory for it. Create that directory first and give it to the container's user (`node`, UID 1000): if it is missing, Docker creates it as root, and the backup fails with a permission error.
+**Without stopping Lager:** `node dist/backup.js <target directory>` (or `npm run backup -- <target directory>` in a source checkout; the Docker image has no `npm`) writes a consistent copy of the data directory while the server keeps running. It reads `LAGER_DATA_DIR`, copies every database with SQLite's own snapshot mechanism and the other files as they are, and leaves the trash out. The target must be a new or empty directory outside the data directory. In the container, mount a directory for it. Create that directory first and give it to the container's user (`node`, UID 1000): if it is missing, Docker creates it as root, and the backup fails with a permission error.
 
 ```sh
 mkdir -p backup && sudo chown 1000:1000 backup
