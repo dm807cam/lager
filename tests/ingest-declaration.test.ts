@@ -45,8 +45,9 @@ describe('the ingest declaration', () => {
 
   it('checks the websites an instance adds like declared ones', () => {
     const [managed] = parseIngest(one({ name: 'hits', auth: 'none', origins: ['https://a.example'], managedOrigins: true }));
+    // A declared website is kept as entered: it stays open should a later version stop declaring it.
     expect(parseManagedOrigins(managed, [' HTTPS://Blog.Example.com ', 'https://blog.example.com', 'https://a.example', 'http://localhost:4000']))
-      .toEqual(['https://blog.example.com', 'http://localhost:4000']);
+      .toEqual(['https://blog.example.com', 'https://a.example', 'http://localhost:4000']);
     expect(parseManagedOrigins(managed, [])).toEqual([]);
     const bad = (list: unknown): string => { try { parseManagedOrigins(managed, list); } catch (e) { return (e as Error).message; } return ''; };
     for (const o of ['*', 'blog.example.com', 'https://blog.example.com/', 'https://*.example.com', 'javascript:alert(1)', 5, null]) {
@@ -55,6 +56,14 @@ describe('the ingest declaration', () => {
     expect(bad('https://blog.example.com')).toMatch(/must be a list/);
     expect(bad(Array.from({ length: INGEST_LIMITS.origins }, (_, i) => `https://s${i}.example`))).toMatch(/at most 19 can be added/);
     expect(parseManagedOrigins(managed, Array.from({ length: INGEST_LIMITS.origins - 1 }, (_, i) => `https://s${i}.example`))).toHaveLength(19);
+    // Declared ones do not count twice.
+    expect(parseManagedOrigins(managed, ['https://a.example', ...Array.from({ length: 19 }, (_, i) => `https://s${i}.example`)])).toHaveLength(20);
+    expect(bad(['x'.repeat(5000)]).length).toBeLessThan(200);
+    // Over the limit only through a later declaration: dropping websites is always taken, adding one is not.
+    const [crowded] = parseIngest(one({ name: 'hits', auth: 'none', origins: Array.from({ length: 15 }, (_, i) => `https://app${i}.example`), managedOrigins: true }));
+    const stored = Array.from({ length: 10 }, (_, i) => `https://mine${i}.example`);
+    expect(parseManagedOrigins(crowded, stored.slice(1), stored)).toEqual(stored.slice(1));
+    expect(() => parseManagedOrigins(crowded, [...stored.slice(1), 'https://new.example'], stored)).toThrow(/at most 5 can be added/);
     const [fixed] = parseIngest(one({ name: 'hits', auth: 'none', origins: ['https://a.example'] }));
     expect(() => parseManagedOrigins(fixed, ['https://b.example'])).toThrow(/cannot be changed per instance/);
   });

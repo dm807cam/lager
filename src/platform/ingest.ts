@@ -74,10 +74,13 @@ function normalizeOrigin(value: unknown): string | null {
 }
 
 /**
- * The websites the people who manage an instance want to add to an endpoint, as they will be stored: normalized, without
- * duplicates and without the origins the declaration already lists. Throws `invalid_argument` naming the first bad entry.
+ * The websites the people who manage an instance want for an endpoint, as they will be stored: normalized and without
+ * duplicates. Websites the declaration lists too are kept, so they stay open if a later version stops declaring them.
+ * Throws `invalid_argument` naming the first bad entry. A list may only grow while the declared and the added websites
+ * together stay within the limit; one that only drops websites of `current` (what is stored now) is always taken, so a
+ * website can be closed even after a later version declared so many that the limit is passed.
  */
-export function parseManagedOrigins(endpoint: IngestEndpoint, list: unknown): string[] {
+export function parseManagedOrigins(endpoint: IngestEndpoint, list: unknown, current: readonly string[] = []): string[] {
   const bad = (msg: string): never => { throw new LagerError('invalid_argument', msg); };
   if (!endpoint.managedOrigins) bad(`The app fixes the websites of endpoint "${endpoint.name}"; they cannot be changed per instance.`);
   if (!Array.isArray(list)) return bad('origins must be a list of websites.');
@@ -85,12 +88,14 @@ export function parseManagedOrigins(endpoint: IngestEndpoint, list: unknown): st
   for (const o of list as unknown[]) {
     const origin = o === '*' ? null : normalizeOrigin(typeof o === 'string' ? o.trim() : o);
     if (origin === null) {
-      throw new LagerError('invalid_argument', `"${String(o)}" is not a website address; write it like https://blog.example.com, without a path.`, 'origin_invalid');
+      // Echo only the start of what was sent: the body may be 16 kB.
+      throw new LagerError('invalid_argument', `"${String(o).slice(0, 100)}" is not a website address; write it like https://blog.example.com, without a path.`, 'origin_invalid');
     }
-    if (!endpoint.origins.includes(origin) && !out.includes(origin)) out.push(origin);
+    if (!out.includes(origin)) out.push(origin);
   }
-  const room = INGEST_LIMITS.origins - endpoint.origins.length;
-  if (out.length > room) {
+  const room = Math.max(0, INGEST_LIMITS.origins - endpoint.origins.length);
+  const added = out.filter((o) => !endpoint.origins.includes(o));
+  if (added.length > room && !out.every((o) => current.includes(o))) {
     throw new LagerError('invalid_argument', `Endpoint "${endpoint.name}" takes at most ${INGEST_LIMITS.origins} websites in all; ${endpoint.origins.length} come with the app, so at most ${room} can be added.`, 'origins_limit');
   }
   return out;
@@ -261,15 +266,19 @@ export class Ingest {
     }
   }
 
-  /** Every origin whose pages may send to the endpoint on this instance: the declared ones, then those its managers added. */
+  /**
+   * Every origin whose pages may send to the endpoint on this instance: the declared ones, then those its managers added, at
+   * most `INGEST_LIMITS.origins` in all. Only a later version that declares more can push added ones past the limit; those
+   * at the end of the list then do not count until some are removed, and the instance page marks them.
+   */
   originsFor(instanceId: string, endpoint: IngestEndpoint): string[] {
     if (!endpoint.managedOrigins) return endpoint.origins;
-    return [...new Set([...endpoint.origins, ...this.instanceOrigins(instanceId, endpoint.name)])];
+    return [...new Set([...endpoint.origins, ...this.instanceOrigins(instanceId, endpoint.name)])].slice(0, INGEST_LIMITS.origins);
   }
 
   /** Replaces the websites the instance's managers added to the endpoint; the list is checked with `parseManagedOrigins`. */
   setOrigins(instanceId: string, endpoint: IngestEndpoint, list: unknown): string[] {
-    const origins = parseManagedOrigins(endpoint, list);
+    const origins = parseManagedOrigins(endpoint, list, this.instanceOrigins(instanceId, endpoint.name));
     this.db.prepare(
       `INSERT INTO ingest_endpoints (instance_id, name, origins) VALUES (?, ?, ?)
        ON CONFLICT(instance_id, name) DO UPDATE SET origins = excluded.origins`,

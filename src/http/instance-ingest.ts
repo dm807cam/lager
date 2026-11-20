@@ -7,8 +7,9 @@ import { LagerError } from '../errors.js';
 import type { Instance } from '../platform/apps.js';
 import { ingestEndpoints, type IngestEndpoint } from '../platform/ingest.js';
 import { addressKey } from './client-address.js';
+import { DB_RATE, type Ctx } from './instance.js';
+import type { RateLimiter } from './ratelimit.js';
 import { discardBody, sendError } from './errors.js';
-import type { Ctx } from './instance.js';
 
 /** The fields the server writes into a received document; a client cannot set them. */
 const SERVER_FIELDS = ['_receivedAt', '_visitor', '_country'] as const;
@@ -143,14 +144,19 @@ export function mountIngestEndpoints(router: express.Router, core: Core): void {
   });
 }
 
-/** One endpoint as the page sees it; the token only for the people who manage the instance. */
+/**
+ * One endpoint as the page sees it. What only the people who manage the instance decided goes to them alone: the token, and
+ * the websites they added, which are their own configuration (their blogs, a staging host). Everyone else learns the declared
+ * websites, which the app's declaration states anyway.
+ */
 function endpointInfo(core: Core, instance: Instance, e: IngestEndpoint, manages: boolean): Record<string, unknown> {
   return {
     name: e.name, path: `/_ingest/${e.name}`, collection: e.collection, auth: e.auth,
-    origins: core.ingest.originsFor(instance.id, e), managedOrigins: e.managedOrigins,
-    instanceOrigins: e.managedOrigins ? core.ingest.instanceOrigins(instance.id, e.name) : [], maxBytes: e.maxBytes,
+    origins: manages ? core.ingest.originsFor(instance.id, e) : e.origins, managedOrigins: e.managedOrigins,
+    instanceOrigins: manages && e.managedOrigins ? core.ingest.instanceOrigins(instance.id, e.name) : [], maxBytes: e.maxBytes,
     enabled: core.ingest.enabled && !core.ingest.isOff(instance.id, e.name),
     token: manages && e.auth === 'token' ? core.ingest.token(instance.id, e.name) : null,
+    canManage: manages,
   };
 }
 
@@ -162,7 +168,9 @@ function endpointInfo(core: Core, instance: Instance, e: IngestEndpoint, manages
  * endpoint that declares `managedOrigins: true` (`ingest.setOrigins`). Everyone else is refused, as is every endpoint whose
  * websites the app fixes.
  */
-export function mountIngestInfo(router: express.Router, core: Core, ctxOf: (res: Response) => Ctx, requireAccess: (ctx: Ctx) => void): void {
+export function mountIngestInfo(
+  router: express.Router, core: Core, ctxOf: (res: Response) => Ctx, requireAccess: (ctx: Ctx) => void, writes: RateLimiter,
+): void {
   const declaredOrRefuse = (ctx: Ctx): void => {
     if (ctx.caps.ingest === undefined || ctx.caps.ingest === null || typeof ctx.caps.ingest !== 'object') {
       throw new LagerError('not_found', 'This app does not receive data from outside.');
@@ -186,6 +194,11 @@ export function mountIngestInfo(router: express.Router, core: Core, ctxOf: (res:
     requireAccess(ctx);
     declaredOrRefuse(ctx);
     if (!manages(ctx)) throw new LagerError('forbidden', 'Only the people who manage this instance may change where data may come from.');
+    // Out of the same budget as the viewer's database writes: each call writes to the platform database.
+    if (!writes.hit(`${ctx.instance.id}\n${ctx.viewer.userId}`, DB_RATE.writes)) {
+      res.set('Retry-After', '5');
+      throw new LagerError('rate_limited', 'Too many requests; try again shortly.');
+    }
     const endpoint = ingestEndpoints(ctx.caps).find((e) => e.name === req.params.name);
     if (!endpoint) throw new LagerError('not_found', 'No such endpoint.');
     const body: unknown = req.body;

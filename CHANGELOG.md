@@ -6,7 +6,7 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 
 ### Added
 
-- **Websites named per instance:** an ingest endpoint can declare `managedOrigins: true`. The people who manage each instance then add the websites whose pages may send, on the instance page under "Data from outside" or from the app with `ingest.setOrigins(name, origins)`, without a redeploy. For apps where every owner brings their own website, such as a blog analytics dashboard; until now they needed a token endpoint with `["*"]`, whose token sits in every visitor's page source. `ingest.endpoints()` also reports `managedOrigins` and `instanceOrigins`. The platform database moves to schema version 4 (one new column).
+- **Websites named per instance:** an ingest endpoint can declare `managedOrigins: true`. The people who manage each instance then add the websites whose pages may send, on the instance page under "Data from outside" or from the app with `ingest.setOrigins(name, origins)`, without a redeploy. For apps where every owner brings their own website, such as a blog analytics dashboard; until now they needed a token endpoint with `["*"]`, whose token sits in every visitor's page source. `ingest.endpoints()` also reports `managedOrigins`, `instanceOrigins` and `canManage`; the added websites, like the token, are shown only to the people who manage the instance. The platform database moves to schema version 4 (one new column).
 
 ## [0.2.0] - 2026-11-20
 

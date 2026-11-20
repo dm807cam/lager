@@ -179,8 +179,9 @@ ${e.auth === 'token' ? form(`${base}/ingest/token`, csrf, name, esc(t(locale, 'i
 function managedOriginsBody(core: Core, locale: Locale, inst: Instance, e: IngestEndpoint, base: string, csrf: string): string {
   const name = hiddenField('name', e.name);
   const id = `origin-${e.name}`;
+  const counted = core.ingest.originsFor(inst.id, e);
   const rows = core.ingest.instanceOrigins(inst.id, e.name).map((origin) => [
-    `<span class="mono">${esc(origin)}</span>`,
+    `<span class="mono">${esc(origin)}</span>${counted.includes(origin) ? '' : ` ${badge(t(locale, 'instance.ingest.overLimit'), { tone: 'warning', icon: 'alert' })}`}`,
     form(`${base}/ingest/origins/remove`, csrf, name + hiddenField('origin', origin), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true),
   ]);
   const list = rows.length ? dataTable(locale, [t(locale, 'instance.ingest.origin'), ''], rows) : emptyState(t(locale, 'instance.ingest.managedNone'), 'globe');

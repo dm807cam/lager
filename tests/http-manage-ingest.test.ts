@@ -173,4 +173,32 @@ describe('instance page: data from outside', () => {
     expect(res.status).toBe(302);
     expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).toEqual([]);
   });
+
+  it('websites over the limit are marked, can still be removed, and a 21st is refused with a notice', async () => {
+    const { inst, p, pc } = await setup();
+    const declare = (origins: string[]) => h.core.apps.deploy({ slug: 'stats', html: `<p>${origins.length}</p>`, userId: p.id, capabilities: { ingest: { endpoints: [{ name: 'hits', auth: 'none', origins, managedOrigins: true }] } } as never });
+    declare([]);
+    for (let i = 0; i < 20; i++) expect((await post(pc, p, 'origins', { name: 'hits', origin: `https://s${i}.example` })).status).toBe(302);
+    const full = await post(pc, p, 'origins', { name: 'hits', origin: 'https://s20.example' });
+    expect((await request(h.app).get(full.headers.location).set('Host', h.host).set('Cookie', pc)).text).toContain(en('notice.originsLimit'));
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).toHaveLength(20);
+    // A later version declares two: the last two added stop counting and are marked; removing one of them works.
+    declare(['https://app0.example', 'https://app1.example']);
+    const shown = (await page(pc)).text;
+    expect(shown.match(new RegExp(en('instance.ingest.overLimit'), 'g'))).toHaveLength(2);
+    expect((await post(pc, p, 'origins/remove', { name: 'hits', origin: 'https://s0.example' })).status).toBe(302);
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).not.toContain('https://s0.example');
+    expect((await page(pc)).text.match(new RegExp(en('instance.ingest.overLimit'), 'g'))).toHaveLength(1);
+  });
+
+  it('a platform administrator without a grant and anyone on a disabled instance cannot change the websites', async () => {
+    const { inst, p, pc } = await setup();
+    h.core.apps.deploy({ slug: 'stats', html: '<p>2</p>', userId: p.id, capabilities: { ingest: { endpoints: [{ name: 'hits', auth: 'none', managedOrigins: true }] } } as never });
+    const admin = h.core.users.get(h.adminId)!;
+    const adminCookie = await h.login();
+    expect((await post(adminCookie, admin, 'origins', { name: 'hits', origin: 'https://evil.example' })).status).toBe(403);
+    h.core.apps.setInstanceDisabled(inst.id, true);
+    expect((await post(pc, p, 'origins', { name: 'hits', origin: 'https://blog.example.com' })).status).toBe(403);
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).toEqual([]);
+  });
 });

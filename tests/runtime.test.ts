@@ -1715,8 +1715,8 @@ describe('ingest', () => {
     expect(await g.lager.use('permissions').then((p: any) => p.state('ingest'))).toBe('granted');
     const list = await ingest.endpoints();
     expect(list).toEqual([
-      { name: 'hits', url: `${window.location.origin}/_ingest/hits`, auth: 'none', collection: 'hits', origins: ['https://blog.example.com'], managedOrigins: false, instanceOrigins: [], maxBytes: 4096, enabled: true, token: null },
-      { name: 'weight', url: `${window.location.origin}/_ingest/weight`, auth: 'token', collection: 'weights', origins: [], managedOrigins: false, instanceOrigins: [], maxBytes: 2048, enabled: false, token: 'lgi_secret' },
+      { name: 'hits', url: `${window.location.origin}/_ingest/hits`, auth: 'none', collection: 'hits', origins: ['https://blog.example.com'], managedOrigins: false, instanceOrigins: [], maxBytes: 4096, enabled: true, token: null, canManage: false },
+      { name: 'weight', url: `${window.location.origin}/_ingest/weight`, auth: 'token', collection: 'weights', origins: [], managedOrigins: false, instanceOrigins: [], maxBytes: 2048, enabled: false, token: 'lgi_secret', canManage: false },
     ]);
     expect(Object.isFrozen(list[0])).toBe(true);
     // Asked with the session, and every time anew: the switch and the token can change.
@@ -1730,10 +1730,10 @@ describe('ingest', () => {
     const ingest = await boot().use('ingest');
     originsReply = (url, body) => json({ endpoint: {
       name: 'hits', path: '/_ingest/hits', collection: 'hits', auth: 'none', origins: body.origins, managedOrigins: true, instanceOrigins: body.origins,
-      maxBytes: 4096, enabled: true, token: null, url,
+      maxBytes: 4096, enabled: true, token: null, canManage: true, url,
     } });
     const e = await ingest.setOrigins('hits', ['https://blog.example.com']);
-    expect(e).toEqual({ name: 'hits', url: `${window.location.origin}/_ingest/hits`, auth: 'none', collection: 'hits', origins: ['https://blog.example.com'], managedOrigins: true, instanceOrigins: ['https://blog.example.com'], maxBytes: 4096, enabled: true, token: null });
+    expect(e).toEqual({ name: 'hits', url: `${window.location.origin}/_ingest/hits`, auth: 'none', collection: 'hits', origins: ['https://blog.example.com'], managedOrigins: true, instanceOrigins: ['https://blog.example.com'], maxBytes: 4096, enabled: true, token: null, canManage: true });
     expect(Object.isFrozen(e) && Object.isFrozen(e.instanceOrigins)).toBe(true);
     const [, init] = calls.find(([u]) => u === '/__lager/ingest/hits/origins')!;
     expect(init).toMatchObject({ method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Lager-Request': '1' } });

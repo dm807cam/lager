@@ -1310,9 +1310,10 @@
 
   /**
    * The endpoints through which the instance takes data from outside, for a page that tells its owner what to paste where:
-   * `{name, url, auth, collection, origins, managedOrigins, instanceOrigins, maxBytes, enabled, token}`. `token` is a string
-   * only for the people who manage the instance, and only for an endpoint that needs one. `origins` is every website that may
-   * send; on an endpoint with `managedOrigins`, `instanceOrigins` are the ones the instance's managers added with `setOrigins`.
+   * `{name, url, auth, collection, origins, managedOrigins, instanceOrigins, maxBytes, enabled, token, canManage}`. `canManage`
+   * says whether the viewer manages the instance; only then is `token` a string (for an endpoint that needs one), `origins`
+   * every website that may send, and `instanceOrigins` the websites the managers added with `setOrigins`. Everyone else gets
+   * the declared websites and an empty `instanceOrigins`.
    */
   function buildIngest() {
     function endpointOf(e) {
@@ -1320,7 +1321,7 @@
       return Object.freeze({
         name: e.name, url: window.location.origin + e.path, auth: e.auth, collection: e.collection,
         origins: list(e.origins), managedOrigins: e.managedOrigins === true, instanceOrigins: list(e.instanceOrigins), maxBytes: e.maxBytes,
-        enabled: e.enabled === true, token: typeof e.token === 'string' ? e.token : null,
+        enabled: e.enabled === true, token: typeof e.token === 'string' ? e.token : null, canManage: e.canManage === true,
       });
     }
     function networkError(e) { throw { code: 'unavailable', message: e && e.message ? String(e.message) : 'Network error.' }; }
