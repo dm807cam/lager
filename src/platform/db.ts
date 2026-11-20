@@ -226,6 +226,11 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (instance_id, name)
   );
   `,
+  `
+  -- The websites the people who manage an instance added to one of its ingest endpoints, as a JSON list of origins (NULL =
+  -- none). Used only while the app's active version declares \`managedOrigins: true\` for the endpoint.
+  ALTER TABLE ingest_endpoints ADD COLUMN origins TEXT;
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

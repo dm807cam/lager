@@ -485,8 +485,8 @@ describe('GET /__lager/ingest', () => {
     expect(guest.status).toBe(200);
     expect(guest.headers['cache-control']).toBe('no-store');
     expect(guest.body.endpoints).toEqual([
-      { name: 'hits', path: '/_ingest/hits', collection: 'hits', auth: 'none', origins: [BLOG, 'http://localhost:4000'], maxBytes: 4096, enabled: true, token: null },
-      { name: 'weight', path: '/_ingest/weight', collection: 'log/main/weights', auth: 'token', origins: [], maxBytes: 200, enabled: true, token: null },
+      { name: 'hits', path: '/_ingest/hits', collection: 'hits', auth: 'none', origins: [BLOG, 'http://localhost:4000'], managedOrigins: false, instanceOrigins: [], maxBytes: 4096, enabled: true, token: null },
+      { name: 'weight', path: '/_ingest/weight', collection: 'log/main/weights', auth: 'token', origins: [], managedOrigins: false, instanceOrigins: [], maxBytes: 200, enabled: true, token: null },
     ]);
     const ada = h.core.users.create({ email: 'ada@x.y', name: 'Ada', password: 'password-123', role: 'user' });
     h.core.access.setGrant(inst, 'user', ada.id, 'interact', h.core.users.get(h.adminId)!);
@@ -505,5 +505,97 @@ describe('GET /__lager/ingest', () => {
     h.core.apps.deploy({ slug: 'plain', html: '<p>x</p>', userId: h.adminId });
     const cookie = await h.enter('plain', await h.login());
     expect((await request(h.app).get('/__lager/ingest').set('Host', 'plain.apps.localhost').set('Cookie', cookie)).status).toBe(404);
+  });
+});
+
+describe('websites named per instance (managedOrigins)', () => {
+  const MANAGED = [{ name: 'hits', auth: 'none', managedOrigins: true }, { name: 'fixed', auth: 'none', origins: [BLOG] }];
+  const putOrigins = (h: Harness, cookie: string | null, origins: unknown, name = 'hits', host = HOST) => {
+    const req = request(h.app).put(`/__lager/ingest/${name}/origins`).set('Host', host).set('X-Lager-Request', '1');
+    if (cookie !== null) req.set('Cookie', cookie);
+    return req.send({ origins });
+  };
+  const owner = async (h: Harness, slug = 'stats') => h.enter(slug, await h.login());
+  const person = async (h: Harness, inst: { id: string }, email: string, level: 'view' | 'interact' | 'admin') => {
+    const u = h.core.users.create({ email, name: email, password: 'password-123', role: 'user' });
+    h.core.access.setGrant(inst as never, 'user', u.id, level, h.core.users.get(h.adminId)!);
+    return h.enter('stats', await h.login(email, 'password-123'));
+  };
+
+  it('takes nothing until a website is added, then exactly the added ones', async () => {
+    const { h, inst } = setup({ endpoints: MANAGED });
+    expect((await hit(h)).status).toBe(403);
+    const res = await putOrigins(h, await owner(h), [BLOG, 'https://WWW.Example.com']);
+    expect(res.status).toBe(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.body.endpoint).toMatchObject({ name: 'hits', origins: [BLOG, 'https://www.example.com'], managedOrigins: true, instanceOrigins: [BLOG, 'https://www.example.com'] });
+    const ok = await hit(h, { path: '/' }, 'https://www.example.com');
+    expect(ok.status).toBe(202);
+    expect(ok.headers['access-control-allow-origin']).toBe('https://www.example.com');
+    expect((await hit(h)).status).toBe(202);
+    expect((await hit(h, { path: '/' }, 'https://evil.example')).status).toBe(403);
+    const pre = await request(h.app).options('/_ingest/hits').set('Host', HOST).set('Origin', BLOG).set('Access-Control-Request-Method', 'POST');
+    expect(pre.status).toBe(204);
+    expect(docs(h, inst.id)).toHaveLength(2);
+    // Removing a website closes it at once.
+    expect((await putOrigins(h, await owner(h), ['https://www.example.com'])).status).toBe(200);
+    expect((await hit(h)).status).toBe(403);
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).toEqual(['https://www.example.com']);
+  });
+
+  it('keeps the declared websites and adds the instance\'s own', async () => {
+    const { h } = setup({ endpoints: [{ name: 'hits', auth: 'none', origins: [BLOG], managedOrigins: true }] });
+    const res = await putOrigins(h, await owner(h), ['https://other.example', BLOG]);
+    expect(res.body.endpoint.origins).toEqual([BLOG, 'https://other.example']);
+    expect(res.body.endpoint.instanceOrigins).toEqual(['https://other.example']);
+    expect((await hit(h)).status).toBe(202);
+    expect((await hit(h, { path: '/' }, 'https://other.example')).status).toBe(202);
+    await putOrigins(h, await owner(h), []);
+    expect((await hit(h)).status).toBe(202);
+    expect((await hit(h, { path: '/' }, 'https://other.example')).status).toBe(403);
+  });
+
+  it('only the people who manage the instance may change them, and only from the instance\'s own page', async () => {
+    const { h, inst } = setup({ endpoints: MANAGED, visibility: 'public' });
+    // A guest of a public instance can look, not manage.
+    expect((await putOrigins(h, null, [BLOG])).status).toBe(403);
+    expect((await putOrigins(h, await person(h, inst, 'v@x.y', 'view'), [BLOG])).status).toBe(403);
+    expect((await putOrigins(h, await person(h, inst, 'c@x.y', 'interact'), [BLOG])).status).toBe(403);
+    const noHeader = await request(h.app).put('/__lager/ingest/hits/origins').set('Host', HOST).set('Cookie', await owner(h)).send({ origins: [BLOG] });
+    expect(noHeader.status).toBe(403);
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).toEqual([]);
+    expect((await putOrigins(h, await person(h, inst, 'm@x.y', 'admin'), [BLOG])).status).toBe(200);
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).toEqual([BLOG]);
+  });
+
+  it('refuses bad websites, endpoints whose websites the app fixes and endpoints that do not exist', async () => {
+    const { h, inst } = setup({ endpoints: MANAGED });
+    const cookie = await owner(h);
+    for (const bad of [['*'], ['blog.example.com'], [`${BLOG}/path`], 'https://blog.example.com', [7], Array.from({ length: INGEST_LIMITS.origins + 1 }, (_, i) => `https://s${i}.example`)]) {
+      const res = await putOrigins(h, cookie, bad);
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+      expect(res.body.error.code).toBe('invalid_argument');
+    }
+    expect((await putOrigins(h, cookie, ['https://other.example'], 'fixed')).status).toBe(400);
+    expect((await putOrigins(h, cookie, [BLOG], 'nope')).status).toBe(404);
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).toEqual([]);
+  });
+
+  it('belong to the instance and count only while the active version says managedOrigins', async () => {
+    const { h, inst } = setup({ endpoints: MANAGED });
+    await putOrigins(h, await owner(h), [BLOG]);
+    // Another instance of the same app has its own list.
+    const other = h.core.apps.createInstance({ appId: inst.appId, slug: 'stats-two', ownerId: h.adminId });
+    const otherHit = request(h.app).post('/_ingest/hits').set('Host', 'stats-two.apps.localhost').set('Origin', BLOG).type('text/plain').send('{}');
+    expect((await otherHit).status).toBe(403);
+    expect(h.core.ingest.instanceOrigins(other.id, 'hits')).toEqual([]);
+    // A version that fixes its websites closes the added ones without forgetting them.
+    h.core.apps.deploy({ slug: 'stats', html: '<p>2</p>', userId: h.adminId, capabilities: { ingest: { endpoints: [{ name: 'hits', auth: 'none', origins: ['https://lager.example'] }] } } as never });
+    expect((await hit(h)).status).toBe(403);
+    const info = await request(h.app).get('/__lager/ingest').set('Host', HOST).set('Cookie', await owner(h));
+    expect(info.body.endpoints[0]).toMatchObject({ origins: ['https://lager.example'], managedOrigins: false, instanceOrigins: [] });
+    expect((await putOrigins(h, await owner(h), [BLOG])).status).toBe(400);
+    h.core.apps.deploy({ slug: 'stats', html: '<p>3</p>', userId: h.adminId, capabilities: { ingest: { endpoints: MANAGED } } as never });
+    expect((await hit(h)).status).toBe(202);
   });
 });

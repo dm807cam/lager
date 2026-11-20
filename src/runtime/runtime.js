@@ -1310,28 +1310,59 @@
 
   /**
    * The endpoints through which the instance takes data from outside, for a page that tells its owner what to paste where:
-   * `{name, url, auth, collection, origins, maxBytes, enabled, token}`. `token` is a string only for the people who manage the
-   * instance, and only for an endpoint that needs one.
+   * `{name, url, auth, collection, origins, managedOrigins, instanceOrigins, maxBytes, enabled, token}`. `token` is a string
+   * only for the people who manage the instance, and only for an endpoint that needs one. `origins` is every website that may
+   * send; on an endpoint with `managedOrigins`, `instanceOrigins` are the ones the instance's managers added with `setOrigins`.
    */
   function buildIngest() {
+    function endpointOf(e) {
+      var list = function (v) { return Object.freeze(Array.isArray(v) ? v.slice() : []); };
+      return Object.freeze({
+        name: e.name, url: window.location.origin + e.path, auth: e.auth, collection: e.collection,
+        origins: list(e.origins), managedOrigins: e.managedOrigins === true, instanceOrigins: list(e.instanceOrigins), maxBytes: e.maxBytes,
+        enabled: e.enabled === true, token: typeof e.token === 'string' ? e.token : null,
+      });
+    }
+    function networkError(e) { throw { code: 'unavailable', message: e && e.message ? String(e.message) : 'Network error.' }; }
     function endpoints() {
       return fetch(INGEST_URL, { credentials: 'same-origin' }).then(
         function (res) {
           return res.json().catch(function () { return null; }).then(function (json) {
             if (!res.ok || !json || !Array.isArray(json.endpoints)) throw { code: 'unavailable', message: 'The endpoints could not be read.' };
-            return json.endpoints.map(function (e) {
-              return Object.freeze({
-                name: e.name, url: window.location.origin + e.path, auth: e.auth, collection: e.collection,
-                origins: Object.freeze(Array.isArray(e.origins) ? e.origins.slice() : []), maxBytes: e.maxBytes,
-                enabled: e.enabled === true, token: typeof e.token === 'string' ? e.token : null,
-              });
-            });
+            return json.endpoints.map(endpointOf);
           });
         },
-        function (e) { throw { code: 'unavailable', message: e && e.message ? String(e.message) : 'Network error.' }; }
+        networkError
       );
     }
-    return Object.freeze({ endpoints: endpoints });
+    /**
+     * Replaces the websites this instance adds to an endpoint that declares `managedOrigins: true`, for example the blogs an
+     * owner names in the app. Only for the people who manage the instance. Resolves the endpoint as `endpoints()` shows it, or
+     * rejects `{code, message}`: `not_granted`, `invalid_argument` (a bad address, too many, or websites the app fixes),
+     * `not_found` or `unavailable`.
+     */
+    function setOrigins(name, origins) {
+      if (typeof name !== 'string' || !Array.isArray(origins)) {
+        return Promise.reject({ code: 'invalid_argument', message: 'setOrigins takes the endpoint name and a list of websites.' });
+      }
+      return fetch(INGEST_URL + '/' + encodeURIComponent(name) + '/origins', {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-Lager-Request': '1' },
+        body: JSON.stringify({ origins: origins }),
+      }).then(
+        function (res) {
+          return res.json().catch(function () { return null; }).then(function (json) {
+            if (res.ok && json && json.endpoint) return endpointOf(json.endpoint);
+            var err = json && json.error ? json.error : {};
+            var code = err.code === 'forbidden' || err.code === 'unauthenticated' ? 'not_granted'
+              : err.code === 'invalid_argument' || err.code === 'not_found' ? err.code : 'unavailable';
+            throw { code: code, message: err.message || 'The websites could not be saved.' };
+          });
+        },
+        networkError
+      );
+    }
+    return Object.freeze({ endpoints: endpoints, setOrigins: setOrigins });
   }
 
   // ------------------------------------------------------------------ permissions

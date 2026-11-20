@@ -40,6 +40,8 @@ const NOTICES: Record<string, MessageKey> = {
   collaborators_invalid: 'notice.collaboratorsInvalid',
   owner_in_charge: 'notice.ownerInCharge',
   model_not_allowed: 'notice.modelNotAllowed',
+  origin_invalid: 'notice.originInvalid',
+  origins_limit: 'notice.originsLimit',
   owner_full_access: 'notice.ownerFullAccess',
   host_invalid: 'notice.hostInvalid',
   host_taken: 'notice.hostTaken',
@@ -151,9 +153,12 @@ function ingestCard(core: Core, locale: Locale, inst: Instance, base: string, cs
     const off = core.ingest.isOff(inst.id, e.name);
     const counts = core.ingest.countsOf(inst.id, e.name);
     // Each website on its own, as text to read: the page loads nothing from there.
+    const origins = core.ingest.originsFor(inst.id, e);
     const who = e.auth === 'token' ? esc(t(locale, 'instance.ingest.byToken'))
-      : `${esc(t(locale, 'instance.ingest.byOrigins'))} ${e.origins.map((o) => `<code>${esc(o)}</code>`).join(' ')}`;
+      : origins.length === 0 ? esc(t(locale, 'instance.ingest.noOrigins'))
+        : `${esc(t(locale, 'instance.ingest.byOrigins'))} ${origins.map((o) => `<code>${esc(o)}</code>`).join(' ')}`;
     const name = hiddenField('name', e.name);
+    const managed = e.managedOrigins ? managedOriginsBody(core, locale, inst, e, base, csrf) : '';
     const token = e.auth === 'token' ? `<div class="field"><span class="hint">${esc(t(locale, 'instance.ingest.token'))}</span>${copyField(locale, core.ingest.token(inst.id, e.name))}
 <p class="hint">${esc(t(locale, 'instance.ingest.tokenHint'))}</p></div>` : '';
     return `<div class="subsection" data-endpoint="${esc(e.name)}"><div class="card-title"><h3 class="mono">${esc(e.name)}</h3>${off
@@ -162,12 +167,27 @@ ${copyField(locale, `${url}/_ingest/${e.name}`)}
 <p class="hint">${who}</p><p class="hint">${esc(t(locale, 'instance.ingest.into', { collection: e.collection }))}</p>${token}
 <p class="hint">${esc(t(locale, 'instance.ingest.counts', { accepted: counts.accepted, refused: counts.refused, limited: counts.limited, date: since }))}</p>
 <div class="btn-row">${form(`${base}/ingest/switch`, csrf, name + hiddenField('on', off ? '1' : '0'), esc(t(locale, off ? 'instance.ingest.turnOn' : 'instance.ingest.turnOff')), 'secondary', '', true)}
-${e.auth === 'token' ? form(`${base}/ingest/token`, csrf, name, esc(t(locale, 'instance.ingest.rotate')), 'quiet', '', true) : ''}</div></div>`;
+${e.auth === 'token' ? form(`${base}/ingest/token`, csrf, name, esc(t(locale, 'instance.ingest.rotate')), 'quiet', '', true) : ''}</div>${managed}</div>`;
   }).join('');
   const used = core.data.ingestUsage(inst.id);
   return card(title, `<p class="hint">${esc(t(locale, 'instance.ingest.intro'))}</p>${items}
 <div class="subsection">${meter(used, core.ingest.quotaBytes, t(locale, 'instance.ingest.storage', { used: formatSize(locale, used), quota: formatSize(locale, core.ingest.quotaBytes) }))}
 <p class="hint gap-top">${esc(t(locale, 'instance.ingest.storageHint'))}</p></div>`);
+}
+
+/** The websites the people who manage the instance added to an endpoint with `managedOrigins`, each removable, and a form to add one. */
+function managedOriginsBody(core: Core, locale: Locale, inst: Instance, e: IngestEndpoint, base: string, csrf: string): string {
+  const name = hiddenField('name', e.name);
+  const id = `origin-${e.name}`;
+  const rows = core.ingest.instanceOrigins(inst.id, e.name).map((origin) => [
+    `<span class="mono">${esc(origin)}</span>`,
+    form(`${base}/ingest/origins/remove`, csrf, name + hiddenField('origin', origin), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true),
+  ]);
+  const list = rows.length ? dataTable(locale, [t(locale, 'instance.ingest.origin'), ''], rows) : emptyState(t(locale, 'instance.ingest.managedNone'), 'globe');
+  const add = form(`${base}/ingest/origins`, csrf, name + field(id, t(locale, 'instance.ingest.origin'),
+    `<input id="${esc(id)}" name="origin" type="url" required maxlength="300" autocomplete="off" spellcheck="false" placeholder="https://blog.example.com">`),
+  `${icon('plus')}${esc(t(locale, 'common.add'))}`, 'secondary', 'form-row');
+  return `<div class="gap-top"><h4>${esc(t(locale, 'instance.ingest.managed'))}</h4>${list}${add}<p class="hint gap-top">${esc(t(locale, 'instance.ingest.managedHint'))}</p></div>`;
 }
 
 /** Destructive actions at the bottom of the main column: each confirmed by typing the name. */
@@ -460,11 +480,12 @@ export const manageExtension: PlatformExtension = (router, core) => {
   }));
 
   /** The instance, if `user` manages it and its active version declares the endpoint the form names. */
-  const managedEndpoint = (req: Request, user: User): { inst: Instance; name: string } => {
+  const managedEndpoint = (req: Request, user: User): { inst: Instance; name: string; endpoint: IngestEndpoint } => {
     const inst = managed(user, param(req, 'slug'));
     const name = field(req, 'name', 100);
-    if (!endpointsOf(core, inst).some((e) => e.name === name)) throw new LagerError('not_found', 'Endpoint not found.');
-    return { inst, name };
+    const endpoint = endpointsOf(core, inst).find((e) => e.name === name);
+    if (!endpoint) throw new LagerError('not_found', 'Endpoint not found.');
+    return { inst, name, endpoint };
   };
 
   router.post('/ui/instances/:slug/ingest/switch', ...action(instBack, (req, user) => {
@@ -475,6 +496,19 @@ export const manageExtension: PlatformExtension = (router, core) => {
   router.post('/ui/instances/:slug/ingest/token', ...action(instBack, (req, user) => {
     const { inst, name } = managedEndpoint(req, user);
     core.ingest.rotateToken(inst.id, name);
+  }));
+
+  router.post('/ui/instances/:slug/ingest/origins', ...action(instBack, (req, user) => {
+    const { inst, name, endpoint } = managedEndpoint(req, user);
+    // People paste what the address bar shows; one trailing slash is the only thing taken off before the strict check.
+    const origin = field(req, 'origin', 300).trim().replace(/\/$/, '');
+    core.ingest.setOrigins(inst.id, endpoint, [...core.ingest.instanceOrigins(inst.id, name), origin]);
+  }));
+
+  router.post('/ui/instances/:slug/ingest/origins/remove', ...action(instBack, (req, user) => {
+    const { inst, name, endpoint } = managedEndpoint(req, user);
+    const origin = field(req, 'origin', 300);
+    core.ingest.setOrigins(inst.id, endpoint, core.ingest.instanceOrigins(inst.id, name).filter((o) => o !== origin));
   }));
 
   router.post('/ui/instances/:slug/delete', ...action(instBack, (req, user) => {

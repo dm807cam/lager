@@ -525,7 +525,7 @@ const capabilitiesArg = z.object({
   page: jsonObject().optional().describe('The page saves itself (lager.use("page")). {"publish": false} disables saving'),
   downloads: jsonObject().optional().describe('Offer files to save (lager.use("downloads"))'),
   complete: jsonObject().optional().describe('Language model calls through lager.complete(). Optional {"model": "<name from list_models>"}; without it every viewer gets the default model of their AI group'),
-  ingest: jsonObject().optional().describe('Receive data from outside (another website, a webhook, a script, a device): {"endpoints": [{"name", "auth": "none" | "token", "origins"?, "collection"?, "maxBytes"?, "maxPerDay"?, "onFull"?, "visitor"?, "country"?}]}. Each endpoint only appends documents to one collection; see "Receiving data from outside" in get_guide'),
+  ingest: jsonObject().optional().describe('Receive data from outside (another website, a webhook, a script, a device): {"endpoints": [{"name", "auth": "none" | "token", "origins"?, "managedOrigins"?, "collection"?, "maxBytes"?, "maxPerDay"?, "onFull"?, "visitor"?, "country"?}]}. Each endpoint only appends documents to one collection; see "Receiving data from outside" in get_guide'),
 }).catchall(z.unknown())
   .describe('Every runtime capability the HTML uses, e.g. {"db":{},"user":{}}. A capability that is not declared is null at runtime.');
 

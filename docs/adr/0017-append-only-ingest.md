@@ -36,7 +36,7 @@ Alternatives that lost:
 - *Received documents in snapshots.* It would take a second file per snapshot and a restore that rolls back what guests sent since. A restore is for the instance's own state; received documents are append-only from outside, and exports and backups hold them.
 - *Always answering `202`,* as first proposed, so that a prober learns nothing. Senders need the difference: a webhook retries on `429` and `5xx`, and a person with a mistyped token in a phone shortcut needs `401`, not silence. The statuses reveal only what the sender already knows or the instance page of a public address would show; a switched-off endpoint answers like a missing one.
 - *Endpoints that are on wherever a version declares them,* as first built. A deploy can already change what an instance does for its visitors, but a publisher opening a way in for strangers on an instance that belongs to someone else is a different thing from changing the page they chose to run. *Off everywhere until switched on* would cost the common case, an owner deploying their own app, a step for nothing.
-- *A generic tracker script served by Lager, a retention time per endpoint, origins set per instance.* Left out: the first is app code, the second is what `rotate` and the quota already bound, and the third waits for a need.
+- *A generic tracker script served by Lager, a retention time per endpoint, origins set per instance.* Left out: the first is app code, the second is what `rotate` and the quota already bound, and the third waits for a need (it came; see the amendment below).
 - *Stored tokens (hashed, as API tokens are).* A hash cannot be shown again, and the instance page is where people look for the value they pasted into a device a year ago.
 
 ## Consequences
@@ -50,3 +50,16 @@ Alternatives that lost:
 - Changing `LAGER_SECRET` replaces every ingest token, as it ends every session.
 - The request limits, the daily counts and the visitor key live in memory: they start again with the server, and several Lager processes would not share them (0002).
 - When trust levels for publishing arrive (#7), `auth: "none"` endpoints and `anyone` rules are the natural things to hold to them on servers with open registration. Today only administrators and publishers can deploy, so only they can declare either.
+
+## Amendment (2026-11-20): websites named per instance
+
+The need came with the first app built on endpoints: an analytics dashboard for bloggers, deployed once, where every owner names their own blogs in the app. With origins fixed in the declaration it had two ways out, and both were bad: a redeploy for every new blog, or `auth: "token"` with `["*"]`, which puts the token into the page source of every visitor and gives up the per-address limit that only endpoints without a token have.
+
+- An endpoint may declare `managedOrigins: true`. Then the people who manage an instance (`admin` and the owner) can add websites to its origin list, on the instance page or from the app with `ingest.setOrigins(name, origins)` (`PUT /__lager/ingest/<name>/origins`, with the same `X-Lager-Request` header as every other write of the runtime). The declared origins always stay; together they are at most 20, each checked like a declared one, and `*` cannot be added. With `managedOrigins`, `auth: "none"` may declare no origins at all and takes nothing until a website is added.
+- The added websites are stored per instance and endpoint (`ingest_endpoints.origins`, schema version 4) and count only while the active version declares `managedOrigins` for the endpoint: a version that fixes its websites again closes them without forgetting them.
+- Nothing else changes: the endpoint still never reads a cookie, and an added origin is exactly as strong as a declared one. It keeps other websites' pages out, not scripts.
+
+Alternatives that lost:
+
+- *Origins as instance data the page writes* (a document the endpoint reads). Every contributor who may write that path could open the endpoint, and the rules of the app, not the people who manage the instance, would decide who may.
+- *Replacing the declared list per instance.* A publisher who lists a website means it; an instance that drops it would surprise whoever reads the declaration. Adding is enough for every case we know.

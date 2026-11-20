@@ -39,7 +39,8 @@ describe('platform database migrations', () => {
       expect(db.prepare('SELECT COUNT(*) AS n FROM instance_signins').get()).toMatchObject({ n: 1 });
       // Migration 3: the state of ingest endpoints, with its defaults.
       db.prepare('INSERT INTO ingest_endpoints (instance_id, name) VALUES (?, ?)').run('i1', 'hits');
-      expect({ ...db.prepare('SELECT disabled, token_generation FROM ingest_endpoints').get() }).toEqual({ disabled: null, token_generation: 0 });
+      // Migration 4: the websites added per instance, none until someone adds them.
+      expect({ ...db.prepare('SELECT disabled, token_generation, origins FROM ingest_endpoints').get() }).toEqual({ disabled: null, token_generation: 0, origins: null });
       expect(() => db.prepare('INSERT INTO ingest_endpoints (instance_id, name) VALUES (?, ?)').run('no-such-instance', 'hits')).toThrow();
       // The confirmation and the endpoint state go with their instance.
       db.prepare('DELETE FROM instances WHERE id = ?').run('i1');
@@ -55,6 +56,25 @@ describe('platform database migrations', () => {
     again.close();
   });
 
+  it('a version-3 database keeps the state of its ingest endpoints and gains the websites column', () => {
+    const dir = versionOne();
+    const old = new DatabaseSync(path.join(dir, 'platform.sqlite'));
+    old.exec('PRAGMA foreign_keys = ON');
+    old.exec(MIGRATIONS[1]);
+    old.exec(MIGRATIONS[2]);
+    old.exec('PRAGMA user_version = 3');
+    old.prepare('INSERT INTO ingest_endpoints (instance_id, name, disabled, token_generation) VALUES (?, ?, ?, ?)').run('i1', 'hits', 1, 2);
+    old.close();
+    const db = openPlatformDb(dir);
+    try {
+      expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
+      expect({ ...db.prepare('SELECT instance_id, name, disabled, token_generation, origins FROM ingest_endpoints').get() })
+        .toEqual({ instance_id: 'i1', name: 'hits', disabled: 1, token_generation: 2, origins: null });
+    } finally {
+      db.close();
+    }
+  });
+
   it('a fresh database and a migrated one have the same schema', () => {
     const schema = (db: DatabaseSync): string[] =>
       (db.prepare("SELECT name FROM pragma_table_list WHERE schema = 'main' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>)
@@ -65,6 +85,7 @@ describe('platform database migrations', () => {
     expect(schema(migrated)).toEqual(schema(fresh));
     expect(schema(fresh)).toContain('oauth_clients.last_used_at TEXT');
     expect(schema(fresh)).toContain('ingest_endpoints.token_generation INTEGER');
+    expect(schema(fresh)).toContain('ingest_endpoints.origins TEXT');
     fresh.close();
     migrated.close();
   });

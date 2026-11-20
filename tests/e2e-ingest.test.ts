@@ -102,6 +102,6 @@ describe('end to end: a website counts its page views on a private instance', ()
 
     // The page learns its endpoint, without a token: this one needs none.
     const info = JSON.parse((await call(site, 'GET', '/__lager/ingest', { headers: { Cookie: inst } })).body);
-    expect(info.endpoints).toEqual([{ name: 'hits', path: '/_ingest/hits', collection: 'hits', auth: 'none', origins: ['https://blog.example.com'], maxBytes: 1024, enabled: true, token: null }]);
+    expect(info.endpoints).toEqual([{ name: 'hits', path: '/_ingest/hits', collection: 'hits', auth: 'none', origins: ['https://blog.example.com'], managedOrigins: false, instanceOrigins: [], maxBytes: 1024, enabled: true, token: null }]);
   });
 });

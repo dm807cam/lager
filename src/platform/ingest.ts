@@ -19,6 +19,11 @@ export interface IngestEndpoint {
   auth: IngestAuth;
   /** Web origins whose pages may call the endpoint, lower case; `["*"]` is any origin and only valid with a token. */
   origins: string[];
+  /**
+   * Whether the people who manage an instance may add websites of their own to `origins` (`Ingest.setOrigins`). For apps
+   * whose users name their websites in the app (an analytics dashboard for each owner's blog), not in the declaration.
+   */
+  managedOrigins: boolean;
   /** Largest request body in bytes. */
   maxBytes: number;
   /** Documents the endpoint takes per UTC day. */
@@ -52,7 +57,7 @@ export const INGEST_LIMITS = {
 } as const;
 
 const NAME_RE = /^[a-z][a-z0-9_-]{0,47}$/;
-const ENDPOINT_KEYS = new Set(['name', 'collection', 'auth', 'origins', 'maxBytes', 'maxPerDay', 'onFull', 'visitor', 'country']);
+const ENDPOINT_KEYS = new Set(['name', 'collection', 'auth', 'origins', 'managedOrigins', 'maxBytes', 'maxPerDay', 'onFull', 'visitor', 'country']);
 const TOKEN_PREFIX = 'lgi_';
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -66,6 +71,29 @@ function normalizeOrigin(value: unknown): string | null {
   if (!/^([a-z0-9-]+(\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])$/.test(url.hostname)) return null;
   // Whatever the parser normalizes away (a path, a default port, upper case) must not have been there: the value is compared as text later.
   return url.origin === value.toLowerCase() ? url.origin : null;
+}
+
+/**
+ * The websites the people who manage an instance want to add to an endpoint, as they will be stored: normalized, without
+ * duplicates and without the origins the declaration already lists. Throws `invalid_argument` naming the first bad entry.
+ */
+export function parseManagedOrigins(endpoint: IngestEndpoint, list: unknown): string[] {
+  const bad = (msg: string): never => { throw new LagerError('invalid_argument', msg); };
+  if (!endpoint.managedOrigins) bad(`The app fixes the websites of endpoint "${endpoint.name}"; they cannot be changed per instance.`);
+  if (!Array.isArray(list)) return bad('origins must be a list of websites.');
+  const out: string[] = [];
+  for (const o of list as unknown[]) {
+    const origin = o === '*' ? null : normalizeOrigin(typeof o === 'string' ? o.trim() : o);
+    if (origin === null) {
+      throw new LagerError('invalid_argument', `"${String(o)}" is not a website address; write it like https://blog.example.com, without a path.`, 'origin_invalid');
+    }
+    if (!endpoint.origins.includes(origin) && !out.includes(origin)) out.push(origin);
+  }
+  const room = INGEST_LIMITS.origins - endpoint.origins.length;
+  if (out.length > room) {
+    throw new LagerError('invalid_argument', `Endpoint "${endpoint.name}" takes at most ${INGEST_LIMITS.origins} websites in all; ${endpoint.origins.length} come with the app, so at most ${room} can be added.`, 'origins_limit');
+  }
+  return out;
 }
 
 function wholeNumber(value: unknown, what: string, max: number, fallback: number): number {
@@ -111,13 +139,18 @@ export function parseIngest(declaration: unknown): IngestEndpoint[] {
       return normalizeOrigin(o) ?? bad(`${at}: "${String(o)}" is not an origin; write it like https://blog.example.com, without a path.`);
     });
     if (origins.includes('*') && (auth !== 'token' || origins.length > 1)) bad(`${at}: origins ["*"] is only allowed alone and with auth "token"; with auth "none" list the websites.`);
-    if (auth === 'none' && origins.length === 0) bad(`${at}: auth "none" needs origins, the websites whose pages may send.`);
+    if (entry.managedOrigins !== undefined && typeof entry.managedOrigins !== 'boolean') bad(`${at}: managedOrigins must be true or false.`);
+    const managedOrigins = entry.managedOrigins === true;
+    if (managedOrigins && origins.includes('*')) bad(`${at}: managedOrigins adds websites to a list; with origins ["*"] every website may already send.`);
+    if (auth === 'none' && origins.length === 0 && !managedOrigins) {
+      bad(`${at}: auth "none" needs origins, the websites whose pages may send, or managedOrigins: true to let the people who manage each instance name them.`);
+    }
     const onFull = entry.onFull === undefined ? 'refuse' : entry.onFull;
     if (onFull !== 'refuse' && onFull !== 'rotate') return bad(`${at}: onFull must be "refuse" or "rotate".`);
     if (entry.visitor !== undefined && entry.visitor !== 'daily') bad(`${at}: visitor must be "daily".`);
     if (entry.country !== undefined && typeof entry.country !== 'boolean') bad(`${at}: country must be true or false.`);
     return {
-      name, collection, auth, origins: [...new Set(origins)], onFull,
+      name, collection, auth, origins: [...new Set(origins)], managedOrigins, onFull,
       maxBytes: wholeNumber(entry.maxBytes, `${at}: maxBytes`, INGEST_LIMITS.maxBytes, INGEST_LIMITS.defaultMaxBytes),
       maxPerDay: wholeNumber(entry.maxPerDay, `${at}: maxPerDay`, INGEST_LIMITS.maxPerDay, INGEST_LIMITS.defaultPerDay),
       visitor: entry.visitor === 'daily', country: entry.country === true,
@@ -182,9 +215,9 @@ export class Ingest {
     return this.quotaBytes > 0;
   }
 
-  private row(instanceId: string, name: string): { disabled: number | null; token_generation: number } | undefined {
-    return this.db.prepare('SELECT disabled, token_generation FROM ingest_endpoints WHERE instance_id = ? AND name = ?')
-      .get(instanceId, name) as { disabled: number | null; token_generation: number } | undefined;
+  private row(instanceId: string, name: string): { disabled: number | null; token_generation: number; origins: string | null } | undefined {
+    return this.db.prepare('SELECT disabled, token_generation, origins FROM ingest_endpoints WHERE instance_id = ? AND name = ?')
+      .get(instanceId, name) as { disabled: number | null; token_generation: number; origins: string | null } | undefined;
   }
 
   /** Whether an endpoint nobody switched yet takes data; the core says so, because it knows who runs the app (see `setDefault`). */
@@ -210,6 +243,38 @@ export class Ingest {
       `INSERT INTO ingest_endpoints (instance_id, name, disabled) VALUES (?, ?, ?)
        ON CONFLICT(instance_id, name) DO UPDATE SET disabled = excluded.disabled`,
     ).run(instanceId, name, off ? 1 : 0);
+  }
+
+  /**
+   * The websites the people who manage the instance added to the endpoint, whatever the active version declares. They count
+   * only while the version says `managedOrigins: true` (see `originsFor`), so a version that fixes its websites again closes them
+   * without forgetting them.
+   */
+  instanceOrigins(instanceId: string, name: string): string[] {
+    const stored = this.row(instanceId, name)?.origins;
+    if (!stored) return [];
+    try {
+      const list: unknown = JSON.parse(stored);
+      return Array.isArray(list) ? list.filter((o): o is string => typeof o === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Every origin whose pages may send to the endpoint on this instance: the declared ones, then those its managers added. */
+  originsFor(instanceId: string, endpoint: IngestEndpoint): string[] {
+    if (!endpoint.managedOrigins) return endpoint.origins;
+    return [...new Set([...endpoint.origins, ...this.instanceOrigins(instanceId, endpoint.name)])];
+  }
+
+  /** Replaces the websites the instance's managers added to the endpoint; the list is checked with `parseManagedOrigins`. */
+  setOrigins(instanceId: string, endpoint: IngestEndpoint, list: unknown): string[] {
+    const origins = parseManagedOrigins(endpoint, list);
+    this.db.prepare(
+      `INSERT INTO ingest_endpoints (instance_id, name, origins) VALUES (?, ?, ?)
+       ON CONFLICT(instance_id, name) DO UPDATE SET origins = excluded.origins`,
+    ).run(instanceId, endpoint.name, origins.length ? JSON.stringify(origins) : null);
+    return this.originsFor(instanceId, endpoint);
   }
 
   /**

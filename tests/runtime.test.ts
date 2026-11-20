@@ -42,6 +42,7 @@ let roomReply: (body: any) => Response;
 let pageReply: (body: any) => Response | Promise<Response>;
 let completeReply: (body: any) => Response | Promise<Response>;
 let ingestReply: () => Response | Promise<Response>;
+let originsReply: (url: string, body: any) => Response | Promise<Response>;
 
 const parentOf = (path: string): string => path.split('/').slice(0, -1).join('/');
 const dbCalls = (): any[] => calls.filter(([u]) => u === '/__lager/db').map(([, init]) => JSON.parse(init.body));
@@ -119,6 +120,7 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
   if (url === '/__lager/page') return pageReply(JSON.parse(init.body));
   if (url === '/__lager/complete') return completeReply(JSON.parse(init.body));
   if (url === '/__lager/ingest') return ingestReply();
+  if (url.startsWith('/__lager/ingest/')) return originsReply(url, JSON.parse(init.body));
   if (url === '/__lager/assets' || url.startsWith('/__lager/assets/')) {
     const type = init?.headers?.['Content-Type'] as string | undefined;
     if (init?.method === 'POST') {
@@ -158,6 +160,7 @@ beforeEach(() => {
   pageReply = () => json({ version: '2' });
   completeReply = () => json({ text: 'ok' });
   ingestReply = () => json({ endpoints: [] });
+  originsReply = () => json({ error: { code: 'not_found', message: 'No such endpoint.' } }, 404);
   session = sessionOf(OWNER);
   FakeEventSource.instances = [];
   g.fetch = fakeFetch;
@@ -1712,14 +1715,43 @@ describe('ingest', () => {
     expect(await g.lager.use('permissions').then((p: any) => p.state('ingest'))).toBe('granted');
     const list = await ingest.endpoints();
     expect(list).toEqual([
-      { name: 'hits', url: `${window.location.origin}/_ingest/hits`, auth: 'none', collection: 'hits', origins: ['https://blog.example.com'], maxBytes: 4096, enabled: true, token: null },
-      { name: 'weight', url: `${window.location.origin}/_ingest/weight`, auth: 'token', collection: 'weights', origins: [], maxBytes: 2048, enabled: false, token: 'lgi_secret' },
+      { name: 'hits', url: `${window.location.origin}/_ingest/hits`, auth: 'none', collection: 'hits', origins: ['https://blog.example.com'], managedOrigins: false, instanceOrigins: [], maxBytes: 4096, enabled: true, token: null },
+      { name: 'weight', url: `${window.location.origin}/_ingest/weight`, auth: 'token', collection: 'weights', origins: [], managedOrigins: false, instanceOrigins: [], maxBytes: 2048, enabled: false, token: 'lgi_secret' },
     ]);
     expect(Object.isFrozen(list[0])).toBe(true);
     // Asked with the session, and every time anew: the switch and the token can change.
     expect(calls.filter(([u]) => u === '/__lager/ingest')).toEqual([['/__lager/ingest', { credentials: 'same-origin' }]]);
     await ingest.endpoints();
     expect(calls.filter(([u]) => u === '/__lager/ingest')).toHaveLength(2);
+  });
+
+  it('setOrigins replaces the websites of the instance and resolves the endpoint as endpoints() shows it', async () => {
+    declared();
+    const ingest = await boot().use('ingest');
+    originsReply = (url, body) => json({ endpoint: {
+      name: 'hits', path: '/_ingest/hits', collection: 'hits', auth: 'none', origins: body.origins, managedOrigins: true, instanceOrigins: body.origins,
+      maxBytes: 4096, enabled: true, token: null, url,
+    } });
+    const e = await ingest.setOrigins('hits', ['https://blog.example.com']);
+    expect(e).toEqual({ name: 'hits', url: `${window.location.origin}/_ingest/hits`, auth: 'none', collection: 'hits', origins: ['https://blog.example.com'], managedOrigins: true, instanceOrigins: ['https://blog.example.com'], maxBytes: 4096, enabled: true, token: null });
+    expect(Object.isFrozen(e) && Object.isFrozen(e.instanceOrigins)).toBe(true);
+    const [, init] = calls.find(([u]) => u === '/__lager/ingest/hits/origins')!;
+    expect(init).toMatchObject({ method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Lager-Request': '1' } });
+    expect(JSON.parse(init.body)).toEqual({ origins: ['https://blog.example.com'] });
+  });
+
+  it('setOrigins rejects with the codes the guide names', async () => {
+    declared();
+    const ingest = await boot().use('ingest');
+    await expect(ingest.setOrigins('hits', 'https://blog.example.com')).rejects.toMatchObject({ code: 'invalid_argument' });
+    expect(calls.map(([u]) => u)).not.toContain('/__lager/ingest/hits/origins');
+    const cases: Array<[number, string, string]> = [[403, 'forbidden', 'not_granted'], [401, 'unauthenticated', 'not_granted'], [400, 'invalid_argument', 'invalid_argument'], [404, 'not_found', 'not_found'], [500, 'internal', 'unavailable']];
+    for (const [status, code, expected] of cases) {
+      originsReply = () => json({ error: { code, message: 'm' } }, status);
+      await expect(ingest.setOrigins('hits', [])).rejects.toEqual({ code: expected, message: 'm' });
+    }
+    originsReply = () => { throw new TypeError('offline'); };
+    await expect(ingest.setOrigins('hits', [])).rejects.toEqual({ code: 'unavailable', message: 'offline' });
   });
 
   it('rejects with unavailable when the list cannot be read', async () => {

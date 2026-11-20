@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { checkCapabilities } from '../src/mcp/tools.js';
 import { checkApp } from '../src/platform/check.js';
 import { canRead, type Viewer } from '../src/data/rules.js';
-import { effectiveRules, INGEST_LIMITS, ingestEndpoints, parseIngest } from '../src/platform/ingest.js';
+import { effectiveRules, INGEST_LIMITS, ingestEndpoints, parseIngest, parseManagedOrigins } from '../src/platform/ingest.js';
 
 const one = (endpoint: Record<string, unknown>): unknown => ({ endpoints: [endpoint] });
 const message = (declaration: unknown): string => {
@@ -13,13 +13,13 @@ const message = (declaration: unknown): string => {
 describe('the ingest declaration', () => {
   it('fills in the defaults', () => {
     expect(parseIngest(one({ name: 'hits', auth: 'none', origins: ['https://blog.example.com'] }))).toEqual([{
-      name: 'hits', collection: 'hits', auth: 'none', origins: ['https://blog.example.com'], maxBytes: 4096, maxPerDay: 10_000,
+      name: 'hits', collection: 'hits', auth: 'none', origins: ['https://blog.example.com'], managedOrigins: false, maxBytes: 4096, maxPerDay: 10_000,
       onFull: 'refuse', visitor: false, country: false,
     }]);
     expect(parseIngest(one({
       name: 'weight', collection: 'log/main/weights', auth: 'token', maxBytes: 2048, maxPerDay: 50, onFull: 'rotate', visitor: 'daily', country: true,
     }))).toEqual([{
-      name: 'weight', collection: 'log/main/weights', auth: 'token', origins: [], maxBytes: 2048, maxPerDay: 50, onFull: 'rotate', visitor: true, country: true,
+      name: 'weight', collection: 'log/main/weights', auth: 'token', origins: [], managedOrigins: false, maxBytes: 2048, maxPerDay: 50, onFull: 'rotate', visitor: true, country: true,
     }]);
     expect(parseIngest({})).toEqual([]);
     expect(parseIngest({ endpoints: [] })).toEqual([]);
@@ -31,6 +31,32 @@ describe('the ingest declaration', () => {
     expect(message(one({ name: 'hits', auth: 'none', origins: ['*'] }))).toMatch(/only allowed alone and with auth "token"/);
     expect(message(one({ name: 'hits', auth: 'token', origins: ['*', 'https://a.example'] }))).toMatch(/only allowed alone/);
     expect(parseIngest(one({ name: 'hits', auth: 'token', origins: ['*'] }))[0].origins).toEqual(['*']);
+  });
+
+  it('lets the people who manage an instance name the websites when it says managedOrigins', () => {
+    expect(parseIngest(one({ name: 'hits', auth: 'none', managedOrigins: true }))[0]).toMatchObject({ origins: [], managedOrigins: true });
+    expect(parseIngest(one({ name: 'hits', auth: 'none', origins: ['https://lager.example'], managedOrigins: true }))[0])
+      .toMatchObject({ origins: ['https://lager.example'], managedOrigins: true });
+    expect(parseIngest(one({ name: 'hits', auth: 'token', managedOrigins: true }))[0].managedOrigins).toBe(true);
+    expect(message(one({ name: 'hits', auth: 'none', managedOrigins: false }))).toMatch(/needs origins.*or managedOrigins: true/);
+    expect(message(one({ name: 'hits', auth: 'none', managedOrigins: 'yes' }))).toMatch(/managedOrigins must be true or false/);
+    expect(message(one({ name: 'hits', auth: 'token', origins: ['*'], managedOrigins: true }))).toMatch(/every website may already send/);
+  });
+
+  it('checks the websites an instance adds like declared ones', () => {
+    const [managed] = parseIngest(one({ name: 'hits', auth: 'none', origins: ['https://a.example'], managedOrigins: true }));
+    expect(parseManagedOrigins(managed, [' HTTPS://Blog.Example.com ', 'https://blog.example.com', 'https://a.example', 'http://localhost:4000']))
+      .toEqual(['https://blog.example.com', 'http://localhost:4000']);
+    expect(parseManagedOrigins(managed, [])).toEqual([]);
+    const bad = (list: unknown): string => { try { parseManagedOrigins(managed, list); } catch (e) { return (e as Error).message; } return ''; };
+    for (const o of ['*', 'blog.example.com', 'https://blog.example.com/', 'https://*.example.com', 'javascript:alert(1)', 5, null]) {
+      expect(bad([o]), String(o)).toMatch(/is not a website address/);
+    }
+    expect(bad('https://blog.example.com')).toMatch(/must be a list/);
+    expect(bad(Array.from({ length: INGEST_LIMITS.origins }, (_, i) => `https://s${i}.example`))).toMatch(/at most 19 can be added/);
+    expect(parseManagedOrigins(managed, Array.from({ length: INGEST_LIMITS.origins - 1 }, (_, i) => `https://s${i}.example`))).toHaveLength(19);
+    const [fixed] = parseIngest(one({ name: 'hits', auth: 'none', origins: ['https://a.example'] }));
+    expect(() => parseManagedOrigins(fixed, ['https://b.example'])).toThrow(/cannot be changed per instance/);
   });
 
   it('takes an origin only as scheme, host and port', () => {
