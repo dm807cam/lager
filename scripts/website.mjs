@@ -172,7 +172,7 @@ export function parsePost(file, text) {
   return {
     file, slug, title: meta.title, description: meta.description, date: meta.date, author: meta.author || 'The Lager team',
     tags: Array.isArray(meta.tags) ? meta.tags : meta.tags ? [meta.tags] : [], image: meta.image || '',
-    draft: meta.draft === 'true', body, html: markdown(body), minutes: Math.max(1, Math.round(words / 220)), words,
+    draft: meta.draft === 'true', ai: meta.ai === 'true', body, html: markdown(body), minutes: Math.max(1, Math.round(words / 220)), words,
   };
 }
 
@@ -244,7 +244,7 @@ function shell({ title, description, url, body, active, tracker, type = 'website
 <link rel="stylesheet" href="/assets/site.css">
 ${extraHead}${tracker}</head>
 <body>
-<header>
+<header class="site">
   <div class="wrap">
     <a class="brand" href="/"><img src="/assets/icon-192.png" alt="" width="32" height="32">Lager</a>
     <nav aria-label="Main">
@@ -304,6 +304,7 @@ export function postPage(post, { newer, older }, tracker) {
     <h1>${esc(post.title)}</h1>
     <p class="lede">${esc(post.description)}</p>
     ${tagList(post.tags)}
+    ${post.ai ? '<p class="ai-note">This post was created with the assistance of AI and reviewed by the Lager team.</p>' : ''}
   </header>
   <div class="prose">
 ${post.html}

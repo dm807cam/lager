@@ -55,6 +55,13 @@ describe('posts', () => {
     expect(p).toMatchObject({ slug: 'hello-world', title: 'Hello', description: 'A post', author: 'The Lager team', tags: ['one', 'two'], minutes: 2, draft: false });
   });
 
+  it('marks posts written with an AI assistant with a small note under the title', () => {
+    const md = post('title: T\ndescription: D\ndate: 2026-11-21\nai: true');
+    const page = site.postPage(site.parsePost('2026-11-21-t.md', md), {}, '');
+    expect(page).toContain('<p class="ai-note">This post was created with the assistance of AI and reviewed by the Lager team.</p>');
+    expect(site.postPage(site.parsePost('2026-11-21-t.md', post('title: T\ndescription: D\ndate: 2026-11-21')), {}, '')).not.toContain('ai-note');
+  });
+
   it('refuses posts it cannot publish safely', () => {
     expect(() => site.parsePost('a.md', 'no front matter')).toThrow(/front matter/);
     expect(() => site.parsePost('a.md', post('title: T\ndate: 2026-11-21'))).toThrow(/description/);
@@ -121,6 +128,18 @@ describe('build', () => {
     const index = fs.readFileSync(path.join(ROOT, 'website/index.html'), 'utf8');
     if (site.trackerOf(index)) expect(fs.readFileSync(path.join(out, 'changelog/index.html'), 'utf8')).toContain(site.trackerOf(index));
     expect(site.checkLinks(out)).toEqual([]);
+  });
+
+  it('keeps the reading area free: nothing in the text column sticks to the top of the screen', () => {
+    const css = fs.readFileSync(path.join(ROOT, 'website/assets/site.css'), 'utf8');
+    // Styles for the site header are scoped to it, so a post's own <header> (title, description, tags) never picks them up.
+    expect(css).not.toMatch(/(^|\n)\s*header\s*[{,]/);
+    const sticky = [...css.matchAll(/([^{}\n]+)\{[^}]*position:\s*sticky/g)].map((m) => m[1].trim());
+    expect(sticky).toEqual(['.release-head']);
+    const out = tmp();
+    site.build(out, { today: '2099-01-01' });
+    const [post] = site.loadPosts(path.join(ROOT, 'website/blog/posts'), { today: '2099-01-01' });
+    expect(fs.readFileSync(path.join(out, `blog/${post.slug}/index.html`), 'utf8')).toContain('<header class="site">');
   });
 
   it('fails on a local link to a file that does not exist', () => {
