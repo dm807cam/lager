@@ -136,4 +136,69 @@ describe('instance page: data from outside', () => {
     expect(h.core.ingest.isOff(inst.id, 'hits')).toBe(true);
     expect(h.core.ingest.countsOf(inst.id, 'hits')).toEqual({ accepted: 0, refused: 0, limited: 0 });
   });
+
+  it('websites named per instance: added, shown, used and removed on the page', async () => {
+    const { inst, p, m, c, pc, mc, cc } = await setup();
+    h.core.apps.deploy({ slug: 'stats', html: '<p>2</p>', userId: p.id, capabilities: { ingest: { endpoints: [{ name: 'hits', collection: 'pageviews', auth: 'none', managedOrigins: true }] } } as never });
+    const send = (origin: string) => request(h.app).post('/_ingest/hits').set('Host', 'stats.apps.localhost').set('Origin', origin).send({ a: 1 });
+    const before = (await page(pc)).text;
+    expect(before).toContain(en('instance.ingest.noOrigins'));
+    expect(before).toContain(en('instance.ingest.managedNone'));
+    expect(before).toContain('action="/ui/instances/stats/ingest/origins"');
+    expect((await send('https://blog.example.com')).status).toBe(403);
+    // What the address bar shows, with its trailing slash, is taken; the manager adds a second website.
+    expect((await post(pc, p, 'origins', { name: 'hits', origin: ' https://Blog.Example.com/ ' })).status).toBe(302);
+    expect((await post(mc, m, 'origins', { name: 'hits', origin: 'https://www.example.com' })).status).toBe(302);
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).toEqual(['https://blog.example.com', 'https://www.example.com']);
+    const after = (await page(pc)).text;
+    expect(after).toContain(`${en('instance.ingest.byOrigins')} <code>https://blog.example.com</code> <code>https://www.example.com</code>`);
+    expect(after).not.toContain(en('instance.ingest.managedNone'));
+    expect((await send('https://www.example.com')).status).toBe(202);
+    // A bad address is refused with a notice and changes nothing.
+    const bad = await post(pc, p, 'origins', { name: 'hits', origin: 'https://blog.example.com/posts' });
+    expect(bad.status).toBe(302);
+    expect((await request(h.app).get(bad.headers.location).set('Host', h.host).set('Cookie', pc)).text).toContain(en('notice.originInvalid'));
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).toHaveLength(2);
+    // A contributor cannot; removing closes the website at once.
+    expect((await post(cc, c, 'origins', { name: 'hits', origin: 'https://evil.example' })).status).toBe(403);
+    expect((await post(pc, p, 'origins/remove', { name: 'hits', origin: 'https://www.example.com' })).status).toBe(302);
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).toEqual(['https://blog.example.com']);
+    expect((await send('https://www.example.com')).status).toBe(403);
+  });
+
+  it('an endpoint whose websites the app fixes offers no form to add one', async () => {
+    const { inst, p, pc } = await setup();
+    expect((await page(pc)).text).not.toContain('/ingest/origins');
+    const res = await post(pc, p, 'origins', { name: 'hits', origin: 'https://other.example' });
+    expect(res.status).toBe(302);
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).toEqual([]);
+  });
+
+  it('websites over the limit are marked, can still be removed, and a 21st is refused with a notice', async () => {
+    const { inst, p, pc } = await setup();
+    const declare = (origins: string[]) => h.core.apps.deploy({ slug: 'stats', html: `<p>${origins.length}</p>`, userId: p.id, capabilities: { ingest: { endpoints: [{ name: 'hits', auth: 'none', origins, managedOrigins: true }] } } as never });
+    declare([]);
+    for (let i = 0; i < 20; i++) expect((await post(pc, p, 'origins', { name: 'hits', origin: `https://s${i}.example` })).status).toBe(302);
+    const full = await post(pc, p, 'origins', { name: 'hits', origin: 'https://s20.example' });
+    expect((await request(h.app).get(full.headers.location).set('Host', h.host).set('Cookie', pc)).text).toContain(en('notice.originsLimit'));
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).toHaveLength(20);
+    // A later version declares two: the last two added stop counting and are marked; removing one of them works.
+    declare(['https://app0.example', 'https://app1.example']);
+    const shown = (await page(pc)).text;
+    expect(shown.match(new RegExp(en('instance.ingest.overLimit'), 'g'))).toHaveLength(2);
+    expect((await post(pc, p, 'origins/remove', { name: 'hits', origin: 'https://s0.example' })).status).toBe(302);
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).not.toContain('https://s0.example');
+    expect((await page(pc)).text.match(new RegExp(en('instance.ingest.overLimit'), 'g'))).toHaveLength(1);
+  });
+
+  it('a platform administrator without a grant and anyone on a disabled instance cannot change the websites', async () => {
+    const { inst, p, pc } = await setup();
+    h.core.apps.deploy({ slug: 'stats', html: '<p>2</p>', userId: p.id, capabilities: { ingest: { endpoints: [{ name: 'hits', auth: 'none', managedOrigins: true }] } } as never });
+    const admin = h.core.users.get(h.adminId)!;
+    const adminCookie = await h.login();
+    expect((await post(adminCookie, admin, 'origins', { name: 'hits', origin: 'https://evil.example' })).status).toBe(403);
+    h.core.apps.setInstanceDisabled(inst.id, true);
+    expect((await post(pc, p, 'origins', { name: 'hits', origin: 'https://blog.example.com' })).status).toBe(403);
+    expect(h.core.ingest.instanceOrigins(inst.id, 'hits')).toEqual([]);
+  });
 });

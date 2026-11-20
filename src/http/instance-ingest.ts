@@ -4,10 +4,12 @@ import type { Core } from '../core.js';
 import { assertDocData } from '../data/paths.js';
 import { newDocId } from '../data/store.js';
 import { LagerError } from '../errors.js';
+import type { Instance } from '../platform/apps.js';
 import { ingestEndpoints, type IngestEndpoint } from '../platform/ingest.js';
 import { addressKey } from './client-address.js';
+import { DB_RATE, type Ctx } from './instance.js';
+import type { RateLimiter } from './ratelimit.js';
 import { discardBody, sendError } from './errors.js';
-import type { Ctx } from './instance.js';
 
 /** The fields the server writes into a received document; a client cannot set them. */
 const SERVER_FIELDS = ['_receivedAt', '_visitor', '_country'] as const;
@@ -26,10 +28,10 @@ const NO_ENDPOINT = (): LagerError => new LagerError('not_found', 'No such endpo
 const WRONG_ORIGIN = (): LagerError => new LagerError('forbidden', 'This origin may not send here.');
 
 /** What `Access-Control-Allow-Origin` says to a request from `origin`: the origin itself, `*`, or null when it is not listed. */
-function allowedOrigin(endpoint: IngestEndpoint, origin: string | undefined): string | null {
+function allowedOrigin(origins: string[], origin: string | undefined): string | null {
   if (origin === undefined) return null;
-  if (endpoint.origins.includes('*')) return '*';
-  return endpoint.origins.includes(origin.toLowerCase()) ? origin : null;
+  if (origins.includes('*')) return '*';
+  return origins.includes(origin.toLowerCase()) ? origin : null;
 }
 
 function presentedToken(req: Request): unknown {
@@ -63,8 +65,10 @@ export function mountIngestEndpoints(router: express.Router, core: Core): void {
     if (!instance || !endpoint) { stop(404, NO_ENDPOINT()); return; }
     if (core.ingest.isOff(instance.id, endpoint.name)) { stop(404, NO_ENDPOINT(), 'refused'); return; }
 
-    const cors = allowedOrigin(endpoint, req.get('Origin'));
-    if (endpoint.origins.length > 0) res.vary('Origin');
+    // The declared websites, and on an endpoint with `managedOrigins` those the instance's managers added.
+    const origins = core.ingest.originsFor(instance.id, endpoint);
+    const cors = allowedOrigin(origins, req.get('Origin'));
+    if (origins.length > 0 || endpoint.managedOrigins) res.vary('Origin');
     // Never with credentials: a browser that is asked to send cookies along gets its request refused by this very header.
     if (cors !== null) res.set('Access-Control-Allow-Origin', cors);
     if (req.method === 'OPTIONS') {
@@ -141,23 +145,65 @@ export function mountIngestEndpoints(router: express.Router, core: Core): void {
 }
 
 /**
+ * One endpoint as the page sees it. What only the people who manage the instance decided goes to them alone: the token, and
+ * the websites they added, which are their own configuration (their blogs, a staging host). Everyone else learns the declared
+ * websites, which the app's declaration states anyway.
+ */
+function endpointInfo(core: Core, instance: Instance, e: IngestEndpoint, manages: boolean): Record<string, unknown> {
+  return {
+    name: e.name, path: `/_ingest/${e.name}`, collection: e.collection, auth: e.auth,
+    origins: manages ? core.ingest.originsFor(instance.id, e) : e.origins, managedOrigins: e.managedOrigins,
+    instanceOrigins: manages && e.managedOrigins ? core.ingest.instanceOrigins(instance.id, e.name) : [], maxBytes: e.maxBytes,
+    enabled: core.ingest.enabled && !core.ingest.isOff(instance.id, e.name),
+    token: manages && e.auth === 'token' ? core.ingest.token(instance.id, e.name) : null,
+    canManage: manages,
+  };
+}
+
+/**
  * Mounts `GET /__lager/ingest`, what `lager.use("ingest")` shows the page: the endpoints of the active version and whether each
  * is switched on. The token of an endpoint goes only to the people who manage the instance.
+ *
+ * And `PUT /__lager/ingest/<name>/origins`, with which the people who manage the instance replace the websites they added to an
+ * endpoint that declares `managedOrigins: true` (`ingest.setOrigins`). Everyone else is refused, as is every endpoint whose
+ * websites the app fixes.
  */
-export function mountIngestInfo(router: express.Router, core: Core, ctxOf: (res: Response) => Ctx, requireAccess: (ctx: Ctx) => void): void {
-  router.get('/__lager/ingest', (_req, res) => {
-    const ctx = ctxOf(res);
-    requireAccess(ctx);
+export function mountIngestInfo(
+  router: express.Router, core: Core, ctxOf: (res: Response) => Ctx, requireAccess: (ctx: Ctx) => void, writes: RateLimiter,
+): void {
+  const declaredOrRefuse = (ctx: Ctx): void => {
     if (ctx.caps.ingest === undefined || ctx.caps.ingest === null || typeof ctx.caps.ingest !== 'object') {
       throw new LagerError('not_found', 'This app does not receive data from outside.');
     }
-    const manages = ctx.viewer.level === 'admin' || ctx.viewer.level === 'owner';
+  };
+  const manages = (ctx: Ctx): boolean => ctx.viewer.level === 'admin' || ctx.viewer.level === 'owner';
+
+  router.get('/__lager/ingest', (_req, res) => {
+    const ctx = ctxOf(res);
+    requireAccess(ctx);
+    declaredOrRefuse(ctx);
     res.set('Cache-Control', 'no-store').json({
-      endpoints: ingestEndpoints(ctx.caps).map((e) => ({
-        name: e.name, path: `/_ingest/${e.name}`, collection: e.collection, auth: e.auth, origins: e.origins, maxBytes: e.maxBytes,
-        enabled: core.ingest.enabled && !core.ingest.isOff(ctx.instance.id, e.name),
-        token: manages && e.auth === 'token' ? core.ingest.token(ctx.instance.id, e.name) : null,
-      })),
+      endpoints: ingestEndpoints(ctx.caps).map((e) => endpointInfo(core, ctx.instance, e, manages(ctx))),
     });
+  });
+
+  router.put('/__lager/ingest/:name/origins', express.json({ limit: '16kb' }), (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (req.get('X-Lager-Request') !== '1') throw new LagerError('forbidden', 'Missing X-Lager-Request header.');
+    const ctx = ctxOf(res);
+    requireAccess(ctx);
+    declaredOrRefuse(ctx);
+    if (!manages(ctx)) throw new LagerError('forbidden', 'Only the people who manage this instance may change where data may come from.');
+    // Out of the same budget as the viewer's database writes: each call writes to the platform database.
+    if (!writes.hit(`${ctx.instance.id}\n${ctx.viewer.userId}`, DB_RATE.writes)) {
+      res.set('Retry-After', '5');
+      throw new LagerError('rate_limited', 'Too many requests; try again shortly.');
+    }
+    const endpoint = ingestEndpoints(ctx.caps).find((e) => e.name === req.params.name);
+    if (!endpoint) throw new LagerError('not_found', 'No such endpoint.');
+    const body: unknown = req.body;
+    const list = body !== null && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>).origins : undefined;
+    core.ingest.setOrigins(ctx.instance.id, endpoint, list);
+    res.json({ endpoint: endpointInfo(core, ctx.instance, endpoint, true) });
   });
 }

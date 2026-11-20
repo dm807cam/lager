@@ -449,7 +449,7 @@ export function createInstanceRouter(core: Core): express.Router {
   mountRoomRoutes(router, core, ctxOf, requireAccess, activeCapabilities);
   mountPageRoutes(router, core, ctxOf, requireAccess);
   mountCompleteRoutes(router, core, ctxOf, requireAccess);
-  mountIngestInfo(router, core, ctxOf, requireAccess);
+  mountIngestInfo(router, core, ctxOf, requireAccess, dbWrites);
 
   router.use((req, res) => { sendNotFound(core, req, res); });
   return router;
