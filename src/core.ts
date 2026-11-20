@@ -1,4 +1,4 @@
-import { ADMIN_PASSWORD_PLACEHOLDERS, isLoopbackHost, MIN_SECRET_LENGTH, type Config } from './config.js';
+import { ADMIN_PASSWORD_PLACEHOLDERS, DEFAULT_INGEST_QUOTA_BYTES, isLoopbackHost, MIN_SECRET_LENGTH, type Config } from './config.js';
 import { InstanceAssets } from './data/assets.js';
 import { Hub } from './data/hub.js';
 import { RateLimiter } from './http/ratelimit.js';
@@ -14,6 +14,7 @@ import { Apps } from './platform/apps.js';
 import { openPlatformDb } from './platform/db.js';
 import { Domains } from './platform/domains.js';
 import { AppIcons } from './platform/icons.js';
+import { Ingest } from './platform/ingest.js';
 import { Groups } from './platform/groups.js';
 import { createMailer, type Mailer } from './platform/mail.js';
 import { Settings } from './platform/settings.js';
@@ -50,6 +51,8 @@ export interface Core {
   icons: AppIcons;
   /** New versions per app (`app:<id>`) and new apps per person (`user:<id>`) within an hour, REST and MCP together (see `Apps.deploy`). */
   deployLimiter: RateLimiter;
+  /** Data that arrives from outside: the endpoints apps declare, their switches and tokens, and the limits on what comes in. */
+  ingest: Ingest;
   close(): void;
 }
 
@@ -134,6 +137,8 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   apps.onBeforeActivate((inst, from, to) => { data.snapshot(inst.id, `v${from}-to-v${to}`); });
   // Every open view of the instance reloads when its active version changes.
   apps.onActivated((inst) => { hub.publish(inst.id, { type: 'reload', version: inst.activeVersion }); });
+  const ingest = new Ingest(db, config.secret, config.ingestQuotaBytes ?? DEFAULT_INGEST_QUOTA_BYTES, config.countryHeader);
+  apps.onInstanceDeleted((instance) => { ingest.forget(instance.id); });
   const removal = new AccountRemoval(db, users, apps);
   // The private area of a deleted account in other people's instances is closed to everyone else, yet counts against their
   // quota: it goes with the account. Every instance is looked at, since any that was open to the account may hold one; that
@@ -142,7 +147,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   removal.onRemoved((userId) => { privatePurge.start(userId, apps.listAllInstances().map((instance) => instance.id)); });
   return {
     config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, accounts, groups, domains, access,
-    icons, ai, removal, privatePurge, deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000),
+    icons, ai, removal, privatePurge, deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000), ingest,
     close() {
       // First: a pass that is under way must not open a database again after they were closed.
       privatePurge.stop();

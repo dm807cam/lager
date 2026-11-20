@@ -277,7 +277,8 @@ describe('instance host', () => {
     expect((await db(h, W, adaInst, { op: 'set', path: `votes/x-${bob.id}`, data: { a: 2 } })).body).toEqual({ doc: null });
     h.core.data.delete(inst.id, `votes/x-${bob.id}`);
     expect((await db(h, W, adaInst, { op: 'set', path: `votes/${ada.id}`, data: { choice: 'mine' } })).body).toEqual({ doc: null });
-    expect((await db(h, W, adaInst, { op: 'add', path: 'votes', data: { choice: 'more' } })).body).toEqual({ doc: null });
+    // Whoever adds learns the id the server made up, and nothing else.
+    expect((await db(h, W, adaInst, { op: 'add', path: 'votes', data: { choice: 'more' } })).body).toEqual({ doc: null, id: expect.stringMatching(/^[A-Za-z0-9]{20}$/) });
     // The writes happened all the same.
     expect(h.core.data.get(inst.id, `votes/${ada.id}`)!.data).toEqual({ choice: 'mine' });
     expect(h.core.data.query(inst.id, 'votes')).toHaveLength(3);

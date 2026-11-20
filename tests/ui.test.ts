@@ -605,7 +605,8 @@ describe('behaviour of the forms', () => {
   }
 
   // forms.json was generated from the pages before the redesign (the token forms moved with their page to /publish):
-  // the markup may change, the action, method and field names of every form may not.
+  // the markup may change, the action, method and field names of every form may not. The forms of the instance page's
+  // "Data from outside" card (ingest/switch, ingest/token) were added with that card.
   it('forms post the same fields to the same routes as before', async () => {
     s = await showcase();
     const expected = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')) as Record<string, unknown>;

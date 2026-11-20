@@ -214,6 +214,17 @@ export const MIGRATIONS: string[] = [
   -- When the client last showed a consent page or was issued a code or token; NULL until then. Idle clients are purged by it.
   ALTER TABLE oauth_clients ADD COLUMN last_used_at TEXT;
   `,
+  `
+  -- What the people who manage an instance decided about one of its ingest endpoints: switched off, and how often its token
+  -- was replaced. A row exists only once one of the two was used; gone with the instance.
+  CREATE TABLE ingest_endpoints (
+    instance_id TEXT NOT NULL REFERENCES instances(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    disabled INTEGER NOT NULL DEFAULT 0,
+    token_generation INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (instance_id, name)
+  );
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

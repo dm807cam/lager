@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canDelete, canRead, canWrite, type Viewer } from '../src/data/rules.js';
+import { appendRule, canDelete, canRead, canWrite, type Viewer } from '../src/data/rules.js';
 
 const owner: Viewer = { userId: 'o', level: 'owner' };
 const ed: Viewer = { userId: 'e', level: 'interact' };
@@ -114,5 +114,53 @@ describe('rules', () => {
       expect(canRead(rules, v, 'locked/x')).toBe(false);
       expect(canWrite(rules, v, 'locked/x')).toBe(false);
     }
+  });
+
+  describe('write: "anyone"', () => {
+    const rules = [{ path: 'rsvps', read: 'admin' as const, write: 'anyone' as const }];
+
+    it('lets every visitor who can open the instance append, signed in or not, and nobody without access', () => {
+      expect(appendRule(rules, anon, 'rsvps/r1')).toBe('rsvps');
+      expect(appendRule(rules, vw, 'rsvps/r1')).toBe('rsvps');
+      expect(appendRule(rules, none, 'rsvps/r1')).toBeNull();
+      expect(appendRule(rules, { userId: null, level: 'none' }, 'rsvps/r1')).toBeNull();
+      // Below the rule's path too, and nowhere else.
+      expect(appendRule(rules, anon, 'rsvps/r1/comments/c1')).toBe('rsvps');
+      expect(appendRule(rules, anon, 'tasks/t1')).toBeNull();
+      expect(appendRule(undefined, anon, 'rsvps/r1')).toBeNull();
+    });
+
+    it('opens nothing but appending: writing, changing and deleting stay where they are without the rule', () => {
+      for (const v of [anon, vw, none]) {
+        expect(canWrite(rules, v, 'rsvps/r1')).toBe(false);
+        expect(canDelete(rules, v, 'rsvps/r1')).toBe(false);
+      }
+      expect(canWrite(rules, ed, 'rsvps/r1')).toBe(true);
+      expect(canDelete(rules, ed, 'rsvps/r1')).toBe(true);
+      // Reading is a rule of its own.
+      expect(canRead(rules, anon, 'rsvps/r1')).toBe(false);
+      expect(canRead(rules, owner, 'rsvps/r1')).toBe(true);
+    });
+
+    it('a more specific rule closes a part of the path again', () => {
+      const nested = [...rules, { path: 'rsvps/closed', write: 'owner' as const }];
+      expect(appendRule(nested, anon, 'rsvps/open/x/y')).toBe('rsvps');
+      expect(appendRule(nested, anon, 'rsvps/closed/x/y')).toBeNull();
+      expect(canWrite(nested, ed, 'rsvps/closed/x/y')).toBe(false);
+    });
+
+    it('never reaches a private area, and {self} never matches a guest', () => {
+      const wide = [{ path: 'data', write: 'anyone' as const }, { path: 'votes/{self}', write: 'anyone' as const }];
+      expect(appendRule(wide, anon, 'data/users/v/drafts/d1')).toBeNull();
+      expect(appendRule(wide, vw, 'data/users/v/drafts/d1')).toBeNull();
+      expect(appendRule(wide, vw, 'data/users/someone-else/drafts/d1')).toBeNull();
+      expect(appendRule(wide, anon, 'votes/v/x/y')).toBeNull();
+      expect(appendRule(wide, vw, 'votes/v/x/y')).toBe('votes/{self}');
+    });
+
+    it('is not a level for reading: such a rule closes the path to everyone', () => {
+      const bad = [{ path: 'rsvps', read: 'anyone' as never }];
+      for (const v of [owner, ed, vw, anon]) expect(canRead(bad, v, 'rsvps/r1')).toBe(false);
+    });
   });
 });

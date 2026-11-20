@@ -462,6 +462,77 @@
       ]
     },
     {
+      "action": "/ui/instances/notes/ingest/switch",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "name",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "clips"
+        },
+        {
+          "name": "on",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/ingest/switch",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "name",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "feedback"
+        },
+        {
+          "name": "on",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/ingest/token",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "name",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "clips"
+        }
+      ]
+    },
+    {
       "action": "/ui/instances/notes/visibility",
       "method": "post",
       "fields": [
@@ -2057,6 +2128,77 @@
           "required": false,
           "maxlength": null,
           "value": "user"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/ingest/switch",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "name",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "clips"
+        },
+        {
+          "name": "on",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/ingest/switch",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "name",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "feedback"
+        },
+        {
+          "name": "on",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/ingest/token",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "name",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "clips"
         }
       ]
     },

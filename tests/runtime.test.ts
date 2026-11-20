@@ -41,6 +41,7 @@ let clock: number;
 let roomReply: (body: any) => Response;
 let pageReply: (body: any) => Response | Promise<Response>;
 let completeReply: (body: any) => Response | Promise<Response>;
+let ingestReply: () => Response | Promise<Response>;
 
 const parentOf = (path: string): string => path.split('/').slice(0, -1).join('/');
 const dbCalls = (): any[] => calls.filter(([u]) => u === '/__lager/db').map(([, init]) => JSON.parse(init.body));
@@ -102,6 +103,11 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
         return json({ doc: put(b.path, { ...prev.data, ...b.data }) });
       }
       case 'delete': docs.delete(b.path); return json({ ok: true });
+      case 'add': {
+        // As the server does under a write-only rule: the id comes back, the document only to someone who may read it.
+        const doc = put(`${b.path}/serverMadeId0000000${docs.size}`, b.data);
+        return json({ doc: b.path === 'dropbox' ? null : doc, id: doc.id });
+      }
       case 'query': return json({ docs: runQuery(b.path, b.query ?? {}) });
       case 'acquire':
         if (b.path === 'locks/busy') return json({ acquired: false, expiresAt: 'x', holder: 'someone' });
@@ -112,6 +118,7 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
   if (url === '/__lager/room') return roomReply(JSON.parse(init.body));
   if (url === '/__lager/page') return pageReply(JSON.parse(init.body));
   if (url === '/__lager/complete') return completeReply(JSON.parse(init.body));
+  if (url === '/__lager/ingest') return ingestReply();
   if (url === '/__lager/assets' || url.startsWith('/__lager/assets/')) {
     const type = init?.headers?.['Content-Type'] as string | undefined;
     if (init?.method === 'POST') {
@@ -150,6 +157,7 @@ beforeEach(() => {
   roomReply = () => json({ ok: true });
   pageReply = () => json({ version: '2' });
   completeReply = () => json({ text: 'ok' });
+  ingestReply = () => json({ endpoints: [] });
   session = sessionOf(OWNER);
   FakeEventSource.instances = [];
   g.fetch = fakeFetch;
@@ -333,6 +341,25 @@ describe('db', () => {
     expect((await ref.get()).data()).toEqual({ title: 'x' });
     expect(db.doc('boards/b1').collection('cols').path).toBe('boards/b1/cols');
     expect(db.collection('boards/b1/cols').doc('c1').path).toBe('boards/b1/cols/c1');
+  });
+
+  it('a viewer who may only look lets the server make up the id of what they add', async () => {
+    for (const viewer of [{ id: null, name: '', email: null, level: 'view', isOwner: false, canEdit: false }, { ...OWNER, level: 'view', isOwner: false, canEdit: false }]) {
+      calls = [];
+      session = sessionOf(viewer);
+      const db = await boot().use('db');
+      const ref = await db.collection('rsvps').add({ name: 'Grace' });
+      expect(dbCalls()).toEqual([{ op: 'add', path: 'rsvps', data: { name: 'Grace' } }]);
+      expect(ref.path).toBe(`rsvps/${ref.id}`);
+      expect(ref.id).toMatch(/^serverMadeId/);
+      // Also where the document itself does not come back.
+      expect((await db.collection('dropbox').add({ a: 1 })).path).toMatch(/^dropbox\/serverMadeId/);
+    }
+    // Someone who writes keeps choosing the id in the page.
+    calls = [];
+    session = sessionOf({ ...OWNER, level: 'interact', isOwner: false, canEdit: false });
+    const ref = await (await boot().use('db')).collection('rsvps').add({ a: 1 });
+    expect(dbCalls()).toEqual([{ op: 'set', path: ref.path, data: { a: 1 } }]);
   });
 
   it('rejects malformed paths synchronously with TypeError', async () => {
@@ -1654,5 +1681,47 @@ describe('downloads', () => {
     expect(await p.state('downloads')).toBe('granted');
     const downloads = await boot().use('downloads');
     expect(await downloads.save({ filename: 'README.md', data: 'x' })).toEqual({ status: 'saved' });
+  });
+});
+
+describe('ingest', () => {
+  const declared = (): void => {
+    session = { status: 200, body: { viewer: OWNER, instance: { id: 'i1', slug: 'demo', appSlug: 'demo', version: 1 }, capabilities: { ingest: { endpoints: [] } }, loginUrl: '/login' } };
+  };
+
+  it('is null unless the active version declares it', async () => {
+    expect(await boot().use('ingest')).toBeNull();
+    expect(await g.lager.use('permissions').then((p: any) => p.state('ingest'))).toBe('unavailable');
+    expect(calls.map(([u]) => u)).not.toContain('/__lager/ingest');
+  });
+
+  it('lists the endpoints with their full address, and a token only where the server sent one', async () => {
+    declared();
+    ingestReply = () => json({ endpoints: [
+      { name: 'hits', path: '/_ingest/hits', collection: 'hits', auth: 'none', origins: ['https://blog.example.com'], maxBytes: 4096, enabled: true, token: null },
+      { name: 'weight', path: '/_ingest/weight', collection: 'weights', auth: 'token', origins: [], maxBytes: 2048, enabled: false, token: 'lgi_secret' },
+    ] });
+    const ingest = await boot().use('ingest');
+    expect(Object.isFrozen(ingest)).toBe(true);
+    expect(await g.lager.use('permissions').then((p: any) => p.state('ingest'))).toBe('granted');
+    const list = await ingest.endpoints();
+    expect(list).toEqual([
+      { name: 'hits', url: `${window.location.origin}/_ingest/hits`, auth: 'none', collection: 'hits', origins: ['https://blog.example.com'], maxBytes: 4096, enabled: true, token: null },
+      { name: 'weight', url: `${window.location.origin}/_ingest/weight`, auth: 'token', collection: 'weights', origins: [], maxBytes: 2048, enabled: false, token: 'lgi_secret' },
+    ]);
+    expect(Object.isFrozen(list[0])).toBe(true);
+    // Asked with the session, and every time anew: the switch and the token can change.
+    expect(calls.filter(([u]) => u === '/__lager/ingest')).toEqual([['/__lager/ingest', { credentials: 'same-origin' }]]);
+    await ingest.endpoints();
+    expect(calls.filter(([u]) => u === '/__lager/ingest')).toHaveLength(2);
+  });
+
+  it('rejects with unavailable when the list cannot be read', async () => {
+    declared();
+    const ingest = await boot().use('ingest');
+    ingestReply = () => json({ error: { code: 'not_found', message: 'x' } }, 404);
+    await expect(ingest.endpoints()).rejects.toEqual({ code: 'unavailable', message: 'The endpoints could not be read.' });
+    ingestReply = () => { throw new TypeError('offline'); };
+    await expect(ingest.endpoints()).rejects.toEqual({ code: 'unavailable', message: 'offline' });
   });
 });

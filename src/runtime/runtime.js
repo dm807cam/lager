@@ -1,4 +1,4 @@
-/* Lager browser runtime: provides window.lager.use("db" | "user" | "assets" | "room" | "page" | "downloads" | "permissions")
+/* Lager browser runtime: provides window.lager.use("db" | "user" | "assets" | "room" | "page" | "downloads" | "ingest" | "permissions")
    and window.lager.complete on top of the /__lager/* endpoints. Plain ES2020, no dependencies. */
 (function () {
   'use strict';
@@ -14,6 +14,7 @@
   var ASSETS_URL = '/__lager/assets';
   var EVENTS_URL = '/__lager/db/events';
   var COMPLETE_URL = '/__lager/complete';
+  var INGEST_URL = '/__lager/ingest';
   var RETRY_MIN_MS = 1000;
   var RETRY_MAX_MS = 30000;
   // A listener reloads at most this often: changes arriving sooner are answered by one reload at the end of the interval.
@@ -416,11 +417,22 @@
       return makeDocRef(checkPath(path + '/' + (id === undefined ? autoId() : id), true));
     };
     q.add = function (data) {
+      // A viewer who may only look cannot write under an id of their own. Where a rule lets every visitor append
+      // (`write: "anyone"`), the server makes up the id, so nothing that exists can be overwritten.
+      if (dbLevel === 'view') {
+        return dbCall({ op: 'add', path: path, data: data }).then(function (r) {
+          if (typeof r.id !== 'string') throw { code: 'unavailable', message: 'Unexpected response.' };
+          return makeDocRef(checkPath(path + '/' + r.id, true));
+        });
+      }
       var ref = q.doc();
       return ref.set(data).then(function () { return ref; });
     };
     return Object.freeze(q);
   }
+
+  /** The viewer's level, known once the page got `db` from `use`. */
+  var dbLevel = null;
 
   var db = Object.freeze({
     doc: function (path) { return makeDocRef(checkPath(path, true)); },
@@ -1301,6 +1313,34 @@
     return Object.freeze({ save: save });
   }
 
+  // ------------------------------------------------------------------ ingest
+
+  /**
+   * The endpoints through which the instance takes data from outside, for a page that tells its owner what to paste where:
+   * `{name, url, auth, collection, origins, maxBytes, enabled, token}`. `token` is a string only for the people who manage the
+   * instance, and only for an endpoint that needs one.
+   */
+  function buildIngest() {
+    function endpoints() {
+      return fetch(INGEST_URL, { credentials: 'same-origin' }).then(
+        function (res) {
+          return res.json().catch(function () { return null; }).then(function (json) {
+            if (!res.ok || !json || !Array.isArray(json.endpoints)) throw { code: 'unavailable', message: 'The endpoints could not be read.' };
+            return json.endpoints.map(function (e) {
+              return Object.freeze({
+                name: e.name, url: window.location.origin + e.path, auth: e.auth, collection: e.collection,
+                origins: Object.freeze(Array.isArray(e.origins) ? e.origins.slice() : []), maxBytes: e.maxBytes,
+                enabled: e.enabled === true, token: typeof e.token === 'string' ? e.token : null,
+              });
+            });
+          });
+        },
+        function (e) { throw { code: 'unavailable', message: e && e.message ? String(e.message) : 'Network error.' }; }
+      );
+    }
+    return Object.freeze({ endpoints: endpoints });
+  }
+
   // ------------------------------------------------------------------ permissions
 
   function buildPermissions(session) {
@@ -1310,6 +1350,7 @@
     if (roomAvailable(session)) states.room = 'granted';
     if (pageAvailable(session)) states.page = 'granted';
     if (declaredObject(session, 'downloads')) states.downloads = 'granted';
+    if (declaredObject(session, 'ingest')) states.ingest = 'granted';
     var one = function (name) { return typeof name === 'string' && Object.prototype.hasOwnProperty.call(states, name) ? states[name] : 'unavailable'; };
     var all = function () { var o = {}; Object.keys(states).sort().forEach(function (k) { o[k] = states[k]; }); return o; };
     return Object.freeze({
@@ -1329,12 +1370,13 @@
 
   function build(name) {
     return getSession().then(function (session) {
-      if (name === 'db') return levelOf(session) ? db : null;
+      if (name === 'db') { dbLevel = levelOf(session); return dbLevel ? db : null; }
       if (name === 'user') return buildUser(session);
       if (name === 'assets') return assetsAllowed(session) ? buildAssets() : null;
       if (name === 'room') return roomAvailable(session) ? buildRoom(session) : null;
       if (name === 'page') return pageAvailable(session) ? buildPage(session) : null;
       if (name === 'downloads') return declaredObject(session, 'downloads') ? buildDownloads(session) : null;
+      if (name === 'ingest') return declaredObject(session, 'ingest') ? buildIngest() : null;
       if (name === 'permissions') return buildPermissions(session);
       return null;
     });

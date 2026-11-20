@@ -33,7 +33,17 @@ export interface Config {
   trashDays?: number;
   /** How long one language model request may take (LAGER_AI_TIMEOUT_SECONDS, default 90). */
   aiTimeoutSeconds?: number;
+  /**
+   * What one instance may hold of documents that came from outside, through ingest endpoints and from visitors who may only
+   * append (LAGER_INGEST_QUOTA_MB, default 10 MiB, on top of the instance quota). 0 turns receiving data from outside off.
+   */
+  ingestQuotaBytes?: number;
+  /** The header in which the proxy reports the visitor's country (LAGER_COUNTRY_HEADER, for example `cf-ipcountry`); unset = countries are never recorded. */
+  countryHeader?: string;
 }
+
+/** The ingest quota of an instance when LAGER_INGEST_QUOTA_MB is not set. */
+export const DEFAULT_INGEST_QUOTA_BYTES = 10 * 1024 * 1024;
 
 /** Longest instance name (a DNS label). */
 export const MAX_SLUG_LENGTH = 63;
@@ -156,6 +166,14 @@ function parseTrustProxy(raw: string | undefined): number | false {
   return n;
 }
 
+/** The name of the proxy header that carries the visitor's country, in lower case: a header name as HTTP writes it. */
+function parseCountryHeader(raw: string | undefined): string | undefined {
+  const value = raw?.trim().toLowerCase();
+  if (!value) return undefined;
+  if (!/^[a-z0-9!#$%&'*+.^_`|~-]{1,64}$/.test(value)) throw new Error(`LAGER_COUNTRY_HEADER must be the name of an HTTP header, for example cf-ipcountry (it is "${raw}")`);
+  return value;
+}
+
 function parseLocale(raw: string | undefined): Locale {
   const v = raw?.trim().toLowerCase();
   if (!v) return 'en';
@@ -194,6 +212,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   }
   const trashDays = parseIntEnv(env, 'LAGER_TRASH_DAYS', 30);
   const aiTimeoutSeconds = parseIntEnv(env, 'LAGER_AI_TIMEOUT_SECONDS', 90, 5, 600);
+  const ingestQuotaMb = parseIntEnv(env, 'LAGER_INGEST_QUOTA_MB', DEFAULT_INGEST_QUOTA_BYTES / 1024 / 1024, 0, 1024 * 1024);
+  const countryHeader = parseCountryHeader(env.LAGER_COUNTRY_HEADER);
   const accessLog = parseBoolEnv(env, 'LAGER_ACCESS_LOG');
   const trustProxy = parseTrustProxy(env.LAGER_TRUST_PROXY);
   const defaultLocale = parseLocale(env.LAGER_DEFAULT_LOCALE);
@@ -220,6 +240,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     defaultLocale,
     trashDays,
     aiTimeoutSeconds,
+    ingestQuotaBytes: ingestQuotaMb * 1024 * 1024,
+    countryHeader,
   };
 }
 

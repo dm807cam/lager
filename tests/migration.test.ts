@@ -37,9 +37,14 @@ describe('platform database migrations', () => {
         .toEqual({ client_id: 'c1', created_at: '2026-01-01T00:00:00.000Z', last_used_at: null });
       db.prepare('INSERT INTO instance_signins (user_id, instance_id, email, confirmed_at) VALUES (?, ?, ?, ?)').run('u1', 'i1', 1, '2026-02-01T00:00:00.000Z');
       expect(db.prepare('SELECT COUNT(*) AS n FROM instance_signins').get()).toMatchObject({ n: 1 });
-      // The confirmation goes with its instance.
+      // Migration 3: the state of ingest endpoints, with its defaults.
+      db.prepare('INSERT INTO ingest_endpoints (instance_id, name) VALUES (?, ?)').run('i1', 'hits');
+      expect({ ...db.prepare('SELECT disabled, token_generation FROM ingest_endpoints').get() }).toEqual({ disabled: 0, token_generation: 0 });
+      expect(() => db.prepare('INSERT INTO ingest_endpoints (instance_id, name) VALUES (?, ?)').run('no-such-instance', 'hits')).toThrow();
+      // The confirmation and the endpoint state go with their instance.
       db.prepare('DELETE FROM instances WHERE id = ?').run('i1');
       expect(db.prepare('SELECT COUNT(*) AS n FROM instance_signins').get()).toMatchObject({ n: 0 });
+      expect(db.prepare('SELECT COUNT(*) AS n FROM ingest_endpoints').get()).toMatchObject({ n: 0 });
     } finally {
       db.close();
     }
@@ -59,6 +64,7 @@ describe('platform database migrations', () => {
     const migrated = openPlatformDb(versionOne());
     expect(schema(migrated)).toEqual(schema(fresh));
     expect(schema(fresh)).toContain('oauth_clients.last_used_at TEXT');
+    expect(schema(fresh)).toContain('ingest_endpoints.token_generation INTEGER');
     fresh.close();
     migrated.close();
   });

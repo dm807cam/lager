@@ -5,16 +5,20 @@ import type { DatabaseSync } from 'node:sqlite';
 import { assertSlug, assertSlugShape } from '../config.js';
 import { LagerError } from '../errors.js';
 import { checkApp } from './check.js';
+import { effectiveRules } from './ingest.js';
 import { DEFAULT_THEME_COLOR } from './icons.js';
 import type { Settings } from './settings.js';
 import type { User, Users } from './users.js';
 
 export type RuleLevel = 'view' | 'interact' | 'admin' | 'owner' | 'self';
-export interface DbRule { path: string; read?: RuleLevel; write?: RuleLevel }
+/** `write: "anyone"` lets every visitor who can open the instance append new documents, guests included; it is not a read level. */
+export interface DbRule { path: string; read?: RuleLevel; write?: RuleLevel | 'anyone' }
 export interface Capabilities {
   db?: { rules?: DbRule[] }; user?: { scopes?: string[] }; assets?: { upload?: 'interact' }; room?: { topics?: Record<string, 'interact'> };
   /** `model` names a catalog model; without it every viewer gets the default model of their AI group. */
   complete?: { model?: string };
+  /** Endpoints that take data from outside; read with `ingestEndpoints`, which checks every field. */
+  ingest?: { endpoints?: unknown };
   [k: string]: unknown;
 }
 export type Visibility = 'private' | 'users' | 'public';
@@ -609,7 +613,7 @@ export class Apps {
       }
       // The data rules come from the active version. A manager is held to them, so only the owner may switch to a version with other rules.
       if (instance.ownerId !== userId && instance.activeVersion !== version) {
-        const rulesOf = (json: string | undefined): string => canonicalJson((JSON.parse(json ?? '{}') as Capabilities).db?.rules ?? []);
+        const rulesOf = (json: string | undefined): string => canonicalJson(effectiveRules(JSON.parse(json ?? '{}') as Capabilities) ?? []);
         const current = this.db.prepare('SELECT capabilities FROM versions WHERE app_id = ? AND number = ?').get(instance.appId, instance.activeVersion) as { capabilities: string } | undefined;
         if (rulesOf(current?.capabilities) !== rulesOf(row.capabilities)) {
           throw new LagerError('conflict', 'Only the instance owner can activate a version with different data rules.', 'rules_differ');

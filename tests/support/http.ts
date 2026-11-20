@@ -32,7 +32,10 @@ export interface Harness {
   enter(slug: string, platformCookie: string): Promise<string>;
 }
 
-export interface HarnessOptions { publicUrl?: string; extensions?: PlatformExtension[]; trustProxy?: number | false; instanceQuotaBytes?: number; mailer?: Mailer; defaultLocale?: Locale; accessLog?: boolean; fetch?: typeof fetch }
+export interface HarnessOptions {
+  publicUrl?: string; extensions?: PlatformExtension[]; trustProxy?: number | false; instanceQuotaBytes?: number; mailer?: Mailer; defaultLocale?: Locale; accessLog?: boolean; fetch?: typeof fetch;
+  ingestQuotaBytes?: number; countryHeader?: string;
+}
 
 export function makeHarness(opts: HarnessOptions = {}): Harness {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lager-http-'));
@@ -40,6 +43,7 @@ export function makeHarness(opts: HarnessOptions = {}): Harness {
     dataDir, port: 0, defaultLocale: opts.defaultLocale ?? 'en', publicUrl: new URL(opts.publicUrl ?? 'http://lager.localhost:8080'), appsDomain: 'apps.localhost',
     adminEmail: 'admin@x.y', adminPassword: 'admin-password-1', secret: 'test-secret', snapshotKeep: 20, trustProxy: opts.trustProxy ?? false,
     instanceQuotaBytes: opts.instanceQuotaBytes ?? 50 * 1024 * 1024, accessLog: opts.accessLog,
+    ...(opts.ingestQuotaBytes === undefined ? {} : { ingestQuotaBytes: opts.ingestQuotaBytes }), countryHeader: opts.countryHeader,
   };
   const core = createCore(config, { ...(opts.mailer ? { mailer: opts.mailer } : {}), ...(opts.fetch ? { fetch: opts.fetch } : {}) });
   // The stylesheet, the script and the public account pages are part of every platform host, so every harness registers them.

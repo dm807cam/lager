@@ -159,7 +159,7 @@ Run these before you open a pull request. CI runs the same commands and must be 
 
 ```sh
 npm run typecheck   # TypeScript, strict mode
-npm test            # all Vitest suites (about 1150 tests, under a minute)
+npm test            # all Vitest suites (about 1300 tests, a minute or two)
 npm run build       # compiles to dist/ and copies the runtime, guide and assets
 ```
 

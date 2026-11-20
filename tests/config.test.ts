@@ -128,6 +128,7 @@ describe('config', () => {
         ['LAGER_INSTANCE_QUOTA_MB', ['0', '0.5', '50MB']],
         ['LAGER_TRASH_DAYS', ['-1', '2.5', 'never']],
         ['LAGER_AI_TIMEOUT_SECONDS', ['0', '4', '601', '90s', '1.5']],
+        ['LAGER_INGEST_QUOTA_MB', ['-1', '0.5', '10MB', 'off']],
       ];
       for (const [name, values] of bad) for (const v of values) expect(() => load({ [name]: v }), `${name}=${v}`).toThrow(new RegExp(`^${name} must be a whole number`));
       expect(load({ LAGER_PORT: '1', LAGER_SNAPSHOT_KEEP: '1', LAGER_TRASH_DAYS: '0', LAGER_AI_TIMEOUT_SECONDS: '5' }))
@@ -136,6 +137,21 @@ describe('config', () => {
       expect(load({})).toMatchObject({ port: 8080, snapshotKeep: 20, trashDays: 30, aiTimeoutSeconds: 90 });
       // Port 0 lets the system choose a free port, as it always did.
       expect(load({ LAGER_PORT: '0' }).port).toBe(0);
+    });
+
+    it('LAGER_INGEST_QUOTA_MB: 10 MiB unless set, and 0 switches receiving data from outside off', () => {
+      expect(load({}).ingestQuotaBytes).toBe(10 * 1024 * 1024);
+      expect(load({ LAGER_INGEST_QUOTA_MB: '0' }).ingestQuotaBytes).toBe(0);
+      expect(load({ LAGER_INGEST_QUOTA_MB: ' 200 ' }).ingestQuotaBytes).toBe(200 * 1024 * 1024);
+    });
+
+    it('LAGER_COUNTRY_HEADER: the name of a header, in any letter case, or nothing', () => {
+      expect(load({}).countryHeader).toBeUndefined();
+      expect(load({ LAGER_COUNTRY_HEADER: '  ' }).countryHeader).toBeUndefined();
+      expect(load({ LAGER_COUNTRY_HEADER: ' CF-IPCountry ' }).countryHeader).toBe('cf-ipcountry');
+      for (const v of ['cf-ipcountry: DE', 'x country', 'https://example.com', 'a'.repeat(65)]) {
+        expect(() => load({ LAGER_COUNTRY_HEADER: v }), v).toThrow(/^LAGER_COUNTRY_HEADER must be the name of an HTTP header/);
+      }
     });
 
     it('LAGER_SNAPSHOT_KEEP=0 from an existing installation still starts: one snapshot is kept, with a warning', () => {
@@ -167,7 +183,8 @@ describe('config', () => {
       const example = fs.readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
       const env = Object.fromEntries([...example.matchAll(/^(LAGER_[A-Z_]+)=(.*)$/gm)].map((m) => [m[1], m[2]]));
       expect(Object.keys(env)).toContain('LAGER_AI_TIMEOUT_SECONDS');
-      expect(loadConfig({ ...env, LAGER_DATA_DIR: tmp })).toMatchObject({ port: 8080, appsDomain: 'apps.localhost', aiTimeoutSeconds: 90 });
+      expect(Object.keys(env)).toContain('LAGER_INGEST_QUOTA_MB');
+      expect(loadConfig({ ...env, LAGER_DATA_DIR: tmp })).toMatchObject({ port: 8080, appsDomain: 'apps.localhost', aiTimeoutSeconds: 90, ingestQuotaBytes: 10 * 1024 * 1024 });
     });
 
     it('a refused configuration does not create the data directory', () => {

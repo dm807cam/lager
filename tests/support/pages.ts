@@ -36,7 +36,12 @@ export async function showcase(): Promise<Showcase> {
   core.settings.setCustomDomains('publishers');
 
   core.apps.deploy({ slug: 'notes', html: '<p>1</p>', title: 'Notes', note: 'first', userId: h.adminId, description: 'Quick notes that sync between your devices.' });
-  core.apps.deploy({ slug: 'notes', html: '<p>2</p>', userId: h.adminId });
+  core.apps.deploy({
+    slug: 'notes', html: '<p>2</p>', userId: h.adminId,
+    // Two ingest endpoints, so the instance page shows that card. The website that may send is the instance's own custom
+    // domain (added below): the pages name it, and the test for addresses of other hosts knows it as this server's.
+    capabilities: { ingest: { endpoints: [{ name: 'clips', auth: 'token' }, { name: 'feedback', auth: 'none', origins: ['http://notes.example.com:8080'] }] } },
+  });
   const notes = core.apps.getInstanceBySlug('notes')!;
   core.data.snapshot(notes.id, 'before-import');
   core.access.setGrant(notes, 'user', uwe.id, 'view', admin);

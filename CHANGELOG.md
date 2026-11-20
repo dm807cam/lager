@@ -4,11 +4,16 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+
+- **Receiving data from outside:** an app can declare `ingest` endpoints, each of which appends JSON documents to one collection of an instance and can do nothing else: `POST https://<instance>/_ingest/<name>`. Pages on listed websites send without a secret (`auth: "none"`), scripts, webhooks, phone shortcuts and devices with a token (`auth: "token"`) that the instance page shows and replaces. Endpoints work on private instances, never read a cookie and store nothing about the sender; on request the server adds a daily visitor hash and the country. A data rule with `"write": "anyone"` lets guests of a public instance add documents from the page itself (an RSVP, a guestbook, a poll). What comes in counts against a quota of its own, `LAGER_INGEST_QUOTA_MB` (default 10 MiB per instance on top of the instance quota; `0` turns the feature off), with limits per client address, endpoint, instance and day. The instance page has a card "Data from outside" with addresses, tokens, counters and a switch per endpoint. New: `lager.use("ingest")`, the example `examples/pageviews.html`, the setting `LAGER_COUNTRY_HEADER`, and [Receiving data from outside](docs/building-apps.md#receiving-data-from-outside). The platform database moves to schema version 3 (one new table).
+
 ### Changed
 
 - **Node.js 24 or newer** is needed to run Lager from source (it was 22.13). The Docker image and the installer already use Node 24, so they are not affected.
 - **Images:** commits on `main` publish only `:edge`, without a `:sha-<commit>` tag, and earlier edge builds are deleted after each publish. Release images and their tags stay.
 - **Docs:** the steps for adding Lager to claude.ai and Claude Desktop, ChatGPT and VS Code follow the current menus and configuration files of those products.
+- **Database `add`:** the answer to an `add` request (`POST /__lager/db`) carries the `id` of the new document next to `doc`, also where the document itself is withheld because the writer may not read the path. In the browser runtime, `collection.add()` of a viewer who may only look asks the server for the id instead of choosing one; for everyone who writes it works as before.
 
 ### Security
 

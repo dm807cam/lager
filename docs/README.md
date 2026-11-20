@@ -18,7 +18,7 @@ The [README](../README.md) gives the overview and the quick start. These pages c
 | Page | What it covers |
 | --- | --- |
 | [Connecting your AI](connecting-ai.md) | Connecting Claude, ChatGPT, Cursor, VS Code, Gemini CLI or any other MCP client, API tokens, the Lager skill |
-| [Building apps](building-apps.md) | The `window.lager` building blocks an app can use (`db`, `user`, `assets`, `room`, `page`, `downloads`), icons, home-screen install |
+| [Building apps](building-apps.md) | The `window.lager` building blocks an app can use (`db`, `user`, `assets`, `room`, `page`, `downloads`, `ingest`), receiving data from other websites, webhooks and devices, icons, home-screen install |
 | [Bring your own model](ai-models.md) | Connecting a language model (Anthropic, OpenAI, OpenRouter, Ollama and others) for `lager.complete` |
 | [Guide for building apps](../src/guide.md) | The runtime API and rules an AI follows when it builds for Lager. The MCP endpoint serves this file, and the skill contains the same text |
 

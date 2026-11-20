@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -52,6 +53,59 @@ const SCHEMA = `
 `;
 
 /**
+ * Documents that came from outside (an ingest endpoint, or a visitor appending under an `anyone` rule) are ordinary documents
+ * with one entry each in `ingested`: what they count against the ingest quota, in the order they arrived. The entry goes when
+ * the document is deleted or changed by someone with write access, which makes it the instance's own. Triggers keep this and
+ * the running total, so no write path can leave the bookkeeping behind.
+ */
+const INGEST_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS ingested (
+    seq INTEGER PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE,
+    parent TEXT NOT NULL,
+    bytes INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS ingested_parent ON ingested(parent, seq);
+  CREATE TABLE IF NOT EXISTS ingest_usage (id INTEGER PRIMARY KEY CHECK (id = 1), bytes INTEGER NOT NULL);
+  INSERT OR IGNORE INTO ingest_usage (id, bytes) VALUES (1, 0);
+  CREATE TRIGGER IF NOT EXISTS ingested_added AFTER INSERT ON ingested BEGIN UPDATE ingest_usage SET bytes = bytes + NEW.bytes WHERE id = 1; END;
+  CREATE TRIGGER IF NOT EXISTS ingested_removed AFTER DELETE ON ingested BEGIN UPDATE ingest_usage SET bytes = bytes - OLD.bytes WHERE id = 1; END;
+  CREATE TRIGGER IF NOT EXISTS ingested_doc_deleted AFTER DELETE ON docs BEGIN DELETE FROM ingested WHERE path = OLD.path; END;
+  CREATE TRIGGER IF NOT EXISTS ingested_doc_changed AFTER UPDATE ON docs BEGIN DELETE FROM ingested WHERE path = OLD.path; END;
+`;
+
+/** Received documents dropped per round when an endpoint that rotates needs room. */
+const ROTATE_BATCH = 20;
+/** Live queries hear of documents arriving from outside at most this often per collection, however fast they come in. */
+export const INGEST_NOTIFY_MS = 2000;
+
+const PAGE_BYTES = 4096;
+/** What a table page holds of rows; a row larger than this spills onto pages of its own. */
+const PAGE_ROOM = 4000;
+
+/**
+ * What a document that came from outside counts against the ingest quota: the database pages it can take at worst, not the
+ * bytes of its JSON. A row shares its page with as many others as fit, so a row of just over half a page takes a whole one;
+ * the index entries on its path count twice, because index pages can be half empty. The estimate is deliberately on the
+ * high side: what is counted for the ingest quota is taken off what the instance's own data is measured by, so counting too
+ * little would let data from outside use up the instance's own space.
+ */
+export function ingestCost(docPath: string, json: string): number {
+  const pathBytes = Buffer.byteLength(docPath);
+  const row = Buffer.byteLength(json) + 2 * pathBytes + 80;
+  const pages = row <= PAGE_ROOM ? PAGE_BYTES / Math.floor(PAGE_ROOM / row) : row + PAGE_BYTES + 512;
+  return Math.ceil(pages + 8 * pathBytes + 64);
+}
+
+/** A document id made up by the server: 20 letters and digits, about 119 bits. */
+export function newDocId(): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let id = '';
+  for (const b of crypto.randomBytes(20)) id += alphabet[b % alphabet.length];
+  return id;
+}
+
+/**
  * Everyone who ever wrote a shared document here, so their name stays resolvable after the document was edited by
  * someone else or deleted. Private areas are left out: nobody else may learn that an account used the instance privately.
  */
@@ -99,6 +153,8 @@ export class InstanceData {
   private dbs: HandleCache;
   private lastStamp = 0;
   private extraUsage: (instanceId: string) => number = () => 0;
+  /** Per instance and collection: when its listeners last heard of a received document, and the notice that is still to come. */
+  private ingestNotices = new Map<string, { last: number; timer: NodeJS.Timeout | null; path: string }>();
 
   /** `quotaBytes` caps the size of one instance's data (0 = unlimited). */
   constructor(private dataDir: string, private hub: Hub, private snapshotKeep: number, private quotaBytes = 0, maxOpen?: number) {
@@ -129,12 +185,25 @@ export class InstanceData {
     return fs.existsSync(this.dataFile(instanceId));
   }
 
-  /** Bytes of live data in the instance database (free pages do not count, so deleting makes room again); 0 without data. */
+  /**
+   * Bytes of the instance's own data in its database (free pages do not count, so deleting makes room again); 0 without data.
+   * Documents that came from outside are left out: they have a quota of their own (see `ingestUsage`).
+   */
   usage(instanceId: string): number {
     const db = this.open(instanceId, false);
     if (!db) return 0;
     const n = (pragma: string): number => Number((db.prepare(`PRAGMA ${pragma}`).get() as Record<string, number>)[pragma]);
-    return (n('page_count') - n('freelist_count')) * n('page_size');
+    return Math.max(0, (n('page_count') - n('freelist_count')) * n('page_size') - this.ingestBytes(db));
+  }
+
+  private ingestBytes(db: DatabaseSync): number {
+    return Number((db.prepare('SELECT bytes FROM ingest_usage WHERE id = 1').get() as { bytes: number }).bytes);
+  }
+
+  /** What the documents that came from outside, and that nobody changed since, count against the ingest quota. */
+  ingestUsage(instanceId: string): number {
+    const db = this.open(instanceId, false);
+    return db ? this.ingestBytes(db) : 0;
   }
 
   /** Registers bytes stored next to the documents (uploaded assets) that count against the same quota. */
@@ -173,6 +242,7 @@ export class InstanceData {
     db.exec('PRAGMA journal_mode = WAL');
     db.exec('PRAGMA busy_timeout = 5000');
     db.exec(SCHEMA);
+    db.exec(INGEST_SCHEMA);
     // A database from before the authors table (also a restored snapshot) gets it once, filled from the documents it holds.
     if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'authors'").get()) {
       db.exec(`BEGIN IMMEDIATE; ${AUTHORS_SCHEMA}; ${AUTHORS_BACKFILL}; COMMIT`);
@@ -245,6 +315,77 @@ export class InstanceData {
 
   update(instanceId: string, docPath: string, data: Record<string, unknown>, by: string | null): Doc {
     return this.write(instanceId, docPath, data, by, true);
+  }
+
+  /**
+   * Stores a document that comes from outside the circle of people who may write: a request to an ingest endpoint, or a
+   * visitor appending under an `anyone` rule. The caller makes up `docPath` with a fresh id, so this only ever adds. Such
+   * documents count against `quotaBytes`, the ingest quota of the instance, and never against its own storage. When that is
+   * full the write is refused with `quota_exceeded`, unless `rotate` is set: then the oldest received documents of the same
+   * collection make room, as long as there are any.
+   */
+  ingest(instanceId: string, docPath: string, data: Record<string, unknown>, opts: { by: string | null; quotaBytes: number; rotate: boolean }): Doc {
+    const { parent, id } = parseDocPath(docPath);
+    assertDocData(data);
+    const json = JSON.stringify(data);
+    const cost = ingestCost(docPath, json);
+    const full = (): never => { throw new LagerError('quota_exceeded', 'This instance cannot take more data from outside right now.'); };
+    if (cost > opts.quotaBytes) full();
+    const db = this.open(instanceId, true)!;
+    const dropped: string[] = [];
+    // What arrives from outside does not have to survive a power cut that happens within the same moment, and anyone can send
+    // it: these commits are not forced to disk one by one, so a flood of requests is not a flood of disk syncs as well.
+    db.exec('PRAGMA synchronous = NORMAL');
+    let doc: Doc;
+    try {
+      doc = this.transaction(db, () => {
+        while (this.ingestBytes(db) + cost > opts.quotaBytes) {
+          const oldest = opts.rotate
+            ? db.prepare('SELECT path FROM ingested WHERE parent = ? ORDER BY seq LIMIT ?').all(parent, ROTATE_BATCH) as unknown as Array<{ path: string }> : [];
+          if (oldest.length === 0) full();
+          for (const o of oldest) {
+            if (this.ingestBytes(db) + cost <= opts.quotaBytes) break;
+            db.prepare('DELETE FROM docs WHERE path = ?').run(o.path);
+            // The trigger has done this already; said again so that an entry without a document can never keep this loop going.
+            db.prepare('DELETE FROM ingested WHERE path = ?').run(o.path);
+            dropped.push(o.path);
+          }
+        }
+        const now = new Date().toISOString();
+        db.prepare('INSERT INTO docs (path, parent, id, data, version, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, 1, ?, ?, ?)')
+          .run(docPath, parent, id, json, now, now, opts.by);
+        db.prepare('INSERT INTO ingested (path, parent, bytes) VALUES (?, ?, ?)').run(docPath, parent, cost);
+        this.recordAuthor(db, docPath, opts.by);
+        return toDoc(this.row(db, docPath)!);
+      });
+    } finally {
+      // SQLite's default, which every other write keeps.
+      db.exec('PRAGMA synchronous = FULL');
+    }
+    for (const p of dropped) this.notify(instanceId, p, parent);
+    this.notifyIngested(instanceId, docPath, parent);
+    return doc;
+  }
+
+  /** The first received document of a collection is announced at once, further ones together when the interval is over. */
+  private notifyIngested(instanceId: string, docPath: string, parent: string): void {
+    const key = `${instanceId}\n${parent}`;
+    const now = Date.now();
+    for (const [k, e] of this.ingestNotices) if (e.timer === null && now - e.last >= INGEST_NOTIFY_MS) this.ingestNotices.delete(k);
+    const entry = this.ingestNotices.get(key);
+    if (!entry) {
+      this.ingestNotices.set(key, { last: now, timer: null, path: docPath });
+      this.notify(instanceId, docPath, parent);
+      return;
+    }
+    entry.path = docPath;
+    if (entry.timer !== null) return;
+    entry.timer = setTimeout(() => {
+      entry.timer = null;
+      entry.last = Date.now();
+      this.notify(instanceId, entry.path, parent);
+    }, Math.max(0, entry.last + INGEST_NOTIFY_MS - now));
+    entry.timer.unref();
   }
 
   /** Whether `userId` ever wrote a document of the instance outside the private areas. */
@@ -498,6 +639,8 @@ export class InstanceData {
   }
 
   close(): void {
+    for (const e of this.ingestNotices.values()) if (e.timer !== null) clearTimeout(e.timer);
+    this.ingestNotices.clear();
     this.dbs.closeAll();
   }
 }
