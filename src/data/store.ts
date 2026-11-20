@@ -53,49 +53,43 @@ const SCHEMA = `
 `;
 
 /**
- * Documents that came from outside (an ingest endpoint, or a visitor appending under an `anyone` rule) are ordinary documents
- * with one entry each in `ingested`: what they count against the ingest quota, in the order they arrived. The entry goes when
- * the document is deleted or changed by someone with write access, which makes it the instance's own. Triggers keep this and
- * the running total, so no write path can leave the bookkeeping behind.
+ * Documents that came from outside (an ingest endpoint, or a visitor appending under an `anyone` rule) are kept in a database
+ * file of their own next to the instance's data, attached to the same connection as `inbox`. Reads see both through the view
+ * `all_docs`, so to an app they are documents like any other. Keeping them apart is what makes their quota a wall: what the
+ * file holds is measured in pages, not estimated, nothing in it shares a page with the instance's own documents, and whatever
+ * arrives from outside can neither use up nor fragment the instance's own storage.
+ *
+ * `slot` is the collection's number and the order of arrival in one integer, so the documents of a collection lie next to each
+ * other in the order they came in: dropping the oldest ones frees whole pages, whatever other collections hold.
  */
-const INGEST_SCHEMA = `
-  CREATE TABLE IF NOT EXISTS ingested (
-    seq INTEGER PRIMARY KEY,
+const INBOX_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS inbox.collections (n INTEGER PRIMARY KEY, parent TEXT NOT NULL UNIQUE);
+  CREATE TABLE IF NOT EXISTS inbox.docs (
+    slot INTEGER PRIMARY KEY,
     path TEXT NOT NULL UNIQUE,
     parent TEXT NOT NULL,
-    bytes INTEGER NOT NULL
+    id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    created_at TEXT,
+    updated_at TEXT,
+    updated_by TEXT,
+    lease_holder TEXT,
+    lease_expires TEXT
   );
-  CREATE INDEX IF NOT EXISTS ingested_parent ON ingested(parent, seq);
-  CREATE TABLE IF NOT EXISTS ingest_usage (id INTEGER PRIMARY KEY CHECK (id = 1), bytes INTEGER NOT NULL);
-  INSERT OR IGNORE INTO ingest_usage (id, bytes) VALUES (1, 0);
-  CREATE TRIGGER IF NOT EXISTS ingested_added AFTER INSERT ON ingested BEGIN UPDATE ingest_usage SET bytes = bytes + NEW.bytes WHERE id = 1; END;
-  CREATE TRIGGER IF NOT EXISTS ingested_removed AFTER DELETE ON ingested BEGIN UPDATE ingest_usage SET bytes = bytes - OLD.bytes WHERE id = 1; END;
-  CREATE TRIGGER IF NOT EXISTS ingested_doc_deleted AFTER DELETE ON docs BEGIN DELETE FROM ingested WHERE path = OLD.path; END;
-  CREATE TRIGGER IF NOT EXISTS ingested_doc_changed AFTER UPDATE ON docs BEGIN DELETE FROM ingested WHERE path = OLD.path; END;
+  CREATE INDEX IF NOT EXISTS inbox.docs_parent ON docs(parent);
 `;
+const DOC_COLUMNS = 'path, parent, id, data, version, created_at, updated_at, updated_by, lease_holder, lease_expires';
+/** The pages of an inbox file that holds no document (its tables and indexes); they are not counted as data. */
+const INBOX_EMPTY_PAGES = 6;
+/** Bits of `slot` for the order of arrival; the collection's number sits above them. Both stay far below what JavaScript counts exactly. */
+const SLOT_BITS = 32;
+const MAX_INBOX_COLLECTIONS = 2 ** 20;
 
 /** Received documents dropped per round when an endpoint that rotates needs room. */
 const ROTATE_BATCH = 20;
 /** Live queries hear of documents arriving from outside at most this often per collection, however fast they come in. */
 export const INGEST_NOTIFY_MS = 2000;
-
-const PAGE_BYTES = 4096;
-/** What a table page holds of rows; a row larger than this spills onto pages of its own. */
-const PAGE_ROOM = 4000;
-
-/**
- * What a document that came from outside counts against the ingest quota: the database pages it can take at worst, not the
- * bytes of its JSON. A row shares its page with as many others as fit, so a row of just over half a page takes a whole one;
- * the index entries on its path count twice, because index pages can be half empty. The estimate is deliberately on the
- * high side: what is counted for the ingest quota is taken off what the instance's own data is measured by, so counting too
- * little would let data from outside use up the instance's own space.
- */
-export function ingestCost(docPath: string, json: string): number {
-  const pathBytes = Buffer.byteLength(docPath);
-  const row = Buffer.byteLength(json) + 2 * pathBytes + 80;
-  const pages = row <= PAGE_ROOM ? PAGE_BYTES / Math.floor(PAGE_ROOM / row) : row + PAGE_BYTES + 512;
-  return Math.ceil(pages + 8 * pathBytes + 64);
-}
 
 const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
@@ -158,8 +152,17 @@ export class InstanceData {
   /** Per instance and collection: when its listeners last heard of a received document, and the notice that is still to come. */
   private ingestNotices = new Map<string, { last: number; timer: NodeJS.Timeout | null; path: string }>();
 
-  /** `quotaBytes` caps the size of one instance's data (0 = unlimited). */
-  constructor(private dataDir: string, private hub: Hub, private snapshotKeep: number, private quotaBytes = 0, maxOpen?: number) {
+  /** The open handles that have the instance's inbox attached. */
+  private inboxes = new WeakSet<DatabaseSync>();
+
+  /**
+   * `quotaBytes` caps the size of one instance's data (0 = unlimited). `ingestQuotaBytes` caps what one instance holds of
+   * documents that came from outside, apart from that; with 0 no instance takes any.
+   */
+  constructor(
+    private dataDir: string, private hub: Hub, private snapshotKeep: number, private quotaBytes = 0, maxOpen?: number,
+    private ingestQuotaBytes = 0,
+  ) {
     this.dbs = new HandleCache(maxOpen);
   }
 
@@ -179,6 +182,10 @@ export class InstanceData {
     return path.join(this.instanceDir(instanceId), 'data.sqlite');
   }
 
+  private inboxFile(instanceId: string): string {
+    return path.join(this.instanceDir(instanceId), 'inbox.sqlite');
+  }
+
   private snapshotDir(instanceId: string): string {
     return path.join(this.instanceDir(instanceId), 'snapshots');
   }
@@ -188,24 +195,40 @@ export class InstanceData {
   }
 
   /**
-   * Bytes of the instance's own data in its database (free pages do not count, so deleting makes room again); 0 without data.
-   * Documents that came from outside are left out: they have a quota of their own (see `ingestUsage`).
+   * Bytes of live data in the instance database (free pages do not count, so deleting makes room again); 0 without data.
+   * Documents that came from outside are in a file of their own and have their own quota (see `ingestUsage`).
    */
   usage(instanceId: string): number {
     const db = this.open(instanceId, false);
     if (!db) return 0;
     const n = (pragma: string): number => Number((db.prepare(`PRAGMA ${pragma}`).get() as Record<string, number>)[pragma]);
-    return Math.max(0, (n('page_count') - n('freelist_count')) * n('page_size') - this.ingestBytes(db));
+    return (n('page_count') - n('freelist_count')) * n('page_size');
   }
 
-  private ingestBytes(db: DatabaseSync): number {
-    return Number((db.prepare('SELECT bytes FROM ingest_usage WHERE id = 1').get() as { bytes: number }).bytes);
+  /** The pages the inbox holds of documents, in bytes: measured inside a transaction too, so a write knows what it just cost. */
+  private inboxBytes(db: DatabaseSync): number {
+    const n = (pragma: string): number => Number(Object.values(db.prepare(`PRAGMA inbox.${pragma}`).get() as Record<string, number>)[0]);
+    return Math.max(0, n('page_count') - n('freelist_count') - INBOX_EMPTY_PAGES) * n('page_size');
   }
 
-  /** What the documents that came from outside, and that nobody changed since, count against the ingest quota. */
+  /** Bytes the documents that came from outside take, which is what counts against the ingest quota; 0 when none ever arrived. */
   ingestUsage(instanceId: string): number {
     const db = this.open(instanceId, false);
-    return db ? this.ingestBytes(db) : 0;
+    return db && this.inboxes.has(db) ? this.inboxBytes(db) : 0;
+  }
+
+  /** Whether the document is one that came from outside (and so lies in the inbox). */
+  private isReceived(db: DatabaseSync, docPath: string): boolean {
+    return this.inboxes.has(db) && db.prepare('SELECT 1 FROM inbox.docs WHERE path = ?').get(docPath) !== undefined;
+  }
+
+  /**
+   * After a change to a received document, inside its transaction: refuses the change if it made the inbox grow beyond the
+   * ingest quota. A change that takes no further page always goes through, also when the quota was lowered since.
+   */
+  private assertInboxRoom(db: DatabaseSync, before: number): void {
+    const after = this.inboxBytes(db);
+    if (after > before && after > this.ingestQuotaBytes) throw new LagerError('quota_exceeded', 'The space for data from outside is full.');
   }
 
   /** Registers bytes stored next to the documents (uploaded assets) that count against the same quota. */
@@ -233,10 +256,13 @@ export class InstanceData {
   /**
    * Opens (and caches) the instance database; reads pass create=false so they never create files. The cache closes handles
    * that were not used for a while, so use the result right away and never keep it across an `await` or a `yield`.
+   * The inbox is attached when its file exists, and created when `inbox` asks for it.
    */
-  private open(instanceId: string, create: boolean): DatabaseSync | null {
+  private open(instanceId: string, create: boolean, inbox = false): DatabaseSync | null {
     const cached = this.dbs.get(instanceId);
-    if (cached) return cached;
+    if (cached && (!inbox || this.inboxes.has(cached))) return cached;
+    // A handle from before the first document arrived knows no inbox: it is opened anew, with one.
+    if (cached) this.dbs.close(instanceId);
     const file = this.dataFile(instanceId);
     if (!create && !fs.existsSync(file)) return null;
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -244,10 +270,23 @@ export class InstanceData {
     db.exec('PRAGMA journal_mode = WAL');
     db.exec('PRAGMA busy_timeout = 5000');
     db.exec(SCHEMA);
-    db.exec(INGEST_SCHEMA);
     // A database from before the authors table (also a restored snapshot) gets it once, filled from the documents it holds.
     if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'authors'").get()) {
       db.exec(`BEGIN IMMEDIATE; ${AUTHORS_SCHEMA}; ${AUTHORS_BACKFILL}; COMMIT`);
+    }
+    const inboxFile = this.inboxFile(instanceId);
+    if (inbox || fs.existsSync(inboxFile)) {
+      db.prepare('ATTACH DATABASE ? AS inbox').run(inboxFile);
+      db.exec('PRAGMA inbox.journal_mode = WAL');
+      // What arrives from outside does not have to survive a power cut within the same moment, and anyone can send it: commits
+      // to the inbox are not forced to disk one by one, so a flood of requests is not a flood of disk syncs. The instance's own
+      // database keeps SQLite's default and syncs every commit.
+      db.exec('PRAGMA inbox.synchronous = NORMAL');
+      db.exec(INBOX_SCHEMA);
+      this.inboxes.add(db);
+      db.exec(`CREATE TEMP VIEW all_docs AS SELECT ${DOC_COLUMNS} FROM main.docs UNION ALL SELECT ${DOC_COLUMNS} FROM inbox.docs`);
+    } else {
+      db.exec(`CREATE TEMP VIEW all_docs AS SELECT ${DOC_COLUMNS} FROM main.docs`);
     }
     this.dbs.set(instanceId, db);
     return db;
@@ -266,7 +305,7 @@ export class InstanceData {
   }
 
   private row(db: DatabaseSync, docPath: string): DocRow | undefined {
-    return db.prepare('SELECT * FROM docs WHERE path = ?').get(docPath) as DocRow | undefined;
+    return db.prepare('SELECT * FROM all_docs WHERE path = ?').get(docPath) as DocRow | undefined;
   }
 
   /** Remembers a signed-in writer of a shared document; call inside the write's transaction. */
@@ -289,7 +328,10 @@ export class InstanceData {
   private write(instanceId: string, docPath: string, data: Record<string, unknown>, by: string | null, merge: boolean): Doc {
     const { parent, id } = parseDocPath(docPath);
     assertDocData(data);
-    this.assertQuota(instanceId);
+    // A document that came from outside is changed where it lies: it stays in the inbox and within the ingest quota.
+    const current = this.open(instanceId, false);
+    const received = current !== null && this.isReceived(current, docPath);
+    if (!received) this.assertQuota(instanceId);
     const db = this.open(instanceId, true)!;
     const doc = this.transaction(db, () => {
       const now = new Date().toISOString();
@@ -297,11 +339,16 @@ export class InstanceData {
       const next = merge && existing ? deepMerge(JSON.parse(existing.data) as Record<string, unknown>, data) : data;
       if (merge) assertDocData(next);
       const json = JSON.stringify(next);
-      if (existing) {
-        db.prepare('UPDATE docs SET data = ?, version = version + 1, updated_at = ?, updated_by = ? WHERE path = ?')
+      if (existing && received) {
+        const before = this.inboxBytes(db);
+        db.prepare('UPDATE inbox.docs SET data = ?, version = version + 1, updated_at = ?, updated_by = ? WHERE path = ?')
+          .run(json, now, by, docPath);
+        this.assertInboxRoom(db, before);
+      } else if (existing) {
+        db.prepare('UPDATE main.docs SET data = ?, version = version + 1, updated_at = ?, updated_by = ? WHERE path = ?')
           .run(json, now, by, docPath);
       } else {
-        db.prepare('INSERT INTO docs (path, parent, id, data, version, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, 1, ?, ?, ?)')
+        db.prepare('INSERT INTO main.docs (path, parent, id, data, version, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, 1, ?, ?, ?)')
           .run(docPath, parent, id, json, now, now, by);
       }
       this.recordAuthor(db, docPath, by);
@@ -321,50 +368,42 @@ export class InstanceData {
 
   /**
    * Stores a document that comes from outside the circle of people who may write: a request to an ingest endpoint, or a
-   * visitor appending under an `anyone` rule. The caller makes up `docPath` with a fresh id, so this only ever adds. Such
-   * documents count against `quotaBytes`, the ingest quota of the instance, and never against its own storage. When that is
-   * full the write is refused with `quota_exceeded`, unless `rotate` is set: then the oldest received documents of the same
-   * collection make room, as long as there are any.
+   * visitor appending under an `anyone` rule. The caller makes up `docPath` with a fresh id, so this only ever adds. The
+   * document goes into the inbox and counts against the ingest quota, never against the instance's own storage. When the
+   * inbox would grow beyond the quota the write is refused with `quota_exceeded`, unless `rotate` is set: then the oldest
+   * received documents of the same collection make room, as long as there are any.
    */
-  ingest(instanceId: string, docPath: string, data: Record<string, unknown>, opts: { by: string | null; quotaBytes: number; rotate: boolean }): Doc {
+  ingest(instanceId: string, docPath: string, data: Record<string, unknown>, opts: { by: string | null; rotate: boolean }): Doc {
     const { parent, id } = parseDocPath(docPath);
     assertDocData(data);
     const json = JSON.stringify(data);
-    const cost = ingestCost(docPath, json);
     const full = (): never => { throw new LagerError('quota_exceeded', 'This instance cannot take more data from outside right now.'); };
-    if (cost > opts.quotaBytes) full();
-    const db = this.open(instanceId, true)!;
-    const dropped: string[] = [];
-    // What arrives from outside does not have to survive a power cut that happens within the same moment, and anyone can send
-    // it: these commits are not forced to disk one by one, so a flood of requests is not a flood of disk syncs as well.
-    db.exec('PRAGMA synchronous = NORMAL');
-    let doc: Doc;
-    try {
-      doc = this.transaction(db, () => {
-        while (this.ingestBytes(db) + cost > opts.quotaBytes) {
-          const oldest = opts.rotate
-            ? db.prepare('SELECT path FROM ingested WHERE parent = ? ORDER BY seq LIMIT ?').all(parent, ROTATE_BATCH) as unknown as Array<{ path: string }> : [];
-          if (oldest.length === 0) full();
-          for (const o of oldest) {
-            if (this.ingestBytes(db) + cost <= opts.quotaBytes) break;
-            db.prepare('DELETE FROM docs WHERE path = ?').run(o.path);
-            // The trigger has done this already; said again so that an entry without a document can never keep this loop going.
-            db.prepare('DELETE FROM ingested WHERE path = ?').run(o.path);
-            dropped.push(o.path);
-          }
-        }
-        const now = new Date().toISOString();
-        db.prepare('INSERT INTO docs (path, parent, id, data, version, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, 1, ?, ?, ?)')
-          .run(docPath, parent, id, json, now, now, opts.by);
-        db.prepare('INSERT INTO ingested (path, parent, bytes) VALUES (?, ?, ?)').run(docPath, parent, cost);
-        this.recordAuthor(db, docPath, opts.by);
-        return toDoc(this.row(db, docPath)!);
-      });
-    } finally {
-      // SQLite's default, which every other write keeps.
-      db.exec('PRAGMA synchronous = FULL');
-    }
-    for (const p of dropped) this.notify(instanceId, p, parent);
+    if (this.ingestQuotaBytes <= 0) full();
+    const db = this.open(instanceId, true, true)!;
+    const doc = this.transaction(db, () => {
+      if (this.row(db, docPath)) throw new LagerError('conflict', 'A document with this id exists already.');
+      db.prepare('INSERT OR IGNORE INTO inbox.collections (parent) VALUES (?)').run(parent);
+      const n = Number((db.prepare('SELECT n FROM inbox.collections WHERE parent = ?').get(parent) as { n: number }).n);
+      if (n >= MAX_INBOX_COLLECTIONS) full();
+      const now = new Date().toISOString();
+      // The next slot of the collection: one above its newest document, or its first.
+      db.prepare(
+        `INSERT INTO inbox.docs (slot, path, parent, id, data, version, created_at, updated_at, updated_by)
+         SELECT COALESCE(MAX(slot), ?1 << ${SLOT_BITS}) + 1, ?2, ?3, ?4, ?5, 1, ?6, ?6, ?7
+         FROM inbox.docs WHERE slot > (?1 << ${SLOT_BITS}) AND slot < ((?1 + 1) << ${SLOT_BITS})`,
+      ).run(n, docPath, parent, id, json, now, opts.by);
+      // The document is in, so what the inbox holds now is known exactly. Too much: older ones go, or the whole write is undone.
+      while (this.inboxBytes(db) > this.ingestQuotaBytes) {
+        const oldest = opts.rotate ? db.prepare(
+          `SELECT path FROM inbox.docs WHERE slot > (?1 << ${SLOT_BITS}) AND slot < ((?1 + 1) << ${SLOT_BITS}) AND path != ?2 ORDER BY slot LIMIT ?3`,
+        ).all(n, docPath, ROTATE_BATCH) as unknown as Array<{ path: string }> : [];
+        if (oldest.length === 0) full();
+        for (const o of oldest) db.prepare('DELETE FROM inbox.docs WHERE path = ?').run(o.path);
+      }
+      this.recordAuthor(db, docPath, opts.by);
+      return toDoc(this.row(db, docPath)!);
+    });
+    // Documents that rotation dropped are not announced one by one: whoever watches the collection reloads it with this notice.
     this.notifyIngested(instanceId, docPath, parent);
     return doc;
   }
@@ -400,7 +439,8 @@ export class InstanceData {
     const { parent } = parseDocPath(docPath);
     const db = this.open(instanceId, false);
     if (!db) return false;
-    const changes = Number(db.prepare('DELETE FROM docs WHERE path = ?').run(docPath).changes);
+    let changes = Number(db.prepare('DELETE FROM main.docs WHERE path = ?').run(docPath).changes);
+    if (changes === 0 && this.inboxes.has(db)) changes = Number(db.prepare('DELETE FROM inbox.docs WHERE path = ?').run(docPath).changes);
     if (changes === 0) return false;
     this.notify(instanceId, docPath, parent);
     return true;
@@ -417,9 +457,9 @@ export class InstanceData {
     const plain = !spec.where?.length && !spec.orderBy?.length;
     let rows = (plain
       ? (visible
-        ? db.prepare('SELECT * FROM docs WHERE parent = ? ORDER BY id').all(collectionPath)
-        : db.prepare('SELECT * FROM docs WHERE parent = ? ORDER BY id LIMIT ?').all(collectionPath, limit))
-      : db.prepare('SELECT * FROM docs WHERE parent = ?').all(collectionPath)) as unknown as DocRow[];
+        ? db.prepare('SELECT * FROM all_docs WHERE parent = ? ORDER BY id').all(collectionPath)
+        : db.prepare('SELECT * FROM all_docs WHERE parent = ? ORDER BY id LIMIT ?').all(collectionPath, limit))
+      : db.prepare('SELECT * FROM all_docs WHERE parent = ?').all(collectionPath)) as unknown as DocRow[];
     // Documents the caller may not see are dropped before parsing, filtering, sorting and limiting, so they cannot shape the result.
     if (visible) rows = rows.filter((r) => visible(r.path));
     if (plain) rows = rows.slice(0, limit);
@@ -437,8 +477,9 @@ export class InstanceData {
     if (opts.data !== undefined) assertDocData(opts.data);
     const ttl = Math.min(Math.max(Number.isFinite(opts.ttlMs) ? Math.floor(opts.ttlMs!) : DEFAULT_TTL_MS, 1), MAX_TTL_MS);
     const db = this.open(instanceId, true)!;
+    const received = this.isReceived(db, docPath);
     // Renewing a lease on an existing document adds nothing; everything else (new data, a new document) counts against the quota.
-    if (opts.data !== undefined || !this.row(db, docPath)) this.assertQuota(instanceId);
+    if (!received && (opts.data !== undefined || !this.row(db, docPath))) this.assertQuota(instanceId);
     const result = this.transaction(db, (): AcquireResult => {
       const nowMs = Date.now();
       const now = new Date(nowMs).toISOString();
@@ -454,12 +495,14 @@ export class InstanceData {
       if (existing) {
         const next = opts.data ? deepMerge(JSON.parse(existing.data) as Record<string, unknown>, opts.data) : undefined;
         if (next) assertDocData(next);
+        const before = received ? this.inboxBytes(db) : 0;
         db.prepare(
-          'UPDATE docs SET data = ?, version = version + 1, updated_at = ?, updated_by = ?, lease_holder = ?, lease_expires = ? WHERE path = ?',
+          `UPDATE ${received ? 'inbox.docs' : 'main.docs'} SET data = ?, version = version + 1, updated_at = ?, updated_by = ?, lease_holder = ?, lease_expires = ? WHERE path = ?`,
         ).run(next ? JSON.stringify(next) : existing.data, now, by, opts.holder, expires, docPath);
+        if (received) this.assertInboxRoom(db, before);
       } else {
         db.prepare(
-          'INSERT INTO docs (path, parent, id, data, version, created_at, updated_at, updated_by, lease_holder, lease_expires) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)',
+          'INSERT INTO main.docs (path, parent, id, data, version, created_at, updated_at, updated_by, lease_holder, lease_expires) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)',
         ).run(docPath, parent, id, JSON.stringify(opts.data ?? {}), now, now, by, opts.holder, expires);
       }
       this.recordAuthor(db, docPath, by);
@@ -479,7 +522,7 @@ export class InstanceData {
     if (!db) return 0;
     // Everything between "<prefix>/" and "<prefix>0" ("0" follows "/"): a range on the primary key, no scan.
     const prefix = `data/users/${userId}`;
-    return Number(db.prepare('DELETE FROM docs WHERE path IN (SELECT path FROM docs WHERE path >= ? AND path < ? LIMIT ?)').run(`${prefix}/`, `${prefix}0`, limit).changes);
+    return Number(db.prepare('DELETE FROM main.docs WHERE path IN (SELECT path FROM main.docs WHERE path >= ? AND path < ? LIMIT ?)').run(`${prefix}/`, `${prefix}0`, limit).changes);
   }
 
   // ---- export and import ----------------------------------------------
@@ -498,7 +541,7 @@ export class InstanceData {
         if (after === '') return;
         throw new LagerError('not_found', 'The instance was deleted during the export.');
       }
-      const rows = db.prepare('SELECT path, data FROM docs WHERE path > ? ORDER BY path LIMIT ?').all(after, EXPORT_BATCH) as unknown as Array<{ path: string; data: string }>;
+      const rows = db.prepare('SELECT path, data FROM all_docs WHERE path > ? ORDER BY path LIMIT ?').all(after, EXPORT_BATCH) as unknown as Array<{ path: string; data: string }>;
       for (const r of rows) {
         const owner = privateAreaOwner(r.path.split('/'));
         // The filter runs before the JSON is parsed, so skipped documents cost no parsing.
@@ -540,10 +583,17 @@ export class InstanceData {
     this.transaction(db, () => {
       const now = new Date().toISOString();
       const upsert = db.prepare(
-        `INSERT INTO docs (path, parent, id, data, version, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+        `INSERT INTO main.docs (path, parent, id, data, version, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
          ON CONFLICT(path) DO UPDATE SET data = excluded.data, version = docs.version + 1, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       );
-      for (const [p, d] of checked) upsert.run(p, d.parent, d.id, d.json, now, now, by);
+      // A document that came from outside is replaced where it lies, like any other change to it.
+      const received = this.inboxes.has(db)
+        ? db.prepare('UPDATE inbox.docs SET data = ?, version = version + 1, updated_at = ?, updated_by = ? WHERE path = ?') : null;
+      const before = received ? this.inboxBytes(db) : 0;
+      for (const [p, d] of checked) {
+        if (received === null || Number(received.run(d.json, now, by, p).changes) === 0) upsert.run(p, d.parent, d.id, d.json, now, now, by);
+      }
+      if (received) this.assertInboxRoom(db, before);
       // The author is the same for every document: one entry is enough, and only if something landed outside the private areas.
       if (sharedPath !== undefined) this.recordAuthor(db, sharedPath, by);
       if (this.quotaBytes > 0 && this.usage(instanceId) + this.extraUsage(instanceId) > this.quotaBytes) {
@@ -576,7 +626,8 @@ export class InstanceData {
     const final = path.join(dir, `${id}.sqlite`);
     const tmp = `${final}.tmp`;
     fs.rmSync(tmp, { force: true });
-    db.prepare('VACUUM INTO ?').run(tmp);
+    // The instance's own documents: what came from outside lies in the inbox and is not part of a snapshot.
+    db.prepare('VACUUM main INTO ?').run(tmp);
     fs.renameSync(tmp, final);
     this.prune(instanceId);
     return { id, label, createdAt: stampToIso(id.slice(0, 19)), sizeBytes: fs.statSync(final).size };

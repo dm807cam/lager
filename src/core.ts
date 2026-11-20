@@ -113,7 +113,8 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   const icons = new AppIcons(config.dataDir);
   const ai = new AiModels(db, config.secret, opts?.fetch, config.aiTimeoutSeconds === undefined ? undefined : config.aiTimeoutSeconds * 1000);
   const hub = new Hub();
-  const data = new InstanceData(config.dataDir, hub, config.snapshotKeep, config.instanceQuotaBytes);
+  const ingestQuotaBytes = config.ingestQuotaBytes ?? DEFAULT_INGEST_QUOTA_BYTES;
+  const data = new InstanceData(config.dataDir, hub, config.snapshotKeep, config.instanceQuotaBytes, undefined, ingestQuotaBytes);
   // Pages an instance saved itself count like its documents and uploads against the one instance quota.
   const assets = new InstanceAssets(config.dataDir, config.instanceQuotaBytes, (id) => data.usage(id) + apps.savedBytes(id));
   data.setExtraUsage((id) => assets.usage(id).bytes + apps.savedBytes(id));
@@ -137,7 +138,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   apps.onBeforeActivate((inst, from, to) => { data.snapshot(inst.id, `v${from}-to-v${to}`); });
   // Every open view of the instance reloads when its active version changes.
   apps.onActivated((inst) => { hub.publish(inst.id, { type: 'reload', version: inst.activeVersion }); });
-  const ingest = new Ingest(db, config.secret, config.ingestQuotaBytes ?? DEFAULT_INGEST_QUOTA_BYTES, config.countryHeader);
+  const ingest = new Ingest(db, config.secret, ingestQuotaBytes, config.countryHeader);
   apps.onInstanceDeleted((instance) => { ingest.forget(instance.id); });
   const removal = new AccountRemoval(db, users, apps);
   // The private area of a deleted account in other people's instances is closed to everyone else, yet counts against their

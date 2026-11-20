@@ -269,7 +269,7 @@ export const de: Record<MessageKey, string> = {
   'instance.ingest.turnOn': 'Einschalten',
   'instance.ingest.counts': '{accepted} angenommen, {refused} abgelehnt, {limited} über dem Limit seit {date}',
   'instance.ingest.storage': 'Empfangene Daten: {used} von {quota} belegt',
-  'instance.ingest.storageHint': 'Wird getrennt vom Speicher der Instanz gezählt. Ein Dokument, das du änderst oder löschst, zählt hier nicht mehr mit.',
+  'instance.ingest.storageHint': 'Liegt getrennt vom Speicher der Instanz in einer eigenen Datei und ist nicht Teil der Schnappschüsse. Werden empfangene Dokumente gelöscht, ist wieder Platz.',
   'instance.ingest.serverOff': 'Diese App würde Daten von außen annehmen, aber das ist auf diesem Server abgeschaltet.',
 
   'app.pageTitle': 'App {title}',

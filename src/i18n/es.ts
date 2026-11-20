@@ -269,7 +269,7 @@ export const es: Record<MessageKey, string> = {
   'instance.ingest.turnOn': 'Activar',
   'instance.ingest.counts': '{accepted} aceptadas, {refused} rechazadas, {limited} por encima del límite desde el {date}',
   'instance.ingest.storage': 'Datos recibidos: {used} de {quota} usados',
-  'instance.ingest.storageHint': 'Se cuenta aparte del almacenamiento de la instancia. Un documento que cambias o eliminas deja de contar aquí.',
+  'instance.ingest.storageHint': 'Se guarda aparte del almacenamiento de la instancia, en un archivo propio, y no forma parte de las instantáneas. Al eliminar documentos recibidos vuelve a haber sitio.',
   'instance.ingest.serverOff': 'Esta aplicación recibiría datos del exterior, pero eso está desactivado en este servidor.',
 
   'app.pageTitle': 'Aplicación {title}',

@@ -34,8 +34,11 @@ describe('a guest on a public instance and write: "anyone"', () => {
     const stored = h.core.data.get(inst.id, `rsvps/${res.body.id}`)!;
     expect(stored.data).toEqual({ name: 'Grace', coming: true });
     expect(stored.updatedBy).toBeNull();
-    // It counts as data from outside, not against the instance's storage.
-    expect(h.core.data.ingestUsage(inst.id)).toBeGreaterThan(0);
+    // It is data from outside: more of it does not add to the instance's own storage.
+    const own = h.core.data.usage(inst.id);
+    for (let i = 0; i < 20; i++) await db(h, undefined, { op: 'add', path: 'rsvps', data: { name: 'x'.repeat(2000) } });
+    expect(h.core.data.usage(inst.id)).toBe(own);
+    expect(h.core.data.ingestUsage(inst.id)).toBeGreaterThan(20 * 2000);
     // Where guests may read, they get what they added.
     const wall = await db(h, undefined, { op: 'add', path: 'wall', data: { text: 'hi' } });
     expect(wall.body.doc).toMatchObject({ id: wall.body.id, data: { text: 'hi' } });
@@ -75,14 +78,15 @@ describe('a guest on a public instance and write: "anyone"', () => {
   });
 
   it('is refused with quota_exceeded when the ingest quota is full, while the owner still writes', async () => {
-    const { h, inst } = setup({ ingestQuotaBytes: 20_000 });
+    const { h, inst } = setup({ ingestQuotaBytes: 100_000 });
     let added = 0;
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 120; i++) {
       const res = await db(h, undefined, { op: 'add', path: 'rsvps', data: { text: 'x'.repeat(1000) } });
       if (res.status === 200) added++; else { expect(res.status).toBe(507); expect(res.body.error.code).toBe('quota_exceeded'); }
     }
-    expect(added).toBeGreaterThan(5);
-    expect(added).toBeLessThan(20);
+    expect(added).toBeGreaterThan(20);
+    expect(added).toBeLessThan(100);
+    expect(h.core.data.ingestUsage(inst.id)).toBeLessThanOrEqual(100_000);
     const owner = await h.enter('party', await h.login());
     expect((await db(h, owner, { op: 'add', path: 'rsvps', data: { text: 'x'.repeat(5000) } })).status).toBe(200);
     // The owner tidies up, and there is room for guests again.
@@ -123,7 +127,7 @@ describe('signed-in people and write: "anyone"', () => {
     const res = await db(h, cookie, { op: 'add', path: 'wall', data: { text: 'hello' } });
     expect(res.status).toBe(200);
     expect(res.body.doc).toMatchObject({ updatedBy: vera.id });
-    expect(h.core.data.ingestUsage(inst.id)).toBeGreaterThan(0);
+    expect([...h.core.data.exportDocs(inst.id)]).toHaveLength(1);
     expect((await db(h, cookie, { op: 'set', path: `wall/${res.body.id}`, data: { text: 'edited' } })).status).toBe(403);
     expect((await db(h, cookie, { op: 'delete', path: `wall/${res.body.id}` })).status).toBe(403);
   });
@@ -141,12 +145,17 @@ describe('signed-in people and write: "anyone"', () => {
     expect((await db(h, cookie, { op: 'delete', path: `wall/${res.body.id}` })).status).toBe(200);
   });
 
-  it('what a guest added and the owner then approves is the instance\'s own', async () => {
+  it('the owner approves and removes what a guest added; it never counts against the instance\'s own storage', async () => {
     const { h, inst } = setup();
+    h.core.data.set(inst.id, 'notes/n1', { a: 1 }, h.adminId);
+    const own = h.core.data.usage(inst.id);
     const { id } = (await db(h, undefined, { op: 'add', path: 'wall', data: { text: 'hi' } })).body;
     const owner = await h.enter('party', await h.login());
-    expect((await db(h, owner, { op: 'update', path: `wall/${id}`, data: { approved: true } })).status).toBe(200);
-    expect(h.core.data.ingestUsage(inst.id)).toBe(0);
-    expect(h.core.data.get(inst.id, `wall/${id}`)?.data).toEqual({ text: 'hi', approved: true });
+    const approved = await db(h, owner, { op: 'update', path: `wall/${id}`, data: { approved: true } });
+    expect(approved.status).toBe(200);
+    expect(approved.body.doc).toMatchObject({ data: { text: 'hi', approved: true }, version: 2, updatedBy: h.adminId });
+    expect(h.core.data.usage(inst.id)).toBe(own);
+    expect((await db(h, owner, { op: 'delete', path: `wall/${id}` })).body).toEqual({ ok: true });
+    expect(h.core.data.get(inst.id, `wall/${id}`)).toBeNull();
   });
 });

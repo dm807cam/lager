@@ -12,6 +12,25 @@ let h: Harness | undefined;
 afterEach(() => { h?.core.close(); h = undefined; vi.restoreAllMocks(); });
 
 describe('backup', () => {
+  it('includes what an instance received from outside, which snapshots leave out', () => {
+    h = makeHarness();
+    const { core } = h;
+    const inst = core.apps.deploy({ slug: 'stats', html: '<p>v1</p>', userId: h.adminId }).instances[0];
+    core.data.set(inst.id, 'notes/n1', { text: 'own' }, h.adminId);
+    core.data.ingest(inst.id, 'hits/h1', { path: '/' }, { by: null, rotate: false });
+    const target = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lager-backup-')), 'copy');
+    backup(core.config.dataDir, target);
+    expect(fs.readdirSync(path.join(target, 'instances', inst.id)).sort()).toEqual(['data.sqlite', 'inbox.sqlite']);
+    // A server started on the copy reads both.
+    const restored = createCore({ ...core.config, dataDir: target });
+    try {
+      expect(restored.data.get(inst.id, 'notes/n1')?.data).toEqual({ text: 'own' });
+      expect(restored.data.get(inst.id, 'hits/h1')?.data).toEqual({ path: '/' });
+    } finally {
+      restored.close();
+    }
+  });
+
   it('copies a running data directory into one that starts up with the same content', () => {
     h = makeHarness();
     const { core } = h;

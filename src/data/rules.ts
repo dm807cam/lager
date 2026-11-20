@@ -6,7 +6,7 @@ export interface Viewer { userId: string | null; level: Level }
 const RANK: Record<string, number> = { none: 0, view: 1, interact: 2, admin: 3, owner: 4 };
 const DEFAULT_READ = 'view';
 const DEFAULT_WRITE = 'interact';
-/** As a `write` level: every visitor who can open the instance may append (see `appendRule`); changing and deleting stay at the default. */
+/** As a `write` level: every visitor who can open the instance may append (see `appendRule`); nothing else about writing changes. */
 const ANYONE = 'anyone';
 /** `delete` is a write everywhere except in one's own private area. */
 type Kind = 'read' | 'write' | 'delete';
@@ -33,13 +33,16 @@ function ruleMatches(rule: DbRule, segs: string[], viewer: Viewer): number {
   return rs.length;
 }
 
-/** The most specific matching rule that sets this kind decides; a rule that only sets `write` leaves `read` to the broader rule. */
-function deciding(rules: DbRule[] | undefined, viewer: Viewer, segs: string[], kind: 'read' | 'write'): { level: string; path: string | null } {
+/**
+ * The most specific matching rule that sets this kind decides; a rule that only sets `write` leaves `read` to the broader rule.
+ * With `appends` left out, rules that only open appending (`anyone`) are passed over, as if they were not there.
+ */
+function deciding(rules: DbRule[] | undefined, viewer: Viewer, segs: string[], kind: 'read' | 'write', appends = true): { level: string; path: string | null } {
   let found: { level: string; path: string | null } = { level: kind === 'read' ? DEFAULT_READ : DEFAULT_WRITE, path: null };
   let bestLen = 0;
   for (const rule of rules ?? []) {
     const level = rule[kind];
-    if (level === undefined) continue;
+    if (level === undefined || (!appends && kind === 'write' && level === ANYONE)) continue;
     const len = ruleMatches(rule, segs, viewer);
     if (len > bestLen) { found = { level, path: rule.path }; bestLen = len; }
   }
@@ -53,9 +56,9 @@ function check(rules: DbRule[] | undefined, viewer: Viewer, path: string, asked:
   const kind = asked === 'read' ? 'read' : 'write';
   if (kind === 'write' && viewer.userId === null) return false;
 
-  let required = deciding(rules, viewer, segs, kind).level;
-  // `anyone` opens appending only; who may change and delete on such a path is who may without the rule.
-  if (kind === 'write' && required === ANYONE) required = DEFAULT_WRITE;
+  // `anyone` opens appending only: who may write, change and delete on such a path is who may without that rule, so the
+  // next broader rule decides, or the default.
+  const required = deciding(rules, viewer, segs, kind, false).level;
   // "self" and "none" are held by nobody; unknown levels fail closed.
   if (required === 'self' || required === 'none' || !(required in RANK)) return false;
   return RANK[viewer.level] >= RANK[required];

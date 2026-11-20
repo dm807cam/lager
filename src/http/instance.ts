@@ -367,7 +367,7 @@ export function createInstanceRouter(core: Core): express.Router {
           res.set('Retry-After', '5');
           throw new LagerError('rate_limited', 'Too many additions by visitors; try again shortly.');
         }
-        const doc = core.data.ingest(id, docPath, added, { by, quotaBytes: core.ingest.quotaBytes, rotate: false });
+        const doc = core.data.ingest(id, docPath, added, { by, rotate: false });
         res.json({ doc: readable(doc), id: doc.id });
         return;
       }

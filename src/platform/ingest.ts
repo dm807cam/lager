@@ -135,16 +135,28 @@ export function ingestEndpoints(caps: Capabilities | undefined): IngestEndpoint[
   }
 }
 
+/** Whether a declared rule that sets `read` covers the collection: its path is the collection or lies above it. */
+function readDeclared(rules: DbRule[], collection: string): boolean {
+  const segs = collection.split('/');
+  return rules.some((rule) => {
+    if (rule === null || typeof rule !== 'object' || rule.read === undefined || typeof rule.path !== 'string') return false;
+    const rs = rule.path.split('/').filter((s) => s !== '');
+    // `{self}` stands for whoever asks, so such a rule may cover the collection for somebody: the app has spoken.
+    return rs.length > 0 && rs.length <= segs.length && rs.every((r, i) => r === segs[i] || r === '{self}');
+  });
+}
+
 /**
- * The data rules of a version as the server applies them: the declared ones, and behind them one per ingest endpoint that keeps
- * what arrives from outside to the people who manage the instance. An app opens such a collection to others with a rule of its
- * own for that path, which comes first and so decides.
+ * The data rules of a version as the server applies them: the declared ones, and for every ingest endpoint whose collection
+ * no declared rule sets `read` for, one that keeps what arrives from outside to the people who manage the instance. Where the
+ * app has a rule for the collection or for a path above it, that rule stands as written, so the default only ever closes what
+ * would otherwise be open to every viewer.
  */
 export function effectiveRules(caps: Capabilities | undefined): DbRule[] | undefined {
   const declared = Array.isArray(caps?.db?.rules) ? caps.db.rules : undefined;
-  const endpoints = ingestEndpoints(caps);
-  if (endpoints.length === 0) return declared;
-  return [...(declared ?? []), ...[...new Set(endpoints.map((e) => e.collection))].map((path): DbRule => ({ path, read: 'admin' }))];
+  const collections = [...new Set(ingestEndpoints(caps).map((e) => e.collection))].filter((c) => !readDeclared(declared ?? [], c));
+  if (collections.length === 0) return declared;
+  return [...(declared ?? []), ...collections.map((path): DbRule => ({ path, read: 'admin' }))];
 }
 
 export type IngestOutcome = 'accepted' | 'refused' | 'limited';

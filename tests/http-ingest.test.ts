@@ -119,14 +119,19 @@ describe('POST /_ingest/<name>: who may send', () => {
     expect((await send(after)).status).toBe(202);
   });
 
-  it('wrong tokens from one address are no longer looked at after a while, also the right one', async () => {
-    const { h, inst } = setup();
-    const send = (token: string) => request(h!.app).post('/_ingest/weight').set('Host', HOST).set('Authorization', `Bearer ${token}`).send({ kg: 70 });
+  it('after many wrong tokens an address is told to wait, but the right token from the same address still gets through', async () => {
+    const { h, inst } = setup({ endpoints: [...ENDPOINTS, { name: 'steps', auth: 'token' }] });
+    const send = (token: string, name = 'weight') => request(h!.app).post(`/_ingest/${name}`).set('Host', HOST).set('Authorization', `Bearer ${token}`).send({ kg: 70 });
     for (let i = 0; i < INGEST_LIMITS.badTokens; i++) expect((await send('lgi_wrong')).status).toBe(401);
-    const blocked = await send(h.core.ingest.token(inst.id, 'weight'));
-    expect(blocked.status).toBe(429);
-    expect(blocked.headers['retry-after']).toBe('60');
-    expect(docs(h, inst.id, 'log/main/weights')).toEqual([]);
+    const guessing = await send('lgi_wrong');
+    expect(guessing.status).toBe(429);
+    expect(guessing.headers['retry-after']).toBe('60');
+    // Senders share addresses (a webhook provider, an office): somebody else's guessing must not silence the real sender.
+    expect((await send(h.core.ingest.token(inst.id, 'weight'))).status).toBe(202);
+    expect((await send(h.core.ingest.token(inst.id, 'steps'), 'steps')).status).toBe(202);
+    expect((await send('lgi_wrong', 'steps')).status).toBe(429);
+    expect(docs(h, inst.id, 'log/main/weights')).toHaveLength(1);
+    expect(h.core.ingest.countsOf(inst.id, 'weight')).toEqual({ accepted: 1, refused: INGEST_LIMITS.badTokens, limited: 1 });
   });
 
   it('with origins ["*"] a token endpoint can be called from any website', async () => {
@@ -330,30 +335,30 @@ describe('POST /_ingest/<name>: limits', () => {
   });
 
   it('a full ingest quota refuses with 507 and leaves the instance\'s own storage alone', async () => {
-    const { h, inst } = setup({ ingestQuotaBytes: 20_000 });
+    const { h, inst } = setup({ ingestQuotaBytes: 100_000 });
     let accepted = 0;
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 120; i++) {
       const res = await hit(h, { text: 'x'.repeat(1000) });
       if (res.status === 202) accepted++; else expect(res.status).toBe(507);
     }
-    expect(accepted).toBeGreaterThan(5);
-    expect(accepted).toBeLessThan(20);
+    expect(accepted).toBeGreaterThan(20);
+    expect(accepted).toBeLessThan(100);
     expect(docs(h, inst.id)).toHaveLength(accepted);
-    expect(h.core.data.ingestUsage(inst.id)).toBeLessThanOrEqual(20_000);
-    expect(h.core.ingest.countsOf(inst.id, 'hits')).toEqual({ accepted, refused: 40 - accepted, limited: 0 });
+    expect(h.core.data.ingestUsage(inst.id)).toBeLessThanOrEqual(100_000);
+    expect(h.core.ingest.countsOf(inst.id, 'hits')).toEqual({ accepted, refused: 120 - accepted, limited: 0 });
     // The owner still writes: what came from outside does not count against the instance's storage.
     expect(() => h.core.data.set(inst.id, 'notes/n1', { text: 'mine' }, h.adminId)).not.toThrow();
   });
 
   it('with onFull "rotate" the oldest received documents of the collection make room', async () => {
-    const { h, inst } = setup({ ingestQuotaBytes: 20_000, endpoints: [{ name: 'hits', auth: 'none', origins: [BLOG], onFull: 'rotate' }] });
-    for (let i = 0; i < 40; i++) expect((await hit(h, { n: i, text: 'x'.repeat(1000) })).status).toBe(202);
+    const { h, inst } = setup({ ingestQuotaBytes: 100_000, endpoints: [{ name: 'hits', auth: 'none', origins: [BLOG], onFull: 'rotate' }] });
+    for (let i = 0; i < 120; i++) expect((await hit(h, { n: i, text: 'x'.repeat(1000) })).status).toBe(202);
     const kept = docs(h, inst.id).map((d) => d.data.n as number).sort((a, b) => a - b);
-    expect(kept.length).toBeGreaterThan(5);
-    expect(kept.length).toBeLessThan(20);
+    expect(kept.length).toBeGreaterThan(20);
+    expect(kept.length).toBeLessThan(100);
     // The newest ones stayed, without a gap.
-    expect(kept).toEqual(Array.from({ length: kept.length }, (_, i) => 40 - kept.length + i));
-    expect(h.core.data.ingestUsage(inst.id)).toBeLessThanOrEqual(20_000);
+    expect(kept).toEqual(Array.from({ length: kept.length }, (_, i) => 120 - kept.length + i));
+    expect(h.core.data.ingestUsage(inst.id)).toBeLessThanOrEqual(100_000);
   });
 });
 

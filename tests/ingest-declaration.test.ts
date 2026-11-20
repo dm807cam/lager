@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { checkCapabilities } from '../src/mcp/tools.js';
 import { checkApp } from '../src/platform/check.js';
+import { canRead, type Viewer } from '../src/data/rules.js';
 import { effectiveRules, INGEST_LIMITS, ingestEndpoints, parseIngest } from '../src/platform/ingest.js';
 
 const one = (endpoint: Record<string, unknown>): unknown => ({ endpoints: [endpoint] });
@@ -95,12 +96,45 @@ describe('the ingest declaration', () => {
 });
 
 describe('the rules the server applies', () => {
-  it('keep what an endpoint receives to managers unless the app has a rule for that collection', () => {
-    const caps = { ingest: { endpoints: [{ name: 'hits', auth: 'token' }, { name: 'more', collection: 'hits', auth: 'token' }, { name: 'mail', collection: 'inbox/main/mail', auth: 'token' }] } };
-    expect(effectiveRules(caps)).toEqual([{ path: 'hits', read: 'admin' }, { path: 'inbox/main/mail', read: 'admin' }]);
-    const open = { ...caps, db: { rules: [{ path: 'hits', read: 'view' as const }] } };
-    // The app's rule comes first, and of two rules for the same path the first one decides.
-    expect(effectiveRules(open)).toEqual([{ path: 'hits', read: 'view' }, { path: 'hits', read: 'admin' }, { path: 'inbox/main/mail', read: 'admin' }]);
+  const endpoints = [{ name: 'hits', auth: 'token' }, { name: 'more', collection: 'hits', auth: 'token' }, { name: 'mail', collection: 'inbox/main/mail', auth: 'token' }];
+
+  it('keep what an endpoint receives to managers where the app says nothing about reading it', () => {
+    expect(effectiveRules({ ingest: { endpoints } })).toEqual([{ path: 'hits', read: 'admin' }, { path: 'inbox/main/mail', read: 'admin' }]);
+    // A rule that only speaks of writing, or of another path, says nothing about reading the collection.
+    const rules = [{ path: 'hits', write: 'owner' as const }, { path: 'inbox/other', read: 'view' as const }, { path: 'hits/h1/notes', read: 'view' as const }];
+    expect(effectiveRules({ db: { rules }, ingest: { endpoints } })).toEqual([...rules, { path: 'hits', read: 'admin' }, { path: 'inbox/main/mail', read: 'admin' }]);
+  });
+
+  it('leave a collection to the app\'s own rule, whether that rule is for it or for a path above it', () => {
+    // Opened on purpose…
+    const open = [{ path: 'hits', read: 'view' as const }];
+    expect(effectiveRules({ db: { rules: open }, ingest: { endpoints } })).toEqual([...open, { path: 'inbox/main/mail', read: 'admin' }]);
+    // …or closed further than the default would: the default must never open what the app closed.
+    const closed = [{ path: 'inbox', read: 'owner' as const }, { path: 'hits', read: 'self' as const }];
+    expect(effectiveRules({ db: { rules: closed }, ingest: { endpoints } })).toBe(closed);
+    const manager: Viewer = { userId: 'm', level: 'admin' };
+    const rules = effectiveRules({ db: { rules: closed }, ingest: { endpoints } });
+    expect(canRead(rules, manager, 'inbox/main/mail/d1')).toBe(false);
+    expect(canRead(rules, manager, 'inbox/main/mail/d1/notes/n1')).toBe(false);
+    expect(canRead(rules, { userId: 'o', level: 'owner' }, 'inbox/main/mail/d1')).toBe(true);
+    // A rule with {self} above the collection counts as the app having spoken.
+    const personal = [{ path: 'inbox/{self}', read: 'interact' as const }];
+    expect(effectiveRules({ db: { rules: personal }, ingest: { endpoints: [endpoints[2]] } })).toBe(personal);
+  });
+
+  it('never read more openly with the default than without it', () => {
+    const viewers: Viewer[] = [{ userId: null, level: 'view' }, { userId: 'v', level: 'view' }, { userId: 'e', level: 'interact' }, { userId: 'm', level: 'admin' }, { userId: 'o', level: 'owner' }];
+    const sets = [undefined, [], [{ path: 'hits', write: 'admin' as const }], [{ path: 'inbox', read: 'owner' as const }], [{ path: 'inbox/main', read: 'none' as never }],
+      [{ path: 'inbox/main/mail/d1', read: 'view' as const }], [{ path: 'hits', read: 'view' as const }, { path: 'inbox/main/mail', read: 'self' as const }]];
+    for (const rules of sets) {
+      const caps = { ...(rules ? { db: { rules } } : {}), ingest: { endpoints } };
+      for (const v of viewers) {
+        for (const p of ['hits/h1', 'hits/h1/notes/n1', 'inbox/main/mail/d1', 'inbox/main/mail/d1/notes/n1', 'inbox/other/x', 'tasks/t1']) {
+          const withDefault = canRead(effectiveRules(caps), v, p);
+          if (withDefault) expect(canRead(rules, v, p), `${JSON.stringify(rules)} ${v.level} ${p}`).toBe(true);
+        }
+      }
+    }
   });
 
   it('are the declared ones for an app without endpoints', () => {

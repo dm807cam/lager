@@ -267,7 +267,7 @@ export const en = {
   'instance.ingest.turnOn': 'Switch on',
   'instance.ingest.counts': '{accepted} accepted, {refused} refused, {limited} over the limit since {date}',
   'instance.ingest.storage': 'Received data: {used} of {quota} used',
-  'instance.ingest.storageHint': 'Counted apart from the storage of the instance. A document that you change or delete no longer counts here.',
+  'instance.ingest.storageHint': 'Kept apart from the storage of the instance, in a file of its own, and not part of snapshots. Deleting received documents makes room again.',
   'instance.ingest.serverOff': 'This app would take data from outside, but that is switched off on this server.',
 
   'app.pageTitle': 'App {title}',

@@ -83,12 +83,14 @@ export function mountIngestEndpoints(router: express.Router, core: Core): void {
       // Browsers state the origin of every cross-site POST. Other clients can make one up, so this keeps other websites out, not scripts.
       if (cors === null) { stop(403, WRONG_ORIGIN(), 'refused'); return; }
     } else {
-      if (core.ingest.tokenGuessesExhausted(instance.id, address)) {
-        res.set('Retry-After', '60');
-        stop(429, new LagerError('rate_limited', 'Too many requests with a wrong token; try again later.'), 'limited');
-        return;
-      }
+      // The token is looked at first: wrong ones from an address must never keep out the right one from the same address
+      // (senders share addresses). Only further wrong ones are turned away unanswered, to slow down guessing.
       if (!core.ingest.tokenValid(instance.id, endpoint.name, presentedToken(req))) {
+        if (core.ingest.tokenGuessesExhausted(instance.id, address)) {
+          res.set('Retry-After', '60');
+          stop(429, new LagerError('rate_limited', 'Too many requests with a wrong token; try again later.'), 'limited');
+          return;
+        }
         core.ingest.noteBadToken(instance.id, address);
         res.set('WWW-Authenticate', 'Bearer');
         stop(401, new LagerError('unauthenticated', 'This endpoint needs its token: send "Authorization: Bearer <token>".'), 'refused');
@@ -126,9 +128,7 @@ export function mountIngestEndpoints(router: express.Router, core: Core): void {
         if (endpoint.visitor) data._visitor = core.ingest.visitorId(instance.id, address, (req.get('User-Agent') ?? '').slice(0, MAX_USER_AGENT));
         const country = endpoint.country && core.ingest.countryHeader ? req.get(core.ingest.countryHeader) : undefined;
         if (country !== undefined && COUNTRY_RE.test(country)) data._country = country.toUpperCase();
-        core.data.ingest(instance.id, `${endpoint.collection}/${newDocId()}`, data, {
-          by: null, quotaBytes: core.ingest.quotaBytes, rotate: endpoint.onFull === 'rotate',
-        });
+        core.data.ingest(instance.id, `${endpoint.collection}/${newDocId()}`, data, { by: null, rotate: endpoint.onFull === 'rotate' });
         core.ingest.note(instance.id, endpoint.name, 'accepted');
         res.status(202).end();
       } catch (e) {
