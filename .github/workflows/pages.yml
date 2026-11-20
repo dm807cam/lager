@@ -1,16 +1,22 @@
 name: Website
 
-# Publishes website/ to GitHub Pages, served at https://lager.im (the custom domain is set in Settings → Pages;
-# website/CNAME only records it: Actions deployments ignore the file). Pull requests only package the site, so a broken page shows up before the merge;
-# pushes to main also deploy it. Pages must use "GitHub Actions" as its source (Settings → Pages).
+# Publishes the website to GitHub Pages, served at https://lager.im (the custom domain is set in Settings → Pages;
+# website/CNAME only records it: Actions deployments ignore the file). scripts/website.mjs copies website/ and
+# generates the changelog page from CHANGELOG.md and the blog from website/blog/posts/, so a release (its pull
+# request updates CHANGELOG.md on main) and a merged post both publish themselves. Pull requests only build the
+# site, so a broken page or link shows up before the merge; pushes to main also deploy it, and a daily run
+# publishes posts dated for that day. Pages must use "GitHub Actions" as its source (Settings → Pages).
 
 on:
   push:
     branches: [main]
-    paths: ['website/**', '.github/workflows/pages.yml']
+    paths: ['website/**', 'CHANGELOG.md', 'scripts/website.mjs', '.github/workflows/pages.yml']
   pull_request:
     branches: [main]
-    paths: ['website/**', '.github/workflows/pages.yml']
+    paths: ['website/**', 'CHANGELOG.md', 'scripts/website.mjs', '.github/workflows/pages.yml']
+  schedule:
+    # Posts dated in the future appear on their day.
+    - cron: '17 5 * * *'
   workflow_dispatch:
 
 permissions:
@@ -28,16 +34,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: Check that every local file the page refers to exists
-        run: |
-          missing=0
-          for ref in $(grep -oE '(src|href)="[^"#:]+"' website/index.html | sed -E 's/^[a-z]+="//; s/"$//' | sort -u); do
-            if [ ! -f "website/$ref" ]; then echo "::error file=website/index.html::Missing file: $ref"; missing=1; fi
-          done
-          exit "$missing"
+      # Copies website/, renders the changelog and the blog, and fails on any local link to a missing file.
+      - name: Build the site
+        run: node scripts/website.mjs _site
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: website
+          path: _site
 
   deploy:
     name: Deploy to GitHub Pages

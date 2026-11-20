@@ -11,3 +11,4 @@ dist
 .claude/
 .superpowers/
 .DS_Store
+_site/
