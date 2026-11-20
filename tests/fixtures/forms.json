@@ -199,6 +199,32 @@
       ]
     },
     {
+      "action": "/ui/instances/notes/ingest/switch",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "name",
+        "on"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/ingest/switch",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "name",
+        "on"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/ingest/token",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "name"
+      ]
+    },
+    {
       "action": "/ui/instances/notes/visibility",
       "method": "post",
       "fields": [
@@ -905,6 +931,32 @@
         "csrf",
         "id",
         "type"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/ingest/switch",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "name",
+        "on"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/ingest/switch",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "name",
+        "on"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/ingest/token",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "name"
       ]
     },
     {

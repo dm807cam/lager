@@ -1,7 +1,8 @@
 import type { Capabilities } from './apps.js';
+import { ingestEndpoints } from './ingest.js';
 
 /** The capability names `lager.use()` can resolve. */
-export const SUPPORTED_CAPABILITIES: readonly string[] = ['db', 'user', 'permissions', 'assets', 'room', 'page', 'downloads'];
+export const SUPPORTED_CAPABILITIES: readonly string[] = ['db', 'user', 'permissions', 'assets', 'room', 'page', 'downloads', 'ingest'];
 
 export interface AppCheck { used: string[]; unsupported: string[]; undeclared: string[]; warnings: string[] }
 
@@ -29,6 +30,18 @@ const renameHint = (n: string): string => (RENAMED[n] ? ` On Lager this is calle
 
 /** An app variable called `lager` hides or replaces the runtime, and every lager.use() call then fails. */
 const SHADOW_RE = /\b(var|let|const|function|class)\s+lager\b/;
+
+/**
+ * What an app that takes data from people nobody knows must be told: whoever deploys it relays the warning to the user, and the
+ * assistant that wrote the page reads it too.
+ */
+function outsideWarnings(capabilities: Capabilities): string[] {
+  const open = ingestEndpoints(capabilities).filter((e) => e.auth === 'none').map((e) => `the endpoint "${e.name}"`);
+  const rules = Array.isArray(capabilities.db?.rules) ? capabilities.db.rules : [];
+  for (const r of rules) if (r !== null && typeof r === 'object' && r.write === 'anyone') open.push(`the rule on "${String(r.path)}"`);
+  if (open.length === 0) return [];
+  return [`Anyone can add data through ${open.join(' and ')}, without an account. Treat what arrives as untrusted: show it with textContent, never as HTML, and never put a secret into the page that sends it.`];
+}
 
 /** One English warning per browser-storage API, and per API of another app host, that the HTML uses. */
 function storageWarnings(html: string): string[] {
@@ -63,6 +76,7 @@ export function checkApp(html: string, capabilities: Capabilities = {}): AppChec
       .map((n) => `"${n}" is declared in capabilities, but Lager has no such capability.${renameHint(n)}`),
     ...undeclared.map((n) => n === 'complete' ? 'lager.complete is used but "complete" is not declared in capabilities; the call rejects.' : `"${n}" is used but not declared in capabilities.`),
     ...(callsComplete ? ['lager.complete calls the language model the server administrator set up; it rejects when none is set up, for guests and for viewers who may only view.'] : []),
+    ...outsideWarnings(capabilities),
   ];
   return { used, unsupported, undeclared, warnings };
 }

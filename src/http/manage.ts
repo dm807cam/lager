@@ -4,10 +4,11 @@ import { hostUrl, instanceUrl, MAX_SLUG_LENGTH } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
 import { withSnapshotBudget } from './snapshot-limit.js';
-import { formatSize, t, type Locale, type MessageKey } from '../i18n/index.js';
+import { formatDate, formatSize, t, type Locale, type MessageKey } from '../i18n/index.js';
 import { localeOf } from './locale.js';
 import type { App, Instance, SelfInstances, UsersLevel, Version, Visibility } from '../platform/apps.js';
 import type { GrantLevel } from '../platform/access.js';
+import { ingestEndpoints, type IngestEndpoint } from '../platform/ingest.js';
 import type { User } from '../platform/users.js';
 import { sendVersionDownload, streamExport, versionParam } from './api.js';
 import { requireUser, shellFor, type PlatformExtension } from './app.js';
@@ -16,7 +17,7 @@ import {
   dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, formErrorPage, hiddenField, levelOptions, missingPage, noticeHtml, optionList, type Option, page,
   sizeText, visibilityLabel, visibilityOptions,
 } from './pages.js';
-import { appTile, avatar, badge, btn, named, card, dataTable, emptyState, icon, linkButton, meter, notice, personCell, signedIn, visibilityIcon } from './ui.js';
+import { appTile, avatar, badge, btn, named, card, copyField, dataTable, emptyState, icon, linkButton, meter, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashToken, readFlash, type Flash } from './session.js';
 
 const GRANT_LEVELS = ['view', 'interact', 'admin'] as const;
@@ -131,6 +132,44 @@ export function domainsBody(core: Core, locale: Locale, inst: Instance, base: st
   return `${list}<div class="subsection">${add}<p class="hint gap-top">${esc(t(locale, 'instance.domains.hint'))}</p></div>`;
 }
 
+/** The endpoints the active version of the instance declares. */
+const endpointsOf = (core: Core, inst: Instance): IngestEndpoint[] =>
+  ingestEndpoints(core.apps.getVersion(inst.appId, inst.activeVersion)?.capabilities);
+
+/**
+ * Where the instance takes data from outside, for the people who manage it: the address of every endpoint, who may send there,
+ * its token, what came in since the server started, and the switch that closes it at once. Empty for an app without endpoints.
+ */
+function ingestCard(core: Core, locale: Locale, inst: Instance, base: string, csrf: string): string {
+  const endpoints = endpointsOf(core, inst);
+  if (endpoints.length === 0) return '';
+  const title = t(locale, 'instance.ingest.title');
+  if (!core.ingest.enabled) return card(title, `<p class="hint">${esc(t(locale, 'instance.ingest.serverOff'))}</p>`);
+  const url = instanceUrl(core.config, inst.slug);
+  const since = formatDate(locale, core.ingest.since);
+  const items = endpoints.map((e) => {
+    const off = core.ingest.isOff(inst.id, e.name);
+    const counts = core.ingest.countsOf(inst.id, e.name);
+    // Each website on its own, as text to read: the page loads nothing from there.
+    const who = e.auth === 'token' ? esc(t(locale, 'instance.ingest.byToken'))
+      : `${esc(t(locale, 'instance.ingest.byOrigins'))} ${e.origins.map((o) => `<code>${esc(o)}</code>`).join(' ')}`;
+    const name = hiddenField('name', e.name);
+    const token = e.auth === 'token' ? `<div class="field"><span class="hint">${esc(t(locale, 'instance.ingest.token'))}</span>${copyField(locale, core.ingest.token(inst.id, e.name))}
+<p class="hint">${esc(t(locale, 'instance.ingest.tokenHint'))}</p></div>` : '';
+    return `<div class="subsection" data-endpoint="${esc(e.name)}"><div class="card-title"><h3 class="mono">${esc(e.name)}</h3>${off
+      ? badge(t(locale, 'instance.ingest.off'), { tone: 'warning', icon: 'alert' }) : badge(t(locale, 'instance.ingest.on'), { tone: 'success', dot: true })}</div>
+${copyField(locale, `${url}/_ingest/${e.name}`)}
+<p class="hint">${who}</p><p class="hint">${esc(t(locale, 'instance.ingest.into', { collection: e.collection }))}</p>${token}
+<p class="hint">${esc(t(locale, 'instance.ingest.counts', { accepted: counts.accepted, refused: counts.refused, limited: counts.limited, date: since }))}</p>
+<div class="btn-row">${form(`${base}/ingest/switch`, csrf, name + hiddenField('on', off ? '1' : '0'), esc(t(locale, off ? 'instance.ingest.turnOn' : 'instance.ingest.turnOff')), 'secondary', '', true)}
+${e.auth === 'token' ? form(`${base}/ingest/token`, csrf, name, esc(t(locale, 'instance.ingest.rotate')), 'quiet', '', true) : ''}</div></div>`;
+  }).join('');
+  const used = core.data.ingestUsage(inst.id);
+  return card(title, `<p class="hint">${esc(t(locale, 'instance.ingest.intro'))}</p>${items}
+<div class="subsection">${meter(used, core.ingest.quotaBytes, t(locale, 'instance.ingest.storage', { used: formatSize(locale, used), quota: formatSize(locale, core.ingest.quotaBytes) }))}
+<p class="hint gap-top">${esc(t(locale, 'instance.ingest.storageHint'))}</p></div>`);
+}
+
 /** Destructive actions at the bottom of the main column: each confirmed by typing the name. */
 function dangerZone(locale: Locale, title: string, text: string, action: string, csrf: string, name: string, submit: string): string {
   return `<section class="card card-danger"><h2>${icon('alert')}${esc(t(locale, 'common.dangerZone'))}</h2><div class="danger-row"><h3>${esc(title)}</h3><p>${esc(text)}</p>
@@ -195,7 +234,7 @@ ${versionsList(core, locale, user, app, base, csrf, inst.activeVersion, inst.id)
   const domains = core.domains.canManage(user, core.access.canManageInstance(inst, user)) ? card(t(locale, 'instance.domains.title'), domainsBody(core, locale, inst, `${base}/domains`, csrf)) : '';
   return shell(core, locale, user, title, `${hero(app, app.title, `<a class="url" href="${esc(url)}">${esc(url)}</a>`, [visibility, badge(`v${inst.activeVersion}`)],
     linkButton(url, `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary'))}
-<div class="layout"><div class="main-col">${versions}${grantsCard(core, locale, inst, base, csrf)}${domains}${data}${del}</div>
+<div class="layout"><div class="main-col">${versions}${grantsCard(core, locale, inst, base, csrf)}${ingestCard(core, locale, inst, base, csrf)}${domains}${data}${del}</div>
 <aside class="side-col" aria-label="${esc(t(locale, 'instance.details'))}">${details}</aside></div>`, flash, here);
 }
 
@@ -418,6 +457,24 @@ export const manageExtension: PlatformExtension = (router, core) => {
 
   router.post('/ui/instances/:slug/domains/remove', ...action(instBack, (req, user) => {
     core.domains.remove(managed(user, param(req, 'slug')), field(req, 'host', 300), user, true);
+  }));
+
+  /** The instance, if `user` manages it and its active version declares the endpoint the form names. */
+  const managedEndpoint = (req: Request, user: User): { inst: Instance; name: string } => {
+    const inst = managed(user, param(req, 'slug'));
+    const name = field(req, 'name', 100);
+    if (!endpointsOf(core, inst).some((e) => e.name === name)) throw new LagerError('not_found', 'Endpoint not found.');
+    return { inst, name };
+  };
+
+  router.post('/ui/instances/:slug/ingest/switch', ...action(instBack, (req, user) => {
+    const { inst, name } = managedEndpoint(req, user);
+    core.ingest.setOff(inst.id, name, field(req, 'on') !== '1');
+  }));
+
+  router.post('/ui/instances/:slug/ingest/token', ...action(instBack, (req, user) => {
+    const { inst, name } = managedEndpoint(req, user);
+    core.ingest.rotateToken(inst.id, name);
   }));
 
   router.post('/ui/instances/:slug/delete', ...action(instBack, (req, user) => {

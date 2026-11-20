@@ -13,6 +13,7 @@ import type { GrantLevel } from '../platform/access.js';
 import { normalizeDescription, normalizeThemeColor, type App, type Capabilities, type DbRule, type DeployResult, type Instance, type Version, type Visibility } from '../platform/apps.js';
 import { MODEL_ID_RE } from '../platform/ai.js';
 import { checkApp, type AppCheck } from '../platform/check.js';
+import { effectiveRules, parseIngest } from '../platform/ingest.js';
 import type { User } from '../platform/users.js';
 
 const GUIDE = fs.readFileSync(new URL('../guide.md', import.meta.url), 'utf8');
@@ -421,9 +422,9 @@ export function checkCapabilities(value: unknown): Capabilities | undefined {
       for (const r of rules as unknown[]) {
         if (!isObject(r) || typeof r.path !== 'string' || r.path === '') bad('every rule needs a path.');
         const rule = r as Record<string, unknown>;
-        for (const k of ['read', 'write']) {
-          if (rule[k] !== undefined && !RULE_LEVELS.includes(rule[k] as string)) bad(`${k} must be one of ${RULE_LEVELS.join(', ')}.`);
-        }
+        if (rule.read !== undefined && !RULE_LEVELS.includes(rule.read as string)) bad(`read must be one of ${RULE_LEVELS.join(', ')}.`);
+        // `anyone` lets visitors append and nothing else, so it exists for writing only.
+        if (rule.write !== undefined && rule.write !== 'anyone' && !RULE_LEVELS.includes(rule.write as string)) bad(`write must be one of ${RULE_LEVELS.join(', ')}, anyone.`);
       }
     }
   }
@@ -450,6 +451,9 @@ export function checkCapabilities(value: unknown): Capabilities | undefined {
   if (caps.complete !== undefined) {
     const model = (caps.complete as Record<string, unknown>).model;
     if (model !== undefined && (typeof model !== 'string' || !MODEL_ID_RE.test(model))) bad('complete.model must be the name of a model from list_models.');
+  }
+  if (caps.ingest !== undefined) {
+    try { parseIngest(caps.ingest); } catch (e) { bad(e instanceof LagerError ? e.message : 'ingest is not valid.'); }
   }
   return caps as Capabilities;
 }
@@ -493,7 +497,7 @@ export function dbAccess(core: Core, user: User, inst: Instance): { viewer: View
   const viewer: Viewer = { userId: user.id, level };
   if (level === 'owner') return { viewer, rules: [] };
   const caps = core.apps.getVersion(inst.appId, inst.activeVersion)?.capabilities;
-  return { viewer, rules: caps?.db?.rules };
+  return { viewer, rules: effectiveRules(caps) };
 }
 
 /**
@@ -521,6 +525,7 @@ const capabilitiesArg = z.object({
   page: jsonObject().optional().describe('The page saves itself (lager.use("page")). {"publish": false} disables saving'),
   downloads: jsonObject().optional().describe('Offer files to save (lager.use("downloads"))'),
   complete: jsonObject().optional().describe('Language model calls through lager.complete(). Optional {"model": "<name from list_models>"}; without it every viewer gets the default model of their AI group'),
+  ingest: jsonObject().optional().describe('Receive data from outside (another website, a webhook, a script, a device): {"endpoints": [{"name", "auth": "none" | "token", "origins"?, "collection"?, "maxBytes"?, "maxPerDay"?, "onFull"?, "visitor"?, "country"?}]}. Each endpoint only appends documents to one collection; see "Receiving data from outside" in get_guide'),
 }).catchall(z.unknown())
   .describe('Every runtime capability the HTML uses, e.g. {"db":{},"user":{}}. A capability that is not declared is null at runtime.');
 

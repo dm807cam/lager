@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page views</title>
+<!--
+  A small page-view counter for a website of your own, without cookies. Deploy it with these capabilities, with the address of
+  your website in "origins":
+
+  {"db": {}, "user": {}, "ingest": {"endpoints": [{"name": "hits", "auth": "none", "origins": ["https://blog.example.com"],
+    "visitor": "daily", "country": true, "onFull": "rotate", "maxBytes": 1024, "maxPerDay": 100000}]}}
+
+  The website sends one small document per page view to the endpoint. The instance stays private: only the people who manage
+  it read what came in.
+-->
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.45; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .75rem; }
+  .tile { border: 1px solid #8884; border-radius: .5rem; padding: .75rem; }
+  .tile strong { display: block; font-size: 1.6rem; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: .3rem 0; border-bottom: 1px solid #8883; }
+  td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  pre { overflow-x: auto; padding: .75rem; border: 1px solid #8884; border-radius: .5rem; font-size: .85rem; }
+  .muted { opacity: .7; font-size: .9rem; }
+</style>
+</head>
+<body>
+<h1>Page views</h1>
+<p id="status" class="muted"></p>
+
+<section id="numbers" hidden>
+  <div class="tiles">
+    <div class="tile"><strong id="today">0</strong>views today</div>
+    <div class="tile"><strong id="visitors">0</strong>visitors today</div>
+    <div class="tile"><strong id="week">0</strong>views in 7 days</div>
+  </div>
+  <h2>Pages</h2>
+  <table><tbody id="pages"></tbody></table>
+  <h2>Where visitors came from</h2>
+  <table><tbody id="referrers"></tbody></table>
+  <h2>Countries</h2>
+  <table><tbody id="countries"></tbody></table>
+</section>
+
+<section id="setup" hidden>
+  <h2>Add it to your website</h2>
+  <p>Paste this before <code>&lt;/body&gt;</code> on every page of <span id="origins"></span>:</p>
+  <pre id="snippet"></pre>
+  <p id="off" class="muted" hidden>The endpoint is switched off on the instance page: nothing is counted right now.</p>
+</section>
+
+<script>
+(async () => {
+  const status = document.getElementById("status");
+  const db = await lager.use("db");
+  const user = await lager.use("user");
+  const ingest = await lager.use("ingest");
+  if (!db || !ingest) { status.textContent = "This instance cannot receive page views: deploy the app with the db and ingest capabilities."; return; }
+  if (!user || !(await user.canEdit())) { status.textContent = "Only the people who manage this instance see its numbers."; return; }
+
+  // What the website runs: one request per page view, with the path and the site the visitor came from. No cookie, no id.
+  let endpoint;
+  try { endpoint = (await ingest.endpoints()).find((e) => e.name === "hits"); } catch (e) { status.textContent = e.message; return; }
+  if (endpoint) {
+    document.getElementById("origins").textContent = endpoint.origins.join(", ");
+    document.getElementById("snippet").textContent = [
+      "<script>",
+      "(function () {",
+      "  var hit = JSON.stringify({ path: location.pathname, ref: document.referrer ? new URL(document.referrer).hostname : \"\" });",
+      "  var url = " + JSON.stringify(endpoint.url) + ";",
+      "  if (!(navigator.sendBeacon && navigator.sendBeacon(url, hit))) fetch(url, { method: \"POST\", body: hit, keepalive: true });",
+      "})();",
+      "<\/script>",
+    ].join("\n");
+    document.getElementById("off").hidden = endpoint.enabled;
+    document.getElementById("setup").hidden = false;
+  }
+
+  const DAY = 24 * 3600 * 1000;
+  const text = (value, max) => (typeof value === "string" ? value.slice(0, max) : "");
+
+  /** Rows of "label, count", the most frequent first. Whatever a website sent is shown as text, never as HTML. */
+  function table(id, counts, empty) {
+    const rows = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+    document.getElementById(id).replaceChildren(...(rows.length ? rows : [[empty, ""]]).map(([label, count]) => {
+      const tr = document.createElement("tr");
+      const name = document.createElement("td");
+      const number = document.createElement("td");
+      name.textContent = label;
+      number.textContent = String(count);
+      tr.append(name, number);
+      return tr;
+    }));
+  }
+
+  function render(docs) {
+    const now = Date.now();
+    const startOfDay = new Date(now).setUTCHours(0, 0, 0, 0);
+    let today = 0;
+    let week = 0;
+    const visitors = new Set();
+    const pages = new Map();
+    const referrers = new Map();
+    const countries = new Map();
+    const count = (map, key) => map.set(key, (map.get(key) || 0) + 1);
+    for (const doc of docs) {
+      const hit = doc.data();
+      // The server writes _receivedAt, _visitor and _country itself; everything else is whatever the sender claims.
+      const at = Date.parse(hit._receivedAt);
+      if (!(at > now - 7 * DAY)) continue;
+      week += 1;
+      count(pages, text(hit.path, 200) || "/");
+      if (text(hit.ref, 100)) count(referrers, text(hit.ref, 100));
+      if (hit._country) count(countries, hit._country);
+      if (at >= startOfDay) { today += 1; if (hit._visitor) visitors.add(hit._visitor); }
+    }
+    document.getElementById("today").textContent = String(today);
+    document.getElementById("week").textContent = String(week);
+    document.getElementById("visitors").textContent = String(visitors.size);
+    table("pages", pages, "No page views yet.");
+    table("referrers", referrers, "No referrers yet.");
+    table("countries", countries, "Not recorded on this server.");
+    document.getElementById("numbers").hidden = false;
+  }
+
+  // The newest 1000 views. The endpoint rotates: when the space for received data is full, the oldest views make room.
+  db.collection("hits").orderBy("_receivedAt", "desc").limit(1000)
+    .onSnapshot((snap) => render(snap.docs), (e) => { status.textContent = e.message; });
+})();
+</script>
+</body>
+</html>

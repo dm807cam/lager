@@ -224,6 +224,31 @@ describe('Apps with the access model', () => {
     expect(core.apps.activate(inst.id, 1, own.id).activeVersion).toBe(1);
   });
 
+  it('a manager cannot activate a version whose ingest endpoints differ, even where the data rules come out the same', () => {
+    // The collection has a declared read rule, so the endpoint adds no rule of its own: only the endpoints tell the versions apart.
+    const rules = [{ path: 'hits', read: 'admin' as const }];
+    const r = core.apps.deploy({ slug: 'demo', html: '<p>1</p>', userId: own.id, capabilities: { db: { rules } } });
+    core.apps.deploy({ slug: 'demo', html: '<p>2</p>', userId: own.id, capabilities: { db: { rules }, ingest: { endpoints: [{ name: 'hits', auth: 'token' }] } } });
+    core.apps.deploy({ slug: 'demo', html: '<p>3</p>', userId: own.id, capabilities: { db: { rules }, ingest: { endpoints: [{ name: 'hits', auth: 'none', origins: ['https://blog.example.com'] }] } } });
+    core.apps.deploy({ slug: 'demo', html: '<p>4</p>', userId: own.id, capabilities: { db: { rules } } });
+    const inst = r.instances[0];
+    core.access.setGrant(core.apps.getInstance(inst.id)!, 'user', grantee.id, 'admin', own);
+    expect(core.apps.getInstance(inst.id)!.activeVersion).toBe(4);
+    const reason = (version: number): string => {
+      try { core.apps.activate(inst.id, version, grantee.id); } catch (e) { return (e as LagerError).reason ?? ''; }
+      return '';
+    };
+    // Opening an endpoint, and changing who may send to it, are the owner's to do.
+    expect(reason(2)).toBe('rules_differ');
+    expect(reason(3)).toBe('rules_differ');
+    expect(reason(1)).toBe('');
+    expect(core.apps.activate(inst.id, 2, own.id).activeVersion).toBe(2);
+    expect(reason(3)).toBe('rules_differ');
+    // Closing them again is the owner's too: it is the same question.
+    expect(reason(4)).toBe('rules_differ');
+    expect(core.apps.getInstance(inst.id)!.activeVersion).toBe(2);
+  });
+
   it('an app whose slug looks like an id never stands in for the app with that id', () => {
     const victim = core.apps.deploy({ slug: 'victim', html: '<p>v</p>', userId: own.id }).app;
     expect(code(() => core.apps.deploy({ slug: victim.id, html: '<p>x</p>', userId: adm.id }))).toBe('invalid_argument');

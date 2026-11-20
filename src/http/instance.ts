@@ -3,10 +3,12 @@ import fs from 'node:fs';
 import express from 'express';
 import type { Request, Response } from 'express';
 import type { Core } from '../core.js';
-import { canDelete, canRead, canWrite, type Level, type Viewer } from '../data/rules.js';
+import { appendRule, canDelete, canRead, canWrite, type Level, type Viewer } from '../data/rules.js';
 import type { HubEvent } from '../data/hub.js';
+import { newDocId } from '../data/store.js';
 import { LagerError } from '../errors.js';
 import type { Capabilities, DbRule, Instance } from '../platform/apps.js';
+import { effectiveRules, INGEST_LIMITS } from '../platform/ingest.js';
 import type { User } from '../platform/users.js';
 import { addressKey } from './client-address.js';
 import { clearCookie, instanceCookieName, NONCE_RE, nonceCookieName, readCookie, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
@@ -17,6 +19,7 @@ import { mountPwaRoutes } from './instance-pwa.js';
 import { mountAssetRoutes } from './instance-assets.js';
 import { mountRoomRoutes, STREAM_LIMITS } from './instance-room.js';
 import { mountCompleteRoutes } from './instance-complete.js';
+import { mountIngestEndpoints, mountIngestInfo } from './instance-ingest.js';
 import { assertOwnOrigin } from './origin.js';
 import { RateLimiter } from './ratelimit.js';
 import { StreamLimiter } from './stream-limit.js';
@@ -81,20 +84,13 @@ function signInNonce(core: Core, req: Request, res: Response): string {
   return nonce;
 }
 
-function newDocId(): string {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let id = '';
-  for (const b of crypto.randomBytes(20)) id += alphabet[b % alphabet.length];
-  return id;
-}
-
 export interface Ctx { instance: Instance; user: User | null; viewer: Viewer; caps: Capabilities; rules: DbRule[] | undefined }
 
 function context(core: Core, req: Request, instance: Instance): Ctx {
   const user = instanceUser(core, req, instance);
   const caps = activeCapabilities(core, instance);
   return {
-    instance, user, caps, rules: caps.db?.rules,
+    instance, user, caps, rules: effectiveRules(caps),
     viewer: { userId: user?.id ?? null, level: core.access.levelFor(instance, user) },
   };
 }
@@ -126,6 +122,8 @@ export function createInstanceRouter(core: Core): express.Router {
   router.use('/__lager', (_req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); next(); });
 
   mountPwaRoutes(router, core, (req, instance) => core.access.levelFor(instance, instanceUser(core, req, instance)) !== 'none');
+  // Before the session is looked at: whoever sends to an ingest endpoint is anonymous there, whatever cookie comes along.
+  mountIngestEndpoints(router, core);
 
   router.use((req, res, next) => {
     const instance = core.apps.getInstanceBySlug(res.locals.slug as string);
@@ -352,8 +350,25 @@ export function createInstanceRouter(core: Core): express.Router {
         return;
       case 'add': {
         const docPath = `${path}/${newDocId()}`;
-        if (!canWrite(ctx.rules, ctx.viewer, docPath)) deny();
-        res.json({ doc: readable(core.data.set(id, docPath, obj(data, 'data'), by)) });
+        if (canWrite(ctx.rules, ctx.viewer, docPath)) {
+          const doc = core.data.set(id, docPath, obj(data, 'data'), by);
+          // The id goes back also where the document does not: whoever added it has to be able to name it.
+          res.json({ doc: readable(doc), id: doc.id });
+          return;
+        }
+        // Not a writer here, but a rule may let every visitor append. What they add counts as data from outside, with its limits.
+        const rule = core.ingest.enabled ? appendRule(ctx.rules, ctx.viewer, docPath) : null;
+        if (rule === null) throw new LagerError('forbidden', 'Not allowed.');
+        const added = obj(data, 'data');
+        if (Buffer.byteLength(JSON.stringify(added)) > INGEST_LIMITS.defaultMaxBytes) {
+          throw new LagerError('invalid_argument', `A visitor can add at most ${INGEST_LIMITS.defaultMaxBytes} bytes at a time.`);
+        }
+        if (!core.ingest.admit(id, `rule:${rule}`, { perDay: INGEST_LIMITS.defaultPerDay })) {
+          res.set('Retry-After', '5');
+          throw new LagerError('rate_limited', 'Too many additions by visitors; try again shortly.');
+        }
+        const doc = core.data.ingest(id, docPath, added, { by, rotate: false });
+        res.json({ doc: readable(doc), id: doc.id });
         return;
       }
       case 'acquire': {
@@ -418,7 +433,7 @@ export function createInstanceRouter(core: Core): express.Router {
       if (!now) { stop(); return; }
       if (e.type === 'reset') { send('reset'); return; }
       if (e.type === 'reload') { send('reload', { version: e.version }); return; }
-      const rules = activeCapabilities(core, now.inst).db?.rules;
+      const rules = effectiveRules(activeCapabilities(core, now.inst));
       if (canRead(rules, { userId, level: now.level }, e.path)) send('change', { path: e.path, parent: e.parent });
     });
     // An idle stream has no events to notice a revoked session or grant, so the ping checks too.
@@ -434,6 +449,7 @@ export function createInstanceRouter(core: Core): express.Router {
   mountRoomRoutes(router, core, ctxOf, requireAccess, activeCapabilities);
   mountPageRoutes(router, core, ctxOf, requireAccess);
   mountCompleteRoutes(router, core, ctxOf, requireAccess);
+  mountIngestInfo(router, core, ctxOf, requireAccess);
 
   router.use((req, res) => { sendNotFound(core, req, res); });
   return router;

@@ -111,7 +111,7 @@ Then ask for an app, for example *"Build a shared groceries list for my family a
 | | |
 | --- | --- |
 | **Apps** | Own subdomain per instance, numbered versions with rollback, notes per deploy, icons and descriptions, home-screen install, custom domains |
-| **Data** | Document database with live updates and access rules, file uploads, realtime rooms with presence, pages that save themselves, file downloads, snapshots, NDJSON export and import |
+| **Data** | Document database with live updates and access rules, file uploads, realtime rooms with presence, pages that save themselves, file downloads, append-only endpoints for data from other websites, webhooks and devices, snapshots, NDJSON export and import |
 | **People** | Several accounts with roles (administrator, publisher, user), invitations, open or closed registration, groups, four access levels per instance, public instances |
 | **Interfaces** | Browser dashboard, REST API, MCP endpoint (Streamable HTTP) with OAuth 2.1 and dynamic client registration, or API tokens |
 | **AI** | `lager.complete()` routed to the providers you connect, a catalog of named models, a model per app that the building AI picks, AI groups that decide which models their people may use and how often, keys stored encrypted |

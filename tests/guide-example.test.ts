@@ -65,15 +65,16 @@ describe('the complete example in the guide', () => {
 
   it('lists the stored items and adds one with the viewer name', async () => {
     const stored = [{ id: 'a', data: { text: 'Milk', by: 'Grace', createdAt: 1 }, version: 1, updatedAt: '2026-01-01T00:00:00Z' }];
-    const ops = mountRuntime((op) => (op.op === 'query' ? json({ docs: stored }) : json({ doc: { id: 'x', data: op.data, version: 1 } })));
+    const ops = mountRuntime((op) => (op.op === 'query' ? json({ docs: stored }) : json({ doc: { id: 'x', data: op.data, version: 1 }, id: 'x' })));
     await until(() => document.querySelectorAll('#items li').length === 1);
     expect(document.querySelector('#items li')!.textContent).toContain('Milk (Grace)');
 
     (document.getElementById('text') as HTMLInputElement).value = 'Bread';
     document.getElementById('add')!.dispatchEvent(new Event('submit', { cancelable: true }));
-    await until(() => ops.some((o) => o.op === 'set'));
-    const write = ops.find((o) => o.op === 'set')!;
-    expect(write.path).toMatch(/^items\/[^/]+$/);
+    // The page names the collection; the id is the server's to make up.
+    await until(() => ops.some((o) => o.op === 'add'));
+    const write = ops.find((o) => o.op === 'add')!;
+    expect(write.path).toBe('items');
     expect(write.data).toMatchObject({ text: 'Bread', by: 'Ada Lovelace' });
     expect(typeof write.data!.createdAt).toBe('number');
   });

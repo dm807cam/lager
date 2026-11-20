@@ -99,7 +99,7 @@ describe('mcp endpoint', () => {
     expect(destructive).toEqual(['db_write', 'import_data', 'remove_domain', 'restore_snapshot', 'set_visibility', 'share_instance', 'unshare_instance']);
     const deploy = tools.find((t) => t.name === 'deploy_app')!;
     const caps = (deploy.inputSchema.properties as Record<string, { properties?: Record<string, unknown> }>).capabilities;
-    expect(Object.keys(caps.properties ?? {})).toEqual(['db', 'user', 'assets', 'room', 'page', 'downloads', 'complete']);
+    expect(Object.keys(caps.properties ?? {})).toEqual(['db', 'user', 'assets', 'room', 'page', 'downloads', 'complete', 'ingest']);
     expect(deploy.description).toContain('get_guide');
   });
 

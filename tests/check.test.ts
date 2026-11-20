@@ -10,7 +10,7 @@ afterEach(() => { core?.close(); core = undefined; });
 
 describe('checkApp', () => {
   it('lists the capabilities Lager provides', () => {
-    expect([...SUPPORTED_CAPABILITIES].sort()).toEqual(['assets', 'db', 'downloads', 'page', 'permissions', 'room', 'user']);
+    expect([...SUPPORTED_CAPABILITIES].sort()).toEqual(['assets', 'db', 'downloads', 'ingest', 'page', 'permissions', 'room', 'user']);
   });
 
   it('finds used capabilities in both quote styles', () => {
