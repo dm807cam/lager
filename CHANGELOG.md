@@ -4,6 +4,8 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-20
+
 ### Added
 
 - **Receiving data from outside:** an app can declare `ingest` endpoints, each of which appends JSON documents to one collection of an instance and can do nothing else: `POST https://<instance>/_ingest/<name>`. Pages on listed websites send without a secret (`auth: "none"`), scripts, webhooks, phone shortcuts and devices with a token (`auth: "token"`) that the instance page shows and replaces. Endpoints work on private instances, never read a cookie and store nothing about the sender; on request the server adds a daily visitor hash and the country. A data rule with `"write": "anyone"` lets guests of a public instance add documents from the page itself (an RSVP, a guestbook, a poll). What comes in is kept in a file of its own per instance (`inbox.sqlite`, not part of snapshots) with a quota of its own, `LAGER_INGEST_QUOTA_MB` (default 10 MiB per instance on top of the instance quota; `0` turns the feature off), and with limits per client address, endpoint, instance and day. The instance page has a card "Data from outside" with addresses, tokens, counters and a switch per endpoint; on an instance whose owner does not run the app, endpoints start switched off. New: `lager.use("ingest")`, the example `examples/pageviews.html`, the setting `LAGER_COUNTRY_HEADER`, and [Receiving data from outside](docs/building-apps.md#receiving-data-from-outside). The platform database moves to schema version 3 (one new table).
@@ -69,5 +71,6 @@ An installation that ran a build from before the first release will notice these
 - **Title and note:** a new app title takes at most 100 characters and a version note at most 500, one line each.
 - **Plain http:** a platform that is reached without https on another address than this machine logs a warning at the start, and a request that carries two session cookies is signed out, because without https an app could have planted one of them.
 
-[Unreleased]: https://github.com/dm807cam/lager/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dm807cam/lager/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dm807cam/lager/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dm807cam/lager/releases/tag/v0.1.0

@@ -578,7 +578,7 @@ const toolMeta = (name: ToolName): { title: string; annotations: ToolAnnotations
 };
 
 export function buildMcpServer(core: Core, user: User): McpServer {
-  const server = new McpServer({ name: 'lager', version: '0.1.0' }, { instructions: INSTRUCTIONS });
+  const server = new McpServer({ name: 'lager', version: '0.2.0' }, { instructions: INSTRUCTIONS });
 
   server.registerTool('deploy_app', { ...toolMeta('deploy_app'),
     description: 'Deploy an app (one self-contained HTML file) as a new version. Creates the app and its default instance on first deploy. Call get_guide once before your first deploy in a conversation: apps keep their data through the window.lager runtime it describes, never through localStorage. Pass capabilities for every runtime feature the HTML uses, and icon_svg, description and theme_color when you create an app. Returns the instance URLs, the icon URL and warnings to tell the user.',
