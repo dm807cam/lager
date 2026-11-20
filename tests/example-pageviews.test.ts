@@ -52,8 +52,12 @@ function boot(opts: { capabilities?: Record<string, unknown>; level?: string; en
   delete g.__lagerRuntime;
   delete g.pwned;
   (0, eval)(RUNTIME);
-  document.body.innerHTML = /<body>([\s\S]*)<\/body>/.exec(PAGE.replace(/<script>[\s\S]*<\/script>/, ''))![1];
-  (0, eval)(/<script>([\s\S]*)<\/script>/.exec(PAGE)![1]);
+  // The file is read the way a browser reads it: parsed as HTML, its one script taken out of the body and run after it.
+  const parsed = new DOMParser().parseFromString(PAGE, 'text/html');
+  const script = parsed.body.querySelector('script')!;
+  script.remove();
+  document.body.innerHTML = parsed.body.innerHTML;
+  (0, eval)(script.textContent!);
   return calls;
 }
 

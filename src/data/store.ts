@@ -97,11 +97,13 @@ export function ingestCost(docPath: string, json: string): number {
   return Math.ceil(pages + 8 * pathBytes + 64);
 }
 
-/** A document id made up by the server: 20 letters and digits, about 119 bits. */
+const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+/** A document id made up by the server: 20 letters and digits, each equally likely, about 119 bits. */
 export function newDocId(): string {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let id = '';
-  for (const b of crypto.randomBytes(20)) id += alphabet[b % alphabet.length];
+  // randomInt and not a random byte modulo 62: 256 is not a multiple of 62, so the first letters would come up more often.
+  for (let i = 0; i < 20; i++) id += ID_ALPHABET[crypto.randomInt(ID_ALPHABET.length)];
   return id;
 }
 

@@ -184,6 +184,23 @@ describe('documents from outside in the store', () => {
   });
 });
 
+describe('ids the server makes up', () => {
+  it('are 20 letters and digits, and every character is equally likely', () => {
+    const counts = new Map<string, number>();
+    const ids = new Set<string>();
+    for (let i = 0; i < 6200; i++) {
+      const id = newDocId();
+      expect(id).toMatch(/^[A-Za-z0-9]{20}$/);
+      ids.add(id);
+      for (const c of id) counts.set(c, (counts.get(c) ?? 0) + 1);
+    }
+    expect(ids.size).toBe(6200);
+    expect(counts.size).toBe(62);
+    // 124000 characters: 2000 of each, give or take. A random byte taken modulo 62 would give the first eight about 2420.
+    for (const [c, n] of counts) expect(Math.abs(n - 2000), c).toBeLessThan(300);
+  });
+});
+
 describe('what a document from outside counts', () => {
   // Whoever sends chooses the size. For every size, and for a collection that rotates for a long time, the pages the
   // documents take must stay within what is counted for them: otherwise data from outside would eat into the instance's own space.
