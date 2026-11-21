@@ -195,6 +195,53 @@ export async function deployWithIcon(core: Core, user: User, input: {
   return describeDeploy(core, user, { ...result, app, warnings });
 }
 
+export const MAX_EDITS = 100;
+
+/**
+ * How often `needle` occurs in `text` (overlapping matches included: `aa` in `aaa` is ambiguous, not unique) and where the
+ * first match starts. Stops counting at 2, so each edit scans the text at most once.
+ */
+function occurrences(text: string, needle: string): { count: number; first: number } {
+  const first = text.indexOf(needle);
+  if (first === -1) return { count: 0, first };
+  return { count: text.indexOf(needle, first + 1) === -1 ? 1 : 2, first };
+}
+
+/**
+ * Applies text replacements to the latest deployed version and deploys the result as a new version, so an assistant can change
+ * a large app without sending all of it again. The edits apply in order, each to the text the previous ones left, and each
+ * `oldText` must occur exactly once there; any failed edit fails the whole call and nothing is deployed. `baseVersion` must
+ * be the latest deployed version (else `conflict`), so edits written against code someone has since replaced are never
+ * applied to it. The check and the deploy run without an `await` between them, so no other deploy can come in between.
+ * The base version's capabilities are kept unless new ones are given.
+ */
+export async function editVersion(core: Core, user: User, input: {
+  slug: string; baseVersion: number; edits: Array<{ oldText: string; newText: string }>; note?: string; capabilities?: Capabilities;
+}): Promise<object> {
+  const app = appBySlug(core, input.slug);
+  if (!core.access.canDeploy(app, user)) throw new LagerError('forbidden', `You are not allowed to deploy "${app.slug}".`);
+  if (!Array.isArray(input.edits) || input.edits.length === 0) throw new LagerError('invalid_argument', 'Give at least one edit.');
+  if (input.edits.length > MAX_EDITS) throw new LagerError('invalid_argument', `At most ${MAX_EDITS} edits per call.`);
+  const latest = core.apps.latestDeployedVersion(app.id);
+  if (!latest || latest.number !== input.baseVersion) {
+    throw new LagerError('conflict', `Version ${input.baseVersion} is not the latest deployed version of "${app.slug}"${latest ? ` (that is version ${latest.number})` : ''}. Read the latest one with get_version and write the edits against it.`, 'base_version');
+  }
+  let html = core.apps.readVersionHtml(app.id, latest.number);
+  input.edits.forEach((edit, i) => {
+    const which = `Edit ${i + 1}`;
+    if (typeof edit?.oldText !== 'string' || typeof edit.newText !== 'string') throw new LagerError('invalid_argument', `${which}: old_text and new_text must be strings.`);
+    if (edit.oldText === '') throw new LagerError('invalid_argument', `${which}: old_text must not be empty.`);
+    const { count, first } = occurrences(html, edit.oldText);
+    if (count !== 1) {
+      throw new LagerError('invalid_argument', count === 0
+        ? `${which}: old_text was not found${i > 0 ? ' in the text the earlier edits left' : ''}. Copy it exactly from get_version, including spaces and line breaks. Nothing was deployed.`
+        : `${which}: old_text occurs more than once; include more of the surrounding text so it matches exactly once. Nothing was deployed.`);
+    }
+    html = html.slice(0, first) + edit.newText + html.slice(first + edit.oldText.length);
+  });
+  return deployWithIcon(core, user, { slug: app.slug, html, note: input.note, capabilities: input.capabilities ?? latest.capabilities });
+}
+
 /** An app may ask only for a catalog model that the AI group of the person deploying or choosing it allows. */
 function assertModelAllowed(core: Core, user: User, model: string): void {
   if (core.ai.mayUse(user.id, model)) return;
@@ -569,7 +616,7 @@ const descriptionArg = z.string().describe('One plain sentence (at most 200 char
 const themeColorArg = z.string().describe('Hex colour such as #1f2a5c that matches the icon background; used for the phone status bar and splash screen');
 
 type ToolName =
-  | 'deploy_app' | 'set_app_icon' | 'list_apps' | 'get_app' | 'get_version' | 'activate_version' | 'create_instance'
+  | 'deploy_app' | 'edit_version' | 'set_app_icon' | 'list_apps' | 'get_app' | 'get_version' | 'activate_version' | 'create_instance'
   | 'set_auto_update' | 'set_visibility' | 'share_instance' | 'unshare_instance' | 'list_shares' | 'add_domain'
   | 'remove_domain' | 'db_read' | 'db_write' | 'import_data' | 'export_data' | 'check_app' | 'list_snapshots'
   | 'restore_snapshot' | 'list_models' | 'set_app_model' | 'get_guide';
@@ -581,6 +628,7 @@ type ToolName =
  */
 const TOOL_META: Record<ToolName, { title: string; annotations: ToolAnnotations }> = {
   deploy_app: { title: 'Deploy app', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
+  edit_version: { title: 'Edit app', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false } },
   set_app_icon: { title: 'Change app icon', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
   list_apps: { title: 'List apps', annotations: { readOnlyHint: true } },
   get_app: { title: 'Show app', annotations: { readOnlyHint: true } },
@@ -624,6 +672,22 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     },
   }, ({ slug, html, title, capabilities, note, icon_svg, description, theme_color }) => runAsync(() => deployWithIcon(core, user, {
     slug, html, title, note, capabilities: checkCapabilities(capabilities), iconSvg: icon_svg, description, themeColor: theme_color,
+  })));
+
+  server.registerTool('edit_version', { ...toolMeta('edit_version'),
+    description: 'Change an existing app without sending all of its HTML again: replace pieces of text in the latest deployed version and deploy the result as a new version. Read the code with get_version first and copy each old_text exactly from it (spaces and line breaks included), with enough surrounding text that it occurs exactly once. The edits apply in order, each to the text the previous ones left; if any edit does not match exactly once, nothing is deployed. base_version must be the latest deployed version (get_version or get_app tells you which), otherwise the answer is conflict: someone deployed since you read the code, so read it again. The capabilities of base_version are kept unless you pass new ones. Returns the same as deploy_app.',
+    inputSchema: {
+      slug: slugArg, base_version: z.number().int().positive().describe('The version the edits were written against: the latest deployed version'),
+      edits: z.array(z.object({
+        old_text: z.string().describe('Text copied exactly from the HTML; must occur exactly once'),
+        new_text: z.string().describe('What replaces it; empty deletes old_text'),
+      })).min(1).max(MAX_EDITS).describe(`1 to ${MAX_EDITS} replacements, applied in order`),
+      note: z.string().optional().describe('Short version note, one line of at most 500 characters'),
+      capabilities: capabilitiesArg.optional().describe('Only to change them: every runtime capability the edited HTML uses. Default: those of base_version'),
+    },
+  }, ({ slug, base_version, edits, note, capabilities }) => runAsync(() => editVersion(core, user, {
+    slug, baseVersion: base_version, note, capabilities: capabilities === undefined ? undefined : checkCapabilities(capabilities),
+    edits: edits.map((e) => ({ oldText: e.old_text, newText: e.new_text })),
   })));
 
   server.registerTool('set_app_icon', { ...toolMeta('set_app_icon'),
