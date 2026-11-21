@@ -9,6 +9,7 @@ import { localeOf } from './locale.js';
 import type { App, Instance, SelfInstances, UsersLevel, Version, Visibility } from '../platform/apps.js';
 import type { GrantLevel } from '../platform/access.js';
 import { ingestEndpoints, type IngestEndpoint } from '../platform/ingest.js';
+import { embedDeclared } from '../platform/embed.js';
 import type { User } from '../platform/users.js';
 import { sendVersionDownload, streamExport, versionParam } from './api.js';
 import { requireUser, shellFor, type PlatformExtension } from './app.js';
@@ -42,6 +43,8 @@ const NOTICES: Record<string, MessageKey> = {
   model_not_allowed: 'notice.modelNotAllowed',
   origin_invalid: 'notice.originInvalid',
   origins_limit: 'notice.originsLimit',
+  origin_lager: 'notice.originLager',
+  embed_limit: 'notice.embedLimit',
   owner_full_access: 'notice.ownerFullAccess',
   host_invalid: 'notice.hostInvalid',
   host_taken: 'notice.hostTaken',
@@ -191,6 +194,27 @@ function managedOriginsBody(core: Core, locale: Locale, inst: Instance, e: Inges
   return `<div class="gap-top"><h4>${esc(t(locale, 'instance.ingest.managed'))}</h4>${list}${add}<p class="hint gap-top">${esc(t(locale, 'instance.ingest.managedHint'))}</p></div>`;
 }
 
+/**
+ * The websites outside Lager that may show the instance in a frame, for the people who manage it: each removable, one marked
+ * when it is not in effect (it has become an address of this server), and a form to add one. Empty for an app that does not
+ * declare `embed`.
+ */
+function embedCard(core: Core, locale: Locale, inst: Instance, base: string, csrf: string): string {
+  const caps = core.apps.getVersion(inst.appId, inst.activeVersion)?.capabilities;
+  if (!embedDeclared(caps)) return '';
+  const active = core.embed.frameAncestors(inst.id, caps);
+  const rows = core.embed.origins(inst.id).map((origin) => [
+    `<span class="mono">${esc(origin)}</span>${active.includes(origin) ? '' : ` ${badge(t(locale, 'instance.embed.inactive'), { tone: 'warning', icon: 'alert' })}`}`,
+    form(`${base}/embed/remove`, csrf, hiddenField('origin', origin), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true),
+  ]);
+  const list = rows.length ? dataTable(locale, [t(locale, 'instance.embed.origin'), ''], rows) : emptyState(t(locale, 'instance.embed.none'), 'globe');
+  const add = form(`${base}/embed`, csrf, field('embed-origin', t(locale, 'instance.embed.origin'),
+    '<input id="embed-origin" name="origin" type="url" required maxlength="300" autocomplete="off" spellcheck="false" placeholder="https://blog.example.com">'),
+  `${icon('plus')}${esc(t(locale, 'common.add'))}`, 'secondary', 'form-row');
+  return card(t(locale, 'instance.embed.title'), `<p class="hint">${esc(t(locale, 'instance.embed.intro'))}</p>${list}
+<div class="subsection">${add}<p class="hint gap-top">${esc(t(locale, 'instance.embed.hint'))}</p></div>`);
+}
+
 /** Destructive actions at the bottom of the main column: each confirmed by typing the name. */
 function dangerZone(locale: Locale, title: string, text: string, action: string, csrf: string, name: string, submit: string): string {
   return `<section class="card card-danger"><h2>${icon('alert')}${esc(t(locale, 'common.dangerZone'))}</h2><div class="danger-row"><h3>${esc(title)}</h3><p>${esc(text)}</p>
@@ -255,7 +279,7 @@ ${versionsList(core, locale, user, app, base, csrf, inst.activeVersion, inst.id)
   const domains = core.domains.canManage(user, core.access.canManageInstance(inst, user)) ? card(t(locale, 'instance.domains.title'), domainsBody(core, locale, inst, `${base}/domains`, csrf)) : '';
   return shell(core, locale, user, title, `${hero(app, app.title, `<a class="url" href="${esc(url)}">${esc(url)}</a>`, [visibility, badge(`v${inst.activeVersion}`)],
     linkButton(url, `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary'))}
-<div class="layout"><div class="main-col">${versions}${grantsCard(core, locale, inst, base, csrf)}${ingestCard(core, locale, inst, base, csrf)}${domains}${data}${del}</div>
+<div class="layout"><div class="main-col">${versions}${grantsCard(core, locale, inst, base, csrf)}${ingestCard(core, locale, inst, base, csrf)}${embedCard(core, locale, inst, base, csrf)}${domains}${data}${del}</div>
 <aside class="side-col" aria-label="${esc(t(locale, 'instance.details'))}">${details}</aside></div>`, flash, here);
 }
 
@@ -510,6 +534,26 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const { inst, name, endpoint } = managedEndpoint(req, user);
     const origin = field(req, 'origin', 300);
     core.ingest.setOrigins(inst.id, endpoint, core.ingest.instanceOrigins(inst.id, name).filter((o) => o !== origin));
+  }));
+
+  /** The instance, if `user` manages it and its active version declares `embed`. */
+  const embedInstance = (req: Request, user: User): Instance => {
+    const inst = managed(user, param(req, 'slug'));
+    if (!embedDeclared(core.apps.getVersion(inst.appId, inst.activeVersion)?.capabilities)) throw new LagerError('not_found', 'This app is not built to be shown on other websites.');
+    return inst;
+  };
+
+  router.post('/ui/instances/:slug/embed', ...action(instBack, (req, user) => {
+    const inst = embedInstance(req, user);
+    // People paste what the address bar shows; one trailing slash is the only thing taken off before the strict check.
+    const origin = field(req, 'origin', 300).trim().replace(/\/$/, '');
+    core.embed.setOrigins(inst.id, [...core.embed.origins(inst.id), origin]);
+  }));
+
+  router.post('/ui/instances/:slug/embed/remove', ...action(instBack, (req, user) => {
+    const inst = embedInstance(req, user);
+    const origin = field(req, 'origin', 300);
+    core.embed.setOrigins(inst.id, core.embed.origins(inst.id).filter((o) => o !== origin));
   }));
 
   router.post('/ui/instances/:slug/delete', ...action(instBack, (req, user) => {

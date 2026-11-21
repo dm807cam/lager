@@ -2,7 +2,7 @@ import type { Capabilities } from './apps.js';
 import { ingestEndpoints } from './ingest.js';
 
 /** The capability names `lager.use()` can resolve. */
-export const SUPPORTED_CAPABILITIES: readonly string[] = ['db', 'user', 'permissions', 'assets', 'room', 'page', 'downloads', 'ingest'];
+export const SUPPORTED_CAPABILITIES: readonly string[] = ['db', 'user', 'permissions', 'assets', 'room', 'page', 'downloads', 'ingest', 'embed'];
 
 export interface AppCheck { used: string[]; unsupported: string[]; undeclared: string[]; warnings: string[] }
 

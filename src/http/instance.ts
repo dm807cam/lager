@@ -20,6 +20,7 @@ import { mountAssetRoutes } from './instance-assets.js';
 import { mountRoomRoutes, STREAM_LIMITS } from './instance-room.js';
 import { mountCompleteRoutes } from './instance-complete.js';
 import { mountIngestEndpoints, mountIngestInfo } from './instance-ingest.js';
+import { mountEmbed } from './instance-embed.js';
 import { assertOwnOrigin } from './origin.js';
 import { RateLimiter } from './ratelimit.js';
 import { StreamLimiter } from './stream-limit.js';
@@ -191,14 +192,18 @@ export function createInstanceRouter(core: Core): express.Router {
         // Phones fetch the home-screen icon on their own, often without cookies: the page hands them what opens it.
         ...(ctx.instance.visibility === 'public' ? {} : { iconToken: iconToken(ctx.instance.id, app.iconVersion, config.secret) }),
       } : undefined, badge);
+    // Other instances are same-site and would get this instance's cookie inside a frame: only the instance may frame itself,
+    // and the websites outside Lager its managers named for an app that declares `embed`. Those are other sites, where the
+    // browser sends no `Lax` cookie into the frame, so there the instance only ever sees a guest (see `Embed`).
+    const ancestors = core.embed.frameAncestors(ctx.instance.id, ctx.caps);
     res.set({
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'same-origin',
-      // Other instances are same-site and would get this instance's cookie inside a frame: only the instance may frame itself.
-      'Content-Security-Policy': "frame-ancestors 'self'",
-      'X-Frame-Options': 'SAMEORIGIN',
+      'Content-Security-Policy': ['frame-ancestors', "'self'", ...ancestors].join(' '),
+      // X-Frame-Options knows no list of websites; browsers that read the policy above ignore it, so it is left out when there is one.
+      ...(ancestors.length === 0 ? { 'X-Frame-Options': 'SAMEORIGIN' } : {}),
     }).send(html);
   });
 
@@ -450,6 +455,7 @@ export function createInstanceRouter(core: Core): express.Router {
   mountPageRoutes(router, core, ctxOf, requireAccess);
   mountCompleteRoutes(router, core, ctxOf, requireAccess);
   mountIngestInfo(router, core, ctxOf, requireAccess, dbWrites);
+  mountEmbed(router, core, ctxOf, requireAccess, dbWrites);
 
   router.use((req, res) => { sendNotFound(core, req, res); });
   return router;

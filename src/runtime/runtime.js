@@ -1,4 +1,4 @@
-/* Lager browser runtime: provides window.lager.use("db" | "user" | "assets" | "room" | "page" | "downloads" | "ingest" | "permissions")
+/* Lager browser runtime: provides window.lager.use("db" | "user" | "assets" | "room" | "page" | "downloads" | "ingest" | "embed" | "permissions")
    and window.lager.complete on top of the /__lager/* endpoints. Plain ES2020, no dependencies. */
 (function () {
   'use strict';
@@ -15,6 +15,7 @@
   var EVENTS_URL = '/__lager/db/events';
   var COMPLETE_URL = '/__lager/complete';
   var INGEST_URL = '/__lager/ingest';
+  var EMBED_URL = '/__lager/embed';
   var RETRY_MIN_MS = 1000;
   var RETRY_MAX_MS = 30000;
   // A listener reloads at most this often: changes arriving sooner are answered by one reload at the end of the interval.
@@ -1366,6 +1367,44 @@
     return Object.freeze({ endpoints: endpoints, setOrigins: setOrigins });
   }
 
+  // ------------------------------------------------------------------ embed
+
+  /**
+   * The websites outside Lager that may show this instance in a frame, for a page that lets its owner name their blog:
+   * `get()` and `setOrigins(list)` resolve `{origins, active, limit, canManage}`. `origins` is what the managers named,
+   * `active` what the browser is told right now (a website that has become an address of this Lager is left out); both are
+   * empty for everyone who does not manage the instance. `setOrigins` replaces the list and rejects `{code, message}`:
+   * `not_granted`, `invalid_argument` (a bad address, an address of this Lager, or too many) or `unavailable`.
+   */
+  function buildEmbed() {
+    function infoOf(json) {
+      var list = function (v) { return Object.freeze(Array.isArray(v) ? v.slice() : []); };
+      return Object.freeze({ origins: list(json.origins), active: list(json.active), limit: json.limit, canManage: json.canManage === true });
+    }
+    function networkError(e) { throw { code: 'unavailable', message: e && e.message ? String(e.message) : 'Network error.' }; }
+    function answer(res, fallback) {
+      return res.json().catch(function () { return null; }).then(function (json) {
+        if (res.ok && json && Array.isArray(json.origins)) return infoOf(json);
+        var err = json && json.error ? json.error : {};
+        var code = err.code === 'forbidden' || err.code === 'unauthenticated' ? 'not_granted'
+          : err.code === 'invalid_argument' ? err.code : 'unavailable';
+        throw { code: code, message: err.message || fallback };
+      });
+    }
+    function get() {
+      return fetch(EMBED_URL, { credentials: 'same-origin' }).then(function (res) { return answer(res, 'The websites could not be read.'); }, networkError);
+    }
+    function setOrigins(origins) {
+      if (!Array.isArray(origins)) return Promise.reject({ code: 'invalid_argument', message: 'setOrigins takes a list of websites.' });
+      return fetch(EMBED_URL + '/origins', {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-Lager-Request': '1' },
+        body: JSON.stringify({ origins: origins }),
+      }).then(function (res) { return answer(res, 'The websites could not be saved.'); }, networkError);
+    }
+    return Object.freeze({ get: get, setOrigins: setOrigins });
+  }
+
   // ------------------------------------------------------------------ permissions
 
   function buildPermissions(session) {
@@ -1376,6 +1415,7 @@
     if (pageAvailable(session)) states.page = 'granted';
     if (declaredObject(session, 'downloads')) states.downloads = 'granted';
     if (declaredObject(session, 'ingest')) states.ingest = 'granted';
+    if (declaredObject(session, 'embed')) states.embed = 'granted';
     var one = function (name) { return typeof name === 'string' && Object.prototype.hasOwnProperty.call(states, name) ? states[name] : 'unavailable'; };
     var all = function () { var o = {}; Object.keys(states).sort().forEach(function (k) { o[k] = states[k]; }); return o; };
     return Object.freeze({
@@ -1402,6 +1442,7 @@
       if (name === 'page') return pageAvailable(session) ? buildPage(session) : null;
       if (name === 'downloads') return declaredObject(session, 'downloads') ? buildDownloads(session) : null;
       if (name === 'ingest') return declaredObject(session, 'ingest') ? buildIngest() : null;
+      if (name === 'embed') return declaredObject(session, 'embed') ? buildEmbed() : null;
       if (name === 'permissions') return buildPermissions(session);
       return null;
     });

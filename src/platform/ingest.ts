@@ -62,7 +62,7 @@ const TOKEN_PREFIX = 'lgi_';
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 /** `https://host[:port]` in lower case, or null for anything that is not exactly a web origin. */
-function normalizeOrigin(value: unknown): string | null {
+export function normalizeOrigin(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 300) return null;
   let url: URL;
   try { url = new URL(value); } catch { return null; }

@@ -43,6 +43,7 @@ let pageReply: (body: any) => Response | Promise<Response>;
 let completeReply: (body: any) => Response | Promise<Response>;
 let ingestReply: () => Response | Promise<Response>;
 let originsReply: (url: string, body: any) => Response | Promise<Response>;
+let embedReply: (init: any) => Response | Promise<Response>;
 
 const parentOf = (path: string): string => path.split('/').slice(0, -1).join('/');
 const dbCalls = (): any[] => calls.filter(([u]) => u === '/__lager/db').map(([, init]) => JSON.parse(init.body));
@@ -121,6 +122,7 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
   if (url === '/__lager/complete') return completeReply(JSON.parse(init.body));
   if (url === '/__lager/ingest') return ingestReply();
   if (url.startsWith('/__lager/ingest/')) return originsReply(url, JSON.parse(init.body));
+  if (url === '/__lager/embed' || url === '/__lager/embed/origins') return embedReply(init);
   if (url === '/__lager/assets' || url.startsWith('/__lager/assets/')) {
     const type = init?.headers?.['Content-Type'] as string | undefined;
     if (init?.method === 'POST') {
@@ -161,6 +163,7 @@ beforeEach(() => {
   completeReply = () => json({ text: 'ok' });
   ingestReply = () => json({ endpoints: [] });
   originsReply = () => json({ error: { code: 'not_found', message: 'No such endpoint.' } }, 404);
+  embedReply = () => json({ origins: [], active: [], limit: 20, canManage: false });
   session = sessionOf(OWNER);
   FakeEventSource.instances = [];
   g.fetch = fakeFetch;
@@ -1761,5 +1764,50 @@ describe('ingest', () => {
     await expect(ingest.endpoints()).rejects.toEqual({ code: 'unavailable', message: 'The endpoints could not be read.' });
     ingestReply = () => { throw new TypeError('offline'); };
     await expect(ingest.endpoints()).rejects.toEqual({ code: 'unavailable', message: 'offline' });
+  });
+});
+
+describe('embed', () => {
+  const declared = (): void => {
+    session = { status: 200, body: { viewer: OWNER, instance: { id: 'i1', slug: 'demo', appSlug: 'demo', version: 1 }, capabilities: { embed: {} }, loginUrl: '/login' } };
+  };
+
+  it('is null unless the active version declares it', async () => {
+    expect(await boot().use('embed')).toBeNull();
+    expect(await g.lager.use('permissions').then((p: any) => p.state('embed'))).toBe('unavailable');
+    expect(calls.map(([u]) => u)).not.toContain('/__lager/embed');
+  });
+
+  it('get reads the websites, setOrigins replaces them through the runtime header', async () => {
+    declared();
+    const embed = await boot().use('embed');
+    expect(Object.isFrozen(embed)).toBe(true);
+    expect(await g.lager.use('permissions').then((p: any) => p.state('embed'))).toBe('granted');
+    embedReply = (init) => init?.method === 'PUT'
+      ? json({ origins: JSON.parse(init.body).origins, active: JSON.parse(init.body).origins, limit: 20, canManage: true })
+      : json({ origins: ['https://blog.example.com'], active: [], limit: 20, canManage: true });
+    const info = await embed.get();
+    expect(info).toEqual({ origins: ['https://blog.example.com'], active: [], limit: 20, canManage: true });
+    expect(Object.isFrozen(info) && Object.isFrozen(info.origins)).toBe(true);
+    expect(calls.find(([u]) => u === '/__lager/embed')).toEqual(['/__lager/embed', { credentials: 'same-origin' }]);
+    const saved = await embed.setOrigins(['https://blog.example.com', 'https://www.example.com']);
+    expect(saved.active).toEqual(['https://blog.example.com', 'https://www.example.com']);
+    const [, init] = calls.find(([u]) => u === '/__lager/embed/origins')!;
+    expect(init).toMatchObject({ method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Lager-Request': '1' } });
+    expect(JSON.parse(init.body)).toEqual({ origins: ['https://blog.example.com', 'https://www.example.com'] });
+  });
+
+  it('rejects with the codes the guide names', async () => {
+    declared();
+    const embed = await boot().use('embed');
+    await expect(embed.setOrigins('https://blog.example.com')).rejects.toMatchObject({ code: 'invalid_argument' });
+    expect(calls.map(([u]) => u)).not.toContain('/__lager/embed/origins');
+    const cases: Array<[number, string, string]> = [[403, 'forbidden', 'not_granted'], [401, 'unauthenticated', 'not_granted'], [400, 'invalid_argument', 'invalid_argument'], [404, 'not_found', 'unavailable'], [500, 'internal', 'unavailable']];
+    for (const [status, code, expected] of cases) {
+      embedReply = () => json({ error: { code, message: 'm' } }, status);
+      await expect(embed.setOrigins([])).rejects.toEqual({ code: expected, message: 'm' });
+    }
+    embedReply = () => { throw new TypeError('offline'); };
+    await expect(embed.get()).rejects.toEqual({ code: 'unavailable', message: 'offline' });
   });
 });

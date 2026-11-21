@@ -75,6 +75,26 @@ describe('platform database migrations', () => {
     }
   });
 
+  it('a version-4 database keeps its ingest websites and gains the table of embedding websites', () => {
+    const dir = versionOne();
+    const old = new DatabaseSync(path.join(dir, 'platform.sqlite'));
+    old.exec('PRAGMA foreign_keys = ON');
+    old.exec(MIGRATIONS[1]);
+    old.exec(MIGRATIONS[2]);
+    old.exec(MIGRATIONS[3]);
+    old.exec('PRAGMA user_version = 4');
+    old.prepare('INSERT INTO ingest_endpoints (instance_id, name, origins) VALUES (?, ?, ?)').run('i1', 'hits', '["https://blog.example.com"]');
+    old.close();
+    const db = openPlatformDb(dir);
+    try {
+      expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
+      expect({ ...db.prepare('SELECT origins FROM ingest_endpoints').get() }).toEqual({ origins: '["https://blog.example.com"]' });
+      expect(db.prepare('SELECT COUNT(*) AS n FROM embed_origins').get()).toMatchObject({ n: 0 });
+    } finally {
+      db.close();
+    }
+  });
+
   it('a fresh database and a migrated one have the same schema', () => {
     const schema = (db: DatabaseSync): string[] =>
       (db.prepare("SELECT name FROM pragma_table_list WHERE schema = 'main' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>)
@@ -86,6 +106,7 @@ describe('platform database migrations', () => {
     expect(schema(fresh)).toContain('oauth_clients.last_used_at TEXT');
     expect(schema(fresh)).toContain('ingest_endpoints.token_generation INTEGER');
     expect(schema(fresh)).toContain('ingest_endpoints.origins TEXT');
+    expect(schema(fresh)).toContain('embed_origins.origins TEXT');
     fresh.close();
     migrated.close();
   });

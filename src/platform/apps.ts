@@ -19,6 +19,8 @@ export interface Capabilities {
   complete?: { model?: string };
   /** Endpoints that take data from outside; read with `ingestEndpoints`, which checks every field. */
   ingest?: { endpoints?: unknown };
+  /** The app is built to be framed by other websites; which ones is set per instance (see `Embed`). Carries no fields. */
+  embed?: Record<string, never>;
   [k: string]: unknown;
 }
 export type Visibility = 'private' | 'users' | 'public';
