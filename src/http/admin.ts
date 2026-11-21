@@ -57,14 +57,16 @@ function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): strin
     const base = `/admin/users/${encodeURIComponent(u.id)}`;
     const state = u.disabled ? 'disabled' : u.verified ? 'active' : 'unverified';
     const status = t(locale, u.disabled ? 'common.disabled' : u.verified ? 'common.active' : 'common.unverified');
+    const twoFactorOn = core.twoFactor.isEnabled(u.id);
     return [
       personCell(u),
       `<form method="post" action="${base}/role" class="inline-form">${hiddenField('csrf', csrf)}<select name="role" aria-label="${esc(t(locale, 'admin.users.roleOf', { email: u.email }))}">${roleOptions(locale, u.role)}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
       `<form method="post" action="${base}/ai-group" class="inline-form">${hiddenField('csrf', csrf)}<select name="group" aria-label="${esc(t(locale, 'admin.users.aiGroupOf', { email: u.email }))}">${optionList(aiGroups, core.ai.groupIdOf(u.id))}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
-      badge(status, { tone: STATUS_TONES[state], dot: true }),
+      `${badge(status, { tone: STATUS_TONES[state], dot: true })}${twoFactorOn ? ` ${badge(t(locale, 'admin.users.twoFactorOn'), { icon: 'shield', tone: 'success' })}` : ''}`,
       `<span class="num">${dateText(locale, u.createdAt)}</span>`,
       `<div class="btn-row">${form(`${base}/disabled`, csrf, hiddenField('disabled', u.disabled ? '0' : '1'), esc(t(locale, u.disabled ? 'common.activate' : 'common.deactivate')), 'quiet', '', true)}
 ${form(`${base}/reset-link`, csrf, '', esc(t(locale, 'admin.users.resetLink')), 'quiet', '', true)}
+${twoFactorOn && u.id !== admin.id ? form(`${base}/two-factor/reset`, csrf, '', esc(t(locale, 'admin.users.twoFactorReset')), 'quiet', '', true) : ''}
 ${u.disabled && u.id !== admin.id ? linkButton(`${base}/delete`, `${icon('trash')}${esc(t(locale, 'admin.users.delete'))}`, 'quiet', true, named(t(locale, 'admin.users.delete.of', { email: u.email }))) : ''}</div>`,
     ];
   });
@@ -472,6 +474,24 @@ export const adminExtension: PlatformExtension = (router, core) => {
       const link = core.accounts.createResetLink(param(req, 'id'));
       send(res, 200, usersSection(core, localeOf(res), user, { once: { title: t(localeOf(res), 'admin.users.resetLinkTitle'), link } }));
     } catch (e) { failWith(res, e, (m) => usersSection(core, localeOf(res), user, m), userMessages); }
+  }));
+
+  /**
+   * For someone who lost both their authenticator app and their recovery codes. Never for the administrator's own account: a
+   * session left open must not be enough to switch off the second step, so they do it on their account page with a code. The
+   * account is signed out everywhere and its owner gets a mail.
+   */
+  router.post('/admin/users/:id/two-factor/reset', ...action((req, res, user) => {
+    const locale = localeOf(res);
+    const target = core.users.get(param(req, 'id'));
+    if (!target) { send(res, 404, usersSection(core, locale, user, { error: t(locale, 'admin.users.notFound') })); return; }
+    if (target.id === user.id) { send(res, 403, usersSection(core, locale, user, { error: t(locale, 'admin.users.twoFactorSelf') })); return; }
+    if (core.twoFactor.disable(target.id)) {
+      core.users.bumpEpoch(target.id);
+      core.oauth.revokeUser(target.id);
+      core.accounts.noticeTwoFactor(target, 'reset');
+    }
+    send(res, 200, usersSection(core, locale, user, { ok: t(locale, 'admin.users.twoFactorResetDone', { email: target.email }) }));
   }));
 
   // Deleting an account: a page that says what goes with it, then the deletion itself. Not offered over REST or MCP.
