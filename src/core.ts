@@ -15,6 +15,7 @@ import { openPlatformDb } from './platform/db.js';
 import { Domains } from './platform/domains.js';
 import { AppIcons } from './platform/icons.js';
 import { Ingest } from './platform/ingest.js';
+import { Embed } from './platform/embed.js';
 import { Groups } from './platform/groups.js';
 import { createMailer, type Mailer } from './platform/mail.js';
 import { Settings } from './platform/settings.js';
@@ -53,6 +54,8 @@ export interface Core {
   deployLimiter: RateLimiter;
   /** Data that arrives from outside: the endpoints apps declare, their switches and tokens, and the limits on what comes in. */
   ingest: Ingest;
+  /** The websites outside Lager that the people who manage an instance allow to show it in a frame. */
+  embed: Embed;
   close(): void;
 }
 
@@ -155,6 +158,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   return {
     config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, accounts, groups, domains, access,
     icons, ai, removal, privatePurge, deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000), ingest,
+    embed: new Embed(db, config, domains),
     close() {
       // First: a pass that is under way must not open a database again after they were closed.
       privatePurge.stop();

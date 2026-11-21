@@ -14,6 +14,7 @@ import { normalizeDescription, normalizeThemeColor, type App, type Capabilities,
 import { MODEL_ID_RE } from '../platform/ai.js';
 import { checkApp, type AppCheck } from '../platform/check.js';
 import { effectiveRules, parseIngest } from '../platform/ingest.js';
+import { parseEmbed } from '../platform/embed.js';
 import type { User } from '../platform/users.js';
 
 const GUIDE = fs.readFileSync(new URL('../guide.md', import.meta.url), 'utf8');
@@ -455,6 +456,9 @@ export function checkCapabilities(value: unknown): Capabilities | undefined {
   if (caps.ingest !== undefined) {
     try { parseIngest(caps.ingest); } catch (e) { bad(e instanceof LagerError ? e.message : 'ingest is not valid.'); }
   }
+  if (caps.embed !== undefined) {
+    try { parseEmbed(caps.embed); } catch (e) { bad(e instanceof LagerError ? e.message : 'embed is not valid.'); }
+  }
   return caps as Capabilities;
 }
 
@@ -526,6 +530,7 @@ const capabilitiesArg = z.object({
   downloads: jsonObject().optional().describe('Offer files to save (lager.use("downloads"))'),
   complete: jsonObject().optional().describe('Language model calls through lager.complete(). Optional {"model": "<name from list_models>"}; without it every viewer gets the default model of their AI group'),
   ingest: jsonObject().optional().describe('Receive data from outside (another website, a webhook, a script, a device): {"endpoints": [{"name", "auth": "none" | "token", "origins"?, "managedOrigins"?, "collection"?, "maxBytes"?, "maxPerDay"?, "onFull"?, "visitor"?, "country"?}]}. Each endpoint only appends documents to one collection; see "Receiving data from outside" in get_guide'),
+  embed: jsonObject().optional().describe('Other websites may show the app in a frame (lager.use("embed")): {} with no fields. The people who manage each instance name the websites; see "Showing the app on other websites" in get_guide'),
 }).catchall(z.unknown())
   .describe('Every runtime capability the HTML uses, e.g. {"db":{},"user":{}}. A capability that is not declared is null at runtime.');
 

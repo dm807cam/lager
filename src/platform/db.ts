@@ -231,6 +231,14 @@ export const MIGRATIONS: string[] = [
   -- none). Used only while the app's active version declares \`managedOrigins: true\` for the endpoint.
   ALTER TABLE ingest_endpoints ADD COLUMN origins TEXT;
   `,
+  `
+  -- The websites the people who manage an instance allow to show it in a frame, as a JSON list of origins. Used only while the
+  -- app's active version declares \`embed\`; a row exists only once the list was set, and goes with the instance.
+  CREATE TABLE embed_origins (
+    instance_id TEXT PRIMARY KEY REFERENCES instances(id) ON DELETE CASCADE,
+    origins TEXT NOT NULL
+  );
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

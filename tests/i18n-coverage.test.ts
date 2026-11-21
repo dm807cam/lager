@@ -325,7 +325,7 @@ describe('signed-in pages in every locale', () => {
 /** Values that are the same word in the language as in English (loanwords, shared Latin vocabulary, product and role names). */
 const SAME_AS_ENGLISH: Record<'de' | 'fr' | 'es', readonly string[]> = {
   de: ['common.name', 'nav.admin', 'nav.apps', 'nav.tab.apps', 'nav.tab.admin', 'theme.system', 'instance.details', 'common.version', 'common.status', 'role.admin', 'role.publisher', 'instance.version', 'instance.downloadHtml',
-    'instance.domains.domain', 'instance.domains.host', 'app.pageTitle', 'admin.pageTitle', 'admin.section.apps', 'admin.apps.domains', 'instance.ingest.token', 'instance.ingest.origin'],
+    'instance.domains.domain', 'instance.domains.host', 'app.pageTitle', 'admin.pageTitle', 'admin.section.apps', 'admin.apps.domains', 'instance.ingest.token', 'instance.ingest.origin', 'instance.embed.origin'],
   fr: ['nav.admin', 'nav.tab.apps', 'nav.tab.admin', 'common.actions', 'common.instance', 'common.version', 'common.date', 'role.publisher', 'instance.pageTitle', 'instance.version', 'dash.instanceCount.one', 'dash.instanceCount.other',
     'instance.downloadHtml', 'instance.grants.type', 'app.versions', 'app.instances', 'admin.section.invites', 'admin.ai.provider.ollama'],
   es: ['role.publisher', 'instance.downloadHtml', 'nav.tab.apps', 'nav.tab.admin', 'admin.ai.provider.ollama', 'instance.ingest.token'],
