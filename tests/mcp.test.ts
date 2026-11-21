@@ -185,6 +185,42 @@ describe('mcp endpoint', () => {
     }
   });
 
+  it('get_version reads a large app in parts that join to the whole HTML', async () => {
+    const r = await start();
+    const client = await connect(r);
+    // Multi-byte characters straddle the part borders, so a part that split one would corrupt the joined source.
+    const html = `<!doctype html>\n${'<p>Grüße 🌿 – naïve</p>\n'.repeat(400)}`;
+    await call(client, 'deploy_app', { slug: 'big', html, capabilities: { db: {} } });
+    const total = Buffer.byteLength(html);
+
+    const parts: string[] = [];
+    let offset: number | null = 0;
+    while (offset !== null) {
+      const part = await getVersion(client, { app: 'big', offset, limit: 1000 });
+      expect(part.meta).toMatchObject({ app: 'big', version: 1, sizeBytes: total, offset, capabilities: { db: {} } });
+      expect(Buffer.byteLength(part.html)).toBeLessThanOrEqual(1000);
+      expect(part.html).not.toContain('\uFFFD');
+      parts.push(part.html);
+      offset = part.meta.nextOffset;
+    }
+    expect(parts.length).toBeGreaterThanOrEqual(Math.ceil(total / 1000));
+    expect(parts.join('')).toBe(html);
+
+    // Without a range, or with a limit beyond the size, the whole HTML comes back and says it is complete.
+    expect((await getVersion(client, { app: 'big' })).meta).toMatchObject({ offset: 0, nextOffset: null });
+    const whole = await getVersion(client, { app: 'big', limit: total + 1 });
+    expect(whole.html).toBe(html);
+    expect(whole.meta.nextOffset).toBeNull();
+    expect((await getVersion(client, { instance: 'big', limit: 10 })).html).toBe(html.slice(0, 10));
+
+    const inside = Buffer.from(html).indexOf(Buffer.from('ü')) + 1;
+    for (const args of [{ app: 'big', offset: total + 1 }, { app: 'big', offset: inside }]) {
+      const res = await call(client, 'get_version', args);
+      expect(res.isError, JSON.stringify(args)).toBe(true);
+      expect(res.json.error.code, JSON.stringify(args)).toBe('invalid_argument');
+    }
+  });
+
   it('get_version: collaborators read the code, people the instance is only shared with do not', async () => {
     const r = await start();
     const owner = await connect(r);

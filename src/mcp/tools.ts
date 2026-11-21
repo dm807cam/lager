@@ -329,6 +329,30 @@ export function versionSource(core: Core, user: User, input: { app?: string; ver
   };
 }
 
+/**
+ * One part of `html`, measured in UTF-8 bytes like `sizeBytes`, so that a client whose tool results are capped can read a
+ * large app in several calls. A part never splits a character: it ends early instead (or, for a `limit` smaller than the
+ * character at `offset`, takes that one character whole), and an `offset` inside a character is refused, so following
+ * `nextOffset` from 0 returns every byte exactly once. `nextOffset` is null once the part reaches the end.
+ */
+export function htmlPart(html: string, offset = 0, limit?: number): { text: string; offset: number; nextOffset: number | null } {
+  const bytes = Buffer.from(html, 'utf8');
+  const total = bytes.length;
+  if (!Number.isInteger(offset) || offset < 0 || offset > total) {
+    throw new LagerError('invalid_argument', `offset must be between 0 and ${total}, the size of the HTML in bytes.`);
+  }
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) throw new LagerError('invalid_argument', 'limit must be a positive whole number of bytes.');
+  const continuation = (i: number): boolean => i < total && (bytes[i] & 0xc0) === 0x80;
+  if (continuation(offset)) throw new LagerError('invalid_argument', `offset ${offset} lies inside a character; continue from the nextOffset of the previous part.`);
+  let end = limit === undefined ? total : Math.min(total, offset + limit);
+  while (end > offset && continuation(end)) end--;
+  if (end === offset && offset < total) {
+    end++;
+    while (continuation(end)) end++;
+  }
+  return { text: bytes.subarray(offset, end).toString('utf8'), offset, nextOffset: end < total ? end : null };
+}
+
 /** The app check for a signed-in publisher or administrator. */
 export function runAppCheck(user: User, html: unknown, capabilities: unknown): AppCheck {
   if (user.disabled || (user.role !== 'admin' && user.role !== 'publisher')) {
@@ -624,15 +648,21 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }, ({ slug, model }) => run(() => setAppModel(core, user, readableApp(core, user, slug), model)));
 
   server.registerTool('get_version', { ...toolMeta('get_version'),
-    description: 'Get the source of an app so you can continue developing it, e.g. in a new conversation: the complete HTML of a version plus its title and capabilities. Give app (with version, default the latest deployed one) or instance (the version active there, possibly one the page saved itself). Returns two text blocks: first JSON {app, title, version, createdAt, note, sizeBytes, capabilities, savedByInstance}, then the raw HTML. Edit that HTML and redeploy it with deploy_app, passing the same capabilities (or deliberately changed ones): a deploy without capabilities declares none.',
+    description: 'Get the source of an app so you can continue developing it, e.g. in a new conversation: the complete HTML of a version plus its title and capabilities. Give app (with version, default the latest deployed one) or instance (the version active there, possibly one the page saved itself). Returns two text blocks: first JSON {app, title, version, createdAt, note, sizeBytes, capabilities, savedByInstance, offset, nextOffset}, then the raw HTML. A large app can be read in parts: pass limit (bytes, e.g. 40000) and call again with offset set to nextOffset until nextOffset is null, then join the parts in order; an app that fits comes back whole with nextOffset null, so pass limit whenever you do not know the size (get_app lists sizeBytes per version). Edit that HTML and redeploy it with deploy_app, passing the same capabilities (or deliberately changed ones): a deploy without capabilities declares none. Never deploy a part as if it were the whole app.',
     inputSchema: {
       app: slugArg.optional(), version: z.number().int().positive().optional().describe('Version number from get_app; default: the latest deployed version'),
       instance: slugArg.optional().describe('Instead of app: the instance whose active version you want'),
+      offset: z.number().int().nonnegative().optional().describe('Byte offset to start at, from nextOffset of the previous part; default 0'),
+      limit: z.number().int().positive().optional().describe('At most this many bytes of HTML (a part ends before a character it would split); default: all the rest'),
     },
-  }, ({ app, version, instance }) => {
+  }, ({ app, version, instance, offset, limit }) => {
     try {
       const { meta, html } = versionSource(core, user, { app, version, instance });
-      return { content: [{ type: 'text', text: JSON.stringify(meta) }, { type: 'text', text: html }] };
+      const part = htmlPart(html, offset, limit);
+      return { content: [
+        { type: 'text', text: JSON.stringify({ ...meta, offset: part.offset, nextOffset: part.nextOffset }) },
+        { type: 'text', text: part.text },
+      ] };
     } catch (e) {
       return errorResult(e);
     }
