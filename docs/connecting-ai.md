@@ -85,7 +85,7 @@ Lager forgets a registered client that holds no sign-in and was last used more t
 
 ## What every assistant gets
 
-- **The same 24 tools**, with titles and read-only or destructive hints, and the guide for building apps (the `get_guide` tool). Lager also sends a short version of the guide as MCP server instructions; clients that do not show those to the model still find a pointer to `get_guide` in the `deploy_app` description.
+- **The same 25 tools**, with titles and read-only or destructive hints, and the guide for building apps (the `get_guide` tool). Lager also sends a short version of the guide as MCP server instructions; clients that do not show those to the model still find a pointer to `get_guide` in the `deploy_app` description.
 - **The same app runtime.** Apps call `lager.use("db")`, `lager.complete(…)` and so on, whichever assistant writes them: an app built by ChatGPT uses the same calls and runs the same way as one built by Claude.
 - **The same AI inside apps.** `lager.complete()` in an app is answered by the model your administrator connected under [Bring your own model](ai-models.md), whether that is Claude, GPT, Gemini, Mistral or a local Ollama, and regardless of which assistant built the app.
 
