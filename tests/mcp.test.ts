@@ -6,8 +6,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { UnauthorizedError, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { OAuthClientInformationMixed, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
+import { DEPLOYS_PER_HOUR } from '../src/core.js';
 import { apiExtension } from '../src/http/api.js';
 import { mcpExtension } from '../src/mcp/http.js';
+import { editVersion } from '../src/mcp/tools.js';
 import { makeHarness, type Harness } from './support/http.js';
 
 interface Running { h: Harness; server: http.Server; base: string; token: string }
@@ -307,6 +309,72 @@ describe('mcp endpoint', () => {
     const ok = await call(collab.client, 'edit_version', edit);
     expect(ok.isError).toBe(false);
     expect((await getVersion(owner, { app: 'todo' })).html).toBe('<p>open code</p>');
+  });
+
+  it('edit_version refuses platform admins, removed collaborators, disabled accounts and apps over the deploy limit', async () => {
+    const r = await start();
+    const owner = await connect(r);
+    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>secret code</p>' });
+    const appId = r.h.core.apps.getApp('todo')!.id;
+    const edit = { slug: 'todo', base_version: 1, edits: [{ old_text: 'secret', new_text: 'open' }] };
+    const expectForbidden = (res: { isError: boolean; json: any }, who: string): void => {
+      expect(res.isError, who).toBe(true);
+      expect(res.json.error.code, who).toBe('forbidden');
+    };
+
+    // A platform administrator who neither owns the app nor collaborates on it deploys it no more than anyone else.
+    const admin = await asUser(r, 'admin2@x.y', 'admin');
+    expectForbidden(await call(admin.client, 'edit_version', edit), 'admin');
+
+    const former = await asUser(r, 'former@x.y', 'publisher');
+    r.h.core.apps.addCollaborator(appId, former.id, r.h.adminId);
+    r.h.core.apps.removeCollaborator(appId, former.id, r.h.adminId);
+    expectForbidden(await call(former.client, 'edit_version', edit), 'removed collaborator');
+
+    // A disabled collaborator: tested on the function, since the MCP endpoint already turns a disabled account away.
+    const disabled = await asUser(r, 'disabled@x.y', 'publisher');
+    r.h.core.apps.addCollaborator(appId, disabled.id, r.h.adminId);
+    r.h.core.users.setDisabled(disabled.id, true);
+    await expect(editVersion(r.h.core, r.h.core.users.get(disabled.id)!, { slug: 'todo', baseVersion: 1, edits: [{ oldText: 'secret', newText: 'open' }] }))
+      .rejects.toMatchObject({ code: 'forbidden' });
+
+    // Edits count against the same hourly limit as deploys.
+    for (let n = 0; n < DEPLOYS_PER_HOUR; n++) r.h.core.deployLimiter.hit(`app:${appId}`);
+    const limited = await call(owner, 'edit_version', edit);
+    expect(limited.isError).toBe(true);
+    expect(limited.json.error.code).toBe('conflict');
+    expect(limited.json.error.message).toContain('limit of deploys');
+
+    expect(r.h.core.apps.listVersions(appId).map((v) => v.number)).toEqual([1]);
+    expect((await getVersion(owner, { app: 'todo' })).html).toBe('<p>secret code</p>');
+  });
+
+  it('edit_version edits the latest deployed version, also while an instance runs an older one', async () => {
+    const r = await start();
+    const client = await connect(r);
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>one</p>' });
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>two</p>' });
+    await call(client, 'activate_version', { instance: 'todo', version: 1 });
+
+    // The active version is not a base: the edits would be applied to code that is no longer the app's latest.
+    const onActive = await call(client, 'edit_version', { slug: 'todo', base_version: 1, edits: [{ old_text: 'one', new_text: 'x' }] });
+    expect(onActive.json.error.code).toBe('conflict');
+    expect(onActive.json.error.message).toContain('version 2');
+
+    const res = await call(client, 'edit_version', { slug: 'todo', base_version: 2, edits: [{ old_text: 'two', new_text: 'three' }] });
+    expect(res.json).toMatchObject({ app: 'todo', version: 3, createdVersion: true });
+    expect((await getVersion(client, { app: 'todo' })).html).toBe('<p>three</p>');
+  });
+
+  it('edit_version refuses edits that leave an empty document and creates no version', async () => {
+    const r = await start();
+    const client = await connect(r);
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>one</p>' });
+    const res = await call(client, 'edit_version', { slug: 'todo', base_version: 1, edits: [{ old_text: '<p>one</p>', new_text: '' }] });
+    expect(res.isError).toBe(true);
+    expect(res.json.error.code).toBe('invalid_argument');
+    expect(res.json.error.message).toContain('must not be empty');
+    expect(r.h.core.apps.listVersions(r.h.core.apps.getApp('todo')!.id)).toHaveLength(1);
   });
 
   it('deploy_app surfaces lint warnings', async () => {

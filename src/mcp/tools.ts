@@ -197,11 +197,14 @@ export async function deployWithIcon(core: Core, user: User, input: {
 
 export const MAX_EDITS = 100;
 
-/** How often `needle` occurs in `text`, overlapping matches included: `aa` in `aaa` is ambiguous, not unique. Stops counting at 2. */
-function occurrences(text: string, needle: string): number {
-  let count = 0;
-  for (let i = text.indexOf(needle); i !== -1 && count < 2; i = text.indexOf(needle, i + 1)) count++;
-  return count;
+/**
+ * How often `needle` occurs in `text` (overlapping matches included: `aa` in `aaa` is ambiguous, not unique) and where the
+ * first match starts. Stops counting at 2, so each edit scans the text at most once.
+ */
+function occurrences(text: string, needle: string): { count: number; first: number } {
+  const first = text.indexOf(needle);
+  if (first === -1) return { count: 0, first };
+  return { count: text.indexOf(needle, first + 1) === -1 ? 1 : 2, first };
 }
 
 /**
@@ -228,14 +231,13 @@ export async function editVersion(core: Core, user: User, input: {
     const which = `Edit ${i + 1}`;
     if (typeof edit?.oldText !== 'string' || typeof edit.newText !== 'string') throw new LagerError('invalid_argument', `${which}: old_text and new_text must be strings.`);
     if (edit.oldText === '') throw new LagerError('invalid_argument', `${which}: old_text must not be empty.`);
-    const found = occurrences(html, edit.oldText);
-    if (found !== 1) {
-      throw new LagerError('invalid_argument', found === 0
+    const { count, first } = occurrences(html, edit.oldText);
+    if (count !== 1) {
+      throw new LagerError('invalid_argument', count === 0
         ? `${which}: old_text was not found${i > 0 ? ' in the text the earlier edits left' : ''}. Copy it exactly from get_version, including spaces and line breaks. Nothing was deployed.`
         : `${which}: old_text occurs more than once; include more of the surrounding text so it matches exactly once. Nothing was deployed.`);
     }
-    const at = html.indexOf(edit.oldText);
-    html = html.slice(0, at) + edit.newText + html.slice(at + edit.oldText.length);
+    html = html.slice(0, first) + edit.newText + html.slice(first + edit.oldText.length);
   });
   return deployWithIcon(core, user, { slug: app.slug, html, note: input.note, capabilities: input.capabilities ?? latest.capabilities });
 }
