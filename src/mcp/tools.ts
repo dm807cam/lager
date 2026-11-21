@@ -293,7 +293,7 @@ export function downloadableVersion(core: Core, user: User, slug: string, number
  * Access is that of the HTML download. Returns the HTML and what a redeploy needs alongside it (the app's current title, the version's capabilities).
  */
 export function versionSource(core: Core, user: User, input: { app?: string; version?: number; instance?: string }): {
-  meta: { app: string; title: string; version: number; createdAt: string; note: string | null; sizeBytes: number; capabilities: Capabilities; savedByInstance: string | null };
+  meta: { app: string; title: string; version: number; createdAt: string; note: string | null; sizeBytes: number; sha256: string; capabilities: Capabilities; savedByInstance: string | null };
   html: string;
 } {
   if ((input.app === undefined) === (input.instance === undefined)) throw new LagerError('invalid_argument', 'Give exactly one of app or instance.');
@@ -323,11 +323,17 @@ export function versionSource(core: Core, user: User, input: { app?: string; ver
   return {
     meta: {
       app: app.slug, title: app.title, version: version.number, createdAt: version.createdAt, note: version.note,
-      sizeBytes: version.sizeBytes, capabilities: version.capabilities, savedByInstance: savedBy,
+      sizeBytes: version.sizeBytes, sha256: version.sha256, capabilities: version.capabilities, savedByInstance: savedBy,
     },
     html,
   };
 }
+
+/**
+ * The smallest part `get_version` returns. Every part re-reads the whole version, so a tiny `limit` would turn one read into
+ * thousands of full reads; a smaller `limit` is raised to this.
+ */
+export const MIN_PART_BYTES = 1024;
 
 /**
  * One part of `html`, measured in UTF-8 bytes like `sizeBytes`, so that a client whose tool results are capped can read a
@@ -648,17 +654,17 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }, ({ slug, model }) => run(() => setAppModel(core, user, readableApp(core, user, slug), model)));
 
   server.registerTool('get_version', { ...toolMeta('get_version'),
-    description: 'Get the source of an app so you can continue developing it, e.g. in a new conversation: the complete HTML of a version plus its title and capabilities. Give app (with version, default the latest deployed one) or instance (the version active there, possibly one the page saved itself). Returns two text blocks: first JSON {app, title, version, createdAt, note, sizeBytes, capabilities, savedByInstance, offset, nextOffset}, then the raw HTML. A large app can be read in parts: pass limit (bytes, e.g. 40000) and call again with offset set to nextOffset until nextOffset is null, then join the parts in order; an app that fits comes back whole with nextOffset null, so pass limit whenever you do not know the size (get_app lists sizeBytes per version). Edit that HTML and redeploy it with deploy_app, passing the same capabilities (or deliberately changed ones): a deploy without capabilities declares none. Never deploy a part as if it were the whole app.',
+    description: `Get the source of an app so you can continue developing it, e.g. in a new conversation: the complete HTML of a version plus its title and capabilities. Give app (with version, default the latest deployed one) or instance (the version active there, possibly one the page saved itself). Returns two text blocks: first JSON {app, title, version, createdAt, note, sizeBytes, sha256, capabilities, savedByInstance, offset, nextOffset}, then the raw HTML. A large app can be read in parts: pass limit (bytes, e.g. 40000; at least ${MIN_PART_BYTES}) and call again with offset set to nextOffset until nextOffset is null, then join the parts in order; an app that fits comes back whole with nextOffset null, so pass limit whenever you do not know the size (get_app lists sizeBytes per version). After the first part, always continue with app and version from its answer (not instance, and never without version), so that every part comes from the same version even if someone deploys meanwhile; if you can compute a SHA-256 (e.g. in a shell), the joined parts must match sha256, otherwise start over. Edit that HTML and redeploy it with deploy_app, passing the same capabilities (or deliberately changed ones): a deploy without capabilities declares none. Never deploy a part as if it were the whole app.`,
     inputSchema: {
-      app: slugArg.optional(), version: z.number().int().positive().optional().describe('Version number from get_app; default: the latest deployed version'),
+      app: slugArg.optional(), version: z.number().int().positive().optional().describe('Version number from get_app, or from the first part of a read in parts; default: the latest deployed version'),
       instance: slugArg.optional().describe('Instead of app: the instance whose active version you want'),
       offset: z.number().int().nonnegative().optional().describe('Byte offset to start at, from nextOffset of the previous part; default 0'),
-      limit: z.number().int().positive().optional().describe('At most this many bytes of HTML (a part ends before a character it would split); default: all the rest'),
+      limit: z.number().int().positive().optional().describe(`At most this many bytes of HTML (a part ends before a character it would split); values below ${MIN_PART_BYTES} count as ${MIN_PART_BYTES}; default: all the rest`),
     },
   }, ({ app, version, instance, offset, limit }) => {
     try {
       const { meta, html } = versionSource(core, user, { app, version, instance });
-      const part = htmlPart(html, offset, limit);
+      const part = htmlPart(html, offset, limit === undefined ? undefined : Math.max(limit, MIN_PART_BYTES));
       return { content: [
         { type: 'text', text: JSON.stringify({ ...meta, offset: part.offset, nextOffset: part.nextOffset }) },
         { type: 'text', text: part.text },

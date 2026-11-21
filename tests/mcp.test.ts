@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -8,6 +9,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { OAuthClientInformationMixed, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { apiExtension } from '../src/http/api.js';
 import { mcpExtension } from '../src/mcp/http.js';
+import { MIN_PART_BYTES } from '../src/mcp/tools.js';
 import { makeHarness, type Harness } from './support/http.js';
 
 interface Running { h: Harness; server: http.Server; base: string; token: string }
@@ -196,14 +198,15 @@ describe('mcp endpoint', () => {
     const parts: string[] = [];
     let offset: number | null = 0;
     while (offset !== null) {
-      const part = await getVersion(client, { app: 'big', offset, limit: 1000 });
+      const part = await getVersion(client, { app: 'big', offset, limit: 1500 });
       expect(part.meta).toMatchObject({ app: 'big', version: 1, sizeBytes: total, offset, capabilities: { db: {} } });
-      expect(Buffer.byteLength(part.html)).toBeLessThanOrEqual(1000);
+      expect(Buffer.byteLength(part.html)).toBeLessThanOrEqual(1500);
       expect(part.html).not.toContain('\uFFFD');
       parts.push(part.html);
       offset = part.meta.nextOffset;
     }
-    expect(parts.length).toBeGreaterThanOrEqual(Math.ceil(total / 1000));
+    expect(parts.length).toBeGreaterThanOrEqual(Math.ceil(total / 1500));
+    expect(crypto.createHash('sha256').update(parts.join('')).digest('hex')).toBe((await getVersion(client, { app: 'big' })).meta.sha256);
     expect(parts.join('')).toBe(html);
 
     // Without a range, or with a limit beyond the size, the whole HTML comes back and says it is complete.
@@ -211,7 +214,15 @@ describe('mcp endpoint', () => {
     const whole = await getVersion(client, { app: 'big', limit: total + 1 });
     expect(whole.html).toBe(html);
     expect(whole.meta.nextOffset).toBeNull();
-    expect((await getVersion(client, { instance: 'big', limit: 10 })).html).toBe(html.slice(0, 10));
+    // A tiny limit is raised to the floor, so reading in parts never takes thousands of calls.
+    const floored = await getVersion(client, { instance: 'big', limit: 10 });
+    expect(floored.meta.nextOffset).toBeGreaterThan(MIN_PART_BYTES - 4);
+    expect(Buffer.byteLength(floored.html)).toBeLessThanOrEqual(MIN_PART_BYTES);
+    expect(html.startsWith(floored.html)).toBe(true);
+    // Reading from the very end gives an empty part that says it is the last one.
+    const end = await getVersion(client, { app: 'big', offset: total, limit: 5000 });
+    expect(end.html).toBe('');
+    expect(end.meta).toMatchObject({ offset: total, nextOffset: null });
 
     const inside = Buffer.from(html).indexOf(Buffer.from('ü')) + 1;
     for (const args of [{ app: 'big', offset: total + 1 }, { app: 'big', offset: inside }]) {
@@ -219,6 +230,28 @@ describe('mcp endpoint', () => {
       expect(res.isError, JSON.stringify(args)).toBe(true);
       expect(res.json.error.code, JSON.stringify(args)).toBe('invalid_argument');
     }
+  });
+
+  it('get_version: parts read with the version of the first part join to that version, even after a deploy', async () => {
+    const r = await start();
+    const client = await connect(r);
+    const v1 = `<!doctype html>\n${'<p>first</p>\n'.repeat(300)}`;
+    await call(client, 'deploy_app', { slug: 'big', html: v1 });
+    const first = await getVersion(client, { app: 'big', limit: 2000 });
+    expect(first.meta.version).toBe(1);
+
+    // Someone deploys in the middle of the read; the next parts name the version from the first answer.
+    await call(client, 'deploy_app', { slug: 'big', html: `<!doctype html>\n${'<p>second, longer</p>\n'.repeat(300)}` });
+    const parts = [first.html];
+    let offset: number | null = first.meta.nextOffset;
+    while (offset !== null) {
+      const part = await getVersion(client, { app: 'big', version: first.meta.version, offset, limit: 2000 });
+      expect(part.meta.version).toBe(1);
+      parts.push(part.html);
+      offset = part.meta.nextOffset;
+    }
+    expect(parts.join('')).toBe(v1);
+    expect(crypto.createHash('sha256').update(parts.join('')).digest('hex')).toBe(first.meta.sha256);
   });
 
   it('get_version: collaborators read the code, people the instance is only shared with do not', async () => {
@@ -236,11 +269,17 @@ describe('mcp endpoint', () => {
     const viaInstance = await call(viewer.client, 'get_version', { instance: 'portal' });
     expect(viaInstance.json.error.code).toBe('forbidden');
     expect(viaInstance.json.error.message).not.toContain('todo');
-    for (const args of [{ app: 'todo' }, { instance: 'todo' }]) {
-      const res = await call(viewer.client, 'get_version', args);
-      expect(res.isError).toBe(true);
-      expect(res.json.error.code).toBe('forbidden');
+    // Reading in parts is refused just like reading whole: `call` also checks that no HTML block comes back.
+    const stranger = await asUser(r, 'stranger@x.y', 'publisher');
+    for (const client of [viewer.client, stranger.client]) {
+      for (const args of [{ app: 'todo' }, { instance: 'todo' }, { instance: 'todo', limit: 10 }, { app: 'todo', offset: 0, limit: 10 }, { app: 'todo', version: 1, offset: 3, limit: 2000 }]) {
+        const res = await call(client, 'get_version', args);
+        expect(res.isError, JSON.stringify(args)).toBe(true);
+        expect(res.json.error.code, JSON.stringify(args)).toBe('forbidden');
+      }
     }
+    const partOfPortal = await call(stranger.client, 'get_version', { instance: 'portal', offset: 0, limit: 10 });
+    expect(partOfPortal.json.error.code).toBe('forbidden');
   });
 
   it('get_version by instance returns a page the instance saved itself, to its managers only', async () => {
