@@ -56,12 +56,12 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 const guide = fs.readFileSync(new URL('../src/guide.md', import.meta.url), 'utf8');
 
 describe('mcp endpoint', () => {
-  it('lists the twenty-four tools and exposes instructions', async () => {
+  it('lists the twenty-five tools and exposes instructions', async () => {
     const r = await start();
     const client = await connect(r);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'activate_version', 'add_domain', 'check_app', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'export_data', 'get_app', 'get_guide', 'get_version',
+      'activate_version', 'add_domain', 'check_app', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'edit_version', 'export_data', 'get_app', 'get_guide', 'get_version',
       'import_data', 'list_apps', 'list_models', 'list_shares', 'list_snapshots', 'remove_domain', 'restore_snapshot', 'set_app_icon', 'set_app_model', 'set_auto_update', 'set_visibility',
       'share_instance', 'unshare_instance',
     ]);
@@ -77,7 +77,7 @@ describe('mcp endpoint', () => {
     const r = await start();
     const client = await connect(r);
     const registered = new Set((await client.listTools()).tools.map((t) => t.name));
-    const TOOL_LIKE = /`((?:activate|add|check|create|db|deploy|export|get|import|list|remove|restore|set|share|unshare)_[a-z_]+)\b/g;
+    const TOOL_LIKE = /`((?:activate|add|check|create|db|deploy|edit|export|get|import|list|remove|restore|set|share|unshare)_[a-z_]+)\b/g;
     const named = [...new Set([...guide.matchAll(TOOL_LIKE)].map((m) => m[1]))];
     expect(named.length).toBeGreaterThan(15);
     for (const name of named) expect(registered.has(name), `guide names ${name}`).toBe(true);
@@ -226,6 +226,87 @@ describe('mcp endpoint', () => {
     const res = await call(collab.client, 'get_version', { app: 'todo', version: 2 });
     expect(res.isError).toBe(true);
     expect(res.json.error.code).toBe('forbidden');
+  });
+
+  it('edit_version changes the latest version without resending its HTML', async () => {
+    const r = await start();
+    const client = await connect(r);
+    const v1 = '<!doctype html>\n<style>.a { color: red; }</style>\n<p class="a">one</p>\n<p>$&</p>\n';
+    const caps = { db: { rules: [{ path: 'tasks', write: 'admin' }] }, user: {} };
+    await call(client, 'deploy_app', { slug: 'todo', html: v1, capabilities: caps, title: 'Todo' });
+
+    const edited = await call(client, 'edit_version', {
+      slug: 'todo', base_version: 1, note: 'blue',
+      // In order: the second edit matches text the first one wrote. `$&` is taken literally, not as a replacement pattern.
+      edits: [{ old_text: 'color: red;', new_text: 'color: blue;' }, { old_text: 'blue; }', new_text: 'blue; font-weight: bold; }' }, { old_text: '<p>$&</p>\n', new_text: '' }],
+    });
+    expect(edited.isError).toBe(false);
+    expect(edited.json).toMatchObject({ app: 'todo', version: 2, createdVersion: true });
+    const v2 = await getVersion(client, { app: 'todo' });
+    expect(v2.html).toBe('<!doctype html>\n<style>.a { color: blue; font-weight: bold; }</style>\n<p class="a">one</p>\n');
+    // Capabilities and title are kept, the note is the new one.
+    expect(v2.meta).toMatchObject({ version: 2, title: 'Todo', note: 'blue', capabilities: caps });
+
+    // New capabilities replace the old ones when given.
+    const withCaps = await call(client, 'edit_version', { slug: 'todo', base_version: 2, edits: [{ old_text: 'one', new_text: 'two' }], capabilities: { db: {} } });
+    expect(withCaps.json).toMatchObject({ version: 3, createdVersion: true });
+    expect((await getVersion(client, { app: 'todo' })).meta.capabilities).toEqual({ db: {} });
+
+    const refusals: Array<[Record<string, unknown>, string, string?]> = [
+      // Written against an older version: someone deployed since.
+      [{ slug: 'todo', base_version: 2, edits: [{ old_text: 'two', new_text: 'three' }] }, 'conflict', 'version 3'],
+      [{ slug: 'todo', base_version: 9, edits: [{ old_text: 'two', new_text: 'three' }] }, 'conflict'],
+      [{ slug: 'todo', base_version: 3, edits: [{ old_text: 'nowhere', new_text: 'x' }] }, 'invalid_argument', 'not found'],
+      [{ slug: 'todo', base_version: 3, edits: [{ old_text: '\n', new_text: 'x' }] }, 'invalid_argument', 'more than once'],
+      // Overlapping matches are ambiguous too.
+      [{ slug: 'todo', base_version: 3, edits: [{ old_text: 'two', new_text: 'aaa' }, { old_text: 'aa', new_text: 'b' }] }, 'invalid_argument', 'Edit 2'],
+      [{ slug: 'todo', base_version: 3, edits: [{ old_text: 'two', new_text: 'x' }, { old_text: 'two', new_text: 'y' }] }, 'invalid_argument', 'earlier edits'],
+      [{ slug: 'todo', base_version: 3, edits: [{ old_text: '', new_text: 'x' }] }, 'invalid_argument', 'empty'],
+      [{ slug: 'nope', base_version: 1, edits: [{ old_text: 'a', new_text: 'b' }] }, 'not_found'],
+    ];
+    for (const [args, code, message] of refusals) {
+      const res = await call(client, 'edit_version', args);
+      expect(res.isError, JSON.stringify(args)).toBe(true);
+      expect(res.json.error.code, JSON.stringify(args)).toBe(code);
+      if (message) expect(res.json.error.message, JSON.stringify(args)).toContain(message);
+    }
+    // A failed edit deploys nothing, not even the edits before it.
+    expect(r.h.core.apps.latestDeployedVersion(r.h.core.apps.getApp('todo')!.id)?.number).toBe(3);
+    const noEdits = await client.callTool({ name: 'edit_version', arguments: { slug: 'todo', base_version: 3, edits: [] } });
+    expect(noEdits.isError).toBe(true);
+
+    // Edits that change nothing make no new version.
+    const same = await call(client, 'edit_version', { slug: 'todo', base_version: 3, edits: [{ old_text: 'two', new_text: 'two' }] });
+    expect(same.json).toMatchObject({ version: 3, createdVersion: false });
+  });
+
+  it('edit_version: only those who deploy the app may edit it, and a page saved by an instance is not a base', async () => {
+    const r = await start();
+    const owner = await connect(r);
+    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>secret code</p>', capabilities: { page: {} } });
+    const edit = { slug: 'todo', base_version: 1, edits: [{ old_text: 'secret', new_text: 'open' }] };
+
+    const stranger = await asUser(r, 'stranger@x.y', 'publisher');
+    const viewer = await asUser(r, 'viewer@x.y');
+    await call(owner, 'share_instance', { instance: 'todo', email: 'viewer@x.y', level: 'admin' });
+    for (const client of [stranger.client, viewer.client]) {
+      const res = await call(client, 'edit_version', edit);
+      expect(res.isError).toBe(true);
+      expect(res.json.error.code).toBe('forbidden');
+      // A refusal must not tell whether the text would have matched.
+      expect(res.json.error.message).not.toContain('secret');
+    }
+    const collab = await asUser(r, 'collab@x.y', 'publisher');
+    r.h.core.apps.addCollaborator(r.h.core.apps.getApp('todo')!.id, collab.id, r.h.adminId);
+
+    const inst = r.h.core.apps.getInstanceBySlug('todo')!;
+    r.h.core.apps.selfPublish({ instanceId: inst.id, html: '<p>saved secret</p>', baseVersion: 1, userId: r.h.adminId });
+    const onSaved = await call(collab.client, 'edit_version', { ...edit, base_version: 2 });
+    expect(onSaved.json.error.code).toBe('conflict');
+
+    const ok = await call(collab.client, 'edit_version', edit);
+    expect(ok.isError).toBe(false);
+    expect((await getVersion(owner, { app: 'todo' })).html).toBe('<p>open code</p>');
   });
 
   it('deploy_app surfaces lint warnings', async () => {
@@ -809,7 +890,7 @@ describe('mcp endpoint', () => {
     const client = new Client({ name: 't', version: '1' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${r.base}/mcp`), { authProvider: provider }));
     clients.push(client);
-    expect((await client.listTools()).tools).toHaveLength(24);
+    expect((await client.listTools()).tools).toHaveLength(25);
   });
 
   describe('icons and descriptions', () => {
