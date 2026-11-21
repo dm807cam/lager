@@ -3,7 +3,7 @@ import request from 'supertest';
 import { adminExtension } from '../src/http/admin.js';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { csrfToken } from '../src/http/session.js';
-import { MAX_CODES_PER_SIGN_IN } from '../src/http/two-factor.js';
+import { MAX_CODES_PER_SIGN_IN, setupToken } from '../src/http/two-factor.js';
 import { t } from '../src/i18n/index.js';
 import { MemoryMailer } from '../src/platform/mail.js';
 import { base32Decode, hotp, MAX_CODE_FAILURES, RECOVERY_CODE_COUNT, timeStep } from '../src/platform/two-factor.js';
@@ -266,10 +266,12 @@ describe('the account page', () => {
     const secret = new URL(uri).searchParams.get('secret')!;
     expect(secret).toBe(s.core.twoFactor.pendingSecret(s.user.id));
     expect(new URL(uri).searchParams.get('issuer')).toBe('Lager (lager.localhost:8080)');
-    const wrong = await s.post('/account/two-factor/confirm', { csrf: s.csrf(), code: '000000' }, { cookie });
+    const setupField = /name="setup" value="([^"]+)"/.exec(shown.text)![1];
+    const wrong = await s.post('/account/two-factor/confirm', { csrf: s.csrf(), setup: setupField, code: '000000' }, { cookie });
     expect(wrong.status).toBe(400);
+    expect(wrong.text).toContain(secret.slice(0, 4));
     expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(false);
-    const done = await s.post('/account/two-factor/confirm', { csrf: s.csrf(), code: codeFor(secret) }, { cookie });
+    const done = await s.post('/account/two-factor/confirm', { csrf: s.csrf(), setup: setupField, code: codeFor(secret) }, { cookie });
     expect(done.status).toBe(200);
     expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(true);
     const codes = [...done.text.matchAll(/<li><code>([A-Z2-7-]{14})<\/code><\/li>/g)].map((m) => m[1]);
@@ -282,14 +284,42 @@ describe('the account page', () => {
     expect(s.mailer.sent.map((m) => m.subject)).toContain(t('en', 'mail.twoFactor.enabled.subject'));
   });
 
-  it('turning it on signs out other browsers and connected assistants', async () => {
+  it('turning it on signs out other browsers and revokes API tokens', async () => {
     const s = setup();
     const other = await signedIn(s);
     const cookie = await signedIn(s);
+    const { token: apiToken } = s.core.tokens.create(s.user.id, 'script');
     const secret = s.core.twoFactor.startSetup(s.user.id);
-    const done = await s.post('/account/two-factor/confirm', { csrf: s.csrf(), code: codeFor(secret) }, { cookie });
+    const form = setupToken(s.core, s.core.users.get(s.user.id)!)!;
+    const done = await s.post('/account/two-factor/confirm', { csrf: s.csrf(), setup: form, code: codeFor(secret) }, { cookie });
     expect(done.status).toBe(200);
+    expect(done.text).toContain(t('en', 'account.twoFactor.codes.enabled'));
     expect((await s.get('/account', other)).status).toBe(302);
+    expect(s.core.tokens.verify(apiToken)).toBeNull();
+  });
+
+  it('a session without the password can neither see the key of a pending setup nor confirm it', async () => {
+    const s = setup();
+    const owner = await signedIn(s);
+    const thief = await signedIn(s);
+    const shown = await s.post('/account/two-factor/setup', { csrf: s.csrf(), current: USER.password }, { cookie: owner });
+    const ownerSetup = /name="setup" value="([^"]+)"/.exec(shown.text)![1];
+    const secret = s.core.twoFactor.pendingSecret(s.user.id)!;
+    // The other session has the CSRF token of the account page, but not the setup's own token.
+    for (const setup of [undefined, 'x.y', s.csrf()]) {
+      const res = await s.post('/account/two-factor/confirm', { csrf: s.csrf(), ...(setup ? { setup } : {}), code: codeFor(secret) }, { cookie: thief });
+      expect(res.status).toBe(400);
+      expect(res.text).not.toContain(secret.slice(0, 8));
+      expect(res.text).not.toMatch(/<li><code>/);
+      expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(false);
+    }
+    const wrong = await s.post('/account/two-factor/confirm', { csrf: s.csrf(), code: '000000' }, { cookie: thief });
+    expect(wrong.text).not.toContain(secret.slice(0, 8));
+    // A setup started again makes the token of the earlier one worthless.
+    await s.post('/account/two-factor/setup', { csrf: s.csrf(), current: USER.password }, { cookie: owner });
+    const stale = await s.post('/account/two-factor/confirm', { csrf: s.csrf(), setup: ownerSetup, code: codeFor(s.core.twoFactor.pendingSecret(s.user.id)!) }, { cookie: owner });
+    expect(stale.status).toBe(400);
+    expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(false);
   });
 
   it('a form without its token changes nothing', async () => {
@@ -347,8 +377,17 @@ describe('administrators', () => {
     const annSession = cookieOf(await s.post('/login/two-factor', { code: codeFor(secret) }, { cookie: pending }), s.names.session)!;
     const admin = await h!.login(ADMIN.email, ADMIN.password);
     const list = await s.get('/admin/users', admin);
-    expect(list.text).toContain(`action="/admin/users/${s.user.id}/two-factor/reset"`);
-    const res = await s.post(`/admin/users/${s.user.id}/two-factor/reset`, { csrf: s.csrf(h!.adminId) }, { cookie: admin });
+    expect(list.text).toContain(`href="/admin/users/${s.user.id}/two-factor/reset"`);
+    const page = await s.get(`/admin/users/${s.user.id}/two-factor/reset`, admin);
+    expect(page.status).toBe(200);
+    expect(page.text).toContain('name="current"');
+    // The administrator's session alone is not enough: their own password is asked for.
+    for (const current of [undefined, 'wrong-password']) {
+      const refused = await s.post(`/admin/users/${s.user.id}/two-factor/reset`, { csrf: s.csrf(h!.adminId), ...(current ? { current } : {}) }, { cookie: admin });
+      expect(refused.status).toBe(400);
+      expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(true);
+    }
+    const res = await s.post(`/admin/users/${s.user.id}/two-factor/reset`, { csrf: s.csrf(h!.adminId), current: ADMIN.password }, { cookie: admin });
     expect(res.status).toBe(200);
     expect(res.text).toContain(t('en', 'admin.users.twoFactorResetDone', { email: USER.email }));
     expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(false);
@@ -363,15 +402,32 @@ describe('administrators', () => {
     s.core.twoFactor.confirmSetup(h!.adminId, codeFor(secret, -1));
     const { pending } = await s.password(ADMIN);
     const admin = cookieOf(await s.post('/login/two-factor', { code: codeFor(secret) }, { cookie: pending }), s.names.session)!;
-    expect((await s.get('/admin/users', admin)).text).not.toContain(`action="/admin/users/${h!.adminId}/two-factor/reset"`);
-    const self = await s.post(`/admin/users/${h!.adminId}/two-factor/reset`, { csrf: s.csrf(h!.adminId) }, { cookie: admin });
+    expect((await s.get('/admin/users', admin)).text).not.toContain(`href="/admin/users/${h!.adminId}/two-factor/reset"`);
+    const self = await s.post(`/admin/users/${h!.adminId}/two-factor/reset`, { csrf: s.csrf(h!.adminId), current: ADMIN.password, code: codeFor(secret, 1) }, { cookie: admin });
     expect(self.status).toBe(403);
     expect(s.core.twoFactor.isEnabled(h!.adminId)).toBe(true);
     // An account without the role is turned away before anything happens.
     const ann = await h!.login(USER.email, USER.password);
-    const refused = await s.post(`/admin/users/${h!.adminId}/two-factor/reset`, { csrf: s.csrf() }, { cookie: ann });
+    const refused = await s.post(`/admin/users/${h!.adminId}/two-factor/reset`, { csrf: s.csrf(), current: USER.password }, { cookie: ann });
     expect(refused.status).toBe(403);
     expect(s.core.twoFactor.isEnabled(h!.adminId)).toBe(true);
+  });
+
+  it('an administrator with two-step sign-in confirms with a code as well', async () => {
+    const s = setup();
+    s.enable();
+    const adminSecret = s.core.twoFactor.startSetup(h!.adminId);
+    s.core.twoFactor.confirmSetup(h!.adminId, codeFor(adminSecret, -1));
+    const { pending } = await s.password(ADMIN);
+    const admin = cookieOf(await s.post('/login/two-factor', { code: codeFor(adminSecret) }, { cookie: pending }), s.names.session)!;
+    expect((await s.get(`/admin/users/${s.user.id}/two-factor/reset`, admin)).text).toContain('name="code"');
+    const noCode = await s.post(`/admin/users/${s.user.id}/two-factor/reset`, { csrf: s.csrf(h!.adminId), current: ADMIN.password, code: '000000' }, { cookie: admin });
+    expect(noCode.status).toBe(400);
+    expect(noCode.text).toContain(t('en', 'twoFactor.wrong'));
+    expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(true);
+    const ok = await s.post(`/admin/users/${s.user.id}/two-factor/reset`, { csrf: s.csrf(h!.adminId), current: ADMIN.password, code: codeFor(adminSecret, 1) }, { cookie: admin });
+    expect(ok.status).toBe(200);
+    expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(false);
   });
 });
 

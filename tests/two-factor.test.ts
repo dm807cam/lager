@@ -79,6 +79,21 @@ describe('setting up two-step sign-in', () => {
     expect(() => tf.startSetup(userId, T0)).toThrow(expect.objectContaining({ reason: 'two_factor_on' }));
   });
 
+  it('names the pending setup with a mark that changes when it is started again and is gone once confirmed', () => {
+    const { tf, userId } = setup();
+    expect(tf.pendingMark(userId, T0)).toBeNull();
+    const secret = tf.startSetup(userId, T0);
+    const first = tf.pendingMark(userId, T0);
+    expect(first).toMatch(/^[\w-]{22}$/);
+    expect(first).not.toContain(secret);
+    tf.startSetup(userId, T0);
+    const second = tf.pendingMark(userId, T0);
+    expect(second).not.toBe(first);
+    expect(tf.pendingMark(userId, T0 + SETUP_TTL_MS)).toBeNull();
+    tf.confirmSetup(userId, codeAt(tf.pendingSecret(userId, T0)!, T0), T0);
+    expect(tf.pendingMark(userId, T0)).toBeNull();
+  });
+
   it('a setup that was not confirmed in time is worthless', () => {
     const { tf, userId } = setup();
     const secret = tf.startSetup(userId, T0);
@@ -183,6 +198,15 @@ describe('checking a code', () => {
     expect(tf.status(victim).unreadable).toBe(true);
   });
 
+  it('refuses a secret whose authentication tag was cut short', () => {
+    const { db, tf, userId } = setup();
+    enable(tf, userId, T0);
+    const [v, iv, tag, ct] = (db.prepare('SELECT secret_enc FROM user_two_factor').get() as { secret_enc: string }).secret_enc.split(':');
+    const short = Buffer.from(tag, 'base64url').subarray(0, 4).toString('base64url');
+    db.prepare('UPDATE user_two_factor SET secret_enc = ?').run([v, iv, short, ct].join(':'));
+    expect(tf.status(userId).unreadable).toBe(true);
+  });
+
   it('after the server secret changed only recovery codes work', () => {
     const { db, tf, userId } = setup('first-secret');
     const { secret, codes } = enable(tf, userId, T0);
@@ -213,20 +237,55 @@ describe('checking a code', () => {
     expect(CODE_LOCK_STEPS_MS[CODE_LOCK_STEPS_MS.length - 1]).toBe(24 * 3600_000);
   });
 
-  it('a right code ends the count, and a quiet day brings the pauses back to the first step', () => {
+  it('a right code ends the run of wrong codes but not the length of the next pause; each quiet day takes one step back', () => {
     const { tf, userId } = setup();
     const { secret } = enable(tf, userId, T0);
     let now = T0 + 60_000;
-    for (let i = 1; i < MAX_CODE_FAILURES; i++) tf.check(userId, '000000', now);
-    expect(tf.check(userId, codeAt(secret, now), now)).toMatchObject({ ok: true });
-    for (let i = 1; i < MAX_CODE_FAILURES; i++) expect(tf.check(userId, '000000', now).ok).toBe(false);
-    expect(tf.check(userId, '000000', now)).toMatchObject({ reason: 'locked', until: now + CODE_LOCK_STEPS_MS[0] });
+    const lockNow = (): ReturnType<TwoFactor['check']> => {
+      for (let i = 1; i < MAX_CODE_FAILURES; i++) expect(tf.check(userId, '000000', now)).toEqual({ ok: false, reason: 'wrong' });
+      return tf.check(userId, '000000', now);
+    };
+    expect(lockNow()).toMatchObject({ reason: 'locked', until: now + CODE_LOCK_STEPS_MS[0] });
     now += CODE_LOCK_STEPS_MS[0];
-    for (let i = 0; i < MAX_CODE_FAILURES; i++) tf.check(userId, '000000', now);
-    now += 24 * 3600_000 + CODE_LOCK_STEPS_MS[1];
-    for (let i = 1; i < MAX_CODE_FAILURES; i++) tf.check(userId, '000000', now);
-    expect(tf.check(userId, '000000', now)).toMatchObject({ reason: 'locked', until: now + CODE_LOCK_STEPS_MS[0] });
+    expect(lockNow()).toMatchObject({ reason: 'locked', until: now + CODE_LOCK_STEPS_MS[1] });
+    now += CODE_LOCK_STEPS_MS[1];
+    expect(lockNow()).toMatchObject({ reason: 'locked', until: now + CODE_LOCK_STEPS_MS[2] });
+    now += CODE_LOCK_STEPS_MS[2];
+    // The owner signs in: the run ends, so four wrong codes do not pause; but the fifth starts the long pause, not the shortest.
+    expect(tf.check(userId, codeAt(secret, now), now)).toMatchObject({ ok: true });
+    expect(lockNow()).toMatchObject({ reason: 'locked', until: now + CODE_LOCK_STEPS_MS[3] });
+    // Two quiet days after the end of that pause take it back two steps, not to the first.
+    now += CODE_LOCK_STEPS_MS[3] + 2 * 24 * 3600_000;
+    expect(lockNow()).toMatchObject({ reason: 'locked', until: now + CODE_LOCK_STEPS_MS[2] });
   });
+
+  it('whatever the rhythm, an attacker who knows the password gets about five codes a day looked at', () => {
+    const DAY = 24 * 3600_000;
+    const YEAR = 365 * DAY;
+    let worst = 0;
+    // Spend a number of pauses, then wait a number of days, and repeat for a year; also guess the moment every pause ends.
+    // The strongest rhythms against a reset to the first step were four or five pauses and then a quiet day.
+    for (const batches of [1, 4, 5, 7]) {
+      for (const waitDays of [0, 1, 3]) {
+        const { tf, userId } = setup();
+        enable(tf, userId, T0);
+        let now = T0 + 60_000;
+        let looked = 0;
+        while (now < T0 + YEAR) {
+          for (let b = 0; b < batches && now < T0 + YEAR; b++) {
+            let r = tf.check(userId, '000000', now);
+            while (r.ok === false && r.reason === 'locked' && !r.started) { now = r.until; r = tf.check(userId, '000000', now); }
+            looked++;
+            while (!(r.ok === false && r.reason === 'locked')) { r = tf.check(userId, '000000', now); looked++; }
+            now = r.until;
+          }
+          now += waitDays * DAY;
+        }
+        worst = Math.max(worst, looked / 365);
+      }
+    }
+    expect(worst).toBeLessThan(MAX_CODE_FAILURES + 1);
+  }, 60_000);
 
   it('the count of wrong codes is kept in the database, across a restart', () => {
     const { db, tf, userId } = setup();

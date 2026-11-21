@@ -14,7 +14,7 @@ import { authCard, esc, field, messagePage, page, resendForm, sessionExpiredPage
 import { avatar, btn, icon, notice as noticeBox, signedIn } from './ui.js';
 import { RateLimiter } from './ratelimit.js';
 import { csrfToken, csrfValid, issueSession, markDevice } from './session.js';
-import { codeRefusal, recoveryCodesPage, setupPage, twoFactorCard } from './two-factor.js';
+import { codeRefusal, recoveryCodesPage, setupPage, setupToken, setupTokenValid, twoFactorCard } from './two-factor.js';
 
 const HOUR_MS = 3600_000;
 /**
@@ -120,8 +120,7 @@ export const authExtension: PlatformExtension = (router, core) => {
   const resendEmail = new RateLimiter(3, HOUR_MS);
   // Guessing the current password through the account page needs a session already, but is still capped.
   const passwordTries = new RateLimiter(10, 15 * 60_000);
-  // Codes tried against a setup that is not confirmed yet. Its secret was shown only to whoever gave the password; this only keeps a
-  // stolen session from guessing at it.
+  // Codes tried against a setup that is not confirmed yet, from the browser that holds its form token.
   const setupTries = new RateLimiter(10, 15 * 60_000);
   // Wrong passwords on the confirmation form, counted per client address and per link, so changing address does not buy more guesses at one link.
   const verifyTries = new RateLimiter(10, 15 * 60_000);
@@ -410,17 +409,19 @@ export const authExtension: PlatformExtension = (router, core) => {
     }
     if (!(await passwordConfirmed(req, res, user, locale))) return;
     const secretKey = core.twoFactor.startSetup(user.id);
-    html(res, 200, setupPage(core, locale, user, csrfToken(core, user), secretKey));
+    html(res, 200, setupPage(core, locale, user, csrfToken(core, user), setupToken(core, user)!, secretKey));
   }));
 
   router.post('/account/two-factor/confirm', ...accountAction((req, res, user, locale) => {
     const pending = core.twoFactor.pendingSecret(user.id);
-    if (!pending) {
+    // Only the browser that gave the password holds the token: anyone else sees neither the secret nor a way to confirm it.
+    const token = field(req, 'setup', 2000);
+    if (!pending || !setupTokenValid(core, user, token)) {
       html(res, 400, accountPage(core, locale, user, { error: t(locale, 'account.twoFactor.expired') }));
       return;
     }
     if (!setupTries.hit(user.id)) {
-      html(res, 429, setupPage(core, locale, user, csrfToken(core, user), pending, t(locale, 'account.tooMany')));
+      html(res, 429, setupPage(core, locale, user, csrfToken(core, user), token, pending, t(locale, 'account.tooMany')));
       return;
     }
     let codes: string[];
@@ -429,17 +430,18 @@ export const authExtension: PlatformExtension = (router, core) => {
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
       if (e.reason === 'two_factor_code_wrong') {
-        html(res, 400, setupPage(core, locale, user, csrfToken(core, user), pending, t(locale, 'twoFactor.wrong')));
+        html(res, 400, setupPage(core, locale, user, csrfToken(core, user), token, pending, t(locale, 'twoFactor.wrong')));
         return;
       }
       html(res, 400, accountPage(core, locale, user, { error: t(locale, 'account.twoFactor.expired') }));
       return;
     }
     setupTries.reset(user.id);
-    // Every other way into the account was opened with the password alone: sessions in other browsers, codes for instances and
-    // connected assistants end now. This browser, which just proved both, gets a fresh session.
+    // Every other way into the account was opened with the password alone: sessions in other browsers, codes for instances,
+    // connected assistants and API tokens end now, as after a new password. This browser, which just proved both, gets a fresh session.
     core.users.bumpEpoch(user.id);
     core.oauth.revokeUser(user.id);
+    core.tokens.revokeAll(user.id);
     const fresh = core.users.get(user.id)!;
     issueSession(core, res, fresh);
     markDevice(core, res, fresh);

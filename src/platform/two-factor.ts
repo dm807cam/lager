@@ -21,7 +21,7 @@ const RECOVERY_CODE_LENGTH = 12;
 export const MAX_CODE_FAILURES = 5;
 /** How long it then pauses: the first time, and each further time without a right code in between. Never longer than the last step. */
 export const CODE_LOCK_STEPS_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 3600_000, 8 * 3600_000, 24 * 3600_000];
-/** A day without a wrong code, counted from the end of the last pause, brings the pauses back to the first step. */
+/** Each full day without a wrong code, counted from the end of the last pause, takes the pauses back one step. */
 const LOCK_LEVEL_RESET_MS = 24 * 3600_000;
 /** Longest input looked at; anything longer is a wrong code. */
 export const MAX_CODE_INPUT = 64;
@@ -95,7 +95,7 @@ export interface TwoFactorStatus {
   confirmedAt: string | null;
   /** Recovery codes not used yet. */
   recoveryLeft: number;
-  /** True when the stored secret no longer decrypts (the server secret was replaced): only recovery codes still work. */
+  /** True when the stored secret no longer decrypts (the server secret was replaced): no code works, an administrator must turn it off. */
   unreadable: boolean;
 }
 
@@ -141,7 +141,7 @@ export class TwoFactor {
     const [v, iv, tag, ct] = stored.split(':');
     if (v !== 'v1' || !iv || !tag || ct === undefined) return null;
     try {
-      const d = crypto.createDecipheriv('aes-256-gcm', this.encKey, Buffer.from(iv, 'base64url'));
+      const d = crypto.createDecipheriv('aes-256-gcm', this.encKey, Buffer.from(iv, 'base64url'), { authTagLength: 16 });
       d.setAAD(Buffer.from(`user:${userId}`));
       d.setAuthTag(Buffer.from(tag, 'base64url'));
       return Buffer.concat([d.update(Buffer.from(ct, 'base64url')), d.final()]);
@@ -188,6 +188,17 @@ export class TwoFactor {
         last_step = 0, failures = 0, lock_level = 0, locked_until = 0, last_failure_at = 0`)
       .run(userId, this.encrypt(userId, secret), new Date(now).toISOString());
     return base32Encode(secret);
+  }
+
+  /**
+   * A short digest that names the setup now pending (its encrypted secret and its start), or null when none is pending. The page
+   * that shows the secret carries it in a signed form token, so only the browser that gave the password can see the secret
+   * again or confirm it; a session alone, taken from somewhere else, cannot.
+   */
+  pendingMark(userId: string, now = Date.now()): string | null {
+    const row = this.row(userId);
+    if (!row || row.confirmed_at !== null || Date.parse(row.created_at) + SETUP_TTL_MS <= now) return null;
+    return crypto.createHash('sha256').update(`${row.created_at}\n${row.secret_enc}`).digest('base64url').slice(0, 22);
   }
 
   /** The secret of a setup that was started, is not confirmed and has not expired; null otherwise. */
@@ -290,18 +301,21 @@ export class TwoFactor {
       }
     }
     if (method !== null) {
-      this.db.prepare('UPDATE user_two_factor SET failures = 0, lock_level = 0, locked_until = 0, last_failure_at = 0 WHERE user_id = ?').run(userId);
+      // The run of wrong codes ends; the length of the next pause does not. It falls only with time, so the owner signing in now
+      // and then does not hand an attacker short pauses again.
+      this.db.prepare('UPDATE user_two_factor SET failures = 0 WHERE user_id = ?').run(userId);
       return { ok: true, method, recoveryLeft: this.recoveryLeft(userId) };
     }
     return this.fail(row, now);
   }
 
   private fail(row: Row, now: number): CodeCheck {
-    // Quiet counts from the end of the last pause, not from the code that began it: waiting out the longest pause must not
-    // bring an attacker back to the shortest.
-    const quiet = row.last_failure_at > 0 && now - Math.max(row.last_failure_at, row.locked_until) >= LOCK_LEVEL_RESET_MS;
-    let level = quiet ? 0 : row.lock_level;
-    let failures = (quiet ? 0 : row.failures) + 1;
+    // Quiet counts from the end of the last pause, not from the code that began it, and each quiet day takes one step back, never
+    // more: an attacker who waits gets back only as many short pauses as days went by, so over time no more than about
+    // MAX_CODE_FAILURES codes a day are looked at, whatever the rhythm of the guesses.
+    const quietDays = row.last_failure_at > 0 ? Math.floor((now - Math.max(row.last_failure_at, row.locked_until)) / LOCK_LEVEL_RESET_MS) : 0;
+    let level = Math.max(0, row.lock_level - quietDays);
+    let failures = (quietDays > 0 ? 0 : row.failures) + 1;
     let until = 0;
     if (failures >= MAX_CODE_FAILURES) {
       until = now + CODE_LOCK_STEPS_MS[Math.min(level, CODE_LOCK_STEPS_MS.length - 1)];

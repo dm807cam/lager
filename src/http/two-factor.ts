@@ -3,7 +3,7 @@ import express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
 import type { Core } from '../core.js';
 import { t, type Locale } from '../i18n/index.js';
-import { MAX_CODE_INPUT, otpauthUri, RECOVERY_CODE_COUNT, TOTP_DIGITS, type CodeCheck } from '../platform/two-factor.js';
+import { MAX_CODE_INPUT, otpauthUri, RECOVERY_CODE_COUNT, SETUP_TTL_MS, TOTP_DIGITS, type CodeCheck } from '../platform/two-factor.js';
 import type { User } from '../platform/users.js';
 import { addressKey } from './client-address.js';
 import { clearCookie, cookieRepeated, readCookie, setCookie, twoFactorCookieName } from './cookies.js';
@@ -154,11 +154,27 @@ ${password('tf-setup-current')}
 <details class="gap-top"><summary>${esc(t(locale, 'account.twoFactor.disableSubmit'))}</summary>${action('/account/two-factor/disable', 'tf-disable', t(locale, 'account.twoFactor.disableSubmit'), 'danger')}</details></section>`;
 }
 
+/**
+ * The form token of a setup page: issued only where the password was just given, bound to the account, its epoch and the setup now
+ * pending. Without it the secret is never shown again and the setup cannot be confirmed, so somebody who holds a session but
+ * not the password cannot take over a setup the owner started.
+ */
+export function setupToken(core: Core, user: User): string | null {
+  const mark = core.twoFactor.pendingMark(user.id);
+  return mark ? signToken({ uid: user.id, k: '2fa-setup', ep: user.sessionEpoch, m: mark }, core.config.secret, SETUP_TTL_MS / 1000) : null;
+}
+
+export function setupTokenValid(core: Core, user: User, value: unknown): boolean {
+  const tok = verifyToken<{ uid?: unknown; k?: unknown; ep?: unknown; m?: unknown }>(typeof value === 'string' ? value : undefined, core.config.secret);
+  const mark = core.twoFactor.pendingMark(user.id);
+  return tok !== null && mark !== null && tok.k === '2fa-setup' && tok.uid === user.id && tok.ep === user.sessionEpoch && tok.m === mark;
+}
+
 /** Groups of four, as authenticator apps accept them typed in. */
 const grouped = (secret: string): string => secret.match(/.{1,4}/g)!.join(' ');
 
 /** The secret of a new setup and the field for the first code from it. Never cached; the secret is not in force before that code. */
-export function setupPage(core: Core, locale: Locale, user: User, csrf: string, secret: string, error?: string): string {
+export function setupPage(core: Core, locale: Locale, user: User, csrf: string, token: string, secret: string, error?: string): string {
   const title = t(locale, 'account.twoFactor.setup.title');
   const uri = otpauthUri(secret, issuer(core), user.email);
   return page(locale, title, `<div class="narrow"><div class="page-head"><h1>${esc(title)}</h1></div>
@@ -167,7 +183,7 @@ ${error ? notice('danger', error) : ''}
 <li><p>${esc(t(locale, 'account.twoFactor.setup.step1'))}</p>
 <p><a class="${btn('secondary')}" href="${esc(uri)}">${icon('open')}${esc(t(locale, 'account.twoFactor.setup.open'))}</a></p>
 ${field('tf-key', t(locale, 'account.twoFactor.setup.key'), copyField(locale, grouped(secret)), t(locale, 'account.twoFactor.setup.keyHint'))}</li>
-<li><form method="post" action="/account/two-factor/confirm" class="stack">${hiddenField('csrf', csrf)}
+<li><form method="post" action="/account/two-factor/confirm" class="stack">${hiddenField('csrf', csrf)}${hiddenField('setup', token)}
 ${field('code', t(locale, 'account.twoFactor.setup.step2'), codeInput(false, true), t(locale, 'account.twoFactor.setup.expiry'))}
 <div class="btn-row"><a class="${btn('secondary')}" href="/account">${esc(t(locale, 'signin.cancel'))}</a><button type="submit" class="${btn('primary')}">${esc(t(locale, 'account.twoFactor.setup.submit'))}</button></div></form></li>
 </ol></section></div>`, signedIn(core, user, null, '/account'));
