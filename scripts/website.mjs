@@ -214,6 +214,32 @@ export function parseChangelog(text) {
 
 const fmtDate = (d) => new Date(`${d}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 
+/** Comments under a post, from our own Lager. The page id is the post's address, so a post keeps its thread whatever the host. */
+const COMMENTS_URL = 'https://kommentare.ontheblock.xyz/';
+export function commentsBox(slug) {
+  return `<section class="comments" aria-label="Comments">
+  <!-- Comments: on our own Lager (${COMMENTS_URL}), embedded with frame-ancestors. Visitors write as guests; every comment is approved before it shows. -->
+  <div id="lager-comments" data-site="lager.im" data-page="/blog/${esc(slug)}/" data-lang="en" data-theme="auto" data-accent="#b45309"></div>
+  <script>
+  (function(){
+    var box=document.getElementById("lager-comments");
+    var u=new URL("${COMMENTS_URL}");
+    u.searchParams.set("site",box.getAttribute("data-site")||location.hostname);
+    u.searchParams.set("page",box.getAttribute("data-page")||location.pathname);
+    u.searchParams.set("u",location.href.split("#")[0]);
+    ["theme","accent","lang"].forEach(function(k){var v=box.getAttribute("data-"+k);if(v)u.searchParams.set(k,v)});
+    var f=document.createElement("iframe");
+    f.src=u.href;f.title="Comments";f.loading="lazy";
+    f.style.cssText="width:100%;border:0;height:360px;display:block";
+    box.appendChild(f);
+    window.addEventListener("message",function(e){
+      if(e.source===f.contentWindow&&e.data&&e.data.lagerCommentsHeight)f.style.height=e.data.lagerCommentsHeight+"px";
+    });
+  })();
+  </script>
+</section>`;
+}
+
 /** The cookie-free statistics snippet of the home page, so every generated page is counted the same way. */
 export function trackerOf(indexHtml) {
   const m = /<!-- Byline[\s\S]*?<\/script>\n?/.exec(indexHtml);
@@ -309,6 +335,7 @@ export function postPage(post, { newer, older }, tracker) {
   <div class="prose">
 ${post.html}
   </div>
+  ${commentsBox(post.slug)}
   <aside class="cta">
     <h2>Try it on your own server</h2>
     <p>One command sets up Lager on a Raspberry Pi or any 64-bit Linux machine. Then ask your assistant for an app.</p>

@@ -62,6 +62,15 @@ describe('posts', () => {
     expect(site.postPage(site.parsePost('2026-11-21-t.md', post('title: T\ndescription: D\ndate: 2026-11-21')), {}, '')).not.toContain('ai-note');
   });
 
+  it('puts the comment box from our Lager under every post, with the address of the post as its thread', () => {
+    const page = site.postPage(site.parsePost('2026-11-21-hello-world.md', post('title: T\ndescription: D\ndate: 2026-11-21')), {}, '');
+    expect(page).toContain('<div id="lager-comments" data-site="lager.im" data-page="/blog/hello-world/" data-lang="en"');
+    expect(page).toContain('var u=new URL("https://kommentare.ontheblock.xyz/");');
+    // Between the post and the call to action, so it reads as part of the post.
+    expect(page.indexOf('class="comments"')).toBeGreaterThan(page.indexOf('class="prose"'));
+    expect(page.indexOf('class="comments"')).toBeLessThan(page.indexOf('class="cta"'));
+  });
+
   it('refuses posts it cannot publish safely', () => {
     expect(() => site.parsePost('a.md', 'no front matter')).toThrow(/front matter/);
     expect(() => site.parsePost('a.md', post('title: T\ndate: 2026-11-21'))).toThrow(/description/);
