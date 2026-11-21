@@ -14,6 +14,7 @@ import { authCard, esc, field, messagePage, page, resendForm, sessionExpiredPage
 import { avatar, btn, icon, notice as noticeBox, signedIn } from './ui.js';
 import { RateLimiter } from './ratelimit.js';
 import { csrfToken, csrfValid, issueSession, markDevice } from './session.js';
+import { codeRefusal, recoveryCodesPage, setupPage, setupToken, setupTokenValid, twoFactorCard } from './two-factor.js';
 
 const HOUR_MS = 3600_000;
 /**
@@ -102,7 +103,8 @@ ${save}</form></section>
 <form method="post" action="/account/password" class="stack"><input type="hidden" name="csrf" value="${csrf}">
 ${field('current', t(locale, 'account.password.current'), '<input id="current" name="current" type="password" required autocomplete="current-password">')}
 ${field('new-password', t(locale, 'auth.reset.label'), `<input id="new-password" name="password" type="password" required minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password">`, t(locale, 'account.password.hint', { min: MIN_PASSWORD_LENGTH }))}
-<div><button type="submit" class="${btn('primary')}">${esc(t(locale, 'account.password.submit'))}</button></div></form></section></div>`, signedIn(core, user, null, '/account'));
+<div><button type="submit" class="${btn('primary')}">${esc(t(locale, 'account.password.submit'))}</button></div></form></section>
+${twoFactorCard(core, locale, user, csrfToken(core, user))}</div>`, signedIn(core, user, null, '/account'));
 }
 
 /** Public account pages: registration, e-mail verification, password reset and the account page. */
@@ -118,6 +120,8 @@ export const authExtension: PlatformExtension = (router, core) => {
   const resendEmail = new RateLimiter(3, HOUR_MS);
   // Guessing the current password through the account page needs a session already, but is still capped.
   const passwordTries = new RateLimiter(10, 15 * 60_000);
+  // Codes tried against a setup that is not confirmed yet, from the browser that holds its form token.
+  const setupTries = new RateLimiter(10, 15 * 60_000);
   // Wrong passwords on the confirmation form, counted per client address and per link, so changing address does not buy more guesses at one link.
   const verifyTries = new RateLimiter(10, 15 * 60_000);
 
@@ -365,5 +369,98 @@ export const authExtension: PlatformExtension = (router, core) => {
     issueSession(core, res, fresh);
     markDevice(core, res, fresh);
     html(res, 200, accountPage(core, locale, fresh, { ok: t(locale, 'account.password.changed') }));
+  }));
+
+  // --- two-step sign-in ---
+
+  /**
+   * The current password, checked under the same limit as on the password form. Every change to two-step sign-in asks for it:
+   * a session left open on someone else's computer must not be enough to turn it off or to read new recovery codes.
+   */
+  const passwordConfirmed = async (req: Request, res: Response, user: User, locale: Locale): Promise<boolean> => {
+    if (!passwordTries.hit(user.id)) {
+      html(res, 429, accountPage(core, locale, user, { error: t(locale, 'account.tooMany') }));
+      return false;
+    }
+    if (!(await core.users.checkLogin(user.email, secret(req, 'current'), true)).ok) {
+      html(res, 400, accountPage(core, locale, user, { error: t(locale, 'account.password.wrong') }));
+      return false;
+    }
+    passwordTries.reset(user.id);
+    return true;
+  };
+
+  /** A code from the app or a recovery code, counted against the account like one at sign-in. */
+  const codeConfirmed = (req: Request, res: Response, user: User, locale: Locale): boolean => {
+    const result = core.twoFactor.check(user.id, field(req, 'code', 100));
+    if (result.ok) {
+      if (result.method === 'recovery') core.accounts.noticeTwoFactor(user, 'recovery', locale, result.recoveryLeft);
+      return true;
+    }
+    if (result.reason === 'locked' && result.started) core.accounts.noticeTwoFactor(user, 'locked', locale);
+    html(res, result.reason === 'locked' ? 429 : 400, accountPage(core, locale, user, { error: codeRefusal(locale, result) }));
+    return false;
+  };
+
+  router.post('/account/two-factor/setup', ...accountAction(async (req, res, user, locale) => {
+    if (core.twoFactor.isEnabled(user.id)) {
+      html(res, 409, accountPage(core, locale, user, { error: t(locale, 'account.twoFactor.alreadyOn') }));
+      return;
+    }
+    if (!(await passwordConfirmed(req, res, user, locale))) return;
+    const secretKey = core.twoFactor.startSetup(user.id);
+    html(res, 200, setupPage(core, locale, user, csrfToken(core, user), setupToken(core, user)!, secretKey));
+  }));
+
+  router.post('/account/two-factor/confirm', ...accountAction((req, res, user, locale) => {
+    const pending = core.twoFactor.pendingSecret(user.id);
+    // Only the browser that gave the password holds the token: anyone else sees neither the secret nor a way to confirm it.
+    const token = field(req, 'setup', 2000);
+    if (!pending || !setupTokenValid(core, user, token)) {
+      html(res, 400, accountPage(core, locale, user, { error: t(locale, 'account.twoFactor.expired') }));
+      return;
+    }
+    if (!setupTries.hit(user.id)) {
+      html(res, 429, setupPage(core, locale, user, csrfToken(core, user), token, pending, t(locale, 'account.tooMany')));
+      return;
+    }
+    let codes: string[];
+    try {
+      codes = core.twoFactor.confirmSetup(user.id, field(req, 'code', 100));
+    } catch (e) {
+      if (!(e instanceof LagerError)) throw e;
+      if (e.reason === 'two_factor_code_wrong') {
+        html(res, 400, setupPage(core, locale, user, csrfToken(core, user), token, pending, t(locale, 'twoFactor.wrong')));
+        return;
+      }
+      html(res, 400, accountPage(core, locale, user, { error: t(locale, 'account.twoFactor.expired') }));
+      return;
+    }
+    setupTries.reset(user.id);
+    // Every other way into the account was opened with the password alone: sessions in other browsers, codes for instances,
+    // connected assistants and API tokens end now, as after a new password. This browser, which just proved both, gets a fresh session.
+    core.users.bumpEpoch(user.id);
+    core.oauth.revokeUser(user.id);
+    core.tokens.revokeAll(user.id);
+    const fresh = core.users.get(user.id)!;
+    issueSession(core, res, fresh);
+    markDevice(core, res, fresh);
+    core.accounts.noticeTwoFactor(fresh, 'enabled', locale);
+    html(res, 200, recoveryCodesPage(core, locale, fresh, codes, t(locale, 'account.twoFactor.codes.enabled')));
+  }));
+
+  router.post('/account/two-factor/recovery', ...accountAction(async (req, res, user, locale) => {
+    if (!core.twoFactor.isEnabled(user.id)) { html(res, 409, accountPage(core, locale, user)); return; }
+    if (!(await passwordConfirmed(req, res, user, locale)) || !codeConfirmed(req, res, user, locale)) return;
+    const codes = core.twoFactor.regenerateRecoveryCodes(user.id);
+    html(res, 200, recoveryCodesPage(core, locale, user, codes, t(locale, 'account.twoFactor.codes.renewed')));
+  }));
+
+  router.post('/account/two-factor/disable', ...accountAction(async (req, res, user, locale) => {
+    if (!core.twoFactor.isEnabled(user.id)) { html(res, 409, accountPage(core, locale, user)); return; }
+    if (!(await passwordConfirmed(req, res, user, locale)) || !codeConfirmed(req, res, user, locale)) return;
+    core.twoFactor.disable(user.id);
+    core.accounts.noticeTwoFactor(user, 'disabled', locale);
+    html(res, 200, accountPage(core, locale, user, { ok: t(locale, 'account.twoFactor.disabled') }));
   }));
 };

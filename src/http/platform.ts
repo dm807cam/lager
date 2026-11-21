@@ -13,6 +13,7 @@ import { LagerError } from '../errors.js';
 import { safeReturnPath, sendError } from './errors.js';
 import { sameOriginGuard } from './origin.js';
 import { signToken } from './tokens.js';
+import { beginSecondStep, twoFactorLoginRoutes } from './two-factor.js';
 import { hostUrl, instanceUrl } from '../config.js';
 import type { Instance } from '../platform/apps.js';
 import type { LoginResult, User } from '../platform/users.js';
@@ -409,10 +410,19 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
       return;
     }
     if (attempt !== 'paused') limiter.release(attempt, true);
+    // With two-step sign-in on, the right password buys only the way to the code: no session, and no device cookie either, so
+    // whoever knows the password alone is not exempt from a pause of the account.
+    if (core.twoFactor.isEnabled(result.user.id)) {
+      beginSecondStep(core, res, result.user, ret);
+      res.redirect(303, '/login/two-factor');
+      return;
+    }
     issueSession(core, res, result.user);
     markDevice(core, res, result.user);
     res.redirect(ret);
   });
+
+  twoFactorLoginRoutes(router, core);
 
   router.post('/logout', express.urlencoded({ extended: false, limit: '10kb' }), (req, res) => {
     const user = sessionUser(core, req);

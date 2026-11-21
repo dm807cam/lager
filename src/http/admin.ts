@@ -17,6 +17,9 @@ import { noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, f
 import { domainsBody } from './manage.js';
 import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid } from './session.js';
+import { RateLimiter } from './ratelimit.js';
+import { codeRefusal } from './two-factor.js';
+import { MAX_CODE_INPUT } from '../platform/two-factor.js';
 
 const ROLES: readonly Role[] = ['admin', 'publisher', 'user'];
 const ROLE_KEYS: Record<Role, MessageKey> = { admin: 'role.admin', publisher: 'role.publisher', user: 'role.user' };
@@ -57,19 +60,39 @@ function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): strin
     const base = `/admin/users/${encodeURIComponent(u.id)}`;
     const state = u.disabled ? 'disabled' : u.verified ? 'active' : 'unverified';
     const status = t(locale, u.disabled ? 'common.disabled' : u.verified ? 'common.active' : 'common.unverified');
+    const twoFactorOn = core.twoFactor.isEnabled(u.id);
     return [
       personCell(u),
       `<form method="post" action="${base}/role" class="inline-form">${hiddenField('csrf', csrf)}<select name="role" aria-label="${esc(t(locale, 'admin.users.roleOf', { email: u.email }))}">${roleOptions(locale, u.role)}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
       `<form method="post" action="${base}/ai-group" class="inline-form">${hiddenField('csrf', csrf)}<select name="group" aria-label="${esc(t(locale, 'admin.users.aiGroupOf', { email: u.email }))}">${optionList(aiGroups, core.ai.groupIdOf(u.id))}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
-      badge(status, { tone: STATUS_TONES[state], dot: true }),
+      `${badge(status, { tone: STATUS_TONES[state], dot: true })}${twoFactorOn ? ` ${badge(t(locale, 'admin.users.twoFactorOn'), { icon: 'shield', tone: 'success' })}` : ''}`,
       `<span class="num">${dateText(locale, u.createdAt)}</span>`,
       `<div class="btn-row">${form(`${base}/disabled`, csrf, hiddenField('disabled', u.disabled ? '0' : '1'), esc(t(locale, u.disabled ? 'common.activate' : 'common.deactivate')), 'quiet', '', true)}
 ${form(`${base}/reset-link`, csrf, '', esc(t(locale, 'admin.users.resetLink')), 'quiet', '', true)}
+${twoFactorOn && u.id !== admin.id ? linkButton(`${base}/two-factor/reset`, esc(t(locale, 'admin.users.twoFactorReset')), 'quiet', true, named(t(locale, 'admin.users.twoFactorReset.of', { email: u.email }))) : ''}
 ${u.disabled && u.id !== admin.id ? linkButton(`${base}/delete`, `${icon('trash')}${esc(t(locale, 'admin.users.delete'))}`, 'quiet', true, named(t(locale, 'admin.users.delete.of', { email: u.email }))) : ''}</div>`,
     ];
   });
   return shell(core, locale, admin, 'users', t(locale, 'admin.section.users'),
     dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.users.role'), t(locale, 'admin.users.aiGroup'), t(locale, 'common.status'), t(locale, 'common.created'), ''], rows, 'table-dense'), msg);
+}
+
+/**
+ * The question before another account's second step is turned off. The administrator confirms with their own password, and their
+ * own code if they use two-step sign-in: an administrator session left open must not be enough to strip it from somebody else.
+ */
+function twoFactorResetPage(core: Core, locale: Locale, admin: User, target: User, msg?: Msg): string {
+  const base = `/admin/users/${encodeURIComponent(target.id)}/two-factor/reset`;
+  const code = core.twoFactor.isEnabled(admin.id)
+    ? field('tf-admin-code', t(locale, 'account.twoFactor.codeLabel'), `<input id="tf-admin-code" name="code" required maxlength="${MAX_CODE_INPUT}" autocomplete="one-time-code" spellcheck="false" autocapitalize="off">`)
+    : '';
+  const body = `<p>${esc(t(locale, 'admin.users.twoFactorReset.text', { email: target.email }))}</p>
+<form method="post" action="${esc(base)}" class="stack">${hiddenField('csrf', csrfToken(core, admin))}
+${field('tf-admin-current', t(locale, 'admin.users.twoFactorReset.password'), '<input id="tf-admin-current" name="current" type="password" required autocomplete="current-password">')}
+${code}<div class="btn-row"><a class="${btn('secondary')}" href="/admin/users">${esc(t(locale, 'signin.cancel'))}</a>
+<button type="submit" class="${btn('danger')}">${esc(t(locale, 'admin.users.twoFactorReset'))}</button></div></form>`;
+  return shell(core, locale, admin, 'users', t(locale, 'admin.users.twoFactorReset.pageTitle', { email: target.email }), body, msg, base,
+    `<a class="back" href="/admin/users">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.section.users'))}</a>`);
 }
 
 /** At most this many names of what an account owns are spelled out on the confirmation page; the counts are always complete. */
@@ -472,6 +495,52 @@ export const adminExtension: PlatformExtension = (router, core) => {
       const link = core.accounts.createResetLink(param(req, 'id'));
       send(res, 200, usersSection(core, localeOf(res), user, { once: { title: t(localeOf(res), 'admin.users.resetLinkTitle'), link } }));
     } catch (e) { failWith(res, e, (m) => usersSection(core, localeOf(res), user, m), userMessages); }
+  }));
+
+  /**
+   * For someone who lost both their authenticator app and their recovery codes. Never for the administrator's own account (they
+   * use their account page, with a code), and only after the administrator confirmed with their own password and code. The
+   * account is signed out everywhere and its owner gets a mail.
+   */
+  const confirmTries = new RateLimiter(10, 15 * 60_000);
+  const resetTarget = (req: Request, res: Response, user: User): User | null => {
+    const locale = localeOf(res);
+    const target = core.users.get(param(req, 'id'));
+    if (!target) { send(res, 404, usersSection(core, locale, user, { error: t(locale, 'admin.users.notFound') })); return null; }
+    if (target.id === user.id) { send(res, 403, usersSection(core, locale, user, { error: t(locale, 'admin.users.twoFactorSelf') })); return null; }
+    if (!core.twoFactor.isEnabled(target.id)) { res.redirect('/admin/users'); return null; }
+    return target;
+  };
+
+  router.get('/admin/users/:id/two-factor/reset', noStore, admin, (req, res) => {
+    const user = adminOf(res);
+    const target = resetTarget(req, res, user);
+    if (target) send(res, 200, twoFactorResetPage(core, localeOf(res), user, target));
+  });
+
+  router.post('/admin/users/:id/two-factor/reset', ...action(async (req, res, user) => {
+    const locale = localeOf(res);
+    const target = resetTarget(req, res, user);
+    if (!target) return;
+    const again = (status: number, error: string): void => send(res, status, twoFactorResetPage(core, locale, user, target, { error }));
+    if (!confirmTries.hit(user.id)) { again(429, t(locale, 'account.tooMany')); return; }
+    if (!(await core.users.checkLogin(user.email, field(req, 'current', Infinity), true)).ok) { again(400, t(locale, 'account.password.wrong')); return; }
+    if (core.twoFactor.isEnabled(user.id)) {
+      const result = core.twoFactor.check(user.id, field(req, 'code', 100));
+      if (!result.ok) {
+        if (result.reason === 'locked' && result.started) core.accounts.noticeTwoFactor(user, 'locked', locale);
+        again(result.reason === 'locked' ? 429 : 400, codeRefusal(locale, result));
+        return;
+      }
+      if (result.method === 'recovery') core.accounts.noticeTwoFactor(user, 'recovery', locale, result.recoveryLeft);
+    }
+    confirmTries.reset(user.id);
+    if (core.twoFactor.disable(target.id)) {
+      core.users.bumpEpoch(target.id);
+      core.oauth.revokeUser(target.id);
+      core.accounts.noticeTwoFactor(target, 'reset');
+    }
+    send(res, 200, usersSection(core, locale, user, { ok: t(locale, 'admin.users.twoFactorResetDone', { email: target.email }) }));
   }));
 
   // Deleting an account: a page that says what goes with it, then the deletion itself. Not offered over REST or MCP.
