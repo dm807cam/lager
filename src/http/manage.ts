@@ -44,6 +44,7 @@ const NOTICES: Record<string, MessageKey> = {
   origin_invalid: 'notice.originInvalid',
   origins_limit: 'notice.originsLimit',
   origin_lager: 'notice.originLager',
+  origin_same_site: 'notice.originSameSite',
   embed_limit: 'notice.embedLimit',
   owner_full_access: 'notice.ownerFullAccess',
   host_invalid: 'notice.hostInvalid',

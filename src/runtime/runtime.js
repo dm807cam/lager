@@ -1370,16 +1370,19 @@
   // ------------------------------------------------------------------ embed
 
   /**
-   * The websites outside Lager that may show this instance in a frame, for a page that lets its owner name their blog:
-   * `get()` and `setOrigins(list)` resolve `{origins, active, limit, canManage}`. `origins` is what the managers named,
-   * `active` what the browser is told right now (a website that has become an address of this Lager is left out); both are
-   * empty for everyone who does not manage the instance. `setOrigins` replaces the list and rejects `{code, message}`:
-   * `not_granted`, `invalid_argument` (a bad address, an address of this Lager, or too many) or `unavailable`.
+   * The websites outside Lager that may show this instance in a frame: `get()` and `setOrigins(list)` resolve
+   * `{origins, active, limit, canManage, manageUrl}`. `origins` is what the managers named, `active` what the browser is told
+   * right now; both are empty, and `manageUrl` is null, for everyone who does not manage the instance. Websites are added only
+   * on the instance page at `manageUrl`; `setOrigins` takes a list that only drops some, and rejects `{code, message}`:
+   * `not_granted` (also for a list that adds one), `invalid_argument` or `unavailable`.
    */
   function buildEmbed() {
     function infoOf(json) {
       var list = function (v) { return Object.freeze(Array.isArray(v) ? v.slice() : []); };
-      return Object.freeze({ origins: list(json.origins), active: list(json.active), limit: json.limit, canManage: json.canManage === true });
+      return Object.freeze({
+        origins: list(json.origins), active: list(json.active), limit: json.limit, canManage: json.canManage === true,
+        manageUrl: typeof json.manageUrl === 'string' ? json.manageUrl : null,
+      });
     }
     function networkError(e) { throw { code: 'unavailable', message: e && e.message ? String(e.message) : 'Network error.' }; }
     function answer(res, fallback) {

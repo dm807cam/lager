@@ -22,7 +22,7 @@ curl -X PUT -H "Authorization: Bearer $LAGER_TOKEN" -H "Content-Type: text/html"
 | `page` | The page saves itself: `page.publish(html)` creates a version that belongs only to this instance and is active there at once | `{"page": {}}`; `{"page": {"publish": false}}` blocks saving | Managers and owners only. The document must start with `<!doctype html`, at most 16 MiB, 60 save attempts per hour and instance (refused ones count too), the last 20 saved versions are kept (older ones are deleted outright, not moved to the trash). Saved pages count toward the instance's storage |
 | `downloads` | `downloads.save({filename, data})` offers the viewer a file to save after a confirmation in the browser; the server is not involved | `{"downloads": {}}` | At most 50 MiB, file name at most 240 bytes; the confirmation names the file and its size; allowed extensions: gif, png, jpg, jpeg, webp, mp4, webm, mov, txt, json, md, docx, pptx, epub, csv, ttf, html, svg, pdf, xlsx, zip, fig |
 | `ingest` | The instance takes data from outside (another website, a webhook, a script, a device): each endpoint appends JSON documents to one collection and can do nothing else. `ingest.endpoints()` tells the page their addresses, and their tokens if the viewer manages the instance | `{"ingest": {"endpoints": [{"name": "hits", "auth": "none", "origins": ["https://blog.example.com"]}]}}` | See [Receiving data from outside](#receiving-data-from-outside): at most 8 endpoints, a request at most 64 KiB, limits per minute and day, and an ingest quota apart from the instance's storage |
-| `embed` | Other websites may show the instance in a frame, for example a comment box on the owner's blog. The people who manage each instance name the websites; `embed.get()` and `embed.setOrigins(origins)` let the app's own settings do it | `{"embed": {}}` (no fields) | See [Showing the app on other websites](#showing-the-app-on-other-websites): at most 20 websites, never an address of this Lager; inside the frame every visitor is a guest |
+| `embed` | Other websites may show the instance in a frame, for example a comment box on the owner's blog. The people who manage each instance add the websites on the instance page; `embed.get()` shows the app the list and `embed.setOrigins(origins)` removes websites | `{"embed": {}}` (no fields) | See [Showing the app on other websites](#showing-the-app-on-other-websites): at most 20 websites, never an address of this Lager or a website on its domain; inside the frame every visitor is a guest |
 
 Data rules (`db.rules`) set a minimum level per path, separately for reading and writing. A path that people may write but not read (a drop box such as `{"path": "inbox", "read": "admin", "write": "interact"}`) accepts `set`, `add` and `delete` from them, but not `update` or `acquire`: both work on the stored document and would reveal something about it, so they are refused with `not_granted`. A write there answers without the stored document. The private area `data/users/<id>/…` belongs to that user alone: they read and delete it from viewer level and write it from contributor level, and no rule changes that.
 
@@ -128,25 +128,34 @@ For a public page that takes one small input from a visitor (an RSVP, a guestboo
 
 An instance answers with `Content-Security-Policy: frame-ancestors 'self'`, so by default no other page can show it in a frame. An app built to sit on somebody's website, such as comments under a blog post, a poll or a booking form, declares `{"embed": {}}`. The declaration names no websites and opens nothing by itself.
 
-**Naming the websites.** The people who manage an instance (managers and the owner) add the websites under "Shown on other websites" on the instance page, or the app does it for them, for example in its settings:
+**Adding websites.** The people who manage an instance (managers and the owner) add the websites under "Shown on other websites" on the instance page. The instance page then sends `frame-ancestors 'self' <websites>`. `X-Frame-Options: SAMEORIGIN` stays: Chrome, Firefox and Safari ignore it when `frame-ancestors` is present, and a browser that knows only the older header keeps the old protection.
+
+**What the app can do.** The app's code runs with the rights of whoever opens it, so it may read the list and remove websites, but never add one: otherwise the publisher's code, not the manager, would choose who may frame the instance whenever a manager opens it.
 
 ```js
 const embed = await lager.use("embed");
-await embed.setOrigins(["https://blog.example.com", "https://www.example.com"]);
-const { origins, active } = await embed.get();
+const { origins, active, manageUrl } = await embed.get();
+// Link the owner to the instance page to add a website:
+document.querySelector("#add-site").href = manageUrl;
+// Removing works from the app:
+await embed.setOrigins(origins.filter((o) => o !== "https://old-blog.example.org"));
 ```
 
-`get()` and `setOrigins()` resolve `{origins, active, limit, canManage}`: `origins` is the stored list, `active` what the instance's page header names right now. Everyone who does not manage the instance gets empty lists, and `setOrigins` rejects for them with `not_granted`. The instance page then sends `frame-ancestors 'self' <websites>` and leaves out `X-Frame-Options`, which cannot name websites.
+`get()` and `setOrigins()` resolve `{origins, active, limit, canManage, manageUrl}`: `origins` is the stored list, `active` what the page header names right now, `manageUrl` the instance page. Everyone who does not manage the instance gets empty lists and `null`. `setOrigins` rejects with `not_granted` for them, and for anyone whose list adds a website.
 
-**What may be named.** Each website is scheme and host, like `https://blog.example.com`, with no path, at most 20 per instance. Refused are `*` and every address this Lager serves: the apps domain and everything under it (other instances), custom domains of instances and the platform host. A website that becomes a custom domain later stops counting at once; the instance page marks it "Not in effect" and it can still be removed. When the active version stops declaring `embed`, nothing is framed any more, and the list is kept for a version that declares it again.
+**What may be named.** Each website is scheme and host, like `https://myblog.example.org`, with no path, at most 20 per instance. Refused are `*` and:
 
-**Why this is safe.** Instances under the apps domain are the same site as each other, so a browser would send an instance's `SameSite=Lax` session cookie into a frame that another instance opens; that is what the default protects against, and why other instances can never be named. A website outside Lager is a different site. There the browser sends no `Lax` cookie into the frame, neither with the page nor with the page's own requests, and the sign-in pages of the platform refuse every frame. So inside an embedding the instance always sees a guest, with exactly the rights a guest has on the instance's own address. Clicks that a website tricks a visitor into making in the frame can do no more than that guest could do anyway.
+- every address this Lager serves: the apps domain and everything under it (other instances), custom domains of instances, and the platform host;
+- every website on the same domain as the apps domain or the platform. Without the Public Suffix List, Lager takes the last two labels of each, or three under a country code with a common second level (`example.co.uk`). With the apps domain `apps.example.com` that refuses everything under `example.com`, and with `apps.lager.fritz.box` everything under `fritz.box`. Under a shared suffix such as `duckdns.org` this refuses more than needed, never less.
+
+The same checks run on every response, so a website that later becomes a custom domain, or the same site after a change of configuration, stops counting at once. The instance page marks it "Not in effect", and it can still be removed. When the active version stops declaring `embed`, nothing is framed any more, and the list is kept for a version that declares it again.
+
+**Why this is safe.** Instances under the apps domain are the same site as each other, so a browser would send an instance's `SameSite=Lax` session cookie into a frame that another instance opens. That is what the default protects against, and why no address of this Lager and nothing on its domain can be named. A website on another domain is a different site. There the browser sends no `Lax` cookie into the frame, neither with the page nor with the page's own requests, and the platform's sign-in pages refuse every frame. So inside an embedding the instance always sees a guest, with exactly the rights a guest has on the instance's own address. Clicks that a website tricks a visitor into making in the frame can do no more than that guest could do anyway.
 
 **What follows for the app.**
 
 - The instance must be `public`; on a private one the frame shows the sign-in redirect, which browsers refuse to frame.
 - Guests write only where a `"write": "anyone"` rule lets them add. Keep moderation and settings on the app's own address, where the owner is signed in.
-- A website under the same registrable domain as the apps domain (`blog.example.com` next to `apps.example.com`, if the apps domain is not on the Public Suffix List) is the same site, so there the visitor's sign-in does reach the frame. Name only websites you control.
 - Storage such as `localStorage` inside a frame is kept apart per embedding website by current browsers.
 
 ## App icons and home-screen install

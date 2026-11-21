@@ -202,8 +202,9 @@ export function createInstanceRouter(core: Core): express.Router {
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'same-origin',
       'Content-Security-Policy': ['frame-ancestors', "'self'", ...ancestors].join(' '),
-      // X-Frame-Options knows no list of websites; browsers that read the policy above ignore it, so it is left out when there is one.
-      ...(ancestors.length === 0 ? { 'X-Frame-Options': 'SAMEORIGIN' } : {}),
+      // Chrome, Firefox and Safari (since 2019) ignore X-Frame-Options when the policy has frame-ancestors, so it stays: a
+      // browser that knows only X-Frame-Options keeps the old protection instead of none.
+      'X-Frame-Options': 'SAMEORIGIN',
     }).send(html);
   });
 

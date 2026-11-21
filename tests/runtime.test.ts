@@ -1785,13 +1785,14 @@ describe('embed', () => {
     expect(await g.lager.use('permissions').then((p: any) => p.state('embed'))).toBe('granted');
     embedReply = (init) => init?.method === 'PUT'
       ? json({ origins: JSON.parse(init.body).origins, active: JSON.parse(init.body).origins, limit: 20, canManage: true })
-      : json({ origins: ['https://blog.example.com'], active: [], limit: 20, canManage: true });
+      : json({ origins: ['https://blog.example.com'], active: [], limit: 20, canManage: true, manageUrl: 'https://lager.example.com/instances/demo' });
     const info = await embed.get();
-    expect(info).toEqual({ origins: ['https://blog.example.com'], active: [], limit: 20, canManage: true });
+    expect(info).toEqual({ origins: ['https://blog.example.com'], active: [], limit: 20, canManage: true, manageUrl: 'https://lager.example.com/instances/demo' });
     expect(Object.isFrozen(info) && Object.isFrozen(info.origins)).toBe(true);
     expect(calls.find(([u]) => u === '/__lager/embed')).toEqual(['/__lager/embed', { credentials: 'same-origin' }]);
     const saved = await embed.setOrigins(['https://blog.example.com', 'https://www.example.com']);
     expect(saved.active).toEqual(['https://blog.example.com', 'https://www.example.com']);
+    expect(saved.manageUrl).toBeNull();
     const [, init] = calls.find(([u]) => u === '/__lager/embed/origins')!;
     expect(init).toMatchObject({ method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Lager-Request': '1' } });
     expect(JSON.parse(init.body)).toEqual({ origins: ['https://blog.example.com', 'https://www.example.com'] });
