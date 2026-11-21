@@ -5,6 +5,7 @@ Topics for the Lager blog. Tick one off (`- [x]`) in the pull request that publi
 ## Releases
 
 - [ ] "What's new in Lager x.y": one post per release, built around the two or three changes people will feel, with an app that shows each
+- [x] What's new in Lager 0.2.0: ingest endpoints and `"write": "anyone"`, as three sticky notes turned into apps (lager-0-2-0-every-app-gets-a-letterbox)
 
 ## Home and family
 
@@ -22,6 +23,7 @@ Topics for the Lager blog. Tick one off (`- [x]`) in the pull request that publi
 - [ ] Webhooks without a server: catch GitHub or form-service events in an app
 - [ ] RSVP for the birthday party on a public page with a `"write": "anyone"` rule
 - [ ] A guestbook for your blog, with a manager who approves entries
+- [ ] "Was this helpful?" on every page of your docs: an `auth: "none"` endpoint, daily totals the app keeps, and a weekly summary from `lager.complete`
 
 ## Together, live
 
@@ -43,6 +45,7 @@ Topics for the Lager blog. Tick one off (`- [x]`) in the pull request that publi
 - [ ] Pages that save themselves: an app the owner edits without asking the AI again
 - [ ] Private by default: who can see what, explained with one shared grocery list
 - [ ] Why Lager has no telemetry, and what "your data" means in practice
+- [ ] One letterbox per house: why an open guestbook and a token endpoint belong on separate instances, told through the ingest quota
 
 ## Small business and clubs
 
