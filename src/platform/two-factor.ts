@@ -306,10 +306,27 @@ export class TwoFactor {
       this.db.prepare('UPDATE user_two_factor SET failures = 0 WHERE user_id = ?').run(userId);
       return { ok: true, method, recoveryLeft: this.recoveryLeft(userId) };
     }
-    return this.fail(row, now);
+    return this.fail(userId, now);
   }
 
-  private fail(row: Row, now: number): CodeCheck {
+  /**
+   * Counts one wrong code. The new values are computed from the row as read and written only if the row still holds those
+   * values; otherwise it is read again. Today nothing can come between the two (`check` awaits nothing and `DatabaseSync` is
+   * synchronous), but the per-account limit must not depend on that: two wrong codes must never be counted as one.
+   */
+  private fail(userId: string, now: number): CodeCheck {
+    for (;;) {
+      const row = this.row(userId);
+      if (!row) return { ok: false, reason: 'wrong' };
+      // Another request may have started a pause in between.
+      if (now < row.locked_until) return { ok: false, reason: 'locked', until: row.locked_until, started: false };
+      const result = this.failOnce(row, now);
+      if (result) return result;
+    }
+  }
+
+  /** One attempt of `fail`: null when the row changed since it was read. */
+  private failOnce(row: Row, now: number): CodeCheck | null {
     // Quiet counts from the end of the last pause, not from the code that began it, and each quiet day takes one step back, never
     // more: an attacker who waits gets back only as many short pauses as days went by, so over time no more than about
     // MAX_CODE_FAILURES codes a day are looked at, whatever the rhythm of the guesses.
@@ -322,8 +339,10 @@ export class TwoFactor {
       level = Math.min(level + 1, CODE_LOCK_STEPS_MS.length - 1);
       failures = 0;
     }
-    this.db.prepare('UPDATE user_two_factor SET failures = ?, lock_level = ?, locked_until = ?, last_failure_at = ? WHERE user_id = ?')
-      .run(failures, level, until, now, row.user_id);
+    const changed = Number(this.db.prepare(`UPDATE user_two_factor SET failures = ?, lock_level = ?, locked_until = ?, last_failure_at = ?
+      WHERE user_id = ? AND failures = ? AND lock_level = ? AND locked_until = ? AND last_failure_at = ?`)
+      .run(failures, level, until, now, row.user_id, row.failures, row.lock_level, row.locked_until, row.last_failure_at).changes);
+    if (changed === 0) return null;
     return until ? { ok: false, reason: 'locked', until, started: true } : { ok: false, reason: 'wrong' };
   }
 

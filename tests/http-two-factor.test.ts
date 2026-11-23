@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
+import crypto from 'node:crypto';
 import { adminExtension } from '../src/http/admin.js';
+import { createHttpApp, type PlatformExtension } from '../src/http/app.js';
+import { authExtension } from '../src/http/auth.js';
+import { staticExtension } from '../src/http/static.js';
+import { mcpExtension } from '../src/mcp/http.js';
+import { createCore } from '../src/core.js';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { csrfToken } from '../src/http/session.js';
 import { MAX_CODES_PER_SIGN_IN, setupToken } from '../src/http/two-factor.js';
@@ -23,9 +29,9 @@ const cleared = (res: request.Response, name: string): boolean => cookiesOf(res)
 /** The code an authenticator app shows right now, `offset` time steps away. */
 const codeFor = (secret: string, offset = 0): string => hotp(base32Decode(secret)!, timeStep(Date.now()) + offset);
 
-function setup(publicUrl?: string) {
+function setup(publicUrl?: string, extra: PlatformExtension[] = []) {
   const mailer = new MemoryMailer();
-  h = makeHarness({ mailer, extensions: [dashboardExtension, adminExtension], ...(publicUrl ? { publicUrl } : {}) });
+  h = makeHarness({ mailer, extensions: [dashboardExtension, adminExtension, ...extra], ...(publicUrl ? { publicUrl } : {}) });
   const core = h.core;
   const https = publicUrl?.startsWith('https:') ?? false;
   const names = {
@@ -145,7 +151,7 @@ describe('signing in with two-step sign-in on', () => {
   it(`after ${MAX_CODES_PER_SIGN_IN} wrong codes the password has to be entered again`, async () => {
     const s = setup();
     const { secret } = s.enable();
-    const { pending } = await s.password();
+    const { pending } = await s.password(USER, '/account');
     for (let i = 1; i < MAX_CODES_PER_SIGN_IN; i++) {
       const wrong = await s.post('/login/two-factor', { code: '000000' }, { cookie: pending });
       expect(wrong.status).toBe(401);
@@ -153,6 +159,8 @@ describe('signing in with two-step sign-in on', () => {
     }
     const last = await s.post('/login/two-factor', { code: '000000' }, { cookie: pending });
     expect(last.text).toContain(t('en', 'login.twoFactor.again'));
+    // The password form that comes back still leads where the sign-in was going.
+    expect(last.text).toContain('<input type="hidden" name="return" value="/account">');
     expect(cleared(last, s.names.pending)).toBe(true);
     const late = await s.post('/login/two-factor', { code: codeFor(secret) }, { cookie: pending });
     expect(cookieOf(late, s.names.session)).toBeUndefined();
@@ -225,6 +233,70 @@ describe('signing in with two-step sign-in on', () => {
     s.enable();
     for (const cookie of [`${s.names.pending}=x.y`, `${s.names.pending}=${s.csrf()}`]) {
       expect((await s.post('/login/two-factor', { code: '123456' }, { cookie })).status).toBe(401);
+    }
+  });
+
+  it('a pending token is no session, neither on the platform nor on an instance', async () => {
+    const s = setup();
+    const { secret } = s.enable(h!.adminId);
+    const r = s.core.apps.deploy({ slug: 'notes', html: '<p>notes</p>', userId: h!.adminId });
+    s.core.apps.setVisibility(r.instances[0].id, 'private', h!.adminId);
+    const { pending } = await s.password(ADMIN);
+    const value = pending!.slice(pending!.indexOf('=') + 1);
+    const home = await s.get('/', `${s.names.session}=${value}`);
+    expect(home.status).toBe(302);
+    expect(home.headers.location).toMatch(/^\/login/);
+    const instance = await request(h!.app).get('/').set('Host', 'notes.apps.localhost').set('Cookie', `lager_inst=${value}`);
+    expect(instance.status).toBe(302);
+    expect(instance.headers.location).toContain('/auth/instance');
+    // With the second step done, the same browser gets in.
+    const session = cookieOf(await s.post('/login/two-factor', { code: codeFor(secret) }, { cookie: pending }), s.names.session)!;
+    expect((await s.get('/', session)).status).toBe(200);
+  });
+
+  it('an OAuth authorization goes through both steps and keeps its place', async () => {
+    const s = setup('http://localhost:8080', [mcpExtension]);
+    const { secret } = s.enable();
+    const reg = await request(h!.app).post('/register').set('Host', h!.host)
+      .send({ redirect_uris: ['https://claude.ai/api/mcp/auth_callback'], client_name: 'Claude', token_endpoint_auth_method: 'none' });
+    expect(reg.status).toBe(201);
+    const challenge = crypto.createHash('sha256').update(crypto.randomBytes(32).toString('base64url')).digest('base64url');
+    const query = new URLSearchParams({ response_type: 'code', client_id: reg.body.client_id, redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+      code_challenge: challenge, code_challenge_method: 'S256', state: 'st-1' }).toString();
+    const anonymous = await s.get(`/authorize?${query}`);
+    const back = new URL(anonymous.headers.location, 'http://x').searchParams.get('return')!;
+    expect(back).toBe(`/authorize?${query}`);
+    const { res, pending } = await s.password(USER, back);
+    expect(res.headers.location).toBe('/login/two-factor');
+    // The password alone does not reach the consent page.
+    const early = await s.get(`/authorize?${query}`, pending);
+    expect(early.status).toBe(302);
+    expect(early.headers.location).toMatch(/^\/login/);
+    const done = await s.post('/login/two-factor', { code: codeFor(secret) }, { cookie: pending });
+    expect(done.headers.location).toBe(back);
+    const consent = await s.get(back, cookieOf(done, s.names.session));
+    expect(consent.status).toBe(200);
+    expect(consent.text).toContain('name="decision"');
+  });
+
+  it('a pause is still in force after a restart', async () => {
+    const s = setup();
+    const { secret } = s.enable();
+    for (let tried = 0; tried < MAX_CODE_FAILURES;) {
+      const { pending } = await s.password();
+      for (let i = 0; i < MAX_CODES_PER_SIGN_IN - 1 && tried < MAX_CODE_FAILURES; i++, tried++) await s.post('/login/two-factor', { code: '000000' }, { cookie: pending });
+    }
+    // A new process on the same data directory: every limit kept in memory starts empty, the pause does not.
+    const core = createCore(s.core.config, { mailer: new MemoryMailer() });
+    try {
+      const app = createHttpApp(core, [staticExtension, authExtension]);
+      const login = await request(app).post('/login').set('Host', h!.host).type('form').send(USER);
+      const pending = cookieOf(login, s.names.pending)!;
+      const res = await request(app).post('/login/two-factor').set('Host', h!.host).set('Cookie', pending).type('form').send({ code: codeFor(secret) });
+      expect(res.status).toBe(429);
+      expect(cookieOf(res, s.names.session)).toBeUndefined();
+    } finally {
+      core.close();
     }
   });
 
@@ -387,7 +459,9 @@ describe('administrators', () => {
       expect(refused.status).toBe(400);
       expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(true);
     }
+    const { token: apiToken } = s.core.tokens.create(s.user.id, 'script');
     const res = await s.post(`/admin/users/${s.user.id}/two-factor/reset`, { csrf: s.csrf(h!.adminId), current: ADMIN.password }, { cookie: admin });
+    expect(s.core.tokens.verify(apiToken)).toBeNull();
     expect(res.status).toBe(200);
     expect(res.text).toContain(t('en', 'admin.users.twoFactorResetDone', { email: USER.email }));
     expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(false);

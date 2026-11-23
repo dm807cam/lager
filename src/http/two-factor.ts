@@ -88,9 +88,10 @@ export function twoFactorLoginRoutes(router: express.Router, core: Core): void {
     next();
   };
   const html = (res: Response, status: number, body: string): void => { res.status(status).type('html').send(body); };
-  const startOver = (res: Response, locale: Locale, why: 'login.twoFactor.expired' | 'login.twoFactor.again' = 'login.twoFactor.expired'): void => {
+  /** Back to the password, keeping where the sign-in was going (an OAuth consent, an instance) when that is still known. */
+  const startOver = (res: Response, locale: Locale, step: SecondStep | null, why: 'login.twoFactor.expired' | 'login.twoFactor.again' = 'login.twoFactor.expired'): void => {
     clearCookie(res, config, twoFactorCookieName(config));
-    html(res, 401, loginPage(locale, '/', t(locale, why), { registration: core.settings.registration }));
+    html(res, 401, loginPage(locale, step?.returnPath ?? '/', t(locale, why), { registration: core.settings.registration }));
   };
 
   router.get('/login/two-factor', headers, (req, res) => {
@@ -103,15 +104,15 @@ export function twoFactorLoginRoutes(router: express.Router, core: Core): void {
   router.post('/login/two-factor', headers, sameOriginGuard(core), express.urlencoded({ extended: false, limit: '10kb' }), (req, res) => {
     const step = pendingSecondStep(core, req);
     const locale = requestLocale(core, req, step?.user ?? null);
-    if (!step || finished.full(step.id)) { startOver(res, locale); return; }
+    if (!step || finished.full(step.id)) { startOver(res, locale, step); return; }
     if (!byAddress.hit(addressKey(req.ip))) { html(res, 429, secondStepPage(locale, t(locale, 'login.tooMany'))); return; }
-    if (!tries.hit(step.id)) { startOver(res, locale, 'login.twoFactor.again'); return; }
+    if (!tries.hit(step.id)) { startOver(res, locale, step, 'login.twoFactor.again'); return; }
     const code = (req.body as Record<string, unknown> | undefined)?.code;
     const result = core.twoFactor.check(step.user.id, typeof code === 'string' ? code : '');
     if (!result.ok) {
       if (result.reason === 'locked' && result.started) core.accounts.noticeTwoFactor(step.user, 'locked', locale);
       // The last try of this sign-in is spent: back to the password, which has limits of its own.
-      if (tries.full(step.id) && result.reason !== 'locked') { startOver(res, locale, 'login.twoFactor.again'); return; }
+      if (tries.full(step.id) && result.reason !== 'locked') { startOver(res, locale, step, 'login.twoFactor.again'); return; }
       html(res, result.reason === 'locked' ? 429 : 401, secondStepPage(locale, codeRefusal(locale, result)));
       return;
     }

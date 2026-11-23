@@ -207,7 +207,7 @@ describe('checking a code', () => {
     expect(tf.status(userId).unreadable).toBe(true);
   });
 
-  it('after the server secret changed only recovery codes work', () => {
+  it('after the server secret changed neither app codes nor recovery codes work', () => {
     const { db, tf, userId } = setup('first-secret');
     const { secret, codes } = enable(tf, userId, T0);
     const replaced = new TwoFactor(db, 'second-secret');
@@ -286,6 +286,25 @@ describe('checking a code', () => {
     }
     expect(worst).toBeLessThan(MAX_CODE_FAILURES + 1);
   }, 60_000);
+
+  it('two wrong codes are never counted as one, even if another request writes between the read and the write', () => {
+    const { db, tf, userId } = setup();
+    enable(tf, userId, T0);
+    const now = T0 + 60_000;
+    // A wrong code from another request lands after this one read the row and before it writes.
+    const internals = tf as unknown as { failOnce: (row: unknown, now: number) => unknown };
+    const original = internals.failOnce.bind(tf);
+    let interleaved = false;
+    internals.failOnce = (row, at) => {
+      if (!interleaved) {
+        interleaved = true;
+        db.prepare('UPDATE user_two_factor SET failures = failures + 1, last_failure_at = ? WHERE user_id = ?').run(at, userId);
+      }
+      return original(row, at);
+    };
+    expect(tf.check(userId, '000000', now)).toEqual({ ok: false, reason: 'wrong' });
+    expect(db.prepare('SELECT failures FROM user_two_factor').get()).toMatchObject({ failures: 2 });
+  });
 
   it('the count of wrong codes is kept in the database, across a restart', () => {
     const { db, tf, userId } = setup();

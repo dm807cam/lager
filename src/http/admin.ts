@@ -536,8 +536,10 @@ export const adminExtension: PlatformExtension = (router, core) => {
     }
     confirmTries.reset(user.id);
     if (core.twoFactor.disable(target.id)) {
+      // Out everywhere, as when the second step is turned on: sessions, instance codes, assistants and API tokens.
       core.users.bumpEpoch(target.id);
       core.oauth.revokeUser(target.id);
+      core.tokens.revokeAll(target.id);
       core.accounts.noticeTwoFactor(target, 'reset');
     }
     send(res, 200, usersSection(core, locale, user, { ok: t(locale, 'admin.users.twoFactorResetDone', { email: target.email }) }));
