@@ -27,15 +27,17 @@ Topics for the Lager blog. Tick one off (`- [x]`) in the pull request that publi
 
 ## Together, live
 
-- [ ] Quiz night: a realtime quiz with rooms and presence for the whole pub table
+- [x] Quiz night: a realtime quiz with rooms and presence for the whole pub table (quiz-night-the-laptop-asks-the-phones-answer)
 - [ ] Planning poker for a small team, live in the browser
 - [ ] A shared whiteboard of sticky notes that moves as people type
+- [ ] Questions from the floor: a talk's audience sends questions through a `"write": "anyone"` rule, the moderator picks one, and a room puts it on the big screen
 
 ## Apps that think
 
 - [ ] A recipe app that turns "what's in my fridge" into dinner with `lager.complete`
 - [ ] A language-learning flashcard app whose cards write themselves
 - [ ] Choosing the right model per app: a fast one for sorting, a strong one for writing
+- [ ] The quiz that writes itself, and the fact-checker that doesn't: `lager.complete` drafts questions, a person approves each before it reaches `questions`
 
 ## Under the hood
 
