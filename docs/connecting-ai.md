@@ -33,7 +33,7 @@ ChatGPT adds custom MCP servers on the web without developer mode; you confirm a
 3. Sign in to Lager in the window that opens and allow access.
 4. In a chat, type **@**, select Lager and ask for an app.
 
-ChatGPT asks you to confirm tool calls that change something. Lager marks its reading tools as read-only, so only deploys, shares and data changes need a confirmation. Connectors that write (deploys, shares, data changes) currently work on Business, Enterprise and Edu; on Pro, ChatGPT connects custom MCP servers with read and fetch access only. OpenAI has changed this before, so check [its current documentation](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt) if the connector only offers read access.
+ChatGPT asks you to confirm tool calls that change something. Lager marks its reading tools as read-only, so only deploys, shares and data changes need a confirmation. Connectors that write (deploys, shares, data changes) currently work on Business, Enterprise and Edu; on Pro, ChatGPT connects custom MCP servers with read and fetch access only; for other plans, see OpenAI's documentation. OpenAI has changed this before, so check [its current documentation](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt) if the connector only offers read access.
 
 ## Cursor
 

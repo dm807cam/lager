@@ -14,7 +14,7 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 ### Changed
 
 - **Docs:** the ChatGPT steps no longer ask for developer mode, which ChatGPT no longer needs for custom MCP servers, and say which plans may use connectors that write (Business, Enterprise and Edu; Pro reads only) and who may add one in a workspace.
-- **Dependencies:** nodemailer 10.6.1 (bug fixes: DKIM now signs `List-Unsubscribe-Post`).
+- **Dependencies:** nodemailer 10.6.1 (upstream bug fixes; Lager's emails do not change).
 
 ## [0.2.0] - 2026-11-20
 
