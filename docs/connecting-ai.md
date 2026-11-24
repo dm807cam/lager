@@ -26,14 +26,14 @@ There are two ways to sign in:
 
 ## ChatGPT
 
-ChatGPT connects to custom MCP servers in **developer mode** (on Enterprise and Edu plans an administrator has to allow it first):
+ChatGPT adds custom MCP servers on the web without developer mode; you confirm a risk warning for each server instead. In Business, Enterprise and Edu workspaces only admins and owners may add one, unless an admin grants the permission **Create plugins with MCPs** to members:
 
 1. Open **Plugins** in ChatGPT (chatgpt.com/plugins), click **+** and choose **Add custom MCP server**.
 2. Enter a name, `https://lager.example.com/mcp` as the server URL and OAuth as the authentication, then create it as a plugin.
 3. Sign in to Lager in the window that opens and allow access.
 4. In a chat, type **@**, select Lager and ask for an app.
 
-ChatGPT asks you to confirm tool calls that change something. Lager marks its reading tools as read-only, so only deploys, shares and data changes need a confirmation. Which ChatGPT plans may use connectors that write is OpenAI's decision and has changed over time; check OpenAI's current documentation if the connector only offers read access.
+ChatGPT asks you to confirm tool calls that change something. Lager marks its reading tools as read-only, so only deploys, shares and data changes need a confirmation. Connectors that write (deploys, shares, data changes) currently work on Business, Enterprise and Edu; on Pro, ChatGPT connects custom MCP servers with read and fetch access only; for other plans, see OpenAI's documentation. OpenAI has changed this before, so check [its current documentation](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt) if the connector only offers read access.
 
 ## Cursor
 
@@ -85,7 +85,7 @@ Lager forgets a registered client that holds no sign-in and was last used more t
 
 ## What every assistant gets
 
-- **The same 24 tools**, with titles and read-only or destructive hints, and the guide for building apps (the `get_guide` tool). Lager also sends a short version of the guide as MCP server instructions; clients that do not show those to the model still find a pointer to `get_guide` in the `deploy_app` description.
+- **The same 25 tools**, with titles and read-only or destructive hints, and the guide for building apps (the `get_guide` tool). Lager also sends a short version of the guide as MCP server instructions; clients that do not show those to the model still find a pointer to `get_guide` in the `deploy_app` description.
 - **The same app runtime.** Apps call `lager.use("db")`, `lager.complete(…)` and so on, whichever assistant writes them: an app built by ChatGPT uses the same calls and runs the same way as one built by Claude.
 - **The same AI inside apps.** `lager.complete()` in an app is answered by the model your administrator connected under [Bring your own model](ai-models.md), whether that is Claude, GPT, Gemini, Mistral or a local Ollama, and regardless of which assistant built the app.
 

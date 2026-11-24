@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -6,8 +7,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { UnauthorizedError, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { OAuthClientInformationMixed, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
+import { DEPLOYS_PER_HOUR } from '../src/core.js';
 import { apiExtension } from '../src/http/api.js';
 import { mcpExtension } from '../src/mcp/http.js';
+import { editVersion, MIN_PART_BYTES } from '../src/mcp/tools.js';
 import { makeHarness, type Harness } from './support/http.js';
 
 interface Running { h: Harness; server: http.Server; base: string; token: string }
@@ -56,12 +59,12 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 const guide = fs.readFileSync(new URL('../src/guide.md', import.meta.url), 'utf8');
 
 describe('mcp endpoint', () => {
-  it('lists the twenty-four tools and exposes instructions', async () => {
+  it('lists the twenty-five tools and exposes instructions', async () => {
     const r = await start();
     const client = await connect(r);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'activate_version', 'add_domain', 'check_app', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'export_data', 'get_app', 'get_guide', 'get_version',
+      'activate_version', 'add_domain', 'check_app', 'create_instance', 'db_read', 'db_write', 'deploy_app', 'edit_version', 'export_data', 'get_app', 'get_guide', 'get_version',
       'import_data', 'list_apps', 'list_models', 'list_shares', 'list_snapshots', 'remove_domain', 'restore_snapshot', 'set_app_icon', 'set_app_model', 'set_auto_update', 'set_visibility',
       'share_instance', 'unshare_instance',
     ]);
@@ -77,7 +80,7 @@ describe('mcp endpoint', () => {
     const r = await start();
     const client = await connect(r);
     const registered = new Set((await client.listTools()).tools.map((t) => t.name));
-    const TOOL_LIKE = /`((?:activate|add|check|create|db|deploy|export|get|import|list|remove|restore|set|share|unshare)_[a-z_]+)\b/g;
+    const TOOL_LIKE = /`((?:activate|add|check|create|db|deploy|edit|export|get|import|list|remove|restore|set|share|unshare)_[a-z_]+)\b/g;
     const named = [...new Set([...guide.matchAll(TOOL_LIKE)].map((m) => m[1]))];
     expect(named.length).toBeGreaterThan(15);
     for (const name of named) expect(registered.has(name), `guide names ${name}`).toBe(true);
@@ -185,6 +188,73 @@ describe('mcp endpoint', () => {
     }
   });
 
+  it('get_version reads a large app in parts that join to the whole HTML', async () => {
+    const r = await start();
+    const client = await connect(r);
+    // Multi-byte characters straddle the part borders, so a part that split one would corrupt the joined source.
+    const html = `<!doctype html>\n${'<p>Grüße 🌿 – naïve</p>\n'.repeat(400)}`;
+    await call(client, 'deploy_app', { slug: 'big', html, capabilities: { db: {} } });
+    const total = Buffer.byteLength(html);
+
+    const parts: string[] = [];
+    let offset: number | null = 0;
+    while (offset !== null) {
+      const part = await getVersion(client, { app: 'big', offset, limit: 1500 });
+      expect(part.meta).toMatchObject({ app: 'big', version: 1, sizeBytes: total, offset, capabilities: { db: {} } });
+      expect(Buffer.byteLength(part.html)).toBeLessThanOrEqual(1500);
+      expect(part.html).not.toContain('\uFFFD');
+      parts.push(part.html);
+      offset = part.meta.nextOffset;
+    }
+    expect(parts.length).toBeGreaterThanOrEqual(Math.ceil(total / 1500));
+    expect(crypto.createHash('sha256').update(parts.join('')).digest('hex')).toBe((await getVersion(client, { app: 'big' })).meta.sha256);
+    expect(parts.join('')).toBe(html);
+
+    // Without a range, or with a limit beyond the size, the whole HTML comes back and says it is complete.
+    expect((await getVersion(client, { app: 'big' })).meta).toMatchObject({ offset: 0, nextOffset: null });
+    const whole = await getVersion(client, { app: 'big', limit: total + 1 });
+    expect(whole.html).toBe(html);
+    expect(whole.meta.nextOffset).toBeNull();
+    // A tiny limit is raised to the floor, so reading in parts never takes thousands of calls.
+    const floored = await getVersion(client, { instance: 'big', limit: 10 });
+    expect(floored.meta.nextOffset).toBeGreaterThan(MIN_PART_BYTES - 4);
+    expect(Buffer.byteLength(floored.html)).toBeLessThanOrEqual(MIN_PART_BYTES);
+    expect(html.startsWith(floored.html)).toBe(true);
+    // Reading from the very end gives an empty part that says it is the last one.
+    const end = await getVersion(client, { app: 'big', offset: total, limit: 5000 });
+    expect(end.html).toBe('');
+    expect(end.meta).toMatchObject({ offset: total, nextOffset: null });
+
+    const inside = Buffer.from(html).indexOf(Buffer.from('ü')) + 1;
+    for (const args of [{ app: 'big', offset: total + 1 }, { app: 'big', offset: inside }]) {
+      const res = await call(client, 'get_version', args);
+      expect(res.isError, JSON.stringify(args)).toBe(true);
+      expect(res.json.error.code, JSON.stringify(args)).toBe('invalid_argument');
+    }
+  });
+
+  it('get_version: parts read with the version of the first part join to that version, even after a deploy', async () => {
+    const r = await start();
+    const client = await connect(r);
+    const v1 = `<!doctype html>\n${'<p>first</p>\n'.repeat(300)}`;
+    await call(client, 'deploy_app', { slug: 'big', html: v1 });
+    const first = await getVersion(client, { app: 'big', limit: 2000 });
+    expect(first.meta.version).toBe(1);
+
+    // Someone deploys in the middle of the read; the next parts name the version from the first answer.
+    await call(client, 'deploy_app', { slug: 'big', html: `<!doctype html>\n${'<p>second, longer</p>\n'.repeat(300)}` });
+    const parts = [first.html];
+    let offset: number | null = first.meta.nextOffset;
+    while (offset !== null) {
+      const part = await getVersion(client, { app: 'big', version: first.meta.version, offset, limit: 2000 });
+      expect(part.meta.version).toBe(1);
+      parts.push(part.html);
+      offset = part.meta.nextOffset;
+    }
+    expect(parts.join('')).toBe(v1);
+    expect(crypto.createHash('sha256').update(parts.join('')).digest('hex')).toBe(first.meta.sha256);
+  });
+
   it('get_version: collaborators read the code, people the instance is only shared with do not', async () => {
     const r = await start();
     const owner = await connect(r);
@@ -200,11 +270,17 @@ describe('mcp endpoint', () => {
     const viaInstance = await call(viewer.client, 'get_version', { instance: 'portal' });
     expect(viaInstance.json.error.code).toBe('forbidden');
     expect(viaInstance.json.error.message).not.toContain('todo');
-    for (const args of [{ app: 'todo' }, { instance: 'todo' }]) {
-      const res = await call(viewer.client, 'get_version', args);
-      expect(res.isError).toBe(true);
-      expect(res.json.error.code).toBe('forbidden');
+    // Reading in parts is refused just like reading whole: `call` also checks that no HTML block comes back.
+    const stranger = await asUser(r, 'stranger@x.y', 'publisher');
+    for (const client of [viewer.client, stranger.client]) {
+      for (const args of [{ app: 'todo' }, { instance: 'todo' }, { instance: 'todo', limit: 10 }, { app: 'todo', offset: 0, limit: 10 }, { app: 'todo', version: 1, offset: 3, limit: 2000 }]) {
+        const res = await call(client, 'get_version', args);
+        expect(res.isError, JSON.stringify(args)).toBe(true);
+        expect(res.json.error.code, JSON.stringify(args)).toBe('forbidden');
+      }
     }
+    const partOfPortal = await call(stranger.client, 'get_version', { instance: 'portal', offset: 0, limit: 10 });
+    expect(partOfPortal.json.error.code).toBe('forbidden');
   });
 
   it('get_version by instance returns a page the instance saved itself, to its managers only', async () => {
@@ -226,6 +302,153 @@ describe('mcp endpoint', () => {
     const res = await call(collab.client, 'get_version', { app: 'todo', version: 2 });
     expect(res.isError).toBe(true);
     expect(res.json.error.code).toBe('forbidden');
+  });
+
+  it('edit_version changes the latest version without resending its HTML', async () => {
+    const r = await start();
+    const client = await connect(r);
+    const v1 = '<!doctype html>\n<style>.a { color: red; }</style>\n<p class="a">one</p>\n<p>$&</p>\n';
+    const caps = { db: { rules: [{ path: 'tasks', write: 'admin' }] }, user: {} };
+    await call(client, 'deploy_app', { slug: 'todo', html: v1, capabilities: caps, title: 'Todo' });
+
+    const edited = await call(client, 'edit_version', {
+      slug: 'todo', base_version: 1, note: 'blue',
+      // In order: the second edit matches text the first one wrote. `$&` is taken literally, not as a replacement pattern.
+      edits: [{ old_text: 'color: red;', new_text: 'color: blue;' }, { old_text: 'blue; }', new_text: 'blue; font-weight: bold; }' }, { old_text: '<p>$&</p>\n', new_text: '' }],
+    });
+    expect(edited.isError).toBe(false);
+    expect(edited.json).toMatchObject({ app: 'todo', version: 2, createdVersion: true });
+    const v2 = await getVersion(client, { app: 'todo' });
+    expect(v2.html).toBe('<!doctype html>\n<style>.a { color: blue; font-weight: bold; }</style>\n<p class="a">one</p>\n');
+    // Capabilities and title are kept, the note is the new one.
+    expect(v2.meta).toMatchObject({ version: 2, title: 'Todo', note: 'blue', capabilities: caps });
+
+    // New capabilities replace the old ones when given.
+    const withCaps = await call(client, 'edit_version', { slug: 'todo', base_version: 2, edits: [{ old_text: 'one', new_text: 'two' }], capabilities: { db: {} } });
+    expect(withCaps.json).toMatchObject({ version: 3, createdVersion: true });
+    expect((await getVersion(client, { app: 'todo' })).meta.capabilities).toEqual({ db: {} });
+
+    const refusals: Array<[Record<string, unknown>, string, string?]> = [
+      // Written against an older version: someone deployed since.
+      [{ slug: 'todo', base_version: 2, edits: [{ old_text: 'two', new_text: 'three' }] }, 'conflict', 'version 3'],
+      [{ slug: 'todo', base_version: 9, edits: [{ old_text: 'two', new_text: 'three' }] }, 'conflict'],
+      [{ slug: 'todo', base_version: 3, edits: [{ old_text: 'nowhere', new_text: 'x' }] }, 'invalid_argument', 'not found'],
+      [{ slug: 'todo', base_version: 3, edits: [{ old_text: '\n', new_text: 'x' }] }, 'invalid_argument', 'more than once'],
+      // Overlapping matches are ambiguous too.
+      [{ slug: 'todo', base_version: 3, edits: [{ old_text: 'two', new_text: 'aaa' }, { old_text: 'aa', new_text: 'b' }] }, 'invalid_argument', 'Edit 2'],
+      [{ slug: 'todo', base_version: 3, edits: [{ old_text: 'two', new_text: 'x' }, { old_text: 'two', new_text: 'y' }] }, 'invalid_argument', 'earlier edits'],
+      [{ slug: 'todo', base_version: 3, edits: [{ old_text: '', new_text: 'x' }] }, 'invalid_argument', 'empty'],
+      [{ slug: 'nope', base_version: 1, edits: [{ old_text: 'a', new_text: 'b' }] }, 'not_found'],
+    ];
+    for (const [args, code, message] of refusals) {
+      const res = await call(client, 'edit_version', args);
+      expect(res.isError, JSON.stringify(args)).toBe(true);
+      expect(res.json.error.code, JSON.stringify(args)).toBe(code);
+      if (message) expect(res.json.error.message, JSON.stringify(args)).toContain(message);
+    }
+    // A failed edit deploys nothing, not even the edits before it.
+    expect(r.h.core.apps.latestDeployedVersion(r.h.core.apps.getApp('todo')!.id)?.number).toBe(3);
+    const noEdits = await client.callTool({ name: 'edit_version', arguments: { slug: 'todo', base_version: 3, edits: [] } });
+    expect(noEdits.isError).toBe(true);
+
+    // Edits that change nothing make no new version.
+    const same = await call(client, 'edit_version', { slug: 'todo', base_version: 3, edits: [{ old_text: 'two', new_text: 'two' }] });
+    expect(same.json).toMatchObject({ version: 3, createdVersion: false });
+  });
+
+  it('edit_version: only those who deploy the app may edit it, and a page saved by an instance is not a base', async () => {
+    const r = await start();
+    const owner = await connect(r);
+    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>secret code</p>', capabilities: { page: {} } });
+    const edit = { slug: 'todo', base_version: 1, edits: [{ old_text: 'secret', new_text: 'open' }] };
+
+    const stranger = await asUser(r, 'stranger@x.y', 'publisher');
+    const viewer = await asUser(r, 'viewer@x.y');
+    await call(owner, 'share_instance', { instance: 'todo', email: 'viewer@x.y', level: 'admin' });
+    for (const client of [stranger.client, viewer.client]) {
+      const res = await call(client, 'edit_version', edit);
+      expect(res.isError).toBe(true);
+      expect(res.json.error.code).toBe('forbidden');
+      // A refusal must not tell whether the text would have matched.
+      expect(res.json.error.message).not.toContain('secret');
+    }
+    const collab = await asUser(r, 'collab@x.y', 'publisher');
+    r.h.core.apps.addCollaborator(r.h.core.apps.getApp('todo')!.id, collab.id, r.h.adminId);
+
+    const inst = r.h.core.apps.getInstanceBySlug('todo')!;
+    r.h.core.apps.selfPublish({ instanceId: inst.id, html: '<p>saved secret</p>', baseVersion: 1, userId: r.h.adminId });
+    const onSaved = await call(collab.client, 'edit_version', { ...edit, base_version: 2 });
+    expect(onSaved.json.error.code).toBe('conflict');
+
+    const ok = await call(collab.client, 'edit_version', edit);
+    expect(ok.isError).toBe(false);
+    expect((await getVersion(owner, { app: 'todo' })).html).toBe('<p>open code</p>');
+  });
+
+  it('edit_version refuses platform admins, removed collaborators, disabled accounts and apps over the deploy limit', async () => {
+    const r = await start();
+    const owner = await connect(r);
+    await call(owner, 'deploy_app', { slug: 'todo', html: '<p>secret code</p>' });
+    const appId = r.h.core.apps.getApp('todo')!.id;
+    const edit = { slug: 'todo', base_version: 1, edits: [{ old_text: 'secret', new_text: 'open' }] };
+    const expectForbidden = (res: { isError: boolean; json: any }, who: string): void => {
+      expect(res.isError, who).toBe(true);
+      expect(res.json.error.code, who).toBe('forbidden');
+    };
+
+    // A platform administrator who neither owns the app nor collaborates on it deploys it no more than anyone else.
+    const admin = await asUser(r, 'admin2@x.y', 'admin');
+    expectForbidden(await call(admin.client, 'edit_version', edit), 'admin');
+
+    const former = await asUser(r, 'former@x.y', 'publisher');
+    r.h.core.apps.addCollaborator(appId, former.id, r.h.adminId);
+    r.h.core.apps.removeCollaborator(appId, former.id, r.h.adminId);
+    expectForbidden(await call(former.client, 'edit_version', edit), 'removed collaborator');
+
+    // A disabled collaborator: tested on the function, since the MCP endpoint already turns a disabled account away.
+    const disabled = await asUser(r, 'disabled@x.y', 'publisher');
+    r.h.core.apps.addCollaborator(appId, disabled.id, r.h.adminId);
+    r.h.core.users.setDisabled(disabled.id, true);
+    await expect(editVersion(r.h.core, r.h.core.users.get(disabled.id)!, { slug: 'todo', baseVersion: 1, edits: [{ oldText: 'secret', newText: 'open' }] }))
+      .rejects.toMatchObject({ code: 'forbidden' });
+
+    // Edits count against the same hourly limit as deploys.
+    for (let n = 0; n < DEPLOYS_PER_HOUR; n++) r.h.core.deployLimiter.hit(`app:${appId}`);
+    const limited = await call(owner, 'edit_version', edit);
+    expect(limited.isError).toBe(true);
+    expect(limited.json.error.code).toBe('conflict');
+    expect(limited.json.error.message).toContain('limit of deploys');
+
+    expect(r.h.core.apps.listVersions(appId).map((v) => v.number)).toEqual([1]);
+    expect((await getVersion(owner, { app: 'todo' })).html).toBe('<p>secret code</p>');
+  });
+
+  it('edit_version edits the latest deployed version, also while an instance runs an older one', async () => {
+    const r = await start();
+    const client = await connect(r);
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>one</p>' });
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>two</p>' });
+    await call(client, 'activate_version', { instance: 'todo', version: 1 });
+
+    // The active version is not a base: the edits would be applied to code that is no longer the app's latest.
+    const onActive = await call(client, 'edit_version', { slug: 'todo', base_version: 1, edits: [{ old_text: 'one', new_text: 'x' }] });
+    expect(onActive.json.error.code).toBe('conflict');
+    expect(onActive.json.error.message).toContain('version 2');
+
+    const res = await call(client, 'edit_version', { slug: 'todo', base_version: 2, edits: [{ old_text: 'two', new_text: 'three' }] });
+    expect(res.json).toMatchObject({ app: 'todo', version: 3, createdVersion: true });
+    expect((await getVersion(client, { app: 'todo' })).html).toBe('<p>three</p>');
+  });
+
+  it('edit_version refuses edits that leave an empty document and creates no version', async () => {
+    const r = await start();
+    const client = await connect(r);
+    await call(client, 'deploy_app', { slug: 'todo', html: '<p>one</p>' });
+    const res = await call(client, 'edit_version', { slug: 'todo', base_version: 1, edits: [{ old_text: '<p>one</p>', new_text: '' }] });
+    expect(res.isError).toBe(true);
+    expect(res.json.error.code).toBe('invalid_argument');
+    expect(res.json.error.message).toContain('must not be empty');
+    expect(r.h.core.apps.listVersions(r.h.core.apps.getApp('todo')!.id)).toHaveLength(1);
   });
 
   it('deploy_app surfaces lint warnings', async () => {
@@ -809,7 +1032,7 @@ describe('mcp endpoint', () => {
     const client = new Client({ name: 't', version: '1' });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${r.base}/mcp`), { authProvider: provider }));
     clients.push(client);
-    expect((await client.listTools()).tools).toHaveLength(24);
+    expect((await client.listTools()).tools).toHaveLength(25);
   });
 
   describe('icons and descriptions', () => {

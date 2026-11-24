@@ -195,6 +195,53 @@ export async function deployWithIcon(core: Core, user: User, input: {
   return describeDeploy(core, user, { ...result, app, warnings });
 }
 
+export const MAX_EDITS = 100;
+
+/**
+ * How often `needle` occurs in `text` (overlapping matches included: `aa` in `aaa` is ambiguous, not unique) and where the
+ * first match starts. Stops counting at 2, so each edit scans the text at most once.
+ */
+function occurrences(text: string, needle: string): { count: number; first: number } {
+  const first = text.indexOf(needle);
+  if (first === -1) return { count: 0, first };
+  return { count: text.indexOf(needle, first + 1) === -1 ? 1 : 2, first };
+}
+
+/**
+ * Applies text replacements to the latest deployed version and deploys the result as a new version, so an assistant can change
+ * a large app without sending all of it again. The edits apply in order, each to the text the previous ones left, and each
+ * `oldText` must occur exactly once there; any failed edit fails the whole call and nothing is deployed. `baseVersion` must
+ * be the latest deployed version (else `conflict`), so edits written against code someone has since replaced are never
+ * applied to it. The check and the deploy run without an `await` between them, so no other deploy can come in between.
+ * The base version's capabilities are kept unless new ones are given.
+ */
+export async function editVersion(core: Core, user: User, input: {
+  slug: string; baseVersion: number; edits: Array<{ oldText: string; newText: string }>; note?: string; capabilities?: Capabilities;
+}): Promise<object> {
+  const app = appBySlug(core, input.slug);
+  if (!core.access.canDeploy(app, user)) throw new LagerError('forbidden', `You are not allowed to deploy "${app.slug}".`);
+  if (!Array.isArray(input.edits) || input.edits.length === 0) throw new LagerError('invalid_argument', 'Give at least one edit.');
+  if (input.edits.length > MAX_EDITS) throw new LagerError('invalid_argument', `At most ${MAX_EDITS} edits per call.`);
+  const latest = core.apps.latestDeployedVersion(app.id);
+  if (!latest || latest.number !== input.baseVersion) {
+    throw new LagerError('conflict', `Version ${input.baseVersion} is not the latest deployed version of "${app.slug}"${latest ? ` (that is version ${latest.number})` : ''}. Read the latest one with get_version and write the edits against it.`, 'base_version');
+  }
+  let html = core.apps.readVersionHtml(app.id, latest.number);
+  input.edits.forEach((edit, i) => {
+    const which = `Edit ${i + 1}`;
+    if (typeof edit?.oldText !== 'string' || typeof edit.newText !== 'string') throw new LagerError('invalid_argument', `${which}: old_text and new_text must be strings.`);
+    if (edit.oldText === '') throw new LagerError('invalid_argument', `${which}: old_text must not be empty.`);
+    const { count, first } = occurrences(html, edit.oldText);
+    if (count !== 1) {
+      throw new LagerError('invalid_argument', count === 0
+        ? `${which}: old_text was not found${i > 0 ? ' in the text the earlier edits left' : ''}. Copy it exactly from get_version, including spaces and line breaks. Nothing was deployed.`
+        : `${which}: old_text occurs more than once; include more of the surrounding text so it matches exactly once. Nothing was deployed.`);
+    }
+    html = html.slice(0, first) + edit.newText + html.slice(first + edit.oldText.length);
+  });
+  return deployWithIcon(core, user, { slug: app.slug, html, note: input.note, capabilities: input.capabilities ?? latest.capabilities });
+}
+
 /** An app may ask only for a catalog model that the AI group of the person deploying or choosing it allows. */
 function assertModelAllowed(core: Core, user: User, model: string): void {
   if (core.ai.mayUse(user.id, model)) return;
@@ -293,7 +340,7 @@ export function downloadableVersion(core: Core, user: User, slug: string, number
  * Access is that of the HTML download. Returns the HTML and what a redeploy needs alongside it (the app's current title, the version's capabilities).
  */
 export function versionSource(core: Core, user: User, input: { app?: string; version?: number; instance?: string }): {
-  meta: { app: string; title: string; version: number; createdAt: string; note: string | null; sizeBytes: number; capabilities: Capabilities; savedByInstance: string | null };
+  meta: { app: string; title: string; version: number; createdAt: string; note: string | null; sizeBytes: number; sha256: string; capabilities: Capabilities; savedByInstance: string | null };
   html: string;
 } {
   if ((input.app === undefined) === (input.instance === undefined)) throw new LagerError('invalid_argument', 'Give exactly one of app or instance.');
@@ -323,10 +370,40 @@ export function versionSource(core: Core, user: User, input: { app?: string; ver
   return {
     meta: {
       app: app.slug, title: app.title, version: version.number, createdAt: version.createdAt, note: version.note,
-      sizeBytes: version.sizeBytes, capabilities: version.capabilities, savedByInstance: savedBy,
+      sizeBytes: version.sizeBytes, sha256: version.sha256, capabilities: version.capabilities, savedByInstance: savedBy,
     },
     html,
   };
+}
+
+/**
+ * The smallest part `get_version` returns. Every part re-reads the whole version, so a tiny `limit` would turn one read into
+ * thousands of full reads; a smaller `limit` is raised to this.
+ */
+export const MIN_PART_BYTES = 1024;
+
+/**
+ * One part of `html`, measured in UTF-8 bytes like `sizeBytes`, so that a client whose tool results are capped can read a
+ * large app in several calls. A part never splits a character: it ends early instead (or, for a `limit` smaller than the
+ * character at `offset`, takes that one character whole), and an `offset` inside a character is refused, so following
+ * `nextOffset` from 0 returns every byte exactly once. `nextOffset` is null once the part reaches the end.
+ */
+export function htmlPart(html: string, offset = 0, limit?: number): { text: string; offset: number; nextOffset: number | null } {
+  const bytes = Buffer.from(html, 'utf8');
+  const total = bytes.length;
+  if (!Number.isInteger(offset) || offset < 0 || offset > total) {
+    throw new LagerError('invalid_argument', `offset must be between 0 and ${total}, the size of the HTML in bytes.`);
+  }
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) throw new LagerError('invalid_argument', 'limit must be a positive whole number of bytes.');
+  const continuation = (i: number): boolean => i < total && (bytes[i] & 0xc0) === 0x80;
+  if (continuation(offset)) throw new LagerError('invalid_argument', `offset ${offset} lies inside a character; continue from the nextOffset of the previous part.`);
+  let end = limit === undefined ? total : Math.min(total, offset + limit);
+  while (end > offset && continuation(end)) end--;
+  if (end === offset && offset < total) {
+    end++;
+    while (continuation(end)) end++;
+  }
+  return { text: bytes.subarray(offset, end).toString('utf8'), offset, nextOffset: end < total ? end : null };
 }
 
 /** The app check for a signed-in publisher or administrator. */
@@ -539,7 +616,7 @@ const descriptionArg = z.string().describe('One plain sentence (at most 200 char
 const themeColorArg = z.string().describe('Hex colour such as #1f2a5c that matches the icon background; used for the phone status bar and splash screen');
 
 type ToolName =
-  | 'deploy_app' | 'set_app_icon' | 'list_apps' | 'get_app' | 'get_version' | 'activate_version' | 'create_instance'
+  | 'deploy_app' | 'edit_version' | 'set_app_icon' | 'list_apps' | 'get_app' | 'get_version' | 'activate_version' | 'create_instance'
   | 'set_auto_update' | 'set_visibility' | 'share_instance' | 'unshare_instance' | 'list_shares' | 'add_domain'
   | 'remove_domain' | 'db_read' | 'db_write' | 'import_data' | 'export_data' | 'check_app' | 'list_snapshots'
   | 'restore_snapshot' | 'list_models' | 'set_app_model' | 'get_guide';
@@ -551,6 +628,7 @@ type ToolName =
  */
 const TOOL_META: Record<ToolName, { title: string; annotations: ToolAnnotations }> = {
   deploy_app: { title: 'Deploy app', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
+  edit_version: { title: 'Edit app', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false } },
   set_app_icon: { title: 'Change app icon', annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true } },
   list_apps: { title: 'List apps', annotations: { readOnlyHint: true } },
   get_app: { title: 'Show app', annotations: { readOnlyHint: true } },
@@ -596,6 +674,22 @@ export function buildMcpServer(core: Core, user: User): McpServer {
     slug, html, title, note, capabilities: checkCapabilities(capabilities), iconSvg: icon_svg, description, themeColor: theme_color,
   })));
 
+  server.registerTool('edit_version', { ...toolMeta('edit_version'),
+    description: 'Change an existing app without sending all of its HTML again: replace pieces of text in the latest deployed version and deploy the result as a new version. Read the code with get_version first and copy each old_text exactly from it (spaces and line breaks included), with enough surrounding text that it occurs exactly once. The edits apply in order, each to the text the previous ones left; if any edit does not match exactly once, nothing is deployed. base_version must be the latest deployed version (get_version or get_app tells you which), otherwise the answer is conflict: someone deployed since you read the code, so read it again. The capabilities of base_version are kept unless you pass new ones. Returns the same as deploy_app.',
+    inputSchema: {
+      slug: slugArg, base_version: z.number().int().positive().describe('The version the edits were written against: the latest deployed version'),
+      edits: z.array(z.object({
+        old_text: z.string().describe('Text copied exactly from the HTML; must occur exactly once'),
+        new_text: z.string().describe('What replaces it; empty deletes old_text'),
+      })).min(1).max(MAX_EDITS).describe(`1 to ${MAX_EDITS} replacements, applied in order`),
+      note: z.string().optional().describe('Short version note, one line of at most 500 characters'),
+      capabilities: capabilitiesArg.optional().describe('Only to change them: every runtime capability the edited HTML uses. Default: those of base_version'),
+    },
+  }, ({ slug, base_version, edits, note, capabilities }) => runAsync(() => editVersion(core, user, {
+    slug, baseVersion: base_version, note, capabilities: capabilities === undefined ? undefined : checkCapabilities(capabilities),
+    edits: edits.map((e) => ({ oldText: e.old_text, newText: e.new_text })),
+  })));
+
   server.registerTool('set_app_icon', { ...toolMeta('set_app_icon'),
     description: 'Change the icon, the description or the theme colour of one of your apps (owner or collaborator) without deploying. Give at least one field. An icon that is refused is an error and nothing changes. Icon rules are in the guide.',
     inputSchema: { app: slugArg, icon_svg: iconSvgArg.optional(), description: descriptionArg.optional(), theme_color: themeColorArg.optional() },
@@ -624,15 +718,21 @@ export function buildMcpServer(core: Core, user: User): McpServer {
   }, ({ slug, model }) => run(() => setAppModel(core, user, readableApp(core, user, slug), model)));
 
   server.registerTool('get_version', { ...toolMeta('get_version'),
-    description: 'Get the source of an app so you can continue developing it, e.g. in a new conversation: the complete HTML of a version plus its title and capabilities. Give app (with version, default the latest deployed one) or instance (the version active there, possibly one the page saved itself). Returns two text blocks: first JSON {app, title, version, createdAt, note, sizeBytes, capabilities, savedByInstance}, then the raw HTML. Edit that HTML and redeploy it with deploy_app, passing the same capabilities (or deliberately changed ones): a deploy without capabilities declares none.',
+    description: `Get the source of an app so you can continue developing it, e.g. in a new conversation: the complete HTML of a version plus its title and capabilities. Give app (with version, default the latest deployed one) or instance (the version active there, possibly one the page saved itself). Returns two text blocks: first JSON {app, title, version, createdAt, note, sizeBytes, sha256, capabilities, savedByInstance, offset, nextOffset}, then the raw HTML. A large app can be read in parts: pass limit (bytes, e.g. 40000; at least ${MIN_PART_BYTES}) and call again with offset set to nextOffset until nextOffset is null, then join the parts in order; an app that fits comes back whole with nextOffset null, so pass limit whenever you do not know the size (get_app lists sizeBytes per version). After the first part, always continue with app and version from its answer (not instance, and never without version), so that every part comes from the same version even if someone deploys meanwhile; if you can compute a SHA-256 (e.g. in a shell), the joined parts must match sha256, otherwise start over. Edit that HTML and redeploy it with deploy_app, passing the same capabilities (or deliberately changed ones): a deploy without capabilities declares none. Never deploy a part as if it were the whole app.`,
     inputSchema: {
-      app: slugArg.optional(), version: z.number().int().positive().optional().describe('Version number from get_app; default: the latest deployed version'),
+      app: slugArg.optional(), version: z.number().int().positive().optional().describe('Version number from get_app, or from the first part of a read in parts; default: the latest deployed version'),
       instance: slugArg.optional().describe('Instead of app: the instance whose active version you want'),
+      offset: z.number().int().nonnegative().optional().describe('Byte offset to start at, from nextOffset of the previous part; default 0'),
+      limit: z.number().int().positive().optional().describe(`At most this many bytes of HTML (a part ends before a character it would split); values below ${MIN_PART_BYTES} count as ${MIN_PART_BYTES}; default: all the rest`),
     },
-  }, ({ app, version, instance }) => {
+  }, ({ app, version, instance, offset, limit }) => {
     try {
       const { meta, html } = versionSource(core, user, { app, version, instance });
-      return { content: [{ type: 'text', text: JSON.stringify(meta) }, { type: 'text', text: html }] };
+      const part = htmlPart(html, offset, limit === undefined ? undefined : Math.max(limit, MIN_PART_BYTES));
+      return { content: [
+        { type: 'text', text: JSON.stringify({ ...meta, offset: part.offset, nextOffset: part.nextOffset }) },
+        { type: 'text', text: part.text },
+      ] };
     } catch (e) {
       return errorResult(e);
     }
