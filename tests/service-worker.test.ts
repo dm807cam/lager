@@ -35,7 +35,12 @@ class FakeCaches {
   async keys(): Promise<string[]> { return [...this.stores.keys()]; }
   async delete(name: string): Promise<boolean> { return this.stores.delete(name); }
   /** The URLs kept in the worker's cache, relative to the instance where they belong to it. */
-  kept(): string[] { return [...(this.stores.get('lager-offline-1')?.keys() ?? [])].map((u) => u.startsWith(ORIGIN) ? u.slice(ORIGIN.length) : u); }
+  kept(): string[] {
+    return [...(this.stores.get('lager-offline-1')?.keys() ?? [])].map((u) => {
+      const url = new URL(u);
+      return url.origin === ORIGIN ? url.pathname + url.search : u;
+    });
+  }
   async body(url: string): Promise<string | null> {
     const r = this.stores.get('lager-offline-1')?.get(new URL(url, ORIGIN).href);
     return r ? r.clone().text() : null;
@@ -280,7 +285,7 @@ describe('service worker: session, scripts and files from other hosts', () => {
       routes.set(url, opaque());
       await load(url, { mode: 'no-cors', destination: 'script' });
     }
-    const foreign = caches.kept().filter((u) => u.startsWith('https://'));
+    const foreign = caches.kept().filter((u) => !u.startsWith('/'));
     expect(foreign).toHaveLength(40);
     expect(foreign[0]).toBe('https://cdn.example.net/f5.js');
     expect(caches.kept()).toContain('/');
