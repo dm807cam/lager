@@ -51,6 +51,7 @@ const IPV6_RE = /^\[?[0-9a-f:.]+\]?$/i;
 /** A bare address, or `Name <address>`; nothing that could end a mail header. */
 const FROM_RE = /^(?:[^<>@\p{Cc}]*<[^<>@\s\p{Cc}]+@[^<>@\s\p{Cc}]+>|[^<>@\s\p{Cc}]+@[^<>@\s\p{Cc}]+)$/u;
 const KEY_PREFIX = 'smtp_';
+const KEYS = ['host', 'port', 'security', 'user', 'from', 'password_enc'] as const;
 
 const bad = (message: string): never => { throw new LagerError('invalid_argument', message); };
 
@@ -62,6 +63,8 @@ export class MailSettings {
   private keyBytes: Buffer;
   /** Goes up with every change, so a mailer knows when to build its connection again. */
   version = 0;
+  /** `get()` as of `version`: it is asked on every registration and admin page, and only `save` and `clear` change it. */
+  private cached: { version: number; value: SmtpSettings | null } | null = null;
 
   constructor(private db: DatabaseSync, secret: string) {
     // A key of its own, so the stored password cannot be read with the session-signing or AI key and the other way round.
@@ -94,6 +97,11 @@ export class MailSettings {
 
   /** Null until an administrator saved a mail server. */
   get(): SmtpSettings | null {
+    if (this.cached?.version !== this.version) this.cached = { version: this.version, value: this.load() };
+    return this.cached.value;
+  }
+
+  private load(): SmtpSettings | null {
     const host = this.read('host');
     if (!host) return null;
     const security = SMTP_SECURITY.includes(this.read('security') as SmtpSecurity) ? this.read('security') as SmtpSecurity : 'starttls';
@@ -127,7 +135,12 @@ export class MailSettings {
     };
   }
 
-  save(input: SmtpInput): void {
+  /**
+   * Stores the server. Returns `passwordDropped` when a saved password was removed because the server it was entered for changed
+   * (host, port, encryption or user name) and no new one came with the change: a password goes only where it was typed in for,
+   * so nobody can point the settings at a host of their own and have Lager sign in there with it, or send it unencrypted.
+   */
+  save(input: SmtpInput): { passwordDropped: boolean } {
     const host = typeof input.host === 'string' ? input.host.trim().toLowerCase() : '';
     if (!host || !(HOST_RE.test(host) || (host.includes(':') && IPV6_RE.test(host)))) bad('The mail server must be a host name such as smtp.example.com.');
     if (!SMTP_SECURITY.includes(input.security)) bad('Encryption must be tls, starttls or none.');
@@ -139,6 +152,10 @@ export class MailSettings {
     if (input.password !== undefined && (typeof input.password !== 'string' || input.password.length > MAX_SMTP_PASSWORD)) {
       bad(`The password may have at most ${MAX_SMTP_PASSWORD} characters.`);
     }
+    const before = this.get();
+    const moved = before !== null && (before.host !== host || before.port !== input.port || before.security !== input.security || before.user !== user);
+    const keep = input.password === undefined && !moved;
+    const passwordDropped = Boolean(before?.passwordSaved) && moved && input.password === undefined && user !== '';
     const write = this.db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
     const remove = this.db.prepare('DELETE FROM settings WHERE key = ?');
     this.db.exec('BEGIN IMMEDIATE');
@@ -149,7 +166,7 @@ export class MailSettings {
       write.run(`${KEY_PREFIX}user`, user);
       write.run(`${KEY_PREFIX}from`, from);
       // Without a user name there is nothing to sign in with, so a password left behind would only be a secret kept for nothing.
-      if (!user || input.password === '') remove.run(`${KEY_PREFIX}password_enc`);
+      if (!user || input.password === '' || (input.password === undefined && !keep)) remove.run(`${KEY_PREFIX}password_enc`);
       else if (input.password !== undefined) write.run(`${KEY_PREFIX}password_enc`, this.encrypt(input.password));
       this.db.exec('COMMIT');
     } catch (e) {
@@ -157,11 +174,13 @@ export class MailSettings {
       throw e;
     }
     this.version++;
+    return { passwordDropped };
   }
 
   /** Forgets the mail server and its password; mail is off again unless LAGER_SMTP_URL is set. */
   clear(): void {
-    this.db.prepare(`DELETE FROM settings WHERE key LIKE '${KEY_PREFIX}%'`).run();
+    const remove = this.db.prepare('DELETE FROM settings WHERE key = ?');
+    for (const key of KEYS) remove.run(KEY_PREFIX + key);
     this.version++;
   }
 }
@@ -172,21 +191,17 @@ export const defaultSender = (config: Config): string => config.mailFrom ?? `Lag
 /** Where the mail server comes from: LAGER_SMTP_URL wins over the administration area, so a configuration in files stays in charge. */
 export type MailSource = 'env' | 'admin' | 'none';
 
-export interface ConfigurableMailer extends Mailer {
-  readonly source: MailSource;
-}
-
 /**
  * SMTP mailer from `smtpUrl` when it is configured, else from the mail server saved in the administration area; with neither,
  * `enabled` is false and `send` does nothing. No connection is opened until `send`, and a change in the administration area
  * applies to the next mail without a restart.
  */
-export function createMailer(config: Config, timeoutMs = SMTP_TIMEOUT_MS, stored?: MailSettings): ConfigurableMailer {
+export function createMailer(config: Config, timeoutMs = SMTP_TIMEOUT_MS, stored?: MailSettings): Mailer {
   const defaultFrom = defaultSender(config);
   if (config.smtpUrl) {
     const transport = nodemailer.createTransport({ url: config.smtpUrl, connectionTimeout: timeoutMs, greetingTimeout: timeoutMs, socketTimeout: timeoutMs });
     return {
-      enabled: true, source: 'env',
+      enabled: true,
       async send(mail) {
         await transport.sendMail({ from: defaultFrom, to: mail.to, subject: mail.subject, text: mail.text });
       },
@@ -195,7 +210,6 @@ export function createMailer(config: Config, timeoutMs = SMTP_TIMEOUT_MS, stored
   let built: { version: number; transport: Transporter; from: string } | null = null;
   return {
     get enabled() { return stored?.get() != null; },
-    get source(): MailSource { return stored?.get() ? 'admin' : 'none'; },
     async send(mail) {
       if (!stored) return;
       if (!built || built.version !== stored.version) {
@@ -207,6 +221,19 @@ export function createMailer(config: Config, timeoutMs = SMTP_TIMEOUT_MS, stored
       await built.transport.sendMail({ from: built.from, to: mail.to, subject: mail.subject, text: mail.text });
     },
   };
+}
+
+/**
+ * What the administrator sees of a failed test mail: nodemailer's error code and the mail server's SMTP reply, never the rest of
+ * what the far end said. The host and port are the administrator's to choose, so they may name some other service on the server's
+ * network; its banner or first HTTP line is not passed on.
+ */
+export function smtpErrorText(e: unknown): string {
+  const err = (typeof e === 'object' && e !== null ? e : {}) as { code?: unknown; responseCode?: unknown; response?: unknown };
+  const code = typeof err.code === 'string' && /^[A-Z][A-Z0-9_]{1,30}$/.test(err.code) ? err.code : null;
+  const firstLine = typeof err.response === 'string' ? err.response.split(/\r?\n/)[0].trim() : '';
+  const reply = typeof err.responseCode === 'number' && /^[2-5]\d\d[ -]/.test(firstLine) ? firstLine.slice(0, 200) : '';
+  return [code, reply].filter(Boolean).join(': ') || 'no SMTP answer';
 }
 
 /**

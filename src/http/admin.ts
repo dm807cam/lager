@@ -10,7 +10,7 @@ import type { CustomDomainsMode, RegistrationMode } from '../platform/settings.j
 import { AiError, DEFAULT_GROUP, DEFAULT_HOURLY_LIMIT, HOURLY_LIMIT_MAX, MAX_MODEL_DESCRIPTION, MAX_TOKENS_LIMIT, PRESETS, PROVIDER_IDS, TEST_PROMPT, type AiGroup, type AiGroupInput, type AiModel, type AiModelInput, type AiProvider, type AiProviderInput, type ProviderId } from '../platform/ai.js';
 import type { OwnedPlan } from '../platform/account-removal.js';
 import type { Instance } from '../platform/apps.js';
-import { defaultSender, MAX_SMTP_PASSWORD, SMTP_SECURITY, type SmtpSecurity } from '../platform/mail.js';
+import { defaultSender, MAX_SMTP_PASSWORD, SMTP_SECURITY, smtpErrorText, type SmtpSecurity } from '../platform/mail.js';
 import type { Role, User } from '../platform/users.js';
 import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { loginLimiter } from './platform.js';
@@ -199,6 +199,8 @@ function mailSection(core: Core, locale: Locale, admin: User, msg?: Msg): string
       ? notice('success', t(locale, 'admin.mail.status.on', { host: saved.host }))
       : `<p class="hint">${esc(t(locale, 'admin.mail.status.off'))}</p>`;
   const unreadable = source === 'admin' && saved?.passwordUnreadable ? notice('warning', t(locale, 'admin.mail.passwordUnreadable')) : '';
+  // Without required encryption the sign-in goes out in plain text whenever the server offers no STARTTLS, or someone strips the offer.
+  const cleartext = source === 'admin' && saved?.security === 'none' && saved.user ? notice('warning', t(locale, 'admin.mail.cleartext')) : '';
   const test = source === 'none' ? '' : `<div class="subsection"><h3>${esc(t(locale, 'admin.mail.test'))}</h3><p class="hint">${esc(t(locale, 'admin.mail.test.hint', { email: admin.email }))}</p>
 <div class="btn-row">${form('/admin/mail/test', csrf, '', `${icon('check')}${esc(t(locale, 'admin.mail.test'))}`, 'secondary')}
 ${source === 'admin' ? form('/admin/mail/delete', csrf, '', `${icon('trash')}${esc(t(locale, 'admin.mail.remove'))}`, 'danger') : ''}</div></div>`;
@@ -219,7 +221,7 @@ ${settingRow('smtp-password', t(locale, 'admin.mail.password'), t(locale, 'admin
 ${settingRow('smtp-from', t(locale, 'admin.mail.from'), t(locale, 'admin.mail.from.hint', { from }),
     `<input id="smtp-from" name="from" maxlength="200" autocomplete="off" spellcheck="false" placeholder="${esc(from)}" value="${esc(saved?.from ?? '')}">`)}
 </div>`;
-  const body = `<p class="hint">${esc(t(locale, 'admin.mail.intro'))}</p>${status}${unreadable}
+  const body = `<p class="hint">${esc(t(locale, 'admin.mail.intro'))}</p>${status}${unreadable}${cleartext}
 ${form('/admin/mail', csrf, fields, esc(t(locale, 'common.save')), 'primary', 'stack settings-form')}${test}`;
   return shell(core, locale, admin, 'mail', t(locale, 'admin.section.mail'), body, msg);
 }
@@ -671,10 +673,10 @@ export const adminExtension: PlatformExtension = (router, core) => {
       const rawPort = field(req, 'port').trim();
       const port = rawPort === '' ? { tls: 465, starttls: 587, none: 25 }[security] : /^\d+$/.test(rawPort) ? Number(rawPort) : NaN;
       const password = field(req, 'password', MAX_SMTP_PASSWORD + 1);
-      // Registration must not open by itself at the next restart just because mail is on now.
+      const { passwordDropped } = core.mailSettings.save({ host: field(req, 'host'), port, security, user: field(req, 'user'), password: password === '' ? undefined : password, from: field(req, 'from') });
+      // Registration must not open by itself at the next restart just because mail is on now. Only after a save that succeeded.
       core.settings.keepRegistration();
-      core.mailSettings.save({ host: field(req, 'host'), port, security, user: field(req, 'user'), password: password === '' ? undefined : password, from: field(req, 'from') });
-      send(res, 200, mailSection(core, locale, user, { ok: t(locale, 'admin.mail.saved') }));
+      send(res, 200, mailSection(core, locale, user, { ok: t(locale, passwordDropped ? 'admin.mail.savedPasswordDropped' : 'admin.mail.saved') }));
     } catch (e) { failWith(res, e, (m) => mailSection(core, locale, user, m), { invalid_argument: 'admin.mail.invalid' }); }
   }));
 
@@ -688,13 +690,16 @@ export const adminExtension: PlatformExtension = (router, core) => {
       await core.mailer.send({ to: user.email, subject: t(locale, 'admin.mail.testSubject'), text: `${t(locale, 'admin.mail.testText', { url: core.config.publicUrl.origin })}\n` });
       send(res, 200, mailSection(core, locale, user, { ok: t(locale, 'admin.mail.testOk', { email: user.email }) }));
     } catch (e) {
-      // The administrator sees what the mail server said, so a wrong password or port can be told apart from a server that is down.
-      const error = (e instanceof Error ? e.message : String(e)).slice(0, 500);
-      send(res, 200, mailSection(core, locale, user, { error: t(locale, 'admin.mail.testFailed', { error }) }));
+      // The error code and the SMTP reply tell a wrong password from a server that is down; nothing else the far end said is shown.
+      send(res, 200, mailSection(core, locale, user, { error: t(locale, 'admin.mail.testFailed', { error: smtpErrorText(e) }) }));
     }
   }));
 
   router.post('/admin/mail/delete', ...action((_req, res, user) => {
+    if (core.mailSource === 'env') {
+      send(res, 409, mailSection(core, localeOf(res), user, { error: t(localeOf(res), 'admin.mail.env') }));
+      return;
+    }
     core.mailSettings.clear();
     send(res, 200, mailSection(core, localeOf(res), user, { ok: t(localeOf(res), 'admin.mail.removed') }));
   }));

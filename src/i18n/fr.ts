@@ -510,6 +510,8 @@ export const fr: Record<MessageKey, string> = {
   'admin.mail.from': "Expéditeur",
   'admin.mail.from.hint': "L’adresse d’où partent les e-mails, par exemple « Lager <lager@example.com> ». Beaucoup de fournisseurs n’acceptent qu’une adresse de votre propre compte. Vide = {from}.",
   'admin.mail.saved': "Le serveur de messagerie a été enregistré. Envoyez un e-mail de test pour le vérifier.",
+  'admin.mail.savedPasswordDropped': "Le serveur de messagerie a été enregistré. Le mot de passe a été supprimé, car le serveur, le chiffrement ou le nom d’utilisateur a changé : saisissez-le à nouveau.",
+  'admin.mail.cleartext': "Le chiffrement n’est pas exigé : le mot de passe part en clair dès que le serveur de messagerie ne propose pas STARTTLS. À n’utiliser que pour un serveur de votre propre réseau.",
   'admin.mail.invalid': "Vérifiez les saisies : un nom d’hôte comme smtp.example.com, un port de 1 à 65535 et un expéditeur comme lager@example.com.",
   'admin.mail.test': "Envoyer un e-mail de test",
   'admin.mail.test.hint': "Envoie un court e-mail à {email}, pour voir tout de suite si le serveur, le nom d’utilisateur et le mot de passe sont corrects.",

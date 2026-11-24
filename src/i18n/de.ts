@@ -510,6 +510,8 @@ export const de: Record<MessageKey, string> = {
   'admin.mail.from': "Absender",
   'admin.mail.from.hint': "Die Adresse, von der die E-Mails kommen, zum Beispiel „Lager <lager@example.com>“. Viele Anbieter nehmen nur eine Adresse deines eigenen Kontos an. Leer = {from}.",
   'admin.mail.saved': "Der Mailserver wurde gespeichert. Schick eine Test-E-Mail, um ihn zu prüfen.",
+  'admin.mail.savedPasswordDropped': "Der Mailserver wurde gespeichert. Das Passwort wurde entfernt, weil sich Server, Verschlüsselung oder Benutzername geändert haben: Gib es erneut ein.",
+  'admin.mail.cleartext': "Verschlüsselung wird nicht verlangt, also geht das Passwort unverschlüsselt hinaus, sobald der Mailserver kein STARTTLS anbietet. Nutz das nur für einen Mailserver im eigenen Netz.",
   'admin.mail.invalid': "Bitte prüf die Angaben: ein Hostname wie smtp.example.com, ein Port von 1 bis 65535 und ein Absender wie lager@example.com.",
   'admin.mail.test': "Test-E-Mail senden",
   'admin.mail.test.hint': "Schickt eine kurze E-Mail an {email}, damit du gleich siehst, ob Server, Benutzername und Passwort stimmen.",

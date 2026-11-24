@@ -508,6 +508,8 @@ export const en = {
   'admin.mail.from': "Sender",
   'admin.mail.from.hint': "The address mails come from, for example \"Lager <lager@example.com>\". Many providers only accept an address of your own account. Empty = {from}.",
   'admin.mail.saved': "The mail server was saved. Send a test mail to check it.",
+  'admin.mail.savedPasswordDropped': "The mail server was saved. The password was removed because the server, encryption or user name changed: enter it again.",
+  'admin.mail.cleartext': "Encryption is not required, so the password goes out unencrypted whenever the mail server does not offer STARTTLS. Use this only for a mail server in your own network.",
   'admin.mail.invalid': "Please check the entries: a host name such as smtp.example.com, a port from 1 to 65535 and a sender such as lager@example.com.",
   'admin.mail.test': "Send a test mail",
   'admin.mail.test.hint': "Sends a short mail to {email}, so you see at once whether the server, user name and password are right.",

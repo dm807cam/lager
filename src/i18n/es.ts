@@ -510,6 +510,8 @@ export const es: Record<MessageKey, string> = {
   'admin.mail.from': "Remitente",
   'admin.mail.from.hint': "La dirección desde la que salen los correos, por ejemplo «Lager <lager@example.com>». Muchos proveedores solo aceptan una dirección de tu propia cuenta. Vacío = {from}.",
   'admin.mail.saved': "Se guardó el servidor de correo. Envía un correo de prueba para comprobarlo.",
+  'admin.mail.savedPasswordDropped': "Se guardó el servidor de correo. Se quitó la contraseña porque cambió el servidor, el cifrado o el usuario: introdúcela de nuevo.",
+  'admin.mail.cleartext': "No se exige cifrado, así que la contraseña sale sin cifrar si el servidor de correo no ofrece STARTTLS. Úsalo solo para un servidor de tu propia red.",
   'admin.mail.invalid': "Revisa los datos: un nombre de servidor como smtp.example.com, un puerto de 1 a 65535 y un remitente como lager@example.com.",
   'admin.mail.test': "Enviar un correo de prueba",
   'admin.mail.test.hint': "Envía un correo breve a {email}, para ver enseguida si el servidor, el usuario y la contraseña son correctos.",
