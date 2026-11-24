@@ -25,12 +25,13 @@ const MAIL_KEYS: Record<Kind, { subject: MessageKey; intro: MessageKey; validity
 };
 
 /** Why an account's owner hears about its two-step sign-in. */
-export type TwoFactorNotice = 'enabled' | 'disabled' | 'reset' | 'recovery' | 'locked';
+export type TwoFactorNotice = 'enabled' | 'disabled' | 'reset' | 'recovery' | 'renewed' | 'locked';
 const TWO_FACTOR_MAIL_KEYS: Record<TwoFactorNotice, { subject: MessageKey; text: MessageKey }> = {
   enabled: { subject: 'mail.twoFactor.enabled.subject', text: 'mail.twoFactor.enabled.text' },
   disabled: { subject: 'mail.twoFactor.disabled.subject', text: 'mail.twoFactor.disabled.text' },
   reset: { subject: 'mail.twoFactor.reset.subject', text: 'mail.twoFactor.reset.text' },
   recovery: { subject: 'mail.twoFactor.recovery.subject', text: 'mail.twoFactor.recovery.text' },
+  renewed: { subject: 'mail.twoFactor.renewed.subject', text: 'mail.twoFactor.renewed.text' },
   locked: { subject: 'mail.twoFactor.locked.subject', text: 'mail.twoFactor.locked.text' },
 };
 /**

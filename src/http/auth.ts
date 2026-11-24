@@ -403,11 +403,15 @@ export const authExtension: PlatformExtension = (router, core) => {
   };
 
   router.post('/account/two-factor/setup', ...accountAction(async (req, res, user, locale) => {
-    if (core.twoFactor.isEnabled(user.id)) {
+    const alreadyOn = (): boolean => {
+      if (!core.twoFactor.isEnabled(user.id)) return false;
       html(res, 409, accountPage(core, locale, user, { error: t(locale, 'account.twoFactor.alreadyOn') }));
-      return;
-    }
+      return true;
+    };
+    if (alreadyOn()) return;
     if (!(await passwordConfirmed(req, res, user, locale))) return;
+    // Another tab may have confirmed a setup while the password was being checked; `startSetup` would refuse with a conflict.
+    if (alreadyOn()) return;
     const secretKey = core.twoFactor.startSetup(user.id);
     html(res, 200, setupPage(core, locale, user, csrfToken(core, user), setupToken(core, user)!, secretKey));
   }));
@@ -453,6 +457,8 @@ export const authExtension: PlatformExtension = (router, core) => {
     if (!core.twoFactor.isEnabled(user.id)) { html(res, 409, accountPage(core, locale, user)); return; }
     if (!(await passwordConfirmed(req, res, user, locale)) || !codeConfirmed(req, res, user, locale)) return;
     const codes = core.twoFactor.regenerateRecoveryCodes(user.id);
+    // New codes are a lasting way in that needs no app: the owner hears about it, as about every other change.
+    core.accounts.noticeTwoFactor(user, 'renewed', locale);
     html(res, 200, recoveryCodesPage(core, locale, user, codes, t(locale, 'account.twoFactor.codes.renewed')));
   }));
 

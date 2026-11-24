@@ -77,8 +77,10 @@ export const timeStep = (nowMs: number): number => Math.floor(nowMs / 1000 / TOT
 /** The `otpauth://` address authenticator apps read; `issuer` tells two servers apart in the app. */
 export function otpauthUri(secret: string, issuer: string, account: string): string {
   const label = encodeURIComponent(`${issuer}:${account}`);
-  const q = new URLSearchParams({ secret, issuer, algorithm: 'SHA1', digits: String(TOTP_DIGITS), period: String(TOTP_PERIOD_SECONDS) });
-  return `otpauth://totp/${label}?${q.toString()}`;
+  // Percent-encoded, not form-encoded: several apps show a '+' from `URLSearchParams` as it is instead of as a space.
+  const params: Record<string, string> = { secret, issuer, algorithm: 'SHA1', digits: String(TOTP_DIGITS), period: String(TOTP_PERIOD_SECONDS) };
+  const q = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  return `otpauth://totp/${label}?${q}`;
 }
 
 /** A code as typed: spaces and dashes go, letters are compared in capitals. */

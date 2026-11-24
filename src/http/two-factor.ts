@@ -23,6 +23,11 @@ export const MAX_CODES_PER_SIGN_IN = 3;
 /** Codes one client address may send to the second step in `CODE_WINDOW_MS`, whichever accounts they are for. */
 export const MAX_CODES_PER_ADDRESS = 30;
 const CODE_WINDOW_MS = 15 * 60_000;
+/**
+ * Bytes of `name=value` the pending cookie may take. Browsers drop a cookie over 4096 bytes without a word, and the browser
+ * would then go round between the password and the second step; a return path that long is given up for '/' instead.
+ */
+export const MAX_SECOND_STEP_COOKIE_BYTES = 4000;
 
 interface PendingToken { uid?: unknown; k?: unknown; ep?: unknown; p?: unknown; jti?: unknown; r?: unknown }
 export interface SecondStep { user: User; returnPath: string; id: string }
@@ -33,10 +38,13 @@ export interface SecondStep { user: User; returnPath: string; id: string }
  * account signs out everywhere, and expires after `SECOND_STEP_TTL_SECONDS`.
  */
 export function beginSecondStep(core: Core, res: Response, user: User, returnPath: string): void {
-  const token = signToken({
-    uid: user.id, k: '2fa', ep: user.sessionEpoch, p: core.users.passwordMark(user.id), jti: crypto.randomUUID(), r: safeReturnPath(returnPath),
+  const name = twoFactorCookieName(core.config);
+  const sign = (r: string): string => signToken({
+    uid: user.id, k: '2fa', ep: user.sessionEpoch, p: core.users.passwordMark(user.id), jti: crypto.randomUUID(), r,
   }, core.config.secret, SECOND_STEP_TTL_SECONDS);
-  setCookie(res, core.config, twoFactorCookieName(core.config), token, SECOND_STEP_TTL_SECONDS);
+  let token = sign(safeReturnPath(returnPath));
+  if (Buffer.byteLength(`${name}=${token}`) > MAX_SECOND_STEP_COOKIE_BYTES) token = sign('/');
+  setCookie(res, core.config, name, token, SECOND_STEP_TTL_SECONDS);
 }
 
 /** The sign-in this browser is in the middle of, or null when it has none that is still good. A cookie sent twice counts as none. */
@@ -96,8 +104,12 @@ export function twoFactorLoginRoutes(router: express.Router, core: Core): void {
 
   router.get('/login/two-factor', headers, (req, res) => {
     const step = pendingSecondStep(core, req);
-    if (!step || finished.full(step.id) || tries.full(step.id)) { res.redirect('/login'); return; }
-    html(res, 200, secondStepPage(requestLocale(core, req, step.user)));
+    if (!step) { clearCookie(res, config, twoFactorCookieName(config)); res.redirect('/login'); return; }
+    const locale = requestLocale(core, req, step.user);
+    // A sign-in that is used up still knows where it was going: back to the password from there, as after a POST.
+    if (finished.full(step.id)) { startOver(res, locale, step); return; }
+    if (tries.full(step.id)) { startOver(res, locale, step, 'login.twoFactor.again'); return; }
+    html(res, 200, secondStepPage(locale));
   });
 
   // Same-site instance code must not be able to post a code into a sign-in of this browser.
@@ -128,8 +140,11 @@ export function twoFactorLoginRoutes(router: express.Router, core: Core): void {
 
 /** The product name, which is not translated. */
 const BRAND = 'Lager';
-/** The server's name in authenticator apps: two Lager servers in one app must be told apart. */
-const issuer = (core: Core): string => `${BRAND} (${core.config.publicUrl.host})`;
+/**
+ * The server's name in authenticator apps: two Lager servers in one app must be told apart. The host name without the port, and
+ * no colon at all: the Key URI format splits `issuer:account` at the first colon, so `lager.lan:8080` would break the entry.
+ */
+export const issuer = (core: Core): string => `${BRAND} (${core.config.publicUrl.hostname.replace(/:/g, '')})`;
 
 /** The two-step sign-in card of the account page. */
 export function twoFactorCard(core: Core, locale: Locale, user: User, csrf: string): string {

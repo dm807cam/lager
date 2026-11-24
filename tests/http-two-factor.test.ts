@@ -9,7 +9,7 @@ import { mcpExtension } from '../src/mcp/http.js';
 import { createCore } from '../src/core.js';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { csrfToken } from '../src/http/session.js';
-import { MAX_CODES_PER_SIGN_IN, setupToken } from '../src/http/two-factor.js';
+import { MAX_CODES_PER_SIGN_IN, MAX_SECOND_STEP_COOKIE_BYTES, setupToken } from '../src/http/two-factor.js';
 import { t } from '../src/i18n/index.js';
 import { MemoryMailer } from '../src/platform/mail.js';
 import { base32Decode, hotp, MAX_CODE_FAILURES, RECOVERY_CODE_COUNT, timeStep } from '../src/platform/two-factor.js';
@@ -164,6 +164,38 @@ describe('signing in with two-step sign-in on', () => {
     expect(cleared(last, s.names.pending)).toBe(true);
     const late = await s.post('/login/two-factor', { code: codeFor(secret) }, { cookie: pending });
     expect(cookieOf(late, s.names.session)).toBeUndefined();
+  });
+
+  it('opening the second step again after its tries are spent goes back to the password, keeping the return path', async () => {
+    const s = setup();
+    s.enable();
+    const { pending } = await s.password(USER, '/account');
+    for (let i = 0; i < MAX_CODES_PER_SIGN_IN; i++) await s.post('/login/two-factor', { code: '000000' }, { cookie: pending });
+    const back = await s.get('/login/two-factor', pending);
+    expect(back.status).toBe(401);
+    expect(back.text).toContain(t('en', 'login.twoFactor.again'));
+    expect(back.text).toContain('<input type="hidden" name="return" value="/account">');
+    expect(cleared(back, s.names.pending)).toBe(true);
+    // Without a pending sign-in at all there is nothing to keep: plain redirect to the password.
+    const none = await s.get('/login/two-factor');
+    expect(none.status).toBe(302);
+    expect(none.headers.location).toBe('/login');
+  });
+
+  it('a return path too long for a cookie is given up for "/" instead of losing the cookie', async () => {
+    const s = setup();
+    const { secret } = s.enable();
+    const long = `/authorize?state=${'a'.repeat(4000)}`;
+    const { pending } = await s.password(USER, long);
+    expect(pending).toBeDefined();
+    expect(Buffer.byteLength(pending!)).toBeLessThanOrEqual(MAX_SECOND_STEP_COOKIE_BYTES);
+    const done = await s.post('/login/two-factor', { code: codeFor(secret) }, { cookie: pending });
+    expect(cookieOf(done, s.names.session)).toBeDefined();
+    expect(done.headers.location).toBe('/');
+    // An ordinary return path is kept as it is.
+    const kept = await s.password(USER, '/account');
+    const ok = await s.post('/login/two-factor', { code: codeFor(secret, 1) }, { cookie: kept.pending });
+    expect(ok.headers.location).toBe('/account');
   });
 
   it('wrong codes from many sign-ins pause the account for everyone and warn its owner', async () => {
@@ -337,7 +369,10 @@ describe('the account page', () => {
     const uri = /href="(otpauth:\/\/[^"]+)"/.exec(shown.text)![1].replace(/&amp;/g, '&');
     const secret = new URL(uri).searchParams.get('secret')!;
     expect(secret).toBe(s.core.twoFactor.pendingSecret(s.user.id));
-    expect(new URL(uri).searchParams.get('issuer')).toBe('Lager (lager.localhost:8080)');
+    // No port: the Key URI format splits the label at the first colon. Spaces percent-encoded, never as '+'.
+    expect(new URL(uri).searchParams.get('issuer')).toBe('Lager (lager.localhost)');
+    expect(uri).toContain('issuer=Lager%20(lager.localhost)');
+    expect(uri).not.toContain('+');
     const setupField = /name="setup" value="([^"]+)"/.exec(shown.text)![1];
     const wrong = await s.post('/account/two-factor/confirm', { csrf: s.csrf(), setup: setupField, code: '000000' }, { cookie });
     expect(wrong.status).toBe(400);
@@ -438,6 +473,25 @@ describe('the account page', () => {
     expect(fresh).toHaveLength(RECOVERY_CODE_COUNT);
     expect(s.core.twoFactor.check(s.user.id, codes[1]).ok).toBe(false);
     expect(s.core.twoFactor.check(s.user.id, fresh[0]).ok).toBe(true);
+    await new Promise((r) => setImmediate(r));
+    expect(s.mailer.sent.find((m) => m.subject === t('en', 'mail.twoFactor.renewed.subject'))?.to).toBe(USER.email);
+  });
+
+  it('a setup started while another tab turns it on ends on the account page, not on an error page', async () => {
+    const s = setup();
+    const cookie = await h!.login(USER.email, USER.password);
+    // The other tab confirms its setup while this request's password is still being checked.
+    const checkLogin = s.core.users.checkLogin.bind(s.core.users);
+    s.core.users.checkLogin = async (...args) => {
+      const result = await checkLogin(...args);
+      s.enable();
+      return result;
+    };
+    const res = await s.post('/account/two-factor/setup', { csrf: s.csrf(), current: USER.password }, { cookie });
+    expect(res.status).toBe(409);
+    expect(res.text).toContain(t('en', 'account.twoFactor.alreadyOn'));
+    // The account page itself, with the card that now offers to turn it off, not the generic error page.
+    expect(res.text).toContain('action="/account/two-factor/disable"');
   });
 });
 

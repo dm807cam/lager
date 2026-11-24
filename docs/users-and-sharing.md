@@ -34,7 +34,7 @@ Every account can add a second step to signing in, on its account page under **T
 
 **Turning it on.** Enter your current password and choose "Set up two-step sign-in". Lager shows a key: on the same device, "Open in authenticator app" adds it directly; on another device, type the key into the app (time-based, 6 digits, 30 seconds). Enter the code the app shows to confirm. Until that code is accepted nothing changes, and the key expires after 15 minutes. The key and the confirmation belong to the page that showed them: another browser signed in to the same account cannot see the key or confirm the setup. When it is on:
 
-- Lager shows **10 recovery codes**, once. Each signs you in one time if you cannot use the app. Save them in a password manager or print them. They can be replaced with new ones (password and a code needed); the old ones then stop working.
+- Lager shows **10 recovery codes**, once. Each signs you in one time if you cannot use the app. Save them in a password manager or print them. They can be replaced with new ones (password and a code needed); the old ones then stop working, and you get a mail about it.
 - Every other browser is signed out, connected AI assistants are disconnected and the account's API tokens are revoked, because all of them were obtained with the password alone. Create new tokens afterwards where you need them.
 - You get a mail.
 
