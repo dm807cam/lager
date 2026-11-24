@@ -286,7 +286,7 @@ describe('administration page for mail', () => {
     };
     for (const route of routes) {
       const anon = await postAs(route, null, '');
-      expect(anon.status, `anonymous ${route}`).not.toBe(200);
+      expect(anon.status, `anonymous ${route}`).toBe(302);
     }
     expect((await request(s.hh.app).get('/admin/mail').set('Host', s.hh.host)).status).toBe(302);
     for (const role of ['user', 'publisher'] as const) {
