@@ -35,7 +35,7 @@ class FakeEventSource {
 
 let calls: Call[];
 let docs: Map<string, StoredDoc>;
-let session: { status: number; body: unknown } | 'network-error';
+let session: { status: number; body: unknown; headers?: Record<string, string> } | 'network-error';
 let users: Record<string, { id: string; name: string; email: string | null; isMe: boolean }>;
 let clock: number;
 let roomReply: (body: any) => Response;
@@ -80,6 +80,7 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
   calls.push([url, init]);
   if (url === '/__lager/session') {
     if (session === 'network-error') throw new TypeError('network down');
+    if (session.headers) return new Response(JSON.stringify(session.body), { status: session.status, headers: { 'Content-Type': 'application/json', ...session.headers } });
     return json(session.body, session.status);
   }
   if (url.startsWith('/__lager/users?q=')) {
@@ -1904,6 +1905,28 @@ describe('offline: the service worker', () => {
     boot();
     await settle();
     expect(registered).toEqual([]);
+  });
+
+  it('a session the worker answered from its copy is used, and asked for again once the server answers', async () => {
+    session = { ...sessionOf({ ...OWNER, email: null }), headers: { 'X-Lager-From-Cache': '1' } };
+    const lager = boot();
+    const sessionCalls = (): number => calls.filter(([u]) => u === '/__lager/session').length;
+    const offlineUser = await lager.use('user');
+    expect(await offlineUser.id()).toBe('u1');
+    expect(await offlineUser.email()).toBeNull();
+    expect(await lager.use('db')).not.toBeNull();
+    const whileOffline = sessionCalls();
+    expect(whileOffline).toBeGreaterThanOrEqual(2);
+
+    // Back online: the next use reads the live session and keeps it.
+    session = sessionOf(OWNER);
+    const onlineUser = await lager.use('user');
+    expect(onlineUser).not.toBe(offlineUser);
+    expect(await onlineUser.email()).toBe('ada@example.org');
+    const settled = sessionCalls();
+    expect(settled).toBe(whileOffline + 1);
+    expect(await lager.use('user')).toBe(onlineUser);
+    expect(sessionCalls()).toBe(settled);
   });
 
   it('a browser that refuses to register leaves the app working', async () => {

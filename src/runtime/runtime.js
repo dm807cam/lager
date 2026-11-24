@@ -43,12 +43,16 @@
 
   var sessionPromise = null;
 
-  /** Resolves `{session, transient}`; `transient` marks an answer that says nothing about the viewer (network trouble, a server error). */
+  /**
+   * Resolves `{session, transient}`; `transient` marks an answer that says nothing lasting about the viewer: network trouble,
+   * a server error, or the copy the service worker kept (`X-Lager-From-Cache`), which is used now and asked for again later.
+   */
   function loadSession() {
     return fetch(SESSION_URL, { credentials: 'same-origin' }).then(function (res) {
       if (!res.ok) return { session: null, transient: res.status >= 500 || res.status === 429 };
+      var kept = !!(res.headers && typeof res.headers.get === 'function' && res.headers.get('X-Lager-From-Cache') === '1');
       return res.json().then(function (body) {
-        return { session: body && typeof body === 'object' && body.viewer && typeof body.viewer === 'object' ? body : null, transient: false };
+        return { session: body && typeof body === 'object' && body.viewer && typeof body.viewer === 'object' ? body : null, transient: kept };
       });
     }).catch(function () { return { session: null, transient: true }; });
   }

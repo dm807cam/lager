@@ -14,8 +14,18 @@ const opaque = (): any => ({ type: 'opaque', status: 0, ok: false, redirected: f
 /** A navigation fetched with `redirect: "manual"` that the server answered with a redirect (here: to the sign-in). */
 const opaqueRedirect = (): any => ({ type: 'opaqueredirect', status: 0, ok: false, redirected: false, headers: new Headers(), clone() { return this; } });
 const page = (body: string, headers: Record<string, string> = MARK, status = 200): Response => new Response(body, { status, headers: { 'Content-Type': 'text/html', ...headers } });
-const sessionBody = (headers: Record<string, string> = MARK, status = 200): Response =>
-  new Response(JSON.stringify({ viewer: { id: 'u1', level: 'owner' } }), { status, headers: { 'Content-Type': 'application/json', ...headers } });
+const SESSION = {
+  viewer: { id: 'u1', name: 'Ada', email: 'ada@example.org', level: 'owner', isOwner: true, canEdit: true, locale: 'en' },
+  instance: { id: 'i1', slug: 'todo', appSlug: 'todo', version: 3 }, capabilities: { db: {} }, loginUrl: 'https://lager.example.org/auth/instance?slug=todo&n=abc',
+};
+const sessionBody = (headers: Record<string, string> = MARK, status = 200): Response => {
+  const text = JSON.stringify(SESSION);
+  return new Response(text, { status, headers: { 'Content-Type': 'application/json', 'Content-Length': String(text.length), ...headers } });
+};
+/** A file on a host that sends no CORS headers: a request in CORS mode fails, one without gets an opaque answer. */
+const noCors = () => (_url: string, mode: string): any => (mode === 'cors' ? 'offline' : opaque());
+/** A file on a host that allows CORS (as jsdelivr, unpkg and cdnjs do). */
+const withCors = (body = 'x()') => (): Response => new Response(body, { headers: { 'Access-Control-Allow-Origin': '*' } });
 const script = (body = 'x()'): Response => new Response(body, { headers: { 'Content-Type': 'text/javascript' } });
 
 /** Cache Storage in memory: named caches of URL -> response, keys kept in the order they were stored. */
@@ -49,7 +59,8 @@ class FakeCaches {
 
 type Reply = Response | any | Promise<Response | any> | 'offline' | 'hang';
 let caches: FakeCaches;
-let routes: Map<string, Reply | (() => Reply)>;
+/** A route is a reply, or a function of the URL and the request mode that returns one. */
+let routes: Map<string, Reply | ((url: string, mode: string) => Reply)>;
 let fetched: { url: string; init?: any; request?: any }[];
 let listeners: Map<string, (e: any) => void>;
 let claimed: number;
@@ -59,7 +70,8 @@ function fakeFetch(input: any, init?: any): Promise<any> {
   const url = new URL(typeof input === 'string' ? input : input.url, ORIGIN).href;
   fetched.push({ url, init, request: typeof input === 'string' ? undefined : input });
   const route = routes.get(url);
-  const reply = typeof route === 'function' ? route() : route;
+  const mode = (typeof input === 'string' ? init?.mode : input.mode) ?? 'cors';
+  const reply = typeof route === 'function' ? route(url, mode) : route;
   if (reply === undefined || reply === 'offline') return Promise.reject(new TypeError('Failed to fetch'));
   if (reply === 'hang') return new Promise(() => {});
   return Promise.resolve(reply);
@@ -71,7 +83,10 @@ function boot(): void {
     location: { origin: ORIGIN },
     addEventListener: (type: string, fn: (e: any) => void) => listeners.set(type, fn),
     skipWaiting: () => { skipped++; return Promise.resolve(); },
-    clients: { claim: async () => { claimed++; } },
+    clients: {
+      claim: async () => { claimed++; },
+      get: async (id: string) => (id === 'top' ? { frameType: 'top-level' } : id === 'frame' ? { frameType: 'nested' } : undefined),
+    },
   };
   vm.runInNewContext(SOURCE, {
     self, caches, fetch: fakeFetch, Headers, Response, URL, Promise,
@@ -80,15 +95,25 @@ function boot(): void {
 }
 
 /** Dispatches a fetch event; `response` is what the worker answered (undefined when it let the browser handle the request). */
-async function dispatch(url: string, opts: { method?: string; mode?: string; destination?: string } = {}): Promise<{ response: Promise<any> | undefined; settled: () => Promise<void> }> {
+/**
+ * Dispatches a fetch event; `response` is what the worker answered (undefined when it let the browser handle the request).
+ * By default the request comes from the top-level page, and a navigation loads that page (`destination: "document"`).
+ */
+async function dispatch(url: string, opts: { method?: string; mode?: string; destination?: string; clientId?: string } = {}): Promise<{ response: Promise<any> | undefined; settled: () => Promise<void> }> {
   const waits: Promise<unknown>[] = [];
   let response: Promise<any> | undefined;
-  const request = { url: new URL(url, ORIGIN).href, method: opts.method ?? 'GET', mode: opts.mode ?? 'cors', destination: opts.destination ?? '' };
-  listeners.get('fetch')!({ request, respondWith: (p: Promise<any>) => { response = p; }, waitUntil: (p: Promise<unknown>) => { waits.push(p); } });
-  return { response, settled: async () => { await Promise.all(waits); } };
+  const destination = opts.destination ?? (opts.mode === 'navigate' ? 'document' : '');
+  const request = { url: new URL(url, ORIGIN).href, method: opts.method ?? 'GET', mode: opts.mode ?? 'cors', destination };
+  const event = {
+    request, clientId: opts.clientId ?? (opts.mode === 'navigate' ? '' : 'top'),
+    respondWith: (p: Promise<any>) => { response = p; }, waitUntil: (p: Promise<unknown>) => { waits.push(p); },
+  };
+  listeners.get('fetch')!(event);
+  // Work the worker starts once it knows who asked (the session) is registered a moment later.
+  return { response, settled: async () => { if (response) await response.catch(() => {}); await Promise.all(waits); } };
 }
 
-const navigate = (url = '/'): ReturnType<typeof dispatch> => dispatch(url, { mode: 'navigate', destination: 'document' });
+const navigate = (url = '/'): ReturnType<typeof dispatch> => dispatch(url, { mode: 'navigate' });
 
 /** Answers a request the way the browser would see it, and waits until the worker has stored what it keeps. */
 async function load(url: string, opts: Parameters<typeof dispatch>[1] = {}): Promise<any> {
@@ -222,17 +247,72 @@ describe('service worker: the page', () => {
 });
 
 describe('service worker: session, scripts and files from other hosts', () => {
-  it('keeps the marked session and answers with it offline', async () => {
+  it('keeps the marked session and answers with it offline, without the email address and the sign-in link', async () => {
     routes.set(at('/__lager/session'), sessionBody());
-    await load('/__lager/session');
+    const online = await load('/__lager/session');
+    // The page itself gets the whole answer.
+    expect((await online.json()).viewer.email).toBe('ada@example.org');
+    const kept = JSON.parse((await caches.body('/__lager/session'))!);
+    expect(kept.viewer).toEqual({ ...SESSION.viewer, email: null });
+    expect(kept).not.toHaveProperty('loginUrl');
+    expect(kept.instance).toEqual(SESSION.instance);
+    expect(kept.capabilities).toEqual(SESSION.capabilities);
     routes.set(at('/__lager/session'), 'offline');
     const res = await load('/__lager/session');
     expect(res.headers.get('X-Lager-From-Cache')).toBe('1');
-    expect((await res.json()).viewer.id).toBe('u1');
+    expect(res.headers.get('Content-Type')).toBe('application/json');
+    expect(res.headers.get('Content-Length')).toBeNull();
+    const body = await res.json();
+    expect(body.viewer.id).toBe('u1');
+    expect(body.viewer.name).toBe('Ada');
+    expect(body.viewer.email).toBeNull();
     // Signed out meanwhile: the next answer online deletes it.
     routes.set(at('/__lager/session'), sessionBody({}, 401));
     expect((await load('/__lager/session')).status).toBe(401);
     expect(caches.kept()).toEqual([]);
+  });
+
+  it('a session that is refused deletes the kept page as well', async () => {
+    for (const status of [401, 403]) {
+      routes.set(at('/'), page('<p>v1</p>'));
+      await load('/', { mode: 'navigate' });
+      routes.set(at('/__lager/session'), sessionBody());
+      await load('/__lager/session');
+      routes.set(at('/__lager/runtime.js'), script());
+      await load('/__lager/runtime.js');
+      expect(caches.kept()).toHaveLength(3);
+      routes.set(at('/__lager/session'), sessionBody({}, status));
+      await load('/__lager/session');
+      expect(await caches.keys()).toEqual([]);
+    }
+  });
+
+  it('keeps nothing of an answer that is not a session', async () => {
+    routes.set(at('/__lager/session'), new Response('not json', { headers: MARK }));
+    expect(await (await load('/__lager/session')).text()).toBe('not json');
+    routes.set(at('/__lager/session'), new Response('{"viewer":null}', { headers: MARK }));
+    await load('/__lager/session');
+    expect(caches.kept()).toEqual([]);
+  });
+
+  it('frames get neither a kept page nor a kept session, and do not replace them', async () => {
+    routes.set(at('/'), page('<p>top</p>'));
+    await load('/', { mode: 'navigate' });
+    routes.set(at('/__lager/session'), sessionBody());
+    await load('/__lager/session');
+
+    // The instance inside a frame of itself, or a request whose client cannot be told: straight to the network.
+    expect((await dispatch('/', { mode: 'navigate', destination: 'iframe' })).response).toBeUndefined();
+    routes.set(at('/__lager/session'), () => new Response(JSON.stringify({ viewer: { id: null, level: 'view' } }), { headers: MARK }));
+    for (const clientId of ['frame', 'unknown', '']) {
+      const framed = await load('/__lager/session', { clientId });
+      expect((await framed.json()).viewer.id).toBeNull();
+    }
+    expect(JSON.parse((await caches.body('/__lager/session'))!).viewer.id).toBe('u1');
+
+    routes.set(at('/__lager/session'), 'offline');
+    await expect((await dispatch('/__lager/session', { clientId: 'frame' })).response).rejects.toThrow(/Failed to fetch/);
+    expect((await (await load('/__lager/session')).json()).viewer.id).toBe('u1');
   });
 
   it('keeps the runtime, manifest and icons only while a page is kept', async () => {
@@ -261,9 +341,11 @@ describe('service worker: session, scripts and files from other hosts', () => {
   it('keeps scripts, styles and fonts from other hosts, and gives an opaque copy only to a request without CORS', async () => {
     routes.set(at('/'), page('<p>v1</p>'));
     await load('/', { mode: 'navigate' });
-    routes.set(CDN, opaque());
+    routes.set(CDN, noCors());
     await load(CDN, { mode: 'no-cors', destination: 'script' });
     expect(caches.kept()).toEqual(['/', CDN]);
+    // CORS was tried first; the host refused it, so the request went out as the page made it.
+    expect(fetched.filter((f) => f.url === CDN).map((f) => f.init?.mode ?? f.request?.mode)).toEqual(['cors', 'no-cors']);
 
     routes.set(CDN, 'offline');
     expect((await load(CDN, { mode: 'no-cors', destination: 'script' })).type).toBe('opaque');
@@ -275,6 +357,21 @@ describe('service worker: session, scripts and files from other hosts', () => {
     await load(font, { mode: 'cors', destination: 'font' });
     routes.set(font, 'offline');
     expect(await (await load(font, { mode: 'cors', destination: 'font' })).text()).toBe('font');
+  });
+
+  it('fetches a file from a host that allows CORS in CORS mode, so its copy is not opaque', async () => {
+    routes.set(at('/'), page('<p>v1</p>'));
+    await load('/', { mode: 'navigate' });
+    routes.set(CDN, withCors('lib()'));
+    const res = await load(CDN, { mode: 'no-cors', destination: 'script' });
+    expect(await res.text()).toBe('lib()');
+    expect(fetched.filter((f) => f.url === CDN).map((f) => f.init)).toEqual([{ mode: 'cors', credentials: 'omit' }]);
+    routes.set(CDN, 'offline');
+    const offline = await load(CDN, { mode: 'no-cors', destination: 'script' });
+    expect(offline.type).not.toBe('opaque');
+    expect(offline.headers.get('X-Lager-From-Cache')).toBe('1');
+    // A request in CORS mode may use that copy too.
+    expect(await (await load(CDN, { mode: 'cors', destination: 'script' })).text()).toBe('lib()');
   });
 
   it('keeps at most 40 files from other hosts, the newest ones', async () => {
@@ -332,18 +429,22 @@ describe('service worker: install and activate', () => {
     routes.set(at('/'), page(HTML));
     routes.set(at('/__lager/session'), sessionBody());
     routes.set(at('/__lager/runtime.js'), script());
-    for (const f of [CDN, 'https://cdn.example.net/mod.js', 'https://cdn.example.net/anon.js', 'https://cdn.example.net/style.css']) routes.set(f, opaque());
+    routes.set(CDN, noCors());
+    routes.set('https://cdn.example.net/mod.js', withCors());
+    routes.set('https://cdn.example.net/anon.js', withCors());
+    routes.set('https://cdn.example.net/style.css', withCors());
     await install();
     expect(skipped).toBe(1);
     expect(caches.kept().sort()).toEqual(['/', '/__lager/runtime.js', '/__lager/session', CDN,
       'https://cdn.example.net/anon.js', 'https://cdn.example.net/mod.js', 'https://cdn.example.net/style.css'].sort());
-    const init = (u: string): any => fetched.find((f) => f.url === u)!.init;
-    expect(init(at('/'))).toEqual({ credentials: 'same-origin', redirect: 'manual' });
-    // The request mode matches what the browser will ask with, so the kept copy answers it.
-    expect(init(CDN)).toEqual({ mode: 'no-cors', credentials: 'omit' });
-    expect(init('https://cdn.example.net/mod.js')).toEqual({ mode: 'cors', credentials: 'omit' });
-    expect(init('https://cdn.example.net/anon.js')).toEqual({ mode: 'cors', credentials: 'omit' });
-    expect(init('https://cdn.example.net/style.css')).toEqual({ mode: 'cors', credentials: 'include' });
+    const inits = (u: string): any[] => fetched.filter((f) => f.url === u).map((f) => f.init);
+    expect(inits(at('/'))).toEqual([{ credentials: 'same-origin', redirect: 'manual' }]);
+    // CORS first, so the copy is not opaque; a host without CORS gets the request the browser will make.
+    expect(inits(CDN)).toEqual([{ mode: 'cors', credentials: 'omit' }, { mode: 'no-cors', credentials: 'omit' }]);
+    expect(inits('https://cdn.example.net/mod.js')).toEqual([{ mode: 'cors', credentials: 'omit' }]);
+    expect(inits('https://cdn.example.net/anon.js')).toEqual([{ mode: 'cors', credentials: 'omit' }]);
+    expect(inits('https://cdn.example.net/style.css')).toEqual([{ mode: 'cors', credentials: 'include' }]);
+    expect(JSON.parse((await caches.body('/__lager/session'))!).viewer.email).toBeNull();
     expect(fetched.map((f) => f.url)).not.toContain('https://cdn.example.net/icon.png');
     expect(fetched.map((f) => f.url)).not.toContain(at('/local.js'));
   });

@@ -78,6 +78,26 @@ describe('offline: what the server marks for keeping', () => {
     expect(disabled.headers['x-lager-offline']).toBeUndefined();
   });
 
+  it('marks nothing for a session that ended: after a sign-out or a password change, or for a signed-in stranger', async () => {
+    const { h, inst } = setup();
+    const cookie = await h.enter('workout', await h.login());
+    expect((await request(h.app).get('/').set('Host', W).set('Cookie', cookie)).headers['x-lager-offline']).toBe('1');
+    // Sign-out and a password change move the epoch on: the cookie from before is worth nothing.
+    h.core.users.bumpEpoch(h.adminId);
+    const page = await request(h.app).get('/').set('Host', W).set('Cookie', cookie);
+    expect(page.status).toBe(302);
+    expect(page.headers['x-lager-offline']).toBeUndefined();
+    const session = await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', cookie);
+    expect(session.status).toBe(401);
+    expect(session.headers['x-lager-offline']).toBeUndefined();
+
+    const u = h.core.users.create({ email: 'u@x.y', name: 'U', password: 'pw', role: 'user' });
+    const stranger = 'lager_inst=' + signToken({ uid: u.id, iid: inst.id, k: 'inst', ep: 0 }, 'test-secret', 60);
+    const refused = await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', stranger);
+    expect(refused.status).toBe(401);
+    expect(refused.headers['x-lager-offline']).toBeUndefined();
+  });
+
   it('marks nothing for an app that declares {"db": {"offline": false}}, and follows the active version', async () => {
     const { h, inst } = setup({ db: { offline: false } });
     const cookie = await h.enter('workout', await h.login());

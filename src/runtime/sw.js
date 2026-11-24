@@ -3,15 +3,18 @@
    active version does not turn offline off. Plain ES2020, no dependencies.
 
    What it answers:
-   - the page ("/", "/index.html") and "/__lager/session": from the network, falling back to the copy kept here when the
-     network fails, the server is down (502, 503, 504) or takes longer than NETWORK_TIMEOUT_MS;
+   - the page ("/", "/index.html") and "/__lager/session" for the top-level page: from the network, falling back to the copy
+     kept here when the network fails, the server is down (502, 503, 504) or takes longer than NETWORK_TIMEOUT_MS. Frames are
+     always left to the network;
    - the runtime's own scripts, the manifest and the icons: the same, once a page is kept;
-   - scripts, stylesheets and fonts from other hosts (CDNs): the same, at most MAX_FOREIGN of them.
+   - scripts, stylesheets and fonts from other hosts (CDNs): the same, at most MAX_FOREIGN of them. A request without CORS is
+     tried with CORS first, because browsers charge every opaque copy several megabytes of the storage quota.
    Everything else (the database, its event stream, uploads, rooms, sign-in, any request that is not a GET) never touches it.
 
    What it keeps is decided by the server, never by the page: only a response marked `X-Lager-Offline: 1` is kept. An answer
    for the page or the session that says the viewer has no access (a redirect to the sign-in, 401, 403) or that the instance is
-   gone (404, 410), or a page or session without the mark (the app turned offline off), deletes everything kept here. */
+   gone (404, 410), or a page or session without the mark (the app turned offline off), deletes everything kept here.
+   The kept session never holds the viewer's email address or the sign-in link: opening the app offline needs neither. */
 'use strict';
 
 var CACHE = 'lager-offline-1';
@@ -53,8 +56,41 @@ function judgeEntry(key, res) {
   if (res.type === 'opaqueredirect' || (res.redirected && key === PAGE_KEY) || GONE.indexOf(res.status) !== -1) return clearAll();
   if (!res.ok) return Promise.resolve();
   if (res.headers.get(OFFLINE_HEADER) !== '1') return clearAll();
-  var copy = res.clone();
-  return caches.open(CACHE).then(function (c) { return c.put(key, copy); });
+  var copy = key === SESSION_KEY ? reducedSession(res) : Promise.resolve(res.clone());
+  return copy.then(function (r) {
+    if (!r) return;
+    return caches.open(CACHE).then(function (c) { return c.put(key, r); });
+  });
+}
+
+/**
+ * What is kept of a session: everything but the viewer's email address (null, as for an app without the `email` scope) and
+ * the sign-in link, which only works online and whose nonce goes stale. Resolves null for an answer that is not a session.
+ */
+function reducedSession(res) {
+  return res.clone().json().then(function (body) {
+    if (!body || typeof body !== 'object' || !body.viewer || typeof body.viewer !== 'object') return null;
+    var copy = {};
+    Object.keys(body).forEach(function (k) { if (k !== 'loginUrl') copy[k] = body[k]; });
+    copy.viewer = {};
+    Object.keys(body.viewer).forEach(function (k) { copy.viewer[k] = body.viewer[k]; });
+    copy.viewer.email = null;
+    var headers = new Headers(res.headers);
+    headers.delete('Content-Length');
+    return new Response(JSON.stringify(copy), { status: res.status, statusText: res.statusText, headers: headers });
+  }, function () { return null; });
+}
+
+/** Whether a request comes from the top-level page; one whose client cannot be told is treated as a frame. */
+function fromTopLevel(event) {
+  if (!event.clientId || !self.clients || typeof self.clients.get !== 'function') return Promise.resolve(false);
+  return Promise.resolve(self.clients.get(event.clientId)).then(function (c) { return !!c && c.frameType === 'top-level'; }, function () { return false; });
+}
+
+/** A file from another host. Without CORS the copy would be opaque, so CORS is tried first; a host that does not allow it gets the request as the page made it. */
+function foreignFetch(request) {
+  if (request.mode !== 'no-cors') return fetch(request);
+  return fetch(request.url, { mode: 'cors', credentials: 'omit' }).catch(function () { return fetch(request); });
 }
 
 /** A script, the manifest, an icon or a file from another host: kept only while the page is, so nothing piles up for an app that turned offline off. */
@@ -82,8 +118,8 @@ function trimForeign(c) {
  * Network first: the network's answer when it comes in time, else the kept copy. `judge` decides what to keep and runs
  * whether the answer comes in time or not (the event waits for it). `usable` tells whether a kept copy may answer this request.
  */
-function networkFirst(event, request, key, judge, usable) {
-  var network = fetch(request);
+function networkFirst(event, load, key, judge, usable) {
+  var network = load();
   var judged = network.then(function (res) { return judge(key, res); }, function () { /* offline: nothing to decide */ });
   event.waitUntil(judged.catch(function () { /* a full disk must not break the page */ }));
   var kept = caches.open(CACHE).then(function (c) { return c.match(key); }).then(function (r) { return r && usable(r) ? r : null; }, function () { return null; });
@@ -128,19 +164,23 @@ self.addEventListener('fetch', function (event) {
   if (request.method !== 'GET') return;
   var url = new URL(request.url);
   if (url.origin === self.location.origin) {
-    if (request.mode === 'navigate' && (url.pathname === '/' || url.pathname === '/index.html')) {
-      event.respondWith(networkFirst(event, request, PAGE_KEY, judgeEntry, always));
+    var load = function () { return fetch(request); };
+    // Only the top-level page: a frame (the instance inside itself, an embedding website) neither gets nor replaces a kept copy.
+    if (request.mode === 'navigate' && request.destination === 'document' && (url.pathname === '/' || url.pathname === '/index.html')) {
+      event.respondWith(networkFirst(event, load, PAGE_KEY, judgeEntry, always));
     } else if (url.pathname === SESSION_KEY) {
-      event.respondWith(networkFirst(event, request, SESSION_KEY, judgeEntry, always));
+      event.respondWith(fromTopLevel(event).then(function (top) {
+        return top ? networkFirst(event, load, SESSION_KEY, judgeEntry, always) : fetch(request);
+      }));
     } else if (SHELL_RE.test(url.pathname)) {
-      event.respondWith(networkFirst(event, request, url.pathname + url.search, function (k, r) { return judgeShell(k, r, false); }, always));
+      event.respondWith(networkFirst(event, load, url.pathname + url.search, function (k, r) { return judgeShell(k, r, false); }, always));
     }
     return;
   }
   if ((url.protocol === 'https:' || url.protocol === 'http:') && FOREIGN_DESTINATIONS.indexOf(request.destination) !== -1) {
     // A request in CORS mode (a module, `crossorigin`) cannot be answered with an opaque copy.
     var usable = function (r) { return request.mode !== 'cors' || r.type !== 'opaque'; };
-    event.respondWith(networkFirst(event, request, request.url, function (k, r) { return judgeShell(k, r, true); }, usable));
+    event.respondWith(networkFirst(event, function () { return foreignFetch(request); }, request.url, function (k, r) { return judgeShell(k, r, true); }, usable));
   }
 });
 
@@ -191,8 +231,9 @@ function precache() {
           fetch('/__lager/runtime.js', { credentials: 'same-origin' }).then(function (r) { return judgeShell('/__lager/runtime.js', r, false); }),
         ];
         foreignFiles(html).forEach(function (f) {
-          var init = f.cors ? { mode: 'cors', credentials: f.credentials } : { mode: 'no-cors', credentials: 'omit' };
-          jobs.push(fetch(f.url, init).then(function (r) { return judgeShell(f.url, r, true); }));
+          var load = f.cors ? fetch(f.url, { mode: 'cors', credentials: f.credentials })
+            : fetch(f.url, { mode: 'cors', credentials: 'omit' }).catch(function () { return fetch(f.url, { mode: 'no-cors', credentials: 'omit' }); });
+          jobs.push(load.then(function (r) { return judgeShell(f.url, r, true); }));
         });
         return Promise.all(jobs.map(function (j) { return j.catch(function () { /* one missing file does not stop the rest */ }); }));
       });
