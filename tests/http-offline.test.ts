@@ -26,6 +26,8 @@ describe('offline: the service worker script', () => {
     expect(res.headers['cache-control']).toBe('no-cache');
     expect(res.headers['service-worker-allowed']).toBe('/');
     expect(res.headers['x-content-type-options']).toBe('nosniff');
+    // The worker's own requests follow this policy, as the page's do theirs.
+    expect(res.headers['referrer-policy']).toBe('same-origin');
     expect(res.text).toContain("var CACHE = 'lager-offline-1';");
     expect((await request(h.app).get('/__lager/sw.js').set('Host', W).set('If-None-Match', res.headers.etag)).status).toBe(304);
   });

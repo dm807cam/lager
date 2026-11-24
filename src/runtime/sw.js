@@ -7,8 +7,10 @@
      kept here when the network fails, the server is down (502, 503, 504) or takes longer than NETWORK_TIMEOUT_MS. Frames are
      always left to the network;
    - the runtime's own scripts, the manifest and the icons: the same, once a page is kept;
-   - scripts, stylesheets and fonts from other hosts (CDNs): the same, at most MAX_FOREIGN of them. A request without CORS is
-     tried with CORS first, because browsers charge every opaque copy several megabytes of the storage quota.
+   - scripts, stylesheets and fonts from other hosts (CDNs): the same, at most MAX_FOREIGN of them, of which at most MAX_OPAQUE
+     opaque copies (requests without CORS), because browsers charge every opaque copy several megabytes of the storage quota.
+     Such requests go out exactly as the page made them: a request the worker built itself would follow the worker's referrer
+     policy instead of the page's and, with CORS, carry an Origin, telling the CDN which instance loaded it.
    Everything else (the database, its event stream, uploads, rooms, sign-in, any request that is not a GET) never touches it.
 
    What it keeps is decided by the server, never by the page: only a response marked `X-Lager-Offline: 1` is kept. An answer
@@ -25,6 +27,9 @@ var OFFLINE_HEADER = 'X-Lager-Offline';
 var FROM_CACHE_HEADER = 'X-Lager-From-Cache';
 var NETWORK_TIMEOUT_MS = 4000;
 var MAX_FOREIGN = 40;
+var MAX_OPAQUE = 10;
+/** For the requests this worker makes itself (precache), as the page has it: other hosts learn nothing about the instance. */
+var REFERRER_POLICY = 'same-origin';
 var SHELL_RE = /^\/(__lager\/(runtime\.js|badge\.js|manifest\.webmanifest|icon-(180|192|512|512-maskable)\.png)|apple-touch-icon\.png|favicon\.ico)$/;
 var FOREIGN_DESTINATIONS = ['script', 'style', 'font'];
 var GONE = [401, 403, 404, 410];
@@ -87,11 +92,6 @@ function fromTopLevel(event) {
   return Promise.resolve(self.clients.get(event.clientId)).then(function (c) { return !!c && c.frameType === 'top-level'; }, function () { return false; });
 }
 
-/** A file from another host. Without CORS the copy would be opaque, so CORS is tried first; a host that does not allow it gets the request as the page made it. */
-function foreignFetch(request) {
-  if (request.mode !== 'no-cors') return fetch(request);
-  return fetch(request.url, { mode: 'cors', credentials: 'omit' }).catch(function () { return fetch(request); });
-}
 
 /** A script, the manifest, an icon or a file from another host: kept only while the page is, so nothing piles up for an app that turned offline off. */
 function judgeShell(key, res, foreign) {
@@ -105,12 +105,21 @@ function judgeShell(key, res, foreign) {
   });
 }
 
-/** Keeps the newest MAX_FOREIGN files from other hosts; the cache lists keys in the order they were stored. */
+/**
+ * Keeps the newest MAX_FOREIGN files from other hosts, and of them the newest MAX_OPAQUE opaque ones; the cache lists keys in
+ * the order they were stored.
+ */
 function trimForeign(c) {
   return c.keys().then(function (keys) {
     var foreign = keys.filter(function (k) { return new URL(k.url).origin !== self.location.origin; });
-    var excess = foreign.slice(0, Math.max(0, foreign.length - MAX_FOREIGN));
-    return Promise.all(excess.map(function (k) { return c.delete(k); }));
+    return Promise.all(foreign.map(function (k) { return c.match(k).then(function (r) { return { key: k, opaque: !!r && r.type === 'opaque' }; }); }));
+  }).then(function (entries) {
+    var drop = [];
+    var opaque = entries.filter(function (e) { return e.opaque; });
+    opaque.slice(0, Math.max(0, opaque.length - MAX_OPAQUE)).forEach(function (e) { drop.push(e); });
+    var rest = entries.filter(function (e) { return drop.indexOf(e) === -1; });
+    rest.slice(0, Math.max(0, rest.length - MAX_FOREIGN)).forEach(function (e) { drop.push(e); });
+    return Promise.all(drop.map(function (e) { return c.delete(e.key); }));
   });
 }
 
@@ -180,7 +189,8 @@ self.addEventListener('fetch', function (event) {
   if ((url.protocol === 'https:' || url.protocol === 'http:') && FOREIGN_DESTINATIONS.indexOf(request.destination) !== -1) {
     // A request in CORS mode (a module, `crossorigin`) cannot be answered with an opaque copy.
     var usable = function (r) { return request.mode !== 'cors' || r.type !== 'opaque'; };
-    event.respondWith(networkFirst(event, function () { return foreignFetch(request); }, request.url, function (k, r) { return judgeShell(k, r, true); }, usable));
+    // Passed on as the page made it, with the page's referrer policy and mode (see the top of this file).
+    event.respondWith(networkFirst(event, function () { return fetch(request); }, request.url, function (k, r) { return judgeShell(k, r, true); }, usable));
   }
 });
 
@@ -231,9 +241,10 @@ function precache() {
           fetch('/__lager/runtime.js', { credentials: 'same-origin' }).then(function (r) { return judgeShell('/__lager/runtime.js', r, false); }),
         ];
         foreignFiles(html).forEach(function (f) {
-          var load = f.cors ? fetch(f.url, { mode: 'cors', credentials: f.credentials })
-            : fetch(f.url, { mode: 'cors', credentials: 'omit' }).catch(function () { return fetch(f.url, { mode: 'no-cors', credentials: 'omit' }); });
-          jobs.push(load.then(function (r) { return judgeShell(f.url, r, true); }));
+          // The mode the page's own tag asks for, and the page's referrer policy: no more than the page itself tells the CDN.
+          var init = f.cors ? { mode: 'cors', credentials: f.credentials, referrerPolicy: REFERRER_POLICY }
+            : { mode: 'no-cors', credentials: 'omit', referrerPolicy: REFERRER_POLICY };
+          jobs.push(fetch(f.url, init).then(function (r) { return judgeShell(f.url, r, true); }));
         });
         return Promise.all(jobs.map(function (j) { return j.catch(function () { /* one missing file does not stop the rest */ }); }));
       });

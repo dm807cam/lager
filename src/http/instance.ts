@@ -241,7 +241,11 @@ export function createInstanceRouter(core: Core): express.Router {
   // The service worker lives under /__lager/ with the other scripts but controls the whole host, which the header allows.
   // It holds nothing of the instance: what it keeps is decided by the mark on each answer (OFFLINE_HEADER).
   router.get('/__lager/sw.js', (req, res) => {
-    res.set({ 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', ETag: swEtag, 'Service-Worker-Allowed': '/' });
+    // The worker's referrer policy comes from this answer: as on the page, other hosts learn nothing about the instance.
+    res.set({
+      'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', ETag: swEtag, 'Service-Worker-Allowed': '/',
+      'Referrer-Policy': 'same-origin',
+    });
     if (req.headers['if-none-match'] === swEtag) {
       res.status(304).end();
       return;

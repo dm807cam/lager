@@ -103,7 +103,8 @@ async function dispatch(url: string, opts: { method?: string; mode?: string; des
   const waits: Promise<unknown>[] = [];
   let response: Promise<any> | undefined;
   const destination = opts.destination ?? (opts.mode === 'navigate' ? 'document' : '');
-  const request = { url: new URL(url, ORIGIN).href, method: opts.method ?? 'GET', mode: opts.mode ?? 'cors', destination };
+  // The page is served with `Referrer-Policy: same-origin`, and its requests carry that policy.
+  const request = { url: new URL(url, ORIGIN).href, method: opts.method ?? 'GET', mode: opts.mode ?? 'cors', destination, referrerPolicy: 'same-origin' };
   const event = {
     request, clientId: opts.clientId ?? (opts.mode === 'navigate' ? '' : 'top'),
     respondWith: (p: Promise<any>) => { response = p; }, waitUntil: (p: Promise<unknown>) => { waits.push(p); },
@@ -344,47 +345,57 @@ describe('service worker: session, scripts and files from other hosts', () => {
     routes.set(CDN, noCors());
     await load(CDN, { mode: 'no-cors', destination: 'script' });
     expect(caches.kept()).toEqual(['/', CDN]);
-    // CORS was tried first; the host refused it, so the request went out as the page made it.
-    expect(fetched.filter((f) => f.url === CDN).map((f) => f.init?.mode ?? f.request?.mode)).toEqual(['cors', 'no-cors']);
 
     routes.set(CDN, 'offline');
     expect((await load(CDN, { mode: 'no-cors', destination: 'script' })).type).toBe('opaque');
     const cors = await dispatch(CDN, { mode: 'cors', destination: 'script' });
     await expect(cors.response).rejects.toThrow(/Failed to fetch/);
 
+    // A tag with `crossorigin` makes a CORS request, and its copy is not opaque.
     const font = 'https://fonts.example.net/a.woff2';
-    routes.set(font, new Response('font', { headers: { 'Access-Control-Allow-Origin': '*' } }));
+    routes.set(font, withCors('font'));
     await load(font, { mode: 'cors', destination: 'font' });
     routes.set(font, 'offline');
-    expect(await (await load(font, { mode: 'cors', destination: 'font' })).text()).toBe('font');
+    const kept = await load(font, { mode: 'cors', destination: 'font' });
+    expect(kept.type).not.toBe('opaque');
+    expect(await kept.text()).toBe('font');
   });
 
-  it('fetches a file from a host that allows CORS in CORS mode, so its copy is not opaque', async () => {
+  it('passes a request to another host on exactly as the page made it, so the CDN learns no more than without the worker', async () => {
     routes.set(at('/'), page('<p>v1</p>'));
     await load('/', { mode: 'navigate' });
-    routes.set(CDN, withCors('lib()'));
-    const res = await load(CDN, { mode: 'no-cors', destination: 'script' });
-    expect(await res.text()).toBe('lib()');
-    expect(fetched.filter((f) => f.url === CDN).map((f) => f.init)).toEqual([{ mode: 'cors', credentials: 'omit' }]);
-    routes.set(CDN, 'offline');
-    const offline = await load(CDN, { mode: 'no-cors', destination: 'script' });
-    expect(offline.type).not.toBe('opaque');
-    expect(offline.headers.get('X-Lager-From-Cache')).toBe('1');
-    // A request in CORS mode may use that copy too.
-    expect(await (await load(CDN, { mode: 'cors', destination: 'script' })).text()).toBe('lib()');
+    for (const mode of ['no-cors', 'cors']) {
+      fetched = [];
+      routes.set(CDN, mode === 'cors' ? withCors() : noCors());
+      await load(CDN, { mode, destination: 'script' });
+      // One request, the page's own Request object, with its mode and referrer policy: no new request with an Origin or a Referer.
+      expect(fetched).toHaveLength(1);
+      expect(fetched[0].init).toBeUndefined();
+      expect(fetched[0].request).toMatchObject({ url: CDN, mode, referrerPolicy: 'same-origin' });
+    }
   });
 
-  it('keeps at most 40 files from other hosts, the newest ones', async () => {
+  it('keeps at most 40 files from other hosts, of which at most 10 opaque ones, the newest of each', async () => {
     routes.set(at('/'), page('<p>v1</p>'));
     await load('/', { mode: 'navigate' });
-    for (let i = 0; i < 45; i++) {
-      const url = `https://cdn.example.net/f${i}.js`;
-      routes.set(url, opaque());
+    for (let i = 0; i < 15; i++) {
+      const url = `https://cdn.example.net/o${i}.js`;
+      routes.set(url, noCors());
       await load(url, { mode: 'no-cors', destination: 'script' });
     }
-    const foreign = caches.kept().filter((u) => !u.startsWith('/'));
+    let foreign = caches.kept().filter((u) => !u.startsWith('/'));
+    expect(foreign).toEqual(Array.from({ length: 10 }, (_, i) => `https://cdn.example.net/o${i + 5}.js`));
+
+    for (let i = 0; i < 45; i++) {
+      const url = `https://cdn.example.net/c${i}.js`;
+      routes.set(url, withCors());
+      await load(url, { mode: 'cors', destination: 'script' });
+    }
+    foreign = caches.kept().filter((u) => !u.startsWith('/'));
     expect(foreign).toHaveLength(40);
-    expect(foreign[0]).toBe('https://cdn.example.net/f5.js');
+    // The opaque copies count towards the 40 as well; the oldest files go first.
+    expect(foreign.filter((u) => u.includes('/o'))).toEqual([]);
+    expect(foreign[0]).toBe('https://cdn.example.net/c5.js');
     expect(caches.kept()).toContain('/');
   });
 
@@ -439,11 +450,11 @@ describe('service worker: install and activate', () => {
       'https://cdn.example.net/anon.js', 'https://cdn.example.net/mod.js', 'https://cdn.example.net/style.css'].sort());
     const inits = (u: string): any[] => fetched.filter((f) => f.url === u).map((f) => f.init);
     expect(inits(at('/'))).toEqual([{ credentials: 'same-origin', redirect: 'manual' }]);
-    // CORS first, so the copy is not opaque; a host without CORS gets the request the browser will make.
-    expect(inits(CDN)).toEqual([{ mode: 'cors', credentials: 'omit' }, { mode: 'no-cors', credentials: 'omit' }]);
-    expect(inits('https://cdn.example.net/mod.js')).toEqual([{ mode: 'cors', credentials: 'omit' }]);
-    expect(inits('https://cdn.example.net/anon.js')).toEqual([{ mode: 'cors', credentials: 'omit' }]);
-    expect(inits('https://cdn.example.net/style.css')).toEqual([{ mode: 'cors', credentials: 'include' }]);
+    // The mode the page's tag asks for, so the kept copy answers the browser's request, and the page's referrer policy.
+    expect(inits(CDN)).toEqual([{ mode: 'no-cors', credentials: 'omit', referrerPolicy: 'same-origin' }]);
+    expect(inits('https://cdn.example.net/mod.js')).toEqual([{ mode: 'cors', credentials: 'omit', referrerPolicy: 'same-origin' }]);
+    expect(inits('https://cdn.example.net/anon.js')).toEqual([{ mode: 'cors', credentials: 'omit', referrerPolicy: 'same-origin' }]);
+    expect(inits('https://cdn.example.net/style.css')).toEqual([{ mode: 'cors', credentials: 'include', referrerPolicy: 'same-origin' }]);
     expect(JSON.parse((await caches.body('/__lager/session'))!).viewer.email).toBeNull();
     expect(fetched.map((f) => f.url)).not.toContain('https://cdn.example.net/icon.png');
     expect(fetched.map((f) => f.url)).not.toContain(at('/local.js'));
