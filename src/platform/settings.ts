@@ -26,6 +26,14 @@ export class Settings {
     return MODES.includes(v as RegistrationMode) ? (v as RegistrationMode) : this.defaults.registration;
   }
 
+  /**
+   * Stores the registration mode in effect if none was saved yet. The default follows whether mail was on at startup, so turning
+   * mail on in the administration area would otherwise open registration at the next restart without anybody choosing that.
+   */
+  keepRegistration(): void {
+    if (this.read('registration') === undefined) this.write('registration', this.registration);
+  }
+
   setRegistration(mode: RegistrationMode): void {
     if (!MODES.includes(mode)) throw new LagerError('invalid_argument', 'Registration must be open, invite or closed.');
     this.write('registration', mode);

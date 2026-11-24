@@ -10,6 +10,7 @@ import type { CustomDomainsMode, RegistrationMode } from '../platform/settings.j
 import { AiError, DEFAULT_GROUP, DEFAULT_HOURLY_LIMIT, HOURLY_LIMIT_MAX, MAX_MODEL_DESCRIPTION, MAX_TOKENS_LIMIT, PRESETS, PROVIDER_IDS, TEST_PROMPT, type AiGroup, type AiGroupInput, type AiModel, type AiModelInput, type AiProvider, type AiProviderInput, type ProviderId } from '../platform/ai.js';
 import type { OwnedPlan } from '../platform/account-removal.js';
 import type { Instance } from '../platform/apps.js';
+import { defaultSender, MAX_SMTP_PASSWORD, SMTP_SECURITY, type SmtpSecurity } from '../platform/mail.js';
 import type { Role, User } from '../platform/users.js';
 import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { loginLimiter } from './platform.js';
@@ -21,14 +22,15 @@ import { csrfToken, csrfValid } from './session.js';
 const ROLES: readonly Role[] = ['admin', 'publisher', 'user'];
 const ROLE_KEYS: Record<Role, MessageKey> = { admin: 'role.admin', publisher: 'role.publisher', user: 'role.user' };
 const DOMAIN_KEYS: Record<CustomDomainsMode, MessageKey> = { admins: 'admin.domains.admins', publishers: 'admin.domains.publishers' };
+const SECURITY_KEYS: Record<SmtpSecurity, MessageKey> = { tls: 'admin.mail.security.tls', starttls: 'admin.mail.security.starttls', none: 'admin.mail.security.none' };
 const MODE_KEYS: Record<RegistrationMode, MessageKey> = { open: 'admin.mode.open', invite: 'admin.mode.invite', closed: 'admin.mode.closed' };
-const SECTIONS: Array<[Section, MessageKey]> = [['users', 'admin.section.users'], ['invites', 'admin.section.invites'], ['groups', 'admin.section.groups'], ['settings', 'admin.section.settings'], ['ai', 'admin.section.ai'], ['apps', 'admin.section.apps']];
+const SECTIONS: Array<[Section, MessageKey]> = [['users', 'admin.section.users'], ['invites', 'admin.section.invites'], ['groups', 'admin.section.groups'], ['settings', 'admin.section.settings'], ['mail', 'admin.section.mail'], ['ai', 'admin.section.ai'], ['apps', 'admin.section.apps']];
 const MAX_FIELD = 300;
 /** Product names stay as they are; only the two generic entries are words that need translating. */
 const providerLabel = (locale: Locale, id: ProviderId): string =>
   id === 'ollama' ? t(locale, 'admin.ai.provider.ollama') : id === 'custom' ? t(locale, 'admin.ai.provider.custom') : PRESETS[id].label;
 
-type Section = 'users' | 'invites' | 'groups' | 'settings' | 'ai' | 'apps';
+type Section = 'users' | 'invites' | 'groups' | 'settings' | 'mail' | 'ai' | 'apps';
 /** A note above the section; `once` carries a one-time link and is never stored. */
 interface Msg { ok?: string; error?: string; once?: { title: string; link: string } }
 
@@ -172,7 +174,7 @@ function settingsSection(core: Core, locale: Locale, admin: User, msg?: Msg): st
   const body = form('/admin/settings', csrf, `<div>
 ${settingRow('registration', t(locale, 'admin.settings.registration'), t(locale, 'admin.settings.registration.hint'),
     `<select id="registration" name="registration">${optionList(options(locale, MODE_KEYS), core.settings.registration)}</select>`,
-    core.mailer.enabled ? '' : `<p class="hint">${esc(t(locale, 'admin.settings.noMail'))}</p>`)}
+    core.mailer.enabled ? '' : `<p class="hint">${esc(t(locale, 'admin.settings.noMail'))} <a href="/admin/mail">${esc(t(locale, 'admin.settings.setUpMail'))}</a></p>`)}
 ${settingRow('max-instances', t(locale, 'admin.settings.maxInstances'), t(locale, 'admin.settings.maxInstances.hint'),
     `<input id="max-instances" name="maxInstances" type="number" inputmode="numeric" min="1" max="1000" step="1" required value="${core.settings.maxInstancesPerUser}">`)}
 ${settingRow('custom-domains', t(locale, 'admin.settings.customDomains'), t(locale, 'admin.settings.customDomains.hint'),
@@ -181,6 +183,45 @@ ${settingRow('made-with-badge', t(locale, 'admin.settings.badge'), t(locale, 'ad
     `<input type="hidden" name="madeWithBadge" value="0"><label class="check"><input id="made-with-badge" type="checkbox" class="switch" name="madeWithBadge" value="1"${core.settings.madeWithBadge ? ' checked' : ''}><span>${esc(t(locale, 'admin.settings.badge.label'))}</span></label>`)}
 </div>`, esc(t(locale, 'common.save')), 'primary', 'stack settings-form');
   return shell(core, locale, admin, 'settings', t(locale, 'admin.section.settings'), body, msg);
+}
+
+/**
+ * The mail server: where it comes from, the form for the one saved here, and a test mail to the administrator. With LAGER_SMTP_URL
+ * the configuration file is in charge, and the page only says so and offers the test.
+ */
+function mailSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
+  const csrf = csrfToken(core, admin);
+  const source = core.mailSource;
+  const saved = core.mailSettings.get();
+  const status = source === 'env'
+    ? notice('success', t(locale, 'admin.mail.env'))
+    : saved
+      ? notice('success', t(locale, 'admin.mail.status.on', { host: saved.host }))
+      : `<p class="hint">${esc(t(locale, 'admin.mail.status.off'))}</p>`;
+  const unreadable = source === 'admin' && saved?.passwordUnreadable ? notice('warning', t(locale, 'admin.mail.passwordUnreadable')) : '';
+  const test = source === 'none' ? '' : `<div class="subsection"><h3>${esc(t(locale, 'admin.mail.test'))}</h3><p class="hint">${esc(t(locale, 'admin.mail.test.hint', { email: admin.email }))}</p>
+<div class="btn-row">${form('/admin/mail/test', csrf, '', `${icon('check')}${esc(t(locale, 'admin.mail.test'))}`, 'secondary')}
+${source === 'admin' ? form('/admin/mail/delete', csrf, '', `${icon('trash')}${esc(t(locale, 'admin.mail.remove'))}`, 'danger') : ''}</div></div>`;
+  if (source === 'env') return shell(core, locale, admin, 'mail', t(locale, 'admin.section.mail'), `<p class="hint">${esc(t(locale, 'admin.mail.intro'))}</p>${status}${test}`, msg);
+  const from = defaultSender(core.config);
+  const fields = `<div>
+${settingRow('smtp-host', t(locale, 'admin.mail.host'), t(locale, 'admin.mail.host.hint'),
+    `<input id="smtp-host" name="host" required maxlength="253" autocomplete="off" spellcheck="false" placeholder="smtp.example.com" value="${esc(saved?.host ?? '')}">`)}
+${settingRow('smtp-security', t(locale, 'admin.mail.security'), t(locale, 'admin.mail.security.hint'),
+    `<select id="smtp-security" name="security">${optionList(options(locale, SECURITY_KEYS), saved?.security ?? 'tls')}</select>`)}
+${settingRow('smtp-port', t(locale, 'admin.mail.port'), t(locale, 'admin.mail.port.hint'),
+    `<input id="smtp-port" name="port" type="number" inputmode="numeric" min="1" max="65535" step="1" value="${saved ? saved.port : ''}">`)}
+${settingRow('smtp-user', t(locale, 'admin.mail.user'), t(locale, 'admin.mail.user.hint'),
+    `<input id="smtp-user" name="user" maxlength="254" autocomplete="off" spellcheck="false" value="${esc(saved?.user ?? '')}">`)}
+${settingRow('smtp-password', t(locale, 'admin.mail.password'), t(locale, 'admin.mail.password.hint'),
+    `<input id="smtp-password" name="password" type="password" maxlength="${MAX_SMTP_PASSWORD}" autocomplete="new-password" spellcheck="false">`,
+    saved?.passwordSaved && !saved.passwordUnreadable ? `<p class="hint">${esc(t(locale, 'admin.mail.passwordSaved'))}</p>` : '')}
+${settingRow('smtp-from', t(locale, 'admin.mail.from'), t(locale, 'admin.mail.from.hint', { from }),
+    `<input id="smtp-from" name="from" maxlength="200" autocomplete="off" spellcheck="false" placeholder="${esc(from)}" value="${esc(saved?.from ?? '')}">`)}
+</div>`;
+  const body = `<p class="hint">${esc(t(locale, 'admin.mail.intro'))}</p>${status}${unreadable}
+${form('/admin/mail', csrf, fields, esc(t(locale, 'common.save')), 'primary', 'stack settings-form')}${test}`;
+  return shell(core, locale, admin, 'mail', t(locale, 'admin.section.mail'), body, msg);
 }
 
 const aiBack = (locale: Locale): string => `<a class="back" href="/admin/ai">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.ai.all'))}</a>`;
@@ -410,6 +451,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     else send(res, 200, html);
   });
   router.get('/admin/settings', noStore, admin, (_req, res) => { send(res, 200, settingsSection(core, localeOf(res), adminOf(res))); });
+  router.get('/admin/mail', noStore, admin, (_req, res) => { send(res, 200, mailSection(core, localeOf(res), adminOf(res))); });
   router.get('/admin/ai', noStore, admin, (_req, res) => { send(res, 200, aiSection(core, localeOf(res), adminOf(res))); });
   for (const [kind, view] of [['providers', aiProviderPage], ['models', aiModelPage], ['groups', aiGroupPage]] as const) {
     router.get(`/admin/ai/${kind}/:id`, noStore, admin, (req, res) => {
@@ -613,6 +655,48 @@ export const adminExtension: PlatformExtension = (router, core) => {
       if (badge !== undefined) core.settings.setMadeWithBadge(Array.isArray(badge) ? badge.includes('1') : badge === '1');
       res.redirect('/admin/settings');
     } catch (e) { failWith(res, e, (m) => settingsSection(core, localeOf(res), user, m), { invalid_argument: 'admin.settings.invalid' }); }
+  }));
+
+  // --- mail ---
+
+  router.post('/admin/mail', ...action((req, res, user) => {
+    const locale = localeOf(res);
+    if (core.mailSource === 'env') {
+      send(res, 409, mailSection(core, locale, user, { error: t(locale, 'admin.mail.env') }));
+      return;
+    }
+    try {
+      const security = field(req, 'security') as SmtpSecurity;
+      if (!SMTP_SECURITY.includes(security)) throw new LagerError('invalid_argument', 'Encryption must be tls, starttls or none.');
+      const rawPort = field(req, 'port').trim();
+      const port = rawPort === '' ? { tls: 465, starttls: 587, none: 25 }[security] : /^\d+$/.test(rawPort) ? Number(rawPort) : NaN;
+      const password = field(req, 'password', MAX_SMTP_PASSWORD + 1);
+      // Registration must not open by itself at the next restart just because mail is on now.
+      core.settings.keepRegistration();
+      core.mailSettings.save({ host: field(req, 'host'), port, security, user: field(req, 'user'), password: password === '' ? undefined : password, from: field(req, 'from') });
+      send(res, 200, mailSection(core, locale, user, { ok: t(locale, 'admin.mail.saved') }));
+    } catch (e) { failWith(res, e, (m) => mailSection(core, locale, user, m), { invalid_argument: 'admin.mail.invalid' }); }
+  }));
+
+  router.post('/admin/mail/test', ...action(async (_req, res, user) => {
+    const locale = localeOf(res);
+    if (!core.mailer.enabled) {
+      send(res, 409, mailSection(core, locale, user, { error: t(locale, 'admin.mail.status.off') }));
+      return;
+    }
+    try {
+      await core.mailer.send({ to: user.email, subject: t(locale, 'admin.mail.testSubject'), text: `${t(locale, 'admin.mail.testText', { url: core.config.publicUrl.origin })}\n` });
+      send(res, 200, mailSection(core, locale, user, { ok: t(locale, 'admin.mail.testOk', { email: user.email }) }));
+    } catch (e) {
+      // The administrator sees what the mail server said, so a wrong password or port can be told apart from a server that is down.
+      const error = (e instanceof Error ? e.message : String(e)).slice(0, 500);
+      send(res, 200, mailSection(core, locale, user, { error: t(locale, 'admin.mail.testFailed', { error }) }));
+    }
+  }));
+
+  router.post('/admin/mail/delete', ...action((_req, res, user) => {
+    core.mailSettings.clear();
+    send(res, 200, mailSection(core, localeOf(res), user, { ok: t(localeOf(res), 'admin.mail.removed') }));
   }));
 
   // --- language model ---
