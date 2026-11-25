@@ -206,8 +206,8 @@ function invitesSection(core: Core, locale: Locale, admin: User, msg?: Msg): str
     i.email ? esc(i.email) : `<span class="muted">${esc(t(locale, 'common.any'))}</span>`, badge(roleLabel(locale, i.role)),
     `<span class="num">${dateText(locale, i.createdAt)}</span>`, `<span class="num">${dateText(locale, i.expiresAt)}</span>`,
     form(`/admin/invites/${encodeURIComponent(i.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), 'danger', '', true, confirmAttrs(locale, QUESTIONS.invite(locale)),
-      // An invitation without an address is told apart by its role and the day it expires.
-      namedAction(locale, t(locale, 'common.revoke'), `${i.email || t(locale, 'common.any')}, ${roleLabel(locale, i.role)}, ${formatDate(locale, i.expiresAt)}`)),
+      // An invitation without an address is told apart by its role and when it expires (in UTC, said so: the cell shows local time).
+      namedAction(locale, t(locale, 'common.revoke'), `${i.email || t(locale, 'common.any')}, ${roleLabel(locale, i.role)}, ${formatDate(locale, i.expiresAt, true)}`)),
   ]);
   const create = form('/admin/invites', csrf,
     `${field('invite-email', t(locale, 'admin.invites.email'), '<input id="invite-email" name="email" type="email" maxlength="254" autocomplete="off">')}

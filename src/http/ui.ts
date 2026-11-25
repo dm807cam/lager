@@ -78,12 +78,17 @@ export function notice(kind: 'success' | 'danger' | 'warning', text: string, ext
 }
 
 /** A copy button, hidden until the script can use the clipboard; without it the text next to it stays selectable. */
-export const copyButton = (locale: Locale, value: string, style: ButtonStyle = 'secondary', label = t(locale, 'common.copy'), small = true, extra = ''): string =>
-  `<button type="button" class="${btn(style, small)}" data-copy="${esc(value)}" data-copied="${esc(t(locale, 'common.copied'))}"${extra} hidden>${icon('copy')}<span data-label>${esc(label)}</span></button>`;
+/**
+ * `what` names what is copied, for a button that repeats on its page: out of sight after the label, so the name reads "Copy: Token
+ * feedback", and "Copied: Token feedback" once the script swaps the label (an aria-label would hide that swap from screen readers).
+ */
+export const copyButton = (locale: Locale, value: string, style: ButtonStyle = 'secondary', label = t(locale, 'common.copy'), small = true, what = ''): string =>
+  `<button type="button" class="${btn(style, small)}" data-copy="${esc(value)}" data-copied="${esc(t(locale, 'common.copied'))}" hidden>${icon('copy')}<span data-label>${esc(label)}</span>${
+    what ? `<span class="sr-only">${esc(t(locale, 'common.actionOn', { action: '', what }))}</span>` : ''}</button>`;
 
 /** A value to copy: selectable text with a copy button. */
 export const copyField = (locale: Locale, value: string, style: ButtonStyle = 'secondary', what = ''): string =>
-  `<div class="copyfield"><code>${esc(value)}</code>${copyButton(locale, value, style, undefined, true, what ? namedAction(locale, t(locale, 'common.copy'), what) : '')}</div>`;
+  `<div class="copyfield"><code>${esc(value)}</code>${copyButton(locale, value, style, undefined, true, what)}</div>`;
 
 /** A one-time secret (token, invitation or reset link): shown once, with what to do about it. */
 export const callout = (locale: Locale, title: string, secret: string, warning: string): string =>
