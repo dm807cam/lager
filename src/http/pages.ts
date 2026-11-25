@@ -242,7 +242,11 @@ export const consentInvalidPage = (locale: Locale): string =>
 // --- shared pieces of the signed-in pages ---
 
 /** Date and time as HTML text in the viewer's format. */
-export const dateText = (locale: Locale, iso: string): string => esc(formatDate(locale, iso));
+/**
+ * Date and time as HTML: a `<time>` that names UTC, which the platform script rewrites in the viewer's own time zone (pages on
+ * instance hosts and browsers without the script keep the UTC text, which says what it is).
+ */
+export const dateText = (locale: Locale, iso: string): string => `<time datetime="${esc(iso)}" data-local="datetime">${esc(formatDate(locale, iso, true))}</time>`;
 export const sizeText = (locale: Locale, bytes: number): string => esc(formatSize(locale, bytes));
 
 const VISIBILITY_KEYS: Record<string, MessageKey> = { private: 'visibility.private', users: 'visibility.users', public: 'visibility.public' };
