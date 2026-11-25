@@ -43,12 +43,16 @@
 
   var sessionPromise = null;
 
-  /** Resolves `{session, transient}`; `transient` marks an answer that says nothing about the viewer (network trouble, a server error). */
+  /**
+   * Resolves `{session, transient}`; `transient` marks an answer that says nothing lasting about the viewer: network trouble,
+   * a server error, or the copy the service worker kept (`X-Lager-From-Cache`), which is used now and asked for again later.
+   */
   function loadSession() {
     return fetch(SESSION_URL, { credentials: 'same-origin' }).then(function (res) {
       if (!res.ok) return { session: null, transient: res.status >= 500 || res.status === 429 };
+      var kept = !!(res.headers && typeof res.headers.get === 'function' && res.headers.get('X-Lager-From-Cache') === '1');
       return res.json().then(function (body) {
-        return { session: body && typeof body === 'object' && body.viewer && typeof body.viewer === 'object' ? body : null, transient: false };
+        return { session: body && typeof body === 'object' && body.viewer && typeof body.viewer === 'object' ? body : null, transient: kept };
       });
     }).catch(function () { return { session: null, transient: true }; });
   }
@@ -1432,6 +1436,48 @@
     });
   }
 
+  // ------------------------------------------------------------------ offline
+
+  var SW_URL = '/__lager/sw.js';
+  var OFFLINE_CACHE_PREFIX = 'lager-offline-';
+
+  /** On unless the active version declares `{"db": {"offline": false}}`; the server marks what may be kept by the same rule. */
+  function offlineAllowed(session) {
+    var decl = session && session.capabilities && session.capabilities.db;
+    return !(decl && typeof decl === 'object' && decl.offline === false);
+  }
+
+  /**
+   * Registers the service worker that lets the app open without a connection (ADR 0020), or, when the active version turned
+   * offline off, removes it together with what it kept. Only the top-level page of a secure origin does either: inside a frame
+   * on another website the instance only ever sees a guest, and nothing is kept for it.
+   */
+  function setupOffline(session) {
+    var container;
+    try { container = navigator.serviceWorker; } catch (_) { return; }
+    if (!session || !container || !window.isSecureContext || window.top !== window) return;
+    if (offlineAllowed(session)) {
+      Promise.resolve().then(function () { return container.register(SW_URL, { scope: '/', updateViaCache: 'none' }); })
+        .catch(function () { /* a browser that refuses (private mode, storage off) simply stays online-only */ });
+      return;
+    }
+    Promise.resolve().then(function () { return container.getRegistration('/'); }).then(function (reg) {
+      var worker = reg && (reg.active || reg.waiting || reg.installing);
+      if (worker && new URL(worker.scriptURL).pathname === SW_URL) return reg.unregister();
+    }).then(function () {
+      if (typeof caches === 'undefined') return;
+      return caches.keys().then(function (keys) {
+        return Promise.all(keys.filter(function (k) { return k.indexOf(OFFLINE_CACHE_PREFIX) === 0; }).map(function (k) { return caches.delete(k); }));
+      });
+    }).catch(function () { /* nothing to remove */ });
+  }
+
+  /** After the page has loaded, so registering never competes with the app's own first requests. */
+  function afterLoad(fn) {
+    if (document.readyState === 'complete') fn();
+    else window.addEventListener('load', function () { fn(); }, { once: true });
+  }
+
   // ------------------------------------------------------------------ use
 
   var memo = new Map();
@@ -1468,7 +1514,13 @@
 
   // Pages whose version declares `page` follow saves of any view, so the session is read once the page has settled.
   // It is shared with the first `lager.use()`; pages that do not declare it open no event stream.
-  setTimeout(function () { getSession().then(watchReloads).catch(function () { /* no session, no watching */ }); }, 0);
+  // The same session decides about the service worker, so offline support costs no request of its own.
+  setTimeout(function () {
+    getSession().then(function (session) {
+      watchReloads(session);
+      afterLoad(function () { setupOffline(session); });
+    }).catch(function () { /* no session, no watching */ });
+  }, 0);
 
   // ------------------------------------------------------------------ complete
 

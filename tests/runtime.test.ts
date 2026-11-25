@@ -35,7 +35,7 @@ class FakeEventSource {
 
 let calls: Call[];
 let docs: Map<string, StoredDoc>;
-let session: { status: number; body: unknown } | 'network-error';
+let session: { status: number; body: unknown; headers?: Record<string, string> } | 'network-error';
 let users: Record<string, { id: string; name: string; email: string | null; isMe: boolean }>;
 let clock: number;
 let roomReply: (body: any) => Response;
@@ -80,6 +80,7 @@ async function fakeFetch(url: string, init?: any): Promise<Response> {
   calls.push([url, init]);
   if (url === '/__lager/session') {
     if (session === 'network-error') throw new TypeError('network down');
+    if (session.headers) return new Response(JSON.stringify(session.body), { status: session.status, headers: { 'Content-Type': 'application/json', ...session.headers } });
     return json(session.body, session.status);
   }
   if (url.startsWith('/__lager/users?q=')) {
@@ -1810,5 +1811,136 @@ describe('embed', () => {
     }
     embedReply = () => { throw new TypeError('offline'); };
     await expect(embed.get()).rejects.toEqual({ code: 'unavailable', message: 'offline' });
+  });
+});
+
+describe('offline: the service worker', () => {
+  let registered: [string, any][];
+  let unregistered: number;
+  let registration: any;
+  let deletedCaches: string[];
+  let cacheNames: string[];
+  let registerReply: () => Promise<unknown>;
+  const restore: (() => void)[] = [];
+
+  /** Replaces a property of `target` for one test. */
+  function stub(target: any, key: string, value: unknown): void {
+    const own = Object.getOwnPropertyDescriptor(target, key);
+    Object.defineProperty(target, key, { configurable: true, get: () => value });
+    restore.push(() => { if (own) Object.defineProperty(target, key, own); else delete target[key]; });
+  }
+
+  beforeEach(() => {
+    registered = []; unregistered = 0; deletedCaches = [];
+    cacheNames = ['lager-offline-1', 'lager-offline-0', 'app-own'];
+    registerReply = () => Promise.resolve({});
+    registration = { active: { scriptURL: 'https://workout.apps.example.org/__lager/sw.js' }, unregister: async () => { unregistered++; return true; } };
+    stub(navigator, 'serviceWorker', {
+      register: (url: string, opts: any) => { registered.push([url, opts]); return registerReply(); },
+      getRegistration: async (scope: string) => (scope === '/' ? registration : undefined),
+    });
+    stub(window, 'isSecureContext', true);
+    g.caches = { keys: async () => cacheNames, delete: async (k: string) => { deletedCaches.push(k); return true; } };
+  });
+  afterEach(() => { while (restore.length) restore.pop()!(); delete g.caches; });
+
+  const settle = async (): Promise<void> => { for (let i = 0; i < 6; i++) await flush(); };
+
+  it('is registered for the whole host once the page has loaded, with the session the runtime reads anyway', async () => {
+    boot();
+    await settle();
+    expect(registered).toEqual([['/__lager/sw.js', { scope: '/', updateViaCache: 'none' }]]);
+    expect(calls.filter(([u]) => u === '/__lager/session')).toHaveLength(1);
+    expect(unregistered).toBe(0);
+    expect(deletedCaches).toEqual([]);
+  });
+
+  it('waits for the load event of a page that is still loading', async () => {
+    stub(document, 'readyState', 'loading');
+    boot();
+    await settle();
+    expect(registered).toEqual([]);
+    window.dispatchEvent(new Event('load'));
+    await flush();
+    expect(registered).toHaveLength(1);
+  });
+
+  it('an app that turns offline off removes the worker and what it kept, and nothing else', async () => {
+    session = { status: 200, body: { ...(sessionOf(OWNER).body as object), capabilities: { db: { offline: false } } } };
+    boot();
+    await settle();
+    expect(registered).toEqual([]);
+    expect(unregistered).toBe(1);
+    expect(deletedCaches.sort()).toEqual(['lager-offline-0', 'lager-offline-1']);
+  });
+
+  it('leaves a worker alone that is not Lager\'s', async () => {
+    session = { status: 200, body: { ...(sessionOf(OWNER).body as object), capabilities: { db: { offline: false } } } };
+    registration.active.scriptURL = 'https://workout.apps.example.org/other-sw.js';
+    boot();
+    await settle();
+    expect(unregistered).toBe(0);
+  });
+
+  it('is not registered inside a frame, without a secure context, without a session, or without support', async () => {
+    const cases: (() => void)[] = [
+      () => stub(window, 'top', {}),
+      () => stub(window, 'isSecureContext', false),
+      () => { session = { status: 401, body: { error: { code: 'unauthenticated', message: 'x' } } }; },
+      () => { session = 'network-error'; },
+    ];
+    const base = restore.length;
+    for (const prepare of cases) {
+      registered = [];
+      prepare();
+      boot();
+      await settle();
+      expect(registered).toEqual([]);
+      expect(unregistered).toBe(0);
+      while (restore.length > base) restore.pop()!();
+      session = sessionOf(OWNER);
+      await flush();
+    }
+    stub(navigator, 'serviceWorker', undefined);
+    boot();
+    await settle();
+    expect(registered).toEqual([]);
+  });
+
+  it('a session the worker answered from its copy is used, and asked for again once the server answers', async () => {
+    session = { ...sessionOf({ ...OWNER, email: null }), headers: { 'X-Lager-From-Cache': '1' } };
+    const lager = boot();
+    const sessionCalls = (): number => calls.filter(([u]) => u === '/__lager/session').length;
+    const offlineUser = await lager.use('user');
+    expect(await offlineUser.id()).toBe('u1');
+    expect(await offlineUser.email()).toBeNull();
+    expect(await lager.use('db')).not.toBeNull();
+    const whileOffline = sessionCalls();
+    expect(whileOffline).toBeGreaterThanOrEqual(2);
+
+    // Back online: the next use reads the live session and keeps it.
+    session = sessionOf(OWNER);
+    const onlineUser = await lager.use('user');
+    expect(onlineUser).not.toBe(offlineUser);
+    expect(await onlineUser.email()).toBe('ada@example.org');
+    const settled = sessionCalls();
+    expect(settled).toBe(whileOffline + 1);
+    expect(await lager.use('user')).toBe(onlineUser);
+    expect(sessionCalls()).toBe(settled);
+  });
+
+  it('a browser that refuses to register leaves the app working', async () => {
+    registerReply = () => Promise.reject(new DOMException('no', 'SecurityError'));
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const lager = boot();
+      await settle();
+      expect(registered).toHaveLength(1);
+      expect(await lager.use('db')).not.toBeNull();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
   });
 });
