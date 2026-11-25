@@ -690,7 +690,9 @@ describe('no external resources', () => {
       own.add(new URL(`http://${i.slug}.apps.localhost:8080`).origin);
       for (const host of core.domains.list(i.id)) own.add(new URL(`http://${host}:8080`).origin);
     }
-    const foreign = (text: string): string[] => [...text.matchAll(/https?:\/\/[^\s"'<>)]+/g)].map((m) => m[0]).filter((u) => !own.has(new URL(u).origin));
+    // Any address under the apps domain is this server's (a new instance's name shows the address it will get).
+    const ours = (u: string): boolean => own.has(new URL(u).origin) || new URL(u).host.endsWith('.apps.localhost:8080');
+    const foreign = (text: string): string[] => [...text.matchAll(/https?:\/\/[^\s"'<>)]+/g)].map((m) => m[0]).filter((u) => !ours(u));
     // Form values are data the page sends back (the consent form carries the client's redirect address), not something it loads.
     for (const { name, html } of await pages(s)) expect(foreign(html.replace(/ value="[^"]*"/g, '')), name).toEqual([]);
     for (const file of fs.readdirSync(STATIC)) expect(foreign(fs.readFileSync(path.join(STATIC, file), 'utf8')), file).toEqual([]);

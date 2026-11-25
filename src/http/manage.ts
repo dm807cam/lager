@@ -16,7 +16,7 @@ import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { declaredModel, downloadableVersion, setAppModel } from '../mcp/tools.js';
 import {
   confirmAttrs, confirmed, questionPage, dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, hiddenField, levelLabel, levelOptions, missingPage, optionList, type Option, page, type Question,
-  sizeText, staleFormPage, visibilityLabel, visibilityOptions, withNotice,
+  sizeText, slugField, staleFormPage, visibilityLabel, visibilityOptions, withNotice,
 } from './pages.js';
 import { appTile, avatar, badge, btn, named, card, copyButton, copyField, dataTable, emptyState, icon, linkButton, meter, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash, type Undo } from './session.js';
@@ -364,7 +364,7 @@ function appPage(core: Core, locale: Locale, user: User, app: App, flash: Flash)
 <section class="card" id="versions"><h2>${esc(t(locale, 'app.versions'))}</h2>${versionsList(core, locale, user, app, null, csrf)}</section>
 <section class="card" id="instances"><h2>${esc(t(locale, 'app.instances'))}</h2>${rows.length ? dataTable(locale, [t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'app.saved'), ''], rows) : emptyState(t(locale, 'app.noInstances'))}
 <div class="subsection"><h3>${esc(t(locale, 'app.newInstance'))}</h3>${form(`${base}/instances`, csrf,
-    `${field('new-slug', t(locale, 'instance.slugLabel'), `<input id="new-slug" name="slug" required maxlength="${MAX_SLUG_LENGTH}" autocomplete="off" spellcheck="false">`)}${ownerField}`,
+    `${slugField(locale, 'new-slug', t(locale, 'common.name'), core.apps.suggestSlug(app, ownerField ? null : user.id) ?? '', instanceUrl(core.config, '__slug__'))}${ownerField}`,
     `${icon('plus')}${esc(t(locale, 'app.newInstance'))}`, 'primary', 'form-row')}</div></section>
 ${collaborators}${del}</div><aside class="side-col" aria-label="${esc(t(locale, 'instance.details'))}">${details}</aside></div>`, flash, `/apps/${encodeURIComponent(app.slug)}`, 'publish');
 }

@@ -264,7 +264,7 @@ export const fr: Record<MessageKey, string> = {
   'dash.tokens.nameInvalid': 'Le nom du jeton doit comporter de 1 à {max} caractères.',
   'dash.tokens.unavailable': "Les jetons API ne sont pas disponibles pour votre rôle.",
 
-  'instance.slugLabel': "Nom de l’instance (lettres minuscules, chiffres, tirets)",
+  'instance.slugHint': "Lettres minuscules, chiffres et tirets. Cela devient l’adresse",
   'instance.pageTitle': 'Instance {slug}',
   'instance.disabledNotice': 'Cette instance a été désactivée par un administrateur. Vous pouvez seulement la supprimer.',
   'instance.version': 'Version',

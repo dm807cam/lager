@@ -262,7 +262,7 @@ export const en = {
   'dash.tokens.nameInvalid': 'The token name must be 1 to {max} characters long.',
   'dash.tokens.unavailable': 'API tokens are not available for your role.',
 
-  'instance.slugLabel': 'Instance name (lowercase letters, digits, hyphens)',
+  'instance.slugHint': "Lowercase letters, digits and hyphens. It becomes the address",
   'instance.pageTitle': 'Instance {slug}',
   'instance.disabledNotice': 'An administrator has disabled this instance. You can only delete it.',
   'instance.version': 'Version',

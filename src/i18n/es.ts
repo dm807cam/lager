@@ -264,7 +264,7 @@ export const es: Record<MessageKey, string> = {
   'dash.tokens.nameInvalid': 'El nombre del token debe tener entre 1 y {max} caracteres.',
   'dash.tokens.unavailable': 'Los tokens de API no están disponibles para tu rol.',
 
-  'instance.slugLabel': 'Nombre de la instancia (letras minúsculas, dígitos, guiones)',
+  'instance.slugHint': "Letras minúsculas, dígitos y guiones. Será la dirección",
   'instance.pageTitle': 'Instancia {slug}',
   'instance.disabledNotice': 'Un administrador ha desactivado esta instancia. Solo puedes eliminarla.',
   'instance.version': 'Versión',
