@@ -4,7 +4,7 @@ The limits Lager enforces and what it deliberately does not do.
 
 ## Enforced limits
 
-- **Storage per instance:** The data of an instance is limited to `LAGER_INSTANCE_QUOTA_MB` (default 50 MiB). This size includes the documents, the uploaded files (`assets`) and the pages an instance saved itself (`page`). Documents that came from outside have a quota of their own (see "Data from outside" below). When the limit is reached, Lager refuses further writes, uploads and saves with the error `quota_exceeded` (HTTP 507 for the database); reading and deleting keep working. Versions created by deploys, snapshots and the trash are not counted; see [Storage outside the quota](#storage-outside-the-quota).
+- **Storage per instance:** The data of an instance is limited to `LAGER_INSTANCE_QUOTA_MB` (default 50 MiB), unless an administrator set other storage for its app or for a group of its owner (see [Storage per group and per app](#storage-per-group-and-per-app)). This size includes the documents, the uploaded files (`assets`) and the pages an instance saved itself (`page`). Documents that came from outside have a quota of their own (see "Data from outside" below). When the limit is reached, Lager refuses further writes, uploads and saves with the error `quota_exceeded` (HTTP 507 for the database); reading and deleting keep working. Versions created by deploys, snapshots and the trash are not counted; see [Storage outside the quota](#storage-outside-the-quota).
 - **Instances per user:** Every account that is not an administrator may own at most as many instances as an administrator sets in the administration area under Settings (1 to 1000, default 20). This applies when creating further instances, including self-service.
 - **New instances per day:** Accounts that are not administrators may create at most 10 instances within 24 hours; deleted instances count, and so does the instance created by the first deploy of an app. This stops anyone from filling the storage by creating, filling and deleting in a loop.
 - **Instances for other accounts:** Whoever deploys an app may create instances of it that belong to someone else. Each one counts against the creator's 10 per day, never against the receiver's. An account that is not an administrator may create at most 5 instances for other accounts within 24 hours, and none for an account that already owns half or more of the instances it may own (10 with the default of 20): the rest of that limit is for the account itself. Lager refuses with `conflict` (HTTP 409) and says to ask that person or an administrator. Administrators are not limited in what they hand out, up to the receiver's limit.
@@ -25,6 +25,15 @@ The limits Lager enforces and what it deliberately does not do.
 - **Title, description and note:** The title of an app has at most 100 characters, its description 200 and the note of a version 500. Each is one line of plain text: line breaks and runs of spaces become a single space, and control characters are refused.
 
 - **Language model calls:** A call to `lager.complete` is given up after 90 seconds by default (`LAGER_AI_TIMEOUT_SECONDS`, 5 to 600). Keep the value below the response timeout of the reverse proxy.
+
+## Storage per group and per app
+
+In the administration area, an administrator can set the storage per instance for:
+
+- **An app** (Apps, the field next to each app): applies to every instance of that app, whoever owns it.
+- **A group** (Groups, the group's page): applies to every instance owned by a member of the group.
+
+The value is in MiB, from 1 to 1048576 (1 TiB); an empty field follows the next rule again. Lager uses the first of these that is set: the app's storage, then the largest storage of the groups the instance's owner belongs to (being in one more group never takes space away), then `LAGER_INSTANCE_QUOTA_MB`. A setting can be smaller than the default. Lowering it below what an instance already uses deletes nothing: the instance keeps its data, and further writes, uploads and saves are refused until enough has been deleted. Snapshots follow the storage that applies too (3 times it). The instance page shows the storage that applies to the instance, and the apps overview shows it for every instance. When an instance changes hands, the new owner's groups count.
 
 ## Storage outside the quota
 

@@ -261,6 +261,13 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX user_recovery_codes_user ON user_recovery_codes(user_id);
   `,
+  `
+  -- Storage per instance that an administrator set for the instances of one app, or for the instances owned by the members of
+  -- one group, in bytes; NULL follows LAGER_INSTANCE_QUOTA_MB (see \`Quotas\`).
+  ALTER TABLE apps ADD COLUMN quota_bytes INTEGER;
+  ALTER TABLE groups ADD COLUMN quota_bytes INTEGER;
+  CREATE INDEX group_members_user ON group_members(user_id);
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

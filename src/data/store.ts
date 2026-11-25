@@ -7,6 +7,7 @@ import { HandleCache } from './handles.js';
 import type { Hub } from './hub.js';
 import { assertCollectionPath, assertDocData, parseDocPath } from './paths.js';
 import { queryLimit, runQuery, type QuerySpec } from './query.js';
+import { quotaFor, type Quota } from './quota.js';
 
 export interface Doc {
   path: string; id: string; data: Record<string, unknown>; version: number;
@@ -156,11 +157,11 @@ export class InstanceData {
   private inboxes = new WeakSet<DatabaseSync>();
 
   /**
-   * `quotaBytes` caps the size of one instance's data (0 = unlimited). `ingestQuotaBytes` caps what one instance holds of
-   * documents that came from outside, apart from that; with 0 no instance takes any.
+   * `quota` caps the size of one instance's data (0 = unlimited), one size for all or per instance. `ingestQuotaBytes` caps
+   * what one instance holds of documents that came from outside, apart from that; with 0 no instance takes any.
    */
   constructor(
-    private dataDir: string, private hub: Hub, private snapshotKeep: number, private quotaBytes = 0, maxOpen?: number,
+    private dataDir: string, private hub: Hub, private snapshotKeep: number, private quota: Quota = 0, maxOpen?: number,
     private ingestQuotaBytes = 0,
   ) {
     this.dbs = new HandleCache(maxOpen);
@@ -238,7 +239,8 @@ export class InstanceData {
 
   /** Throws `quota_exceeded` when the instance's storage is already full. */
   assertQuota(instanceId: string): void {
-    if (this.quotaBytes > 0 && this.usage(instanceId) + this.extraUsage(instanceId) >= this.quotaBytes) {
+    const quota = quotaFor(this.quota, instanceId);
+    if (quota > 0 && this.usage(instanceId) + this.extraUsage(instanceId) >= quota) {
       throw new LagerError('quota_exceeded', 'This instance\'s storage is full.');
     }
   }
@@ -596,7 +598,8 @@ export class InstanceData {
       if (received) this.assertInboxRoom(db, before);
       // The author is the same for every document: one entry is enough, and only if something landed outside the private areas.
       if (sharedPath !== undefined) this.recordAuthor(db, sharedPath, by);
-      if (this.quotaBytes > 0 && this.usage(instanceId) + this.extraUsage(instanceId) > this.quotaBytes) {
+      const quota = quotaFor(this.quota, instanceId);
+      if (quota > 0 && this.usage(instanceId) + this.extraUsage(instanceId) > quota) {
         throw new LagerError('quota_exceeded', 'This instance\'s storage is full.');
       }
     });
@@ -654,7 +657,8 @@ export class InstanceData {
    */
   private prune(instanceId: string): void {
     const keep = Math.max(1, Math.floor(this.snapshotKeep));
-    const budget = this.quotaBytes > 0 ? this.quotaBytes * SNAPSHOT_QUOTA_FACTOR : Infinity;
+    const quota = quotaFor(this.quota, instanceId);
+    const budget = quota > 0 ? quota * SNAPSHOT_QUOTA_FACTOR : Infinity;
     const [newest, ...rest] = this.listSnapshots(instanceId);
     if (!newest) return;
     const old = rest.find((s) => Date.parse(s.createdAt) <= Date.now() - SNAPSHOT_OLD_MS);

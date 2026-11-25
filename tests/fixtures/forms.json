@@ -597,6 +597,14 @@
       ]
     },
     {
+      "action": "/admin/groups/{group:Team}/quota",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "quota"
+      ]
+    },
+    {
       "action": "/admin/groups/{group:Team}/rename",
       "method": "post",
       "fields": [
@@ -634,6 +642,22 @@
     }
   ],
   "admin apps": [
+    {
+      "action": "/admin/apps/{app:notes}/quota",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "quota"
+      ]
+    },
+    {
+      "action": "/admin/apps/{app:tasks}/quota",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "quota"
+      ]
+    },
     {
       "action": "/admin/instances/notes/disabled",
       "method": "post",

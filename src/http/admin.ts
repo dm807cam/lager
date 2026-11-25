@@ -3,9 +3,10 @@ import type { Request, RequestHandler, Response } from 'express';
 import { instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
-import { t, type Locale, type MessageKey } from '../i18n/index.js';
+import { formatSize, t, type Locale, type MessageKey } from '../i18n/index.js';
 import { localeOf, requestLocale } from './locale.js';
 import { MAX_NAME } from '../platform/groups.js';
+import { MAX_QUOTA_MB } from '../platform/quotas.js';
 import type { CustomDomainsMode, RegistrationMode } from '../platform/settings.js';
 import { AiError, DEFAULT_GROUP, DEFAULT_HOURLY_LIMIT, HOURLY_LIMIT_MAX, MAX_MODEL_DESCRIPTION, MAX_TOKENS_LIMIT, PRESETS, PROVIDER_IDS, TEST_PROMPT, type AiGroup, type AiGroupInput, type AiModel, type AiModelInput, type AiProvider, type AiProviderInput, type ProviderId } from '../platform/ai.js';
 import type { OwnedPlan } from '../platform/account-removal.js';
@@ -14,7 +15,7 @@ import type { Role, User } from '../platform/users.js';
 import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { loginLimiter } from './platform.js';
 import { noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, sizeText, visibilityLabel, type Option } from './pages.js';
-import { domainsBody } from './manage.js';
+import { domainsBody, storageUsed } from './manage.js';
 import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid } from './session.js';
 import { RateLimiter } from './ratelimit.js';
@@ -181,10 +182,27 @@ function groupPage(core: Core, locale: Locale, admin: User, groupId: string, msg
 ${members.length ? dataTable(locale, [t(locale, 'common.name'), ''], rows) : emptyState(t(locale, 'admin.groups.noMembers'), 'users')}
 <div class="gap-top">${form(`${base}/members`, csrf, field('member-email', t(locale, 'admin.groups.memberEmail'), '<input id="member-email" name="email" type="email" required maxlength="254" autocomplete="off">'),
     `${icon('plus')}${esc(t(locale, 'common.add'))}`, 'secondary', 'form-row')}</div></div>
+<div class="subsection"><h3>${esc(t(locale, 'admin.quota.title'))}</h3>
+${form(`${base}/quota`, csrf, field('group-quota', t(locale, 'admin.quota.label'), quotaInput(core, 'group-quota', core.quotas.ofGroup(group.id))),
+    esc(t(locale, 'common.save')), 'secondary', 'form-row')}
+<p class="hint gap-top">${esc(t(locale, 'admin.quota.groupHint', { size: defaultQuotaText(core, locale) }))}</p></div>
 <div class="subsection">${form(`${base}/delete`, csrf, '', `${icon('trash')}${esc(t(locale, 'admin.groups.delete'))}`, 'danger')}</div>`;
   return shell(core, locale, admin, 'groups', t(locale, 'admin.groups.pageTitle', { name: group.name }), body, msg, base,
     `<a class="back" href="/admin/groups">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.groups.all'))}</a>`);
 }
+
+const MIB = 1024 * 1024;
+/** The server's storage per instance (LAGER_INSTANCE_QUOTA_MB) as text. */
+const defaultQuotaText = (core: Core, locale: Locale): string => formatSize(locale, core.quotas.defaultBytes);
+/** A field for the storage of a group or an app in MiB; empty follows the next rule, with the default as placeholder. */
+const quotaInput = (core: Core, id: string, bytes: number | null, label = ''): string =>
+  `<input id="${esc(id)}" name="quota" type="number" inputmode="numeric" min="1" max="${MAX_QUOTA_MB}" step="1" autocomplete="off"`
+  + ` value="${bytes === null ? '' : Math.floor(bytes / MIB)}"${core.quotas.defaultBytes > 0 ? ` placeholder="${Math.floor(core.quotas.defaultBytes / MIB)}"` : ''}${label ? ` aria-label="${esc(label)}"` : ''}>`;
+/** What an instance uses against its storage, and how much that is. */
+const storageText = (core: Core, locale: Locale, instanceId: string, used: number): string => {
+  const quota = core.quotas.of(instanceId);
+  return quota > 0 ? esc(t(locale, 'instance.storage.used', { used: formatSize(locale, used), quota: formatSize(locale, quota) })) : sizeText(locale, used);
+};
 
 /** One setting: label and help text on the left, the control on the right; `control` is trusted markup. */
 const settingRow = (id: string, label: string, hint: string, control: string, extra = ''): string =>
@@ -340,15 +358,20 @@ function appsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string
   const html = core.apps.listAllApps().map((app) => {
     const rows = core.apps.listInstances(app.id).map((i) => [
       `<a class="mono" href="${esc(instanceUrl(core.config, i.slug))}">${esc(i.slug)}</a>`, esc(emailOf.get(i.ownerId) ?? '–'), `<span class="num">v${i.activeVersion}</span>`,
-      badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) }), `<span class="num">${sizeText(locale, core.data.usage(i.id))}</span>`,
+      badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) }), `<span class="num">${storageText(core, locale, i.id, storageUsed(core, i))}</span>`,
       i.disabled ? badge(t(locale, 'common.disabled'), { tone: 'danger', dot: true }) : badge(t(locale, 'common.active'), { tone: 'success', dot: true }),
       `<div class="btn-row">${form(`/admin/instances/${encodeURIComponent(i.slug)}/disabled`, csrf, hiddenField('disabled', i.disabled ? '0' : '1'), esc(t(locale, i.disabled ? 'common.activate' : 'common.deactivate')), 'quiet', '', true)}
 ${linkButton(`/admin/instances/${encodeURIComponent(i.slug)}/domains`, `${icon('globe')}${esc(t(locale, 'admin.apps.domains'))}`, 'quiet', true)}</div>`,
     ]);
+    const quota = `<form method="post" action="/admin/apps/${encodeURIComponent(app.id)}/quota" class="inline-form quota-form gap-bottom">${hiddenField('csrf', csrf)}`
+      + `<label for="quota-${esc(app.id)}">${esc(t(locale, 'admin.quota.label'))}</label>${quotaInput(core, `quota-${app.id}`, core.quotas.ofApp(app.id), t(locale, 'admin.apps.quotaOf', { app: app.title }))}`
+      + `<button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`;
     return `<section class="app-group subsection"><div class="app-group-head">${appTile(app, app.title, 'sm')}<div><h3>${esc(app.title)}</h3><span class="slug">${esc(app.slug)} · ${esc(emailOf.get(app.ownerId) ?? '–')}</span></div></div>
+${quota}
 ${rows.length ? dataTable(locale, [t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'common.version'), t(locale, 'common.visibility'), t(locale, 'admin.apps.data'), t(locale, 'common.status'), ''], rows) : emptyState(t(locale, 'app.noInstances'))}</section>`;
   }).join('');
-  return shell(core, locale, admin, 'apps', t(locale, 'admin.section.apps'), html || emptyState(t(locale, 'admin.apps.none')), msg);
+  const hint = `<p class="hint gap-bottom">${esc(t(locale, 'admin.apps.quotaHint', { size: defaultQuotaText(core, locale) }))}</p>`;
+  return shell(core, locale, admin, 'apps', t(locale, 'admin.section.apps'), html ? `${hint}${html}` : emptyState(t(locale, 'admin.apps.none')), msg);
 }
 
 const DOMAIN_NOTICES: Record<string, MessageKey> = {
@@ -655,6 +678,29 @@ export const adminExtension: PlatformExtension = (router, core) => {
       core.groups.removeMember(id, param(req, 'userId'));
       res.redirect(`/admin/groups/${encodeURIComponent(id)}`);
     } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), groupMessages); }
+  }));
+
+  /** The storage field in MiB: empty follows the next rule (null); anything but a whole number is refused by `Quotas`. */
+  const quotaField = (req: Request): number | null => {
+    const raw = field(req, 'quota', 20).trim();
+    if (raw === '') return null;
+    return /^\d+$/.test(raw) ? Number(raw) * MIB : NaN;
+  };
+  const quotaMessages = { invalid_argument: 'admin.quota.invalid' } as const;
+
+  router.post('/admin/groups/:id/quota', ...action((req, res, user) => {
+    const id = param(req, 'id');
+    try {
+      core.quotas.setGroup(id, quotaField(req));
+      res.redirect(`/admin/groups/${encodeURIComponent(id)}`);
+    } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), { ...groupMessages, ...quotaMessages }); }
+  }));
+
+  router.post('/admin/apps/:id/quota', ...action((req, res, user) => {
+    try {
+      core.quotas.setApp(param(req, 'id'), quotaField(req));
+      res.redirect('/admin/apps');
+    } catch (e) { failWith(res, e, (m) => appsSection(core, localeOf(res), user, m), { ...quotaMessages, not_found: 'error.notFound.text' }); }
   }));
 
   router.post('/admin/groups/:id/delete', ...action((req, res, user) => {

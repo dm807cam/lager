@@ -228,7 +228,7 @@ const person = (u: User | null): string => (u
   ? personCell(u, u.name || u.email) : '–');
 
 /** Everything the instance uses against its quota: data, uploaded files and the versions it saved itself. */
-const storageUsed = (core: Core, inst: Instance): number => core.data.usage(inst.id) + core.assets.usage(inst.id).bytes + core.apps.savedBytes(inst.id);
+export const storageUsed = (core: Core, inst: Instance): number => core.data.usage(inst.id) + core.assets.usage(inst.id).bytes + core.apps.savedBytes(inst.id);
 
 function instancePage(core: Core, locale: Locale, user: User, inst: Instance, flash: Flash): string {
   const csrf = csrfToken(core, user);
@@ -250,7 +250,7 @@ ${notice('warning', t(locale, 'instance.disabledNotice'))}<div class="main-col">
     mayRestore ? form(`${base}/restore`, csrf, hiddenField('snapshot', s.id), esc(t(locale, 'instance.snapshots.restore')), 'secondary', '', true) : '']);
   const level = inst.visibility === 'users'
     ? field('users-level', t(locale, 'instance.usersLevel'), `<select id="users-level" name="users_level">${optionList(levelOptions(locale, USERS_LEVELS), inst.usersLevel)}</select>`) : '';
-  const quota = core.config.instanceQuotaBytes;
+  const quota = core.quotas.of(inst.id);
   const used = storageUsed(core, inst);
   const storage = quota > 0
     ? meter(used, quota, t(locale, 'instance.storage.used', { used: formatSize(locale, used), quota: formatSize(locale, quota) }))

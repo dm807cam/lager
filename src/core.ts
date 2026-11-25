@@ -17,6 +17,7 @@ import { AppIcons } from './platform/icons.js';
 import { Ingest } from './platform/ingest.js';
 import { Embed } from './platform/embed.js';
 import { Groups } from './platform/groups.js';
+import { Quotas } from './platform/quotas.js';
 import { createMailer, type Mailer } from './platform/mail.js';
 import { Settings } from './platform/settings.js';
 import { ApiTokens } from './platform/tokens.js';
@@ -55,6 +56,8 @@ export interface Core {
   icons: AppIcons;
   /** New versions per app (`app:<id>`) and new apps per person (`user:<id>`) within an hour, REST and MCP together (see `Apps.deploy`). */
   deployLimiter: RateLimiter;
+  /** The storage per instance: the server's default, or what an administrator set for its app or a group of its owner. */
+  quotas: Quotas;
   /** Data that arrives from outside: the endpoints apps declare, their switches and tokens, and the limits on what comes in. */
   ingest: Ingest;
   /** The websites outside Lager that the people who manage an instance allow to show it in a frame. */
@@ -120,11 +123,13 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   const ai = new AiModels(db, config.secret, opts?.fetch, config.aiTimeoutSeconds === undefined ? undefined : config.aiTimeoutSeconds * 1000);
   const hub = new Hub();
   const ingestQuotaBytes = config.ingestQuotaBytes ?? DEFAULT_INGEST_QUOTA_BYTES;
-  const data = new InstanceData(config.dataDir, hub, config.snapshotKeep, config.instanceQuotaBytes, undefined, ingestQuotaBytes);
+  const quotas = new Quotas(db, config.instanceQuotaBytes);
+  const quotaOf = (id: string): number => quotas.of(id);
+  const data = new InstanceData(config.dataDir, hub, config.snapshotKeep, quotaOf, undefined, ingestQuotaBytes);
   // Pages an instance saved itself count like its documents and uploads against the one instance quota.
-  const assets = new InstanceAssets(config.dataDir, config.instanceQuotaBytes, (id) => data.usage(id) + apps.savedBytes(id));
+  const assets = new InstanceAssets(config.dataDir, quotaOf, (id) => data.usage(id) + apps.savedBytes(id));
   data.setExtraUsage((id) => assets.usage(id).bytes + apps.savedBytes(id));
-  apps.setQuota(config.instanceQuotaBytes, (id) => data.usage(id) + assets.usage(id).bytes);
+  apps.setQuota(quotaOf, (id) => data.usage(id) + assets.usage(id).bytes);
   const groups = new Groups(db, users);
   const access = new Access(db, users, groups, apps);
   const domains = new Domains(db, config, settings);
@@ -160,7 +165,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   removal.onRemoved((userId) => { privatePurge.start(userId, apps.listAllInstances().map((instance) => instance.id)); });
   return {
     config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, twoFactor: new TwoFactor(db, config.secret), oauth, settings, mailer, accounts, groups, domains, access,
-    icons, ai, removal, privatePurge, deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000), ingest,
+    icons, ai, removal, privatePurge, deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000), ingest, quotas,
     embed: new Embed(db, config, domains),
     close() {
       // First: a pass that is under way must not open a database again after they were closed.

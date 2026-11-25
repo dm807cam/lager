@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { MAX_SLUG_LENGTH } from '../config.js';
 import { MAX_NAME as MAX_GROUP_NAME } from '../platform/groups.js';
 import { MAX_NAME as MAX_TOKEN_NAME } from '../platform/tokens.js';
+import { MAX_QUOTA_MB } from '../platform/quotas.js';
 import { formatDate, formatSize, LOCALE_NAMES, LOCALES, t, type Locale, type MessageKey } from '../i18n/index.js';
 import { staticUrls } from './static.js';
 import { avatar, btn, icon, notice, SPRITE, type ButtonStyle, type IconName, type NavItem } from './ui.js';
@@ -200,6 +201,7 @@ const LIMITS: Partial<Record<MessageKey, { max: number }>> = {
   'notice.slugInvalid': { max: MAX_SLUG_LENGTH },
   'dash.tokens.nameInvalid': { max: MAX_TOKEN_NAME },
   'admin.groups.nameInvalid': { max: MAX_GROUP_NAME },
+  'admin.quota.invalid': { max: MAX_QUOTA_MB },
 };
 /** Notice and error texts: `t` plus the limits they quote. */
 export const noticeText = (locale: Locale, key: MessageKey): string => t(locale, key, LIMITS[key]);
