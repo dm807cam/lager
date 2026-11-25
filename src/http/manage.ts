@@ -163,10 +163,10 @@ function grantsCard(core: Core, locale: Locale, inst: Instance, base: string, cs
   // A person and a group are two forms: one of two fields that silently wins over the other cannot happen.
   const person = form(`${base}/grants`, csrf, `${field('grant-email', t(locale, 'instance.grants.email'), '<input id="grant-email" name="email" type="email" maxlength="254" autocomplete="off">')}
 ${field('grant-level', t(locale, 'common.level'), `<select id="grant-level" name="level">${optionList(grantLevels, 'view')}</select>`)}`,
-  `${icon('share')}${esc(t(locale, 'instance.grants.add'))}`, 'primary', 'form-row');
+  `${icon('share')}${esc(t(locale, 'instance.grants.add'))}`, 'primary', 'form-row', false, '', namedAction(locale, t(locale, 'instance.grants.add'), t(locale, 'instance.grants.user')));
   const group = groups ? form(`${base}/grants`, csrf, `${field('grant-group', t(locale, 'instance.grants.groupLabel'), `<select id="grant-group" name="group" required><option value="">–</option>${groups}</select>`)}
 ${field('grant-group-level', t(locale, 'common.level'), `<select id="grant-group-level" name="level">${optionList(grantLevels, 'view')}</select>`)}`,
-  `${icon('share')}${esc(t(locale, 'instance.grants.add'))}`, 'secondary', 'form-row') : '';
+  `${icon('share')}${esc(t(locale, 'instance.grants.add'))}`, 'secondary', 'form-row', false, '', namedAction(locale, t(locale, 'instance.grants.add'), t(locale, 'instance.grants.group'))) : '';
   const add = `<h4>${esc(t(locale, 'instance.grants.person'))}</h4>${person}${group ? `<h4 class="gap-top">${esc(t(locale, 'instance.grants.withGroup'))}</h4>${group}` : ''}`;
   return card(t(locale, 'instance.grants.title'), `${visibility}<div class="subsection"><h3>${esc(t(locale, 'instance.grants.people'))}</h3>${list}<div class="gap-top">${add}</div></div>`, '', 'sharing');
 }
@@ -301,7 +301,7 @@ ${notice('warning', t(locale, 'instance.disabledNotice'))}<div class="main-col">
   const mayRestore = core.access.canRestoreInstance(inst, user);
   const snapRows = snapshots.map((s) => [`<span class="mono">${esc(s.label)}</span>`, dateText(locale, s.createdAt), sizeText(locale, s.sizeBytes),
     mayRestore ? form(`${base}/restore`, csrf, hiddenField('snapshot', s.id), esc(t(locale, 'instance.snapshots.restore')), 'secondary', '', true,
-      confirmAttrs(locale, restoreQuestion(locale, inst.slug, s.label))) : '']);
+      confirmAttrs(locale, restoreQuestion(locale, inst.slug, s.label)), namedAction(locale, t(locale, 'instance.snapshots.restore'), s.label)) : '']);
   const quota = core.quotas.of(inst.id);
   const used = storageUsed(core, inst);
   const storage = quota > 0

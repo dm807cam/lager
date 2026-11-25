@@ -20,7 +20,9 @@ function targetOf(el: Element): string {
   const form = el.closest('form');
   if (!form) return `button ${el.outerHTML}`;
   const hidden = [...form.querySelectorAll('input[type="hidden"]:not([name="csrf"])')].map((i) => `${i.getAttribute('name')}=${i.getAttribute('value')}`);
-  return `form ${form.getAttribute('action')} ${el.getAttribute('name') ?? ''}=${el.getAttribute('value') ?? ''} ${hidden.join('&')}`;
+  // The fields a person fills in tell two forms to one route apart (sharing with a person, sharing with a group).
+  const fields = [...form.querySelectorAll('input:not([type="hidden"]), select, textarea')].map((i) => i.getAttribute('name')).sort();
+  return `form ${form.getAttribute('action')} ${el.getAttribute('name') ?? ''}=${el.getAttribute('value') ?? ''} ${hidden.join('&')} ${fields.join(',')}`;
 }
 
 describe('every control on a page has a name of its own', () => {
@@ -29,6 +31,8 @@ describe('every control on a page has a name of its own', () => {
     // A second token and a second invitation, so their rows repeat too.
     s.h.core.tokens.create(s.h.adminId, 'desktop');
     await s.h.core.accounts.createInvite({ role: 'publisher', createdBy: s.h.adminId, locale: 'en' });
+    // A second snapshot, so the Restore buttons repeat.
+    s.h.core.data.snapshot(s.h.core.apps.getInstanceBySlug('notes')!.id, 'second');
     const cookieOf = cookies(s);
     const clashes: string[] = [];
     const notInName: string[] = [];

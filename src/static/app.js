@@ -133,15 +133,18 @@
 
   // Sending: the pressed button says the form is on its way, and pressing again sends nothing. The button is not disabled, so its own
   // name and value still go with the form; coming back to this page (back button, page cache) shows it as it was.
-  // A load the person stopped (Esc, the stop button) shows no new page: after 30 s the form can be sent again.
+  // A load the person stopped (Esc, the stop button) shows no new page: after 100 s the form can be sent again. That is longer than
+  // the server ever takes to answer (the AI test waits up to DEFAULT_REQUEST_TIMEOUT_MS, 90 s, in src/platform/ai.ts).
   var idle = function (form) {
+    clearTimeout(form._busyTimer);
     form.removeAttribute('data-busy');
     form.querySelectorAll('[aria-busy="true"]').forEach(function (b) { b.removeAttribute('aria-busy'); });
   };
   var busy = function (form, button) {
+    clearTimeout(form._busyTimer);
     form.setAttribute('data-busy', '');
     if (button) button.setAttribute('aria-busy', 'true');
-    setTimeout(function () { idle(form); }, 30000);
+    form._busyTimer = setTimeout(function () { idle(form); }, 100000);
   };
   // Capture: a busy form stops here, before its own listeners (a question below would ask again and send a second time).
   window.addEventListener('submit', function (e) {
