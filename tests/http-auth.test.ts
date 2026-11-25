@@ -1,3 +1,4 @@
+import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { dashboardExtension } from '../src/http/dashboard.js';
@@ -414,6 +415,20 @@ describe('password reset', () => {
     const stale = await request(hh.app).get('/verify?token=nope').set('Host', hh.host);
     expect(stale.text).toContain(t('en', 'auth.resend.noMail'));
     expect(stale.text).not.toContain('action="/verify/resend"');
+    // The page about sending a confirmation link again is titled for what the visitor was doing.
+    expect(new JSDOM(resent.text).window.document.querySelector('h1')!.textContent).toBe(t('en', 'auth.verify.title'));
+    // A reset link that no longer works speaks of a link to set a password, not of a confirmation link, and offers no form.
+    for (const res of [await request(hh.app).get('/reset?token=nope').set('Host', hh.host), await post('/reset', { token: 'nope', password: 'long-enough-password' })]) {
+      expect(res.status).toBe(400);
+      expect(res.text).toContain(t('en', 'auth.reset.invalid'));
+      expect(res.text).toContain(t('en', 'auth.forgot.noMail'));
+      expect(res.text).not.toContain(t('en', 'auth.resend.noMail'));
+      expect(res.text).not.toContain('action="/verify/resend"');
+      expect(res.text).not.toContain('href="/forgot"');
+    }
+    // A mail server saved in the administration area counts at once: the form is back without a restart.
+    hh.core.mailSettings.save({ host: 'smtp.example.com', port: 465, security: 'tls', user: '', from: '' });
+    expect((await request(hh.app).get('/forgot').set('Host', hh.host)).text).toContain('action="/forgot"');
   });
 
   it('with mail, an unconfirmed account and a stale link still get the form to send the link again', async () => {
@@ -478,7 +493,13 @@ describe('password reset', () => {
     expect((await s.post('/login', { email: 'ann@example.org', password: 'a brand new password' })).status).toBe(302);
     const again = await s.post('/reset', { token, password: 'yet another password' });
     expect(again.status).toBe(400);
-    expect(again.text).toContain(t('en', 'auth.link.invalid'));
+    expect(again.text).toContain(t('en', 'auth.reset.invalid'));
+    // Opening the used link again says so at once, with a way to ask for a new one.
+    const reopened = await s.get(link);
+    expect(reopened.status).toBe(400);
+    expect(reopened.text).toContain(t('en', 'auth.reset.invalid'));
+    expect(reopened.text).toContain('href="/forgot"');
+    expect(reopened.text).not.toContain('action="/reset"');
   });
 
   it('reset with a verify token fails', async () => {
@@ -487,7 +508,7 @@ describe('password reset', () => {
     const token = new URL(s.linkOf(), 'http://x').searchParams.get('token')!;
     const res = await s.post('/reset', { token, password: 'a brand new password' });
     expect(res.status).toBe(400);
-    expect(res.text).toContain(t('en', 'auth.link.invalid'));
+    expect(res.text).toContain(t('en', 'auth.reset.invalid'));
   });
 
   it('reset with a short password keeps the form', async () => {

@@ -293,7 +293,7 @@ describe('signed-in pages in every locale', () => {
     const pages: Array<[string, string, MessageKey[], string]> = [
       ['login', '/login', ['brand.tagline', 'brand.pitch', 'login.forgot', 'nav.skip'], ''],
       ['register', '/register', ['auth.register.title', 'common.toLogin'], ''],
-      // This server sends no mail: the page says whom to ask instead of offering a form.
+      // This server sends no mail: the page says whom to ask instead of offering a form (the form itself is checked below).
       ['forgot', '/forgot', ['auth.forgot.title', 'auth.forgot.noMail', 'common.toLogin'], ''],
       ['empty home', '/', ['home.step.connect', 'home.step.ask', 'home.step.ask.text', 'home.step.appears', 'home.step.appears.text'], cookie],
     ];
@@ -310,6 +310,18 @@ describe('signed-in pages in every locale', () => {
           if (locale !== 'en') expect(t(locale, key), `${where} ${key} translated`).not.toBe(t('en', key));
         }
       }
+    }
+  });
+
+  it('the forgot-password form of a server that sends mail renders in every locale', async () => {
+    h = makeHarness({ extensions: [dashboardExtension], mailer: new MemoryMailer() });
+    for (const locale of LOCALES) {
+      const res = await request(h.app).get('/forgot').set('Host', h.host).set('Cookie', `lager_lang=${locale}`);
+      const body = bodyOf(res.text);
+      for (const key of ['auth.forgot.title', 'auth.forgot.submit', 'common.email'] as MessageKey[]) {
+        expect(body, `${locale} ${key}`).toContain(esc(t(locale, key)));
+      }
+      expect(res.text, locale).toContain('action="/forgot"');
     }
   });
 

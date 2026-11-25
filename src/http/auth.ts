@@ -151,15 +151,23 @@ export const authExtension: PlatformExtension = (router, core) => {
     html(res, 429, notice(locale, t(locale, 'error.tooMany.title'), t(locale, 'error.tooMany.text')));
   };
 
-  // Without mail the form to send another confirmation link would only promise a mail that never comes.
+  /**
+   * A confirmation link that no longer works: with mail, the form to send another one; without, whom to ask (a form there would
+   * only promise a mail that never comes).
+   */
   const invalidLinkPage = (locale: Locale): string =>
     notice(locale, t(locale, 'auth.link.invalid.title'), t(locale, 'auth.link.invalid'), core.mailer.enabled ? resendForm(locale) : `<p class="hint gap-top">${esc(t(locale, 'auth.resend.noMail'))}</p>${toLogin(locale)}`);
+  /** A reset link that no longer works: with mail, a way to ask for a new one; without, whom to ask for one. */
+  const invalidResetPage = (locale: Locale): string => notice(locale, t(locale, 'auth.link.invalid.title'), t(locale, 'auth.reset.invalid'),
+    core.mailer.enabled
+      ? `<p class="gap-top"><a class="${btn('primary')}" href="/forgot">${esc(t(locale, 'auth.reset.again'))}</a></p>${toLogin(locale)}`
+      : `<p class="hint gap-top">${esc(t(locale, 'auth.forgot.noMail'))}</p>${toLogin(locale)}`);
   /**
    * What a page that would send mail says on a server that sends none: whom to ask instead. The same text for every address, so it
    * tells nothing about which accounts exist.
    */
   const noMailPage = (locale: Locale, key: 'auth.forgot.noMail' | 'auth.resend.noMail'): string =>
-    notice(locale, t(locale, key === 'auth.forgot.noMail' ? 'auth.forgot.title' : 'auth.register.pageTitle'), t(locale, key), toLogin(locale));
+    notice(locale, t(locale, key === 'auth.forgot.noMail' ? 'auth.forgot.title' : 'auth.verify.title'), t(locale, key), toLogin(locale));
 
   // --- registration ---
 
@@ -287,9 +295,13 @@ export const authExtension: PlatformExtension = (router, core) => {
     html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.forgot.sent'), toLogin(locale)));
   });
 
-  // Showing the form consumes nothing, so link scanners that open the URL do not burn the token.
+  // Showing the form consumes nothing, so link scanners that open the URL do not burn the token. A link that no longer works says
+  // so right away, before anyone thinks of and types a new password for it.
   router.get('/reset', hardened, (req, res) => {
-    html(res, 200, resetForm(localeOf(req), typeof req.query.token === 'string' ? req.query.token.slice(0, MAX_TOKEN) : ''));
+    const locale = localeOf(req);
+    const token = typeof req.query.token === 'string' ? req.query.token.slice(0, MAX_TOKEN) : '';
+    if (!core.accounts.checkResetToken(token)) { html(res, 400, invalidResetPage(locale)); return; }
+    html(res, 200, resetForm(locale, token));
   });
 
   router.post('/reset', ...publicForm, async (req, res) => {
@@ -306,7 +318,7 @@ export const authExtension: PlatformExtension = (router, core) => {
       if (!(e instanceof LagerError)) throw e;
       if (e.code === 'rate_limited') { tooMany(req, res); return; }
       // The token is judged before the password, so any other complaint is about the password and keeps the form.
-      html(res, 400, e.reason === 'link_invalid' ? invalidLinkPage(locale) : resetForm(locale, token, reasonText(locale, e)));
+      html(res, 400, e.reason === 'link_invalid' ? invalidResetPage(locale) : resetForm(locale, token, reasonText(locale, e)));
     }
   });
 

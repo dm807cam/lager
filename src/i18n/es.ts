@@ -84,6 +84,8 @@ export const es: Record<MessageKey, string> = {
   'auth.reset.submit': 'Guardar contraseña',
   'auth.reset.done.title': 'Contraseña restablecida',
   'auth.reset.done': 'Contraseña cambiada. Se han revocado todas las conexiones con asistentes de IA y todos los tokens de API de esta cuenta.',
+  'auth.reset.invalid': "El enlace para establecer una contraseña nueva ha caducado o ya se usó. Los enlaces del correo valen una hora y una sola vez.",
+  'auth.reset.again': "Enviar un enlace nuevo",
 
   'account.title': 'Cuenta',
   'account.name.saved': 'Nombre guardado.',

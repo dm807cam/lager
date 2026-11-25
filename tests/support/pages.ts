@@ -18,9 +18,10 @@ export interface Showcase {
   h: Harness;
   mailer: MemoryMailer;
   ids: { pia: string; uwe: string; group: string };
-  /** The token of the open invitation and the verification token of the unconfirmed registration. */
+  /** The token of the open invitation, the verification token of the unconfirmed registration and a working reset token of Uwe. */
   invite: string;
   verify: string;
+  reset: string;
 }
 
 export const PASSWORD = 'password-123';
@@ -65,7 +66,8 @@ export async function showcase(): Promise<Showcase> {
   await new Promise((resolve) => setTimeout(resolve, 20));
   const verifyMail = mailer.sent.find((m) => m.to === 'nova@x.y' || m.text.includes('/verify?token='))!;
   const verify = new URL(/https?:\/\/\S+/.exec(verifyMail.text)![0]).searchParams.get('token')!;
-  return { h, mailer, ids: { pia: pia.id, uwe: uwe.id, group: group.id }, invite: new URL(url).searchParams.get('invite')!, verify };
+  const reset = new URL(core.accounts.createResetLink(uwe.id)).searchParams.get('token')!;
+  return { h, mailer, ids: { pia: pia.id, uwe: uwe.id, group: group.id }, invite: new URL(url).searchParams.get('invite')!, verify, reset };
 }
 
 /** A form as the server sees it: where it posts and which fields it sends. */
@@ -167,7 +169,8 @@ export function pageVisits(s: Showcase): PageVisit[] {
     { name: 'register', path: '/register', as: null },
     { name: 'register (invited)', path: `/register?invite=${s.invite}`, as: null },
     { name: 'forgot', path: '/forgot', as: null },
-    { name: 'reset', path: '/reset?token=abc', as: null },
+    { name: 'reset', path: `/reset?token=${s.reset}`, as: null },
+    { name: 'reset (invalid link)', path: '/reset?token=abc', as: null, status: 400 },
     { name: 'verify', path: `/verify?token=${s.verify}`, as: null },
     { name: 'verify (invalid link)', path: '/verify?token=nope', as: null, status: 400 },
     { name: 'register (closed)', path: '/register', as: null, before: (sc) => sc.h.core.settings.setRegistration('closed'), after: (sc) => sc.h.core.settings.setRegistration('open') },
