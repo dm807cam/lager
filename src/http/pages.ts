@@ -65,9 +65,14 @@ function languageLinks(locale: Locale, returnPath: string, cls: string): string 
 }
 
 /** Footer with one link per language; `GET /lang/<locale>` stores the choice and redirects to `returnPath`. */
+/** System, light or dark: the script shows the button and steps through the three; the choice stays in this browser. */
+const themeToggle = (locale: Locale, cls: string): string =>
+  `<button type="button" class="${cls}" data-theme-toggle data-system="${esc(t(locale, 'theme.system'))}" data-light="${esc(t(locale, 'theme.light'))}" data-dark="${esc(t(locale, 'theme.dark'))}" hidden>${icon('sun')}<span>${esc(t(locale, 'theme.label'))} <span data-theme-name>${esc(t(locale, 'theme.system'))}</span></span></button>`;
+
+/** The footer of signed-out pages: the languages and, since the account menu with its theme is not there, the theme. */
 function footer(locale: Locale, returnPath: string | null): string {
   if (returnPath === null) return '';
-  return `<footer class="site-footer"><nav aria-label="${esc(t(locale, 'footer.language'))}">${icon('globe', 'i-sm')}<span class="sr-only">${esc(t(locale, 'footer.language'))}</span>${languageLinks(locale, returnPath, '')}</nav></footer>`;
+  return `<footer class="site-footer"><nav aria-label="${esc(t(locale, 'footer.language'))}">${icon('globe', 'i-sm')}<span class="sr-only">${esc(t(locale, 'footer.language'))}</span>${languageLinks(locale, returnPath, '')}</nav>${themeToggle(locale, 'footer-theme')}</footer>`;
 }
 
 /**
@@ -90,7 +95,7 @@ function topBar(locale: Locale, opts: PageOpts, returnPath: string): { html: str
     `<a href="${n.href}"${n.id === opts.current ? ' aria-current="page"' : ''}>${icon(n.icon)}<span class="nav-full">${esc(t(locale, n.key))}</span><span class="nav-short">${esc(t(locale, n.tab))}</span></a>`).join('')}</nav>` : '';
   const lang = opts.switcher === false ? '' : `<details class="menu lang-menu"><summary class="menu-trigger">${icon('globe', 'i-sm')}<span aria-hidden="true">${locale}</span><span class="sr-only">${esc(t(locale, 'footer.language'))}</span></summary>
 <div class="menu-panel">${languageLinks(locale, returnPath, 'menu-item')}</div></details>`;
-  const theme = `<button type="button" class="menu-item" data-theme-toggle data-system="${esc(t(locale, 'theme.system'))}" data-light="${esc(t(locale, 'theme.light'))}" data-dark="${esc(t(locale, 'theme.dark'))}" hidden>${icon('sun')}<span>${esc(t(locale, 'theme.label'))} <span data-theme-name>${esc(t(locale, 'theme.system'))}</span></span></button>`;
+  const theme = themeToggle(locale, 'menu-item');
   const account = `<details class="menu account-menu"><summary class="menu-trigger avatar-trigger">${avatar(user)}<span class="sr-only">${esc(t(locale, 'nav.account'))}</span></summary>
 <div class="menu-panel"><div class="menu-head">${avatar(user, 'lg')}<div><strong>${esc(user.name || user.email)}</strong><span>${esc(user.email)}</span></div></div>
 <a class="menu-item" href="/account">${icon('user')}${esc(t(locale, 'nav.account'))}</a>${theme}<div class="menu-sep"></div>
@@ -136,7 +141,7 @@ export function page(locale: Locale, title: string, body: string, opts: PageOpts
 <link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-180.png"><script src="${js}" defer></script>`;
   return `<!doctype html>
 <html lang="${locale}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>${esc(title)}</title><meta name="color-scheme" content="light dark"><meta name="theme-color" content="#1f2a5c">
+<title>${esc(title === 'Lager' ? title : `${title} · Lager`)}</title><meta name="color-scheme" content="light dark"><meta name="theme-color" content="#1f2a5c">
 ${head}</head>
 <body class="${bodyClass}"${origin ? '' : ` data-show-password="${esc(t(locale, 'password.show'))}" data-hide-password="${esc(t(locale, 'password.hide'))}"`}>${SPRITE}${content}</body></html>`;
 }
@@ -169,8 +174,9 @@ export function loginPage(locale: Locale, returnPath: string, error?: string, op
   const typed = opts.email ?? '';
   // A refused sign-in is about both fields: each says so to assistive technology and points at the message.
   const invalid = error ? ' aria-invalid="true" aria-describedby="login-error"' : '';
-  return page(locale, t(locale, 'login.title'), `<div class="auth-hero"><h1>${esc(t(locale, 'brand.tagline'))}</h1></div>
-<div class="auth-card"><h2>${esc(t(locale, 'login.title'))}</h2>
+  // The page's title for a screen reader is "Sign in"; the tagline above the card is a line of text.
+  return page(locale, t(locale, 'login.title'), `<div class="auth-hero"><p class="auth-tagline">${esc(t(locale, 'brand.tagline'))}</p></div>
+<div class="auth-card"><h1 class="auth-title">${esc(t(locale, 'login.title'))}</h1>
 ${opts.notice ? notice('success', opts.notice) : ''}${error ? notice('danger', error).replace('<div class="notice', '<div id="login-error" class="notice') : ''}
 <form method="post" action="/login" class="stack">
 <input type="hidden" name="return" value="${esc(returnPath)}">

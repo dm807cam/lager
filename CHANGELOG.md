@@ -37,6 +37,17 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 
 ### Fixed
 
+- **Small polish across the interface (#100):**
+  - Page titles name the product ("Account · Lager"), and "Sign in" is the heading of the sign-in page instead of the tagline.
+  - In dark mode the current item of the main navigation is visible again: a small shadow token of `none` had dropped its outline, and it now has the accent line in both themes.
+  - Long words in card titles break with a hyphen.
+  - Names and addresses that are cut with "…" in a table wrap where the table is stacked as cards.
+  - The sharing list shows people with name and address.
+  - The Publish panel's step 1 no longer repeats its heading.
+  - "Copied", and a copy the browser refused, are announced to screen readers.
+  - Signed out, the footer offers the theme.
+  - Account › Language › "Browser default" forgets the language the top bar left in this browser.
+  - Two places where a label or hint touched what was above it have their gap back.
 - **Touch targets:** on touch screens the Administration section pills, the brand link, links that fill a table cell (instances, groups), the instance address under its name and the link of a notice are 44 px high, as the rest of the interface already was. The hide button of the "Made with Lager" badge is a 32 px target (it was 22 px, under the 24 px WCAG 2.2 asks for), with the same small ×, and a little further from the badge link (#99).
 - **Website (lager.im):**
   - **Contrast:** orange text and the grey of small print reach AA contrast in light mode. Orange as text and the focus ring use a darker tone, and the bright orange stays for buttons.

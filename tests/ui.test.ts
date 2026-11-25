@@ -447,7 +447,7 @@ describe('home', () => {
     expect(hero.querySelector('h1')!.textContent).toBe(t('en', 'brand.tagline'));
     expect(hero.textContent).toContain(t('en', 'brand.pitch'));
     const steps = [...hero.querySelectorAll('ol.steps > li')];
-    expect(steps.map((li) => li.querySelector('strong')!.textContent)).toEqual([t('en', 'dash.connect'), t('en', 'home.step.ask'), t('en', 'home.step.appears')]);
+    expect(steps.map((li) => li.querySelector('strong')!.textContent)).toEqual([t('en', 'home.step.connect.title'), t('en', 'home.step.ask'), t('en', 'home.step.appears')]);
     expect(steps[0].querySelector('code')!.textContent).toBe('http://lager.localhost:8080/mcp');
     expect(steps[0].querySelector('button[data-copy="http://lager.localhost:8080/mcp"]')).not.toBeNull();
     // Publishers are pointed to the publish page, which holds the connector and the API tokens.
@@ -534,6 +534,8 @@ describe('management and administration', () => {
     const text = rule('.cell-user strong, .cell-user > div > span');
     for (const part of ['overflow: hidden', 'text-overflow: ellipsis', 'white-space: nowrap']) expect(text).toContain(part);
     // The column is bounded, so a long address cannot push the other columns out; nothing lets it break between any two letters.
+    // Stacked as cards (a phone, or the dense users table) the full text wraps instead: a touch screen shows no tooltip (#100).
+    expect(css).toMatch(/\.table-stack \.cell-user strong, \.table-stack \.cell-user > div > span \{ white-space: normal; overflow-wrap: break-word; \}/);
     expect(rule('.cell-user > div')).toMatch(/max-width: clamp\(/);
     expect(css).not.toMatch(/\.cell-user[^{}]*\{[^}]*(overflow-wrap: anywhere|word-break: break-all)/);
     // As cards on a phone the person gets the full width of the card.
@@ -635,7 +637,9 @@ describe('signed-out pages', () => {
     const html = (await visit(s, { name: 'login', path: '/login', as: null }, cookies(s))).text;
     const doc = dom(html);
     expect(doc.querySelector('header img')!.getAttribute('width')).toBe('64');
-    expect(doc.querySelector('main h1')!.textContent).toBe(t('en', 'brand.tagline'));
+    // The tagline is a line of text above the card; the page's heading is what it is for (#100).
+    expect(doc.querySelector('main .auth-tagline')!.textContent).toBe(t('en', 'brand.tagline'));
+    expect(doc.querySelector('main h1')!.textContent).toBe(t('en', 'login.title'));
     expect(html.indexOf(en('brand.tagline'))).toBeLessThan(html.indexOf('action="/login"'));
     expect(html.indexOf('action="/login"')).toBeLessThan(html.indexOf(en('brand.pitch')));
     // Errors and confirmations are banners with their own roles.

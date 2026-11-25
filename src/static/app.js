@@ -111,6 +111,13 @@
   });
 
   // Copy buttons: text and labels come from data attributes.
+  // A hidden status line tells screen readers "Copied" or that copying failed: a label that changes is not read out.
+  var said;
+  var say = function (text) {
+    if (!said) { said = document.createElement('p'); said.className = 'sr-only'; said.setAttribute('role', 'status'); document.body.appendChild(said); }
+    said.textContent = '';
+    setTimeout(function () { said.textContent = text; }, 50);
+  };
   document.querySelectorAll('[data-copy]').forEach(function (btn) {
     if (!navigator.clipboard) return;
     btn.hidden = false;
@@ -120,13 +127,14 @@
     btn.addEventListener('click', function () {
       navigator.clipboard.writeText(btn.getAttribute('data-copy') || '').then(function () {
         if (label) label.textContent = btn.getAttribute('data-copied') || original;
+        say(btn.getAttribute('data-copied') || '');
         btn.classList.add('copy-done');
         clearTimeout(timer);
         timer = setTimeout(function () {
           if (label) label.textContent = original;
           btn.classList.remove('copy-done');
         }, 1800);
-      }, function () { /* clipboard refused: the text stays selectable */ });
+      }, function () { say(btn.getAttribute('data-copy-failed') || ''); });
     });
   });
 
