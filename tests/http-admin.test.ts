@@ -87,7 +87,7 @@ describe('administration area', () => {
     const { user } = await s.makeUser('nina@x.y');
     const res = await s.post(`/admin/users/${user.id}/role`, admin, { role: 'publisher' });
     expect(res.status).toBe(302);
-    expect(res.headers.location).toBe(`/admin/users/${user.id}`);
+    expect(res.headers.location.split('?')[0]).toBe(`/admin/users/${user.id}`);
     expect(s.hh.core.users.get(user.id)!.role).toBe('publisher');
     const page = await s.get(`/admin/users/${user.id}`, admin);
     expect(page.text).toMatch(/<option value="publisher" selected>/);
@@ -129,7 +129,7 @@ describe('administration area', () => {
     expect((await s.get('/', cookie)).status).toBe(200);
     const off = await s.post(`/admin/users/${user.id}/disabled`, admin, { disabled: '1' });
     expect(off.status).toBe(302);
-    expect(off.headers.location).toBe(`/admin/users/${user.id}`);
+    expect(off.headers.location.split('?')[0]).toBe(`/admin/users/${user.id}`);
     expect((await s.get('/', cookie)).status).toBe(302);
     expect((await s.get('/admin/users', admin)).text).toContain(en('common.disabled'));
     await s.post(`/admin/users/${user.id}/disabled`, admin, { disabled: '0' });
@@ -187,10 +187,10 @@ describe('administration area', () => {
     const s = setup();
     const admin = await s.hh.login();
     const { user } = await s.makeUser('nina@x.y');
-    expect((await s.post('/admin/groups', admin, { name: 'Team' })).headers.location).toBe('/admin/groups');
+    expect((await s.post('/admin/groups', admin, { name: 'Team' })).headers.location.split('?')[0]).toBe('/admin/groups');
     const group = s.hh.core.groups.list()[0];
     expect((await s.get('/admin/groups', admin)).text).toContain(`/admin/groups/${group.id}`);
-    expect((await s.post(`/admin/groups/${group.id}/rename`, admin, { name: 'Crew' })).headers.location).toBe(`/admin/groups/${group.id}`);
+    expect((await s.post(`/admin/groups/${group.id}/rename`, admin, { name: 'Crew' })).headers.location.split('?')[0]).toBe(`/admin/groups/${group.id}`);
     expect(s.hh.core.groups.get(group.id)!.name).toBe('Crew');
     const add = await s.post(`/admin/groups/${group.id}/members`, admin, { email: ' nina@x.y ' });
     expect(add.status).toBe(302);
@@ -200,7 +200,7 @@ describe('administration area', () => {
     expect(unknown.text).toContain(en('notice.noAccount'));
     await s.post(`/admin/groups/${group.id}/members/${user.id}/remove`, admin, {});
     expect(s.hh.core.groups.members(group.id)).toHaveLength(0);
-    expect((await s.post(`/admin/groups/${group.id}/delete`, admin, {})).headers.location).toBe('/admin/groups');
+    expect((await s.post(`/admin/groups/${group.id}/delete`, admin, {})).headers.location.split('?')[0]).toBe('/admin/groups');
     expect(s.hh.core.groups.list()).toHaveLength(0);
     expect((await s.get(`/admin/groups/${group.id}`, admin)).status).toBe(404);
   });
@@ -237,7 +237,7 @@ describe('administration area', () => {
     expect(page.text).toContain(slug);
     expect(page.text).toContain(en('common.deactivate'));
     expect(page.text).not.toContain('secret content');
-    expect((await s.post(`/admin/instances/${slug}/disabled`, admin, { disabled: '1' })).headers.location).toBe('/admin/apps');
+    expect((await s.post(`/admin/instances/${slug}/disabled`, admin, { disabled: '1' })).headers.location.split('?')[0]).toBe('/admin/apps');
     const host = `${slug}.apps.localhost:8080`;
     const served = await request(s.hh.app).get('/').set('Host', host);
     expect(served.text).toContain(t('en', 'error.disabled.text'));

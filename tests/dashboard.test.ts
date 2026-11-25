@@ -4,7 +4,7 @@ import request from 'supertest';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { manageExtension } from '../src/http/manage.js';
 import { esc } from '../src/http/pages.js';
-import { signToken } from '../src/http/tokens.js';
+import { sealToken, signToken } from '../src/http/tokens.js';
 import { t, type MessageKey } from '../src/i18n/index.js';
 import type { User } from '../src/platform/users.js';
 import { makeHarness, type Harness } from './support/http.js';
@@ -160,7 +160,7 @@ describe('home page', () => {
     h.core.apps.setSelfInstances(app.id, 'users', p.id);
     const res = await post(h, cookie, '/ui/apps/notes/instances', { slug: 'mine', csrf: csrfOf(h, u.id) });
     expect(res.status).toBe(302);
-    expect(res.headers.location).toBe('/');
+    expect(res.headers.location.split('?')[0]).toBe('/');
     expect(h.core.apps.getInstanceBySlug('mine')!.ownerId).toBe(u.id);
     const home = await get(h, cookie);
     expect(home.text).toContain('href="http://mine.apps.localhost:8080"');
@@ -190,7 +190,7 @@ describe('home page', () => {
     const info = h.core.tokens.list(h.adminId)[0];
     const revoke = await post(h, cookie, `/ui/tokens/${info.id}/revoke`, { csrf: csrfFor(h) });
     expect(revoke.status).toBe(302);
-    expect(revoke.headers.location).toBe('/publish');
+    expect(revoke.headers.location.split('?')[0]).toBe('/publish');
     expect(h.core.tokens.list(h.adminId)).toHaveLength(0);
   });
 
@@ -207,16 +207,16 @@ describe('home page', () => {
   it('a flash message shows once signed and is ignored when forged', async () => {
     const h = setup();
     const cookie = await h.login();
-    const good = signToken({ uid: h.adminId, k: 'flash', e: 1, m: 'notice.noAccount' }, h.core.config.secret, 60);
+    const good = sealToken({ uid: h.adminId, k: 'flash', e: 1, m: 'notice.noAccount' }, h.core.config.secret, 60);
     const ok = await request(h.app).get('/').query({ flash: good }).set('Host', h.host).set('Cookie', cookie);
     expect(ok.text).toContain(en('notice.noAccount'));
     const forged = await request(h.app).get('/').query({ flash: '<b>x</b>.AAAA' }).set('Host', h.host).set('Cookie', cookie);
     expect(forged.status).toBe(200);
     expect(forged.text).not.toContain('<b>x</b>');
-    const other = signToken({ uid: 'someone-else', k: 'flash', e: 1, m: 'notice.noAccount' }, h.core.config.secret, 60);
+    const other = sealToken({ uid: 'someone-else', k: 'flash', e: 1, m: 'notice.noAccount' }, h.core.config.secret, 60);
     const foreign = await request(h.app).get('/').query({ flash: other }).set('Host', h.host).set('Cookie', cookie);
     expect(foreign.text).not.toContain(en('notice.noAccount'));
-    const plain = signToken({ uid: h.adminId, k: 'flash', e: 1, m: 'Free text that is not a catalog key' }, h.core.config.secret, 60);
+    const plain = sealToken({ uid: h.adminId, k: 'flash', e: 1, m: 'Free text that is not a catalog key' }, h.core.config.secret, 60);
     expect((await request(h.app).get('/').query({ flash: plain }).set('Host', h.host).set('Cookie', cookie)).text).not.toContain('Free text');
   });
 

@@ -123,7 +123,7 @@ describe('storage per group and per app', () => {
     const page = await s.get(`/admin/groups/${group.id}`, admin);
     expect(page.text).toContain(esc(t('en', 'admin.quota.title')));
     expect(page.text).toContain('placeholder="4"');
-    expect((await s.post(`/admin/groups/${group.id}/quota`, admin, { quota: ' 12 ' })).headers.location).toBe(`/admin/groups/${group.id}`);
+    expect((await s.post(`/admin/groups/${group.id}/quota`, admin, { quota: ' 12 ' })).headers.location.split('?')[0]).toBe(`/admin/groups/${group.id}`);
     expect(s.hh.core.quotas.ofGroup(group.id)).toBe(12 * MIB);
     expect((await s.get(`/admin/groups/${group.id}`, admin)).text).toContain('value="12"');
     const bad = await s.post(`/admin/groups/${group.id}/quota`, admin, { quota: '1.5' });
@@ -135,7 +135,7 @@ describe('storage per group and per app', () => {
     expect((await s.post('/admin/groups/nope/quota', admin, { quota: '5' })).status).toBe(404);
 
     expect((await s.get('/admin/apps', admin)).text).toContain(`/admin/apps/${s.notes.id}/quota`);
-    expect((await s.post(`/admin/apps/${s.notes.id}/quota`, admin, { quota: '7' })).headers.location).toBe('/admin/apps');
+    expect((await s.post(`/admin/apps/${s.notes.id}/quota`, admin, { quota: '7' })).headers.location.split('?')[0]).toBe('/admin/apps');
     expect(s.hh.core.quotas.ofApp(s.notes.id)).toBe(7 * MIB);
     expect(s.hh.core.quotas.of(s.notesInstance.id)).toBe(7 * MIB);
     const overview = (await s.get('/admin/apps', admin)).text;

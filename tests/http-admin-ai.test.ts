@@ -65,7 +65,7 @@ describe('/admin/ai', () => {
     const u = env.core.users.create({ email: 'kid@x.y', name: 'Kid', password: 'pw-12345678', role: 'user' });
     const assigned = await env.post(`/admin/users/${u.id}/ai-group`, { group: g.id });
     expect(assigned.status).toBe(302);
-    expect(assigned.headers.location).toBe(`/admin/users/${u.id}`);
+    expect(assigned.headers.location.split('?')[0]).toBe(`/admin/users/${u.id}`);
     expect(env.core.ai.groupIdOf(u.id)).toBe(g.id);
     expect((await env.get(`/admin/users/${u.id}`)).text).toContain(`<option value="${g.id}" selected>`);
     // The list names the group in plain text.

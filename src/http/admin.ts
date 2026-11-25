@@ -18,7 +18,7 @@ import { loginLimiter } from './platform.js';
 import { noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, sizeText, visibilityLabel, type Option } from './pages.js';
 import { domainsBody, storageUsed } from './manage.js';
 import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
-import { csrfToken, csrfValid } from './session.js';
+import { csrfToken, csrfValid, flashUrl, readFlash } from './session.js';
 import { RateLimiter } from './ratelimit.js';
 import { codeRefusal } from './two-factor.js';
 import { MAX_CODE_INPUT } from '../platform/two-factor.js';
@@ -533,34 +533,44 @@ export const adminExtension: PlatformExtension = (router, core) => {
     send(res, status, view({ error }) ?? missing(res.req, res, 'error.notFound.text', '/admin', 'admin.back'));
   };
 
-  const showUsers = (res: Response): void => send(res, 200, usersSection(core, localeOf(res), adminOf(res)));
+  /** The notice a form left for this page view, in the viewer's language. */
+  const msgOf = (req: Request, res: Response): Msg => {
+    const flash = readFlash(core, adminOf(res), req.query.flash);
+    const locale = localeOf(res);
+    return { ...(flash.ok ? { ok: noticeText(locale, flash.ok, flash.params) } : {}), ...(flash.error ? { error: noticeText(locale, flash.error, flash.params) } : {}) };
+  };
+  /** After a form: back to `path`, which says what happened. */
+  const done = (res: Response, path: string, ok: MessageKey, params?: Record<string, string>): void => {
+    res.redirect(flashUrl(core, adminOf(res), path, { ok, params }));
+  };
+  const showUsers = (req: Request, res: Response): void => send(res, 200, usersSection(core, localeOf(res), adminOf(res), msgOf(req, res)));
   /** An account's page with a message, or the list when the account is gone. */
   const userView = (res: Response, user: User, id: string) => (m: Msg): string => userPage(core, localeOf(res), user, id, m) ?? usersSection(core, localeOf(res), user, m);
-  router.get('/admin', noStore, admin, (_req, res) => { showUsers(res); });
-  router.get('/admin/users', noStore, admin, (_req, res) => { showUsers(res); });
+  router.get('/admin', noStore, admin, (req, res) => { showUsers(req, res); });
+  router.get('/admin/users', noStore, admin, (req, res) => { showUsers(req, res); });
   router.get('/admin/users/:id', noStore, admin, (req, res) => {
-    const html = userPage(core, localeOf(res), adminOf(res), param(req, 'id'));
+    const html = userPage(core, localeOf(res), adminOf(res), param(req, 'id'), msgOf(req, res));
     if (html === null) send(res, 404, missing(req, res, 'admin.users.notFound', '/admin/users', 'admin.section.users'));
     else send(res, 200, html);
   });
-  router.get('/admin/invites', noStore, admin, (_req, res) => { send(res, 200, invitesSection(core, localeOf(res), adminOf(res))); });
-  router.get('/admin/groups', noStore, admin, (_req, res) => { send(res, 200, groupsSection(core, localeOf(res), adminOf(res))); });
+  router.get('/admin/invites', noStore, admin, (req, res) => { send(res, 200, invitesSection(core, localeOf(res), adminOf(res), msgOf(req, res))); });
+  router.get('/admin/groups', noStore, admin, (req, res) => { send(res, 200, groupsSection(core, localeOf(res), adminOf(res), msgOf(req, res))); });
   router.get('/admin/groups/:id', noStore, admin, (req, res) => {
-    const html = groupPage(core, localeOf(res), adminOf(res), param(req, 'id'));
+    const html = groupPage(core, localeOf(res), adminOf(res), param(req, 'id'), msgOf(req, res));
     if (html === null) send(res, 404, missing(req, res, 'admin.groups.missing', '/admin/groups', 'admin.groups.all'));
     else send(res, 200, html);
   });
-  router.get('/admin/settings', noStore, admin, (_req, res) => { send(res, 200, settingsSection(core, localeOf(res), adminOf(res))); });
-  router.get('/admin/mail', noStore, admin, (_req, res) => { send(res, 200, mailSection(core, localeOf(res), adminOf(res))); });
-  router.get('/admin/ai', noStore, admin, (_req, res) => { send(res, 200, aiSection(core, localeOf(res), adminOf(res))); });
+  router.get('/admin/settings', noStore, admin, (req, res) => { send(res, 200, settingsSection(core, localeOf(res), adminOf(res), msgOf(req, res))); });
+  router.get('/admin/mail', noStore, admin, (req, res) => { send(res, 200, mailSection(core, localeOf(res), adminOf(res), msgOf(req, res))); });
+  router.get('/admin/ai', noStore, admin, (req, res) => { send(res, 200, aiSection(core, localeOf(res), adminOf(res), msgOf(req, res))); });
   for (const [kind, view] of [['providers', aiProviderPage], ['models', aiModelPage], ['groups', aiGroupPage]] as const) {
     router.get(`/admin/ai/${kind}/:id`, noStore, admin, (req, res) => {
-      const html = view(core, localeOf(res), adminOf(res), param(req, 'id'));
+      const html = view(core, localeOf(res), adminOf(res), param(req, 'id'), msgOf(req, res));
       if (html === null) send(res, 404, missing(req, res, 'admin.ai.notFound', '/admin/ai', 'admin.ai.all'));
       else send(res, 200, html);
     });
   }
-  router.get('/admin/apps', noStore, admin, (_req, res) => { send(res, 200, appsSection(core, localeOf(res), adminOf(res))); });
+  router.get('/admin/apps', noStore, admin, (req, res) => { send(res, 200, appsSection(core, localeOf(res), adminOf(res), msgOf(req, res))); });
 
   const domainInstanceOf = (req: Request): Instance => {
     const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
@@ -571,14 +581,16 @@ export const adminExtension: PlatformExtension = (router, core) => {
   router.get('/admin/instances/:slug/domains', noStore, admin, (req, res) => {
     const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
     if (!inst) send(res, 404, missing(req, res, 'admin.instances.notFound', '/admin/apps', 'admin.section.apps'));
-    else showDomains(res, inst);
+    else showDomains(res, inst, 200, msgOf(req, res));
   });
   for (const [route, change] of [['', 'add'], ['/remove', 'remove']] as const) {
     router.post(`/admin/instances/:slug/domains${route}`, ...action((req, res, user) => {
       try {
         const inst = domainInstanceOf(req);
-        core.domains[change](inst, field(req, 'host', MAX_FIELD), user, false);
-        res.redirect(`/admin/instances/${encodeURIComponent(inst.slug)}/domains`);
+        const host = field(req, 'host', MAX_FIELD);
+        core.domains[change](inst, host, user, false);
+        done(res, `/admin/instances/${encodeURIComponent(inst.slug)}/domains`, change === 'add' ? 'notice.ok.domainAdded' : 'notice.ok.removed',
+          change === 'add' ? { host: host.trim().toLowerCase() } : { name: host });
       } catch (e) {
         if (!(e instanceof LagerError)) throw e;
         const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
@@ -595,8 +607,8 @@ export const adminExtension: PlatformExtension = (router, core) => {
 
   router.post('/admin/users/:id/role', ...action((req, res, user) => {
     try {
-      core.users.setRole(param(req, 'id'), field(req, 'role') as Role);
-      res.redirect(userPath(param(req, 'id')));
+      const u = core.users.setRole(param(req, 'id'), field(req, 'role') as Role);
+      done(res, userPath(u.id), 'notice.ok.role', { name: u.name || u.email, role: roleLabel(localeOf(res), u.role) });
     } catch (e) { failWith(res, e, userView(res, user, param(req, 'id')), userMessages); }
   }));
 
@@ -606,8 +618,8 @@ export const adminExtension: PlatformExtension = (router, core) => {
       if (value !== '0' && value !== '1') throw new LagerError('invalid_argument', 'disabled must be 0 or 1.');
       // Deactivating signs the account out everywhere: one's own session would end with it. The page does not offer it either.
       if (value === '1' && param(req, 'id') === user.id) throw new LagerError('forbidden', 'You cannot deactivate your own account.', 'disable_self');
-      core.users.setDisabled(param(req, 'id'), value === '1');
-      res.redirect(userPath(param(req, 'id')));
+      const u = core.users.setDisabled(param(req, 'id'), value === '1');
+      done(res, userPath(u.id), u.disabled ? 'notice.ok.userDisabled' : 'notice.ok.userEnabled', { name: u.name || u.email });
     } catch (e) { failWith(res, e, userView(res, user, param(req, 'id')), userMessages); }
   }));
 
@@ -738,7 +750,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
       send(res, 404, invitesSection(core, localeOf(res), user, { error: t(localeOf(res), 'admin.invites.notFound') }));
       return;
     }
-    res.redirect('/admin/invites');
+    done(res, '/admin/invites', 'notice.ok.inviteRevoked');
   }));
 
   // --- groups ---
@@ -747,8 +759,8 @@ export const adminExtension: PlatformExtension = (router, core) => {
 
   router.post('/admin/groups', ...action((req, res, user) => {
     try {
-      core.groups.create(field(req, 'name'));
-      res.redirect('/admin/groups');
+      const group = core.groups.create(field(req, 'name'));
+      done(res, '/admin/groups', 'notice.ok.created', { name: group.name });
     } catch (e) { failWith(res, e, (m) => groupsSection(core, localeOf(res), user, m), groupMessages); }
   }));
 
@@ -756,7 +768,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     const id = param(req, 'id');
     try {
       core.groups.rename(id, field(req, 'name'));
-      res.redirect(`/admin/groups/${encodeURIComponent(id)}`);
+      done(res, `/admin/groups/${encodeURIComponent(id)}`, 'notice.ok.renamed', { name: core.groups.get(id)?.name ?? '' });
     } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), groupMessages); }
   }));
 
@@ -766,15 +778,16 @@ export const adminExtension: PlatformExtension = (router, core) => {
       const member = core.users.getByEmail(field(req, 'email', 254));
       if (!member) throw new LagerError('not_found', 'No account with this email address.');
       core.groups.addMember(id, member.id);
-      res.redirect(`/admin/groups/${encodeURIComponent(id)}`);
+      done(res, `/admin/groups/${encodeURIComponent(id)}`, 'notice.ok.memberAdded', { name: member.name || member.email });
     } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), { ...groupMessages, not_found: core.groups.get(id) ? 'notice.noAccount' : 'admin.groups.notFound' }); }
   }));
 
   router.post('/admin/groups/:id/members/:userId/remove', ...action((req, res, user) => {
     const id = param(req, 'id');
     try {
+      const member = core.users.get(param(req, 'userId'));
       core.groups.removeMember(id, param(req, 'userId'));
-      res.redirect(`/admin/groups/${encodeURIComponent(id)}`);
+      done(res, `/admin/groups/${encodeURIComponent(id)}`, 'notice.ok.memberRemoved', { name: member ? member.name || member.email : '' });
     } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), groupMessages); }
   }));
 
@@ -790,21 +803,22 @@ export const adminExtension: PlatformExtension = (router, core) => {
     const id = param(req, 'id');
     try {
       core.quotas.setGroup(id, quotaField(req));
-      res.redirect(`/admin/groups/${encodeURIComponent(id)}`);
+      done(res, `/admin/groups/${encodeURIComponent(id)}`, 'notice.ok.saved');
     } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), { ...groupMessages, ...quotaMessages }); }
   }));
 
   router.post('/admin/apps/:id/quota', ...action((req, res, user) => {
     try {
       core.quotas.setApp(param(req, 'id'), quotaField(req));
-      res.redirect('/admin/apps');
+      done(res, '/admin/apps', 'notice.ok.saved');
     } catch (e) { failWith(res, e, (m) => appsSection(core, localeOf(res), user, m), { ...quotaMessages, not_found: 'error.notFound.text' }); }
   }));
 
   router.post('/admin/groups/:id/delete', ...action((req, res, user) => {
     try {
+      const name = core.groups.get(param(req, 'id'))?.name ?? '';
       core.groups.delete(param(req, 'id'));
-      res.redirect('/admin/groups');
+      done(res, '/admin/groups', 'notice.ok.deleted', { name });
     } catch (e) { failWith(res, e, (m) => groupsSection(core, localeOf(res), user, m), groupMessages); }
   }));
 
@@ -826,7 +840,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
       // The form sends a hidden "0" and, when ticked, a "1" as well; a request without the field leaves the setting as it is.
       const badge = (req.body as Record<string, unknown> | undefined)?.madeWithBadge;
       if (badge !== undefined) core.settings.setMadeWithBadge(Array.isArray(badge) ? badge.includes('1') : badge === '1');
-      res.redirect('/admin/settings');
+      done(res, '/admin/settings', 'notice.ok.saved');
     } catch (e) { failWith(res, e, (m) => settingsSection(core, localeOf(res), user, m), { invalid_argument: 'admin.settings.invalid' }); }
   }));
 
@@ -898,8 +912,9 @@ export const adminExtension: PlatformExtension = (router, core) => {
 
   router.post('/admin/ai/providers', ...action((req, res, user) => {
     try {
-      core.ai.createProvider(providerInput(req));
-      res.redirect('/admin/ai');
+      const input = providerInput(req);
+      core.ai.createProvider(input);
+      done(res, '/admin/ai', 'notice.ok.created', { name: input.name });
     } catch (e) { aiFail(res, user, e, (m) => aiSection(core, localeOf(res), user, m)); }
   }));
 
@@ -907,7 +922,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     const id = param(req, 'id');
     try {
       core.ai.updateProvider(id, providerInput(req));
-      res.redirect('/admin/ai');
+      done(res, '/admin/ai', 'notice.ok.saved');
     } catch (e) { aiFail(res, user, e, (m) => aiProviderPage(core, localeOf(res), user, id, m)); }
   }));
 
@@ -915,8 +930,9 @@ export const adminExtension: PlatformExtension = (router, core) => {
     const id = param(req, 'id');
     const locale = localeOf(res);
     try {
+      const name = core.ai.getProvider(id)?.name ?? id;
       core.ai.deleteProvider(id);
-      res.redirect('/admin/ai');
+      done(res, '/admin/ai', 'notice.ok.deleted', { name });
     } catch (e) {
       if (e instanceof LagerError && e.reason === 'ai_provider_in_use') {
         const models = core.ai.modelsUsing(id).map((m) => m.id).join(', ');
@@ -946,8 +962,9 @@ export const adminExtension: PlatformExtension = (router, core) => {
 
   router.post('/admin/ai/models', ...action((req, res, user) => {
     try {
-      core.ai.createModel(modelInput(req));
-      res.redirect('/admin/ai');
+      const input = modelInput(req);
+      core.ai.createModel(input);
+      done(res, '/admin/ai', 'notice.ok.created', { name: input.id ?? input.model });
     } catch (e) { aiFail(res, user, e, (m) => aiSection(core, localeOf(res), user, m)); }
   }));
 
@@ -955,7 +972,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     const id = param(req, 'id');
     try {
       core.ai.updateModel(id, modelInput(req));
-      res.redirect('/admin/ai');
+      done(res, '/admin/ai', 'notice.ok.saved');
     } catch (e) { aiFail(res, user, e, (m) => aiModelPage(core, localeOf(res), user, id, m)); }
   }));
 
@@ -964,7 +981,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     const locale = localeOf(res);
     try {
       core.ai.deleteModel(id);
-      res.redirect('/admin/ai');
+      done(res, '/admin/ai', 'notice.ok.deleted', { name: id });
     } catch (e) {
       if (e instanceof LagerError && e.reason === 'ai_model_in_use') {
         const groups = core.ai.groupsDefaultingTo(id).map((g) => aiGroupName(locale, g)).join(', ');
@@ -977,8 +994,9 @@ export const adminExtension: PlatformExtension = (router, core) => {
 
   router.post('/admin/ai/groups', ...action((req, res, user) => {
     try {
-      core.ai.createGroup(groupInput(req));
-      res.redirect('/admin/ai');
+      const input = groupInput(req);
+      core.ai.createGroup(input);
+      done(res, '/admin/ai', 'notice.ok.created', { name: input.name });
     } catch (e) { aiFail(res, user, e, (m) => aiSection(core, localeOf(res), user, m)); }
   }));
 
@@ -986,29 +1004,33 @@ export const adminExtension: PlatformExtension = (router, core) => {
     const id = param(req, 'id');
     try {
       core.ai.updateGroup(id, groupInput(req));
-      res.redirect('/admin/ai');
+      done(res, '/admin/ai', 'notice.ok.saved');
     } catch (e) { aiFail(res, user, e, (m) => aiGroupPage(core, localeOf(res), user, id, m)); }
   }));
 
   router.post('/admin/ai/groups/:id/delete', ...action((req, res, user) => {
     const id = param(req, 'id');
     try {
+      const name = core.ai.getGroup(id)?.name ?? id;
       core.ai.deleteGroup(id);
-      res.redirect('/admin/ai');
+      done(res, '/admin/ai', 'notice.ok.deleted', { name });
     } catch (e) { aiFail(res, user, e, (m) => aiGroupPage(core, localeOf(res), user, id, m)); }
   }));
 
   router.post('/admin/ai/max-tokens', ...action((req, res, user) => {
     try {
       core.ai.setMaxTokens(int(req, 'maxTokens'));
-      res.redirect('/admin/ai');
+      done(res, '/admin/ai', 'notice.ok.saved');
     } catch (e) { aiFail(res, user, e, (m) => aiSection(core, localeOf(res), user, m)); }
   }));
 
   router.post('/admin/users/:id/ai-group', ...action((req, res, user) => {
     try {
-      core.ai.assign(param(req, 'id'), field(req, 'group'));
-      res.redirect(userPath(param(req, 'id')));
+      const id = param(req, 'id');
+      core.ai.assign(id, field(req, 'group'));
+      const u = core.users.get(id)!;
+      const group = core.ai.listGroups().find((g) => g.id === core.ai.groupIdOf(id));
+      done(res, userPath(id), 'notice.ok.aiGroup', { name: u.name || u.email, group: group ? aiGroupName(localeOf(res), group) : '' });
     } catch (e) { failWith(res, e, userView(res, user, param(req, 'id')), { not_found: 'admin.ai.notFound' }); }
   }));
 
@@ -1021,7 +1043,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
       if (!instance) throw new LagerError('not_found', 'Instance not found.');
       if (value !== '0' && value !== '1') throw new LagerError('invalid_argument', 'disabled must be 0 or 1.');
       core.apps.setInstanceDisabled(instance.id, value === '1');
-      res.redirect('/admin/apps');
+      done(res, '/admin/apps', value === '1' ? 'notice.ok.instanceDisabled' : 'notice.ok.instanceEnabled', { slug: instance.slug });
     } catch (e) { failWith(res, e, (m) => appsSection(core, localeOf(res), user, m), { not_found: 'admin.instances.notFound' }); }
   }));
 };

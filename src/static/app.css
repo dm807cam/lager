@@ -359,6 +359,9 @@ select {
 .notice-warning { background: var(--warning-soft); border-color: var(--warning-line); }
 .notice-warning .i { color: var(--warning); }
 .card .notice:last-child, .auth-card .notice { margin-bottom: 0; }
+/* A notice placed above the card it is about: the column's gap already spaces it. The redirect scrolls to it, without a ring. */
+.main-col > .notice, .side-col > .notice { margin-bottom: 0; }
+#notice:focus { outline: none; }
 .auth-card .notice { margin-bottom: var(--s4); }
 
 .callout { margin-bottom: var(--s5); padding: var(--s4) var(--s5) var(--s5); border: 1px solid var(--accent-line); border-radius: var(--r-card); background: var(--accent-soft); }

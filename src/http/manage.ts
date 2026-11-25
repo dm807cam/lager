@@ -15,11 +15,11 @@ import { sendVersionDownload, streamExport, versionParam } from './api.js';
 import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { declaredModel, downloadableVersion, setAppModel } from '../mcp/tools.js';
 import {
-  dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, formErrorPage, hiddenField, levelOptions, missingPage, noticeHtml, optionList, type Option, page,
-  sizeText, visibilityLabel, visibilityOptions,
+  dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, formErrorPage, hiddenField, levelLabel, levelOptions, missingPage, optionList, type Option, page,
+  sizeText, visibilityLabel, visibilityOptions, withNotice,
 } from './pages.js';
 import { appTile, avatar, badge, btn, named, card, copyField, dataTable, emptyState, icon, linkButton, meter, notice, personCell, signedIn, visibilityIcon } from './ui.js';
-import { csrfToken, csrfValid, flashToken, readFlash, type Flash } from './session.js';
+import { csrfToken, csrfValid, flashUrl, readFlash, type Flash } from './session.js';
 
 const GRANT_LEVELS = ['view', 'interact', 'admin'] as const;
 const USERS_LEVELS = ['view', 'interact'] as const;
@@ -53,6 +53,12 @@ const NOTICES: Record<string, MessageKey> = {
   domain_limit: 'notice.domainLimit',
 };
 
+/** What a form did: the notice for the next page, the values it names, the section it is shown above, and another page to go to. */
+interface Done { ok: MessageKey; params?: Record<string, string>; anchor?: string; to?: string }
+
+/** What a change of visibility says: who can open the instance now. */
+const VISIBILITY_DONE: Record<Visibility, MessageKey> = { private: 'notice.ok.private', users: 'notice.ok.users', public: 'notice.ok.public' };
+
 /** A message for the user that is not a domain error (unknown address, wrong confirmation); carries a catalog key. */
 class Notice extends Error {
   constructor(public key: MessageKey) { super(key); }
@@ -62,7 +68,7 @@ class Notice extends Error {
 function shell(core: Core, locale: Locale, user: User, title: string, body: string, flash: Flash, returnPath: string, section: 'apps' | 'publish' = 'apps'): string {
   const back = section === 'publish' && (user.role === 'admin' || user.role === 'publisher')
     ? backTo('/publish', t(locale, 'nav.publish')) : backTo('/', t(locale, 'common.backToOverview'));
-  return page(locale, title, `${back}${noticeHtml(locale, flash)}${body}`, signedIn(core, user, section, returnPath));
+  return page(locale, title, `${back}${withNotice(locale, flash, body)}`, signedIn(core, user, section, returnPath));
 }
 
 const backTo = (href: string, label: string): string => `<a class="back" href="${esc(href)}">${icon('chevron', 'i-sm')}${esc(label)}</a>`;
@@ -122,7 +128,7 @@ function grantsCard(core: Core, locale: Locale, inst: Instance, base: string, cs
 ${field('grant-group', t(locale, 'instance.grants.orGroup'), `<select id="grant-group" name="group"><option value="">–</option>${groups}</select>`)}
 ${field('grant-level', t(locale, 'common.level'), `<select id="grant-level" name="level">${optionList(grantLevels, 'view')}</select>`)}`,
   `${icon('share')}${esc(t(locale, 'instance.grants.add'))}`, 'primary', 'form-row');
-  return card(t(locale, 'instance.grants.title'), `${list}<div class="subsection">${add}</div>`);
+  return card(t(locale, 'instance.grants.title'), `${list}<div class="subsection">${add}</div>`, '', 'sharing');
 }
 
 /** Only shown to those who may attach domains. Lager cannot check who owns a DNS name, so the page says so. `base` is the add route. */
@@ -150,7 +156,7 @@ function ingestCard(core: Core, locale: Locale, inst: Instance, base: string, cs
   const endpoints = endpointsOf(core, inst);
   if (endpoints.length === 0) return '';
   const title = t(locale, 'instance.ingest.title');
-  if (!core.ingest.enabled) return card(title, `<p class="hint">${esc(t(locale, 'instance.ingest.serverOff'))}</p>`);
+  if (!core.ingest.enabled) return card(title, `<p class="hint">${esc(t(locale, 'instance.ingest.serverOff'))}</p>`, '', 'ingest');
   const url = instanceUrl(core.config, inst.slug);
   const since = formatDate(locale, core.ingest.since);
   const items = endpoints.map((e) => {
@@ -176,7 +182,7 @@ ${e.auth === 'token' ? form(`${base}/ingest/token`, csrf, name, esc(t(locale, 'i
   const used = core.data.ingestUsage(inst.id);
   return card(title, `<p class="hint">${esc(t(locale, 'instance.ingest.intro'))}</p>${items}
 <div class="subsection">${meter(used, core.ingest.quotaBytes, t(locale, 'instance.ingest.storage', { used: formatSize(locale, used), quota: formatSize(locale, core.ingest.quotaBytes) }))}
-<p class="hint gap-top">${esc(t(locale, 'instance.ingest.storageHint'))}</p></div>`);
+<p class="hint gap-top">${esc(t(locale, 'instance.ingest.storageHint'))}</p></div>`, '', 'ingest');
 }
 
 /** The websites the people who manage the instance added to an endpoint with `managedOrigins`, each removable, and a form to add one. */
@@ -213,7 +219,7 @@ function embedCard(core: Core, locale: Locale, inst: Instance, base: string, csr
     '<input id="embed-origin" name="origin" type="url" required maxlength="300" autocomplete="off" spellcheck="false" placeholder="https://blog.example.com">'),
   `${icon('plus')}${esc(t(locale, 'common.add'))}`, 'secondary', 'form-row');
   return card(t(locale, 'instance.embed.title'), `<p class="hint">${esc(t(locale, 'instance.embed.intro'))}</p>${list}
-<div class="subsection">${add}<p class="hint gap-top">${esc(t(locale, 'instance.embed.hint'))}</p></div>`);
+<div class="subsection">${add}<p class="hint gap-top">${esc(t(locale, 'instance.embed.hint'))}</p></div>`, '', 'embed');
 }
 
 /** Destructive actions at the bottom of the main column: each confirmed by typing the name. */
@@ -257,7 +263,7 @@ ${notice('warning', t(locale, 'instance.disabledNotice'))}<div class="main-col">
     : `<p class="num">${sizeText(locale, used)}</p>`;
   const snapshotBytes = snapshots.reduce((sum, s) => sum + s.sizeBytes, 0);
   const snapshotStorage = snapshotBytes > 0 ? `<p class="hint">${esc(t(locale, 'instance.storage.snapshots', { size: formatSize(locale, snapshotBytes) }))}</p>` : '';
-  const details = `<section class="card"><h2>${esc(t(locale, 'instance.details'))}</h2><dl class="facts">
+  const details = `<section class="card" id="details"><h2>${esc(t(locale, 'instance.details'))}</h2><dl class="facts">
 ${fact(t(locale, 'common.owner'), person(core.users.get(inst.ownerId)))}
 ${fact(t(locale, 'instance.visibility.title'), form(`${base}/visibility`, csrf,
     `${field('visibility', t(locale, 'instance.visibility.who'), `<select id="visibility" name="visibility">${optionList(visibilityOptions(locale), inst.visibility)}</select>`)}${level}`,
@@ -269,15 +275,15 @@ ${core.settings.madeWithBadge ? fact(t(locale, 'instance.badge.title'), form(`${
     `${hiddenField('on', '0')}<label class="check"><input type="checkbox" class="switch" name="on" value="1"${inst.showBadge ? ' checked' : ''}><span><strong>${esc(t(locale, 'instance.badge.label'))}</strong><span class="hint">${esc(t(locale, 'instance.badge.hint'))}</span></span></label>`,
     esc(t(locale, 'common.save')), 'secondary', 'stack', true)) : ''}
 ${fact(t(locale, 'instance.storage'), `${storage}${snapshotStorage}`)}</dl></section>`;
-  const versions = `<section class="card"><div class="card-title"><h2>${esc(t(locale, 'instance.version'))}</h2>${badge(t(locale, 'instance.activeVersion', { number: inst.activeVersion }), { tone: 'success', dot: true })}</div>
+  const versions = `<section class="card" id="versions"><div class="card-title"><h2>${esc(t(locale, 'instance.version'))}</h2>${badge(t(locale, 'instance.activeVersion', { number: inst.activeVersion }), { tone: 'success', dot: true })}</div>
 ${versionsList(core, locale, user, app, base, csrf, inst.activeVersion, inst.id)}</section>`;
-  const data = `<section class="card"><h2>${esc(t(locale, 'instance.data.title'))}</h2>
+  const data = `<section class="card" id="data"><h2>${esc(t(locale, 'instance.data.title'))}</h2>
 <div class="btn-row"><a class="${btn('secondary', true)}" href="/instances/${encodeURIComponent(inst.slug)}/export">${icon('download')}${esc(t(locale, 'instance.data.export'))}</a></div>
 <p class="hint gap-top">${esc(t(locale, 'instance.data.hint', { slug: inst.slug }))}</p>
 <div class="subsection"><h3>${esc(t(locale, 'instance.snapshots.title'))}</h3>${snapshots.length
     ? `${dataTable(locale, [t(locale, 'common.name'), t(locale, 'common.date'), t(locale, 'common.size'), ''], snapRows)}${mayRestore ? '' : `<p class="hint gap-top">${esc(t(locale, 'instance.snapshots.ownerOnly'))}</p>`}`
     : emptyState(t(locale, 'instance.snapshots.none'), 'download')}</div></section>`;
-  const domains = core.domains.canManage(user, core.access.canManageInstance(inst, user)) ? card(t(locale, 'instance.domains.title'), domainsBody(core, locale, inst, `${base}/domains`, csrf)) : '';
+  const domains = core.domains.canManage(user, core.access.canManageInstance(inst, user)) ? card(t(locale, 'instance.domains.title'), domainsBody(core, locale, inst, `${base}/domains`, csrf), '', 'domains') : '';
   return shell(core, locale, user, title, `${hero(app, app.title, `<a class="url" href="${esc(url)}">${esc(url)}</a>`, [visibility, badge(`v${inst.activeVersion}`)],
     linkButton(url, `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary'))}
 <div class="layout"><div class="main-col">${versions}${grantsCard(core, locale, inst, base, csrf)}${ingestCard(core, locale, inst, base, csrf)}${embedCard(core, locale, inst, base, csrf)}${domains}${data}${del}</div>
@@ -309,18 +315,18 @@ function appPage(core: Core, locale: Locale, user: User, app: App, flash: Flash)
     const selfModes: Option[] = [['off', t(locale, 'self.off')], ['users', t(locale, 'self.users')]];
     collaborators = card(t(locale, 'app.collaborators'), `${collabRows.length ? dataTable(locale, [t(locale, 'common.name'), ''], collabRows) : emptyState(t(locale, 'app.noCollaborators'), 'users')}
 <div class="subsection">${form(`${base}/collaborators`, csrf, field('collab-email', t(locale, 'app.collaboratorEmail'), '<input id="collab-email" name="email" type="email" required maxlength="254" autocomplete="off">'),
-    `${icon('plus')}${esc(t(locale, 'common.add'))}`, 'secondary', 'form-row')}</div>`);
+    `${icon('plus')}${esc(t(locale, 'common.add'))}`, 'secondary', 'form-row')}</div>`, '', 'collaborators');
     selfService = fact(t(locale, 'app.self.title'), form(`${base}/self-instances`, csrf,
       field('self-mode', t(locale, 'app.self.label'), `<select id="self-mode" name="mode">${optionList(selfModes, app.selfInstances)}</select>`), esc(t(locale, 'common.save')), 'secondary', 'stack', true));
     del = dangerZone(locale, t(locale, 'app.delete.title'), t(locale, 'app.delete.text'), `${base}/delete`, csrf, app.slug, t(locale, 'app.delete.submit'));
   }
-  const details = `<section class="card"><h2>${esc(t(locale, 'instance.details'))}</h2><dl class="facts">${fact(t(locale, 'common.owner'), person(core.users.get(app.ownerId)))}${selfService}${modelFact(core, locale, user, app, base, csrf)}</dl></section>`;
+  const details = `<section class="card" id="details"><h2>${esc(t(locale, 'instance.details'))}</h2><dl class="facts">${fact(t(locale, 'common.owner'), person(core.users.get(app.ownerId)))}${selfService}${modelFact(core, locale, user, app, base, csrf)}</dl></section>`;
   const count = instances.length;
   return shell(core, locale, user, t(locale, 'app.pageTitle', { title: app.title }), `${hero(app, app.title, `<span class="url">${esc(app.slug)}</span>`,
     [`<span class="badge"><span class="sr-only">${esc(t(locale, 'dash.latestVersion'))} </span>v${latest}</span>`, badge(t(locale, count === 1 ? 'dash.instanceCount.one' : 'dash.instanceCount.other', { count }), { icon: 'grid' })], '', app.description)}
 <div class="layout"><div class="main-col">
-<section class="card"><h2>${esc(t(locale, 'app.versions'))}</h2>${versionsList(core, locale, user, app, null, csrf)}</section>
-<section class="card"><h2>${esc(t(locale, 'app.instances'))}</h2>${rows.length ? dataTable(locale, [t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'app.saved'), ''], rows) : emptyState(t(locale, 'app.noInstances'))}
+<section class="card" id="versions"><h2>${esc(t(locale, 'app.versions'))}</h2>${versionsList(core, locale, user, app, null, csrf)}</section>
+<section class="card" id="instances"><h2>${esc(t(locale, 'app.instances'))}</h2>${rows.length ? dataTable(locale, [t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'app.saved'), ''], rows) : emptyState(t(locale, 'app.noInstances'))}
 <div class="subsection"><h3>${esc(t(locale, 'app.newInstance'))}</h3>${form(`${base}/instances`, csrf,
     `${field('new-slug', t(locale, 'instance.slugLabel'), `<input id="new-slug" name="slug" required maxlength="${MAX_SLUG_LENGTH}" autocomplete="off" spellcheck="false">`)}${ownerField}`,
     `${icon('plus')}${esc(t(locale, 'app.newInstance'))}`, 'primary', 'form-row')}</div></section>
@@ -359,9 +365,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     return typeof v === 'string' ? v.slice(0, max) : '';
   };
   const send = (res: Response, status: number, body: string): void => { res.status(status).type('html').send(body); };
-  const toPage = (res: Response, user: User, path: string, flash: Flash): void => {
-    res.redirect(`${path}?flash=${encodeURIComponent(flashToken(core, user, flash))}`);
-  };
+  const toPage = (res: Response, user: User, path: string, flash: Flash): void => { res.redirect(flashUrl(core, user, path, flash)); };
 
   const instanceOf = (slug: string): Instance => {
     const inst = core.apps.getInstanceBySlug(slug);
@@ -390,17 +394,18 @@ export const manageExtension: PlatformExtension = (router, core) => {
   };
 
   /**
-   * Session, then CSRF, then the action. `back` is the page the form came from; `run` may return another
-   * path to redirect to. Domain errors become a notice on `back`, forbidden and unknown targets error pages.
+   * Session, then CSRF, then the action. `back` is the page the form came from; `run` says what it did (`Done`), which the page
+   * shows above the section that changed, and may name another page to go to. Domain errors become a notice on `back`,
+   * forbidden and unknown targets error pages.
    */
-  const action = (back: (req: Request, user: User) => string, run: (req: Request, user: User) => string | void): RequestHandler[] => [
+  const action = (back: (req: Request, user: User) => string, run: (req: Request, user: User) => Done): RequestHandler[] => [
     noStore, auth, formBody,
     (req, res) => {
       const user = userOf(res);
       if (!csrfValid(core, user, field(req, 'csrf', 2000))) { send(res, 403, formErrorPage(localeOf(res), 'error.sessionExpired', undefined, shellOf(res))); return; }
       try {
-        const target = run(req, user);
-        res.redirect(target ?? back(req, user));
+        const done = run(req, user);
+        toPage(res, user, done.to ?? back(req, user), { ok: done.ok, params: done.params, anchor: done.anchor });
       } catch (e) {
         if (e instanceof Notice) { toPage(res, user, back(req, user), { error: e.key }); return; }
         if (!(e instanceof LagerError)) throw e;
@@ -448,6 +453,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     if (!Number.isInteger(version)) throw new LagerError('invalid_argument', 'Invalid version.');
     const inst = managed(user, param(req, 'slug'));
     withSnapshotBudget(core, inst.id, () => core.apps.activate(inst.id, version, user.id));
+    return { ok: 'notice.ok.activated', params: { version: String(version) }, anchor: 'versions' };
   }));
 
   router.post('/ui/instances/:slug/auto-update', ...action(instBack, (req, user) => {
@@ -456,8 +462,12 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const on = Array.isArray(raw) ? raw.includes('1') : raw === '1';
     const inst = managed(user, param(req, 'slug'));
     // Switching it on can move the instance to the latest version, which takes a snapshot like a manual activation.
-    if (on) withSnapshotBudget(core, inst.id, () => core.apps.setAutoUpdate(inst.id, on, user.id));
-    else core.apps.setAutoUpdate(inst.id, on, user.id);
+    const now = on ? withSnapshotBudget(core, inst.id, () => core.apps.setAutoUpdate(inst.id, on, user.id)) : core.apps.setAutoUpdate(inst.id, on, user.id);
+    if (!on) return { ok: 'notice.ok.autoUpdateOff', params: { version: String(now.activeVersion) }, anchor: 'details' };
+    // An instance that was behind moved to the latest version right away: the notice says so, not "the next deploy".
+    return now.activeVersion !== inst.activeVersion
+      ? { ok: 'notice.ok.autoUpdateMoved', params: { version: String(now.activeVersion) }, anchor: 'details' }
+      : { ok: 'notice.ok.autoUpdateOn', anchor: 'details' };
   }));
 
   router.post('/ui/instances/:slug/badge', ...action(instBack, (req, user) => {
@@ -465,6 +475,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const raw = (req.body as Record<string, unknown> | undefined)?.on;
     const on = Array.isArray(raw) ? raw.includes('1') : raw === '1';
     core.apps.setShowBadge(managed(user, param(req, 'slug')).id, on, user.id);
+    return { ok: on ? 'notice.ok.badgeOn' : 'notice.ok.badgeOff', anchor: 'details' };
   }));
 
   router.post('/ui/instances/:slug/visibility', ...action(instBack, (req, user) => {
@@ -472,15 +483,19 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const usersLevel = field(req, 'users_level');
     // Validate before storing either value, so a bad level does not leave a half-applied change.
     if (usersLevel !== '' && !(USERS_LEVELS as readonly string[]).includes(usersLevel)) throw new LagerError('invalid_argument', 'Invalid level.');
-    core.apps.setVisibility(inst.id, field(req, 'visibility') as Visibility, user.id);
+    const now = core.apps.setVisibility(inst.id, field(req, 'visibility') as Visibility, user.id);
     if (usersLevel !== '') core.apps.setUsersLevel(inst.id, usersLevel as UsersLevel, user.id);
+    return { ok: VISIBILITY_DONE[now.visibility], params: { slug: inst.slug }, anchor: 'details' };
   }));
 
   router.post('/ui/instances/:slug/restore', ...action(instBack, (req, user) => {
     const inst = managed(user, param(req, 'slug'));
     // A restore also rolls back what the app's rules keep from a manager (other people's private areas, owner-only paths).
     if (!core.access.canRestoreInstance(inst, user)) throw new LagerError('forbidden', 'Only the owner may do this.');
-    withSnapshotBudget(core, inst.id, () => core.data.restore(inst.id, field(req, 'snapshot')));
+    const id = field(req, 'snapshot');
+    const label = core.data.listSnapshots(inst.id).find((s) => s.id === id)?.label ?? id;
+    withSnapshotBudget(core, inst.id, () => core.data.restore(inst.id, id));
+    return { ok: 'notice.ok.restored', params: { label }, anchor: 'data' };
   }));
 
   router.post('/ui/instances/:slug/grants', ...action(instBack, (req, user) => {
@@ -488,21 +503,37 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const level = field(req, 'level') as GrantLevel;
     const email = field(req, 'email', 254).trim();
     const group = field(req, 'group');
-    if (email !== '') core.access.setGrant(inst, 'user', accountByEmail(email).id, level, user);
-    else if (group !== '') core.access.setGrant(inst, 'group', group, level, user);
-    else throw new Notice('notice.grantTarget');
+    let name: string;
+    if (email !== '') {
+      const account = accountByEmail(email);
+      core.access.setGrant(inst, 'user', account.id, level, user);
+      name = account.email;
+    } else if (group !== '') {
+      core.access.setGrant(inst, 'group', group, level, user);
+      name = core.groups.get(group)?.name ?? group;
+    } else throw new Notice('notice.grantTarget');
+    return { ok: 'notice.ok.shared', params: { name, level: levelLabel(localeOf(req.res!), level) }, anchor: 'sharing' };
   }));
 
   router.post('/ui/instances/:slug/grants/remove', ...action(instBack, (req, user) => {
-    core.access.removeGrant(managed(user, param(req, 'slug')), field(req, 'type') as 'user' | 'group', field(req, 'id'), user);
+    const inst = managed(user, param(req, 'slug'));
+    const type = field(req, 'type') as 'user' | 'group';
+    const id = field(req, 'id');
+    const name = core.access.listGrants(inst.id).find((g) => g.principalType === type && g.principalId === id)?.principalLabel ?? id;
+    core.access.removeGrant(inst, type, id, user);
+    return { ok: 'notice.ok.unshared', params: { name }, anchor: 'sharing' };
   }));
 
   router.post('/ui/instances/:slug/domains', ...action(instBack, (req, user) => {
-    core.domains.add(managed(user, param(req, 'slug')), field(req, 'host', 300), user, true);
+    const host = field(req, 'host', 300);
+    core.domains.add(managed(user, param(req, 'slug')), host, user, true);
+    return { ok: 'notice.ok.domainAdded', params: { host: host.trim().toLowerCase() }, anchor: 'domains' };
   }));
 
   router.post('/ui/instances/:slug/domains/remove', ...action(instBack, (req, user) => {
-    core.domains.remove(managed(user, param(req, 'slug')), field(req, 'host', 300), user, true);
+    const host = field(req, 'host', 300);
+    core.domains.remove(managed(user, param(req, 'slug')), host, user, true);
+    return { ok: 'notice.ok.removed', params: { name: host }, anchor: 'domains' };
   }));
 
   /** The instance, if `user` manages it and its active version declares the endpoint the form names. */
@@ -516,12 +547,15 @@ export const manageExtension: PlatformExtension = (router, core) => {
 
   router.post('/ui/instances/:slug/ingest/switch', ...action(instBack, (req, user) => {
     const { inst, name } = managedEndpoint(req, user);
-    core.ingest.setOff(inst.id, name, field(req, 'on') !== '1');
+    const on = field(req, 'on') === '1';
+    core.ingest.setOff(inst.id, name, !on);
+    return { ok: on ? 'notice.ok.ingestOn' : 'notice.ok.ingestOff', params: { name }, anchor: 'ingest' };
   }));
 
   router.post('/ui/instances/:slug/ingest/token', ...action(instBack, (req, user) => {
     const { inst, name } = managedEndpoint(req, user);
     core.ingest.rotateToken(inst.id, name);
+    return { ok: 'notice.ok.ingestToken', params: { name }, anchor: 'ingest' };
   }));
 
   router.post('/ui/instances/:slug/ingest/origins', ...action(instBack, (req, user) => {
@@ -529,12 +563,14 @@ export const manageExtension: PlatformExtension = (router, core) => {
     // People paste what the address bar shows; one trailing slash is the only thing taken off before the strict check.
     const origin = field(req, 'origin', 300).trim().replace(/\/$/, '');
     core.ingest.setOrigins(inst.id, endpoint, [...core.ingest.instanceOrigins(inst.id, name), origin]);
+    return { ok: 'notice.ok.added', params: { name: origin }, anchor: 'ingest' };
   }));
 
   router.post('/ui/instances/:slug/ingest/origins/remove', ...action(instBack, (req, user) => {
     const { inst, name, endpoint } = managedEndpoint(req, user);
     const origin = field(req, 'origin', 300);
     core.ingest.setOrigins(inst.id, endpoint, core.ingest.instanceOrigins(inst.id, name).filter((o) => o !== origin));
+    return { ok: 'notice.ok.removed', params: { name: origin }, anchor: 'ingest' };
   }));
 
   /** The instance, if `user` manages it and its active version declares `embed`. */
@@ -549,12 +585,14 @@ export const manageExtension: PlatformExtension = (router, core) => {
     // People paste what the address bar shows; one trailing slash is the only thing taken off before the strict check.
     const origin = field(req, 'origin', 300).trim().replace(/\/$/, '');
     core.embed.setOrigins(inst.id, [...core.embed.origins(inst.id), origin]);
+    return { ok: 'notice.ok.added', params: { name: origin }, anchor: 'embed' };
   }));
 
   router.post('/ui/instances/:slug/embed/remove', ...action(instBack, (req, user) => {
     const inst = embedInstance(req, user);
     const origin = field(req, 'origin', 300);
     core.embed.setOrigins(inst.id, core.embed.origins(inst.id).filter((o) => o !== origin));
+    return { ok: 'notice.ok.removed', params: { name: origin }, anchor: 'embed' };
   }));
 
   router.post('/ui/instances/:slug/delete', ...action(instBack, (req, user) => {
@@ -563,7 +601,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     if (!core.access.canDeleteInstance(inst, user)) throw new LagerError('forbidden', 'Only the owner may do this.');
     if (field(req, 'confirm') !== inst.slug) throw new Notice('notice.confirmName');
     core.apps.deleteInstance(inst.id, user.id);
-    return '/';
+    return { ok: 'notice.ok.instanceDeleted', params: { slug: inst.slug }, to: '/' };
   }));
 
   // --- app page ---
@@ -589,31 +627,42 @@ export const manageExtension: PlatformExtension = (router, core) => {
       const email = field(req, 'owner_email', 254).trim();
       // Only people who deploy this app may create instances for others; for everyone else the field is ignored.
       const owner = email !== '' && core.access.canDeploy(app, user) ? accountByEmail(email) : user;
-      core.apps.createInstance({ appId: app.id, slug: field(req, 'slug', 100).trim(), ownerId: owner.id, createdBy: user.id });
+      const created = core.apps.createInstance({ appId: app.id, slug: field(req, 'slug', 100).trim(), ownerId: owner.id, createdBy: user.id });
+      // From the home page the new instance shows among one's own; from the app page in its list of instances.
+      return { ok: 'notice.ok.instanceCreated', params: { slug: created.slug }, anchor: field(req, 'from') === 'home' ? 'mine' : 'instances' };
     },
   ));
 
   router.post('/ui/apps/:slug/collaborators', ...action(appBack, (req, user) => {
     const app = ownedApp(user, param(req, 'slug'));
-    core.apps.addCollaborator(app.id, accountByEmail(field(req, 'email', 254)).id, user.id);
+    const account = accountByEmail(field(req, 'email', 254));
+    core.apps.addCollaborator(app.id, account.id, user.id);
+    return { ok: 'notice.ok.collaboratorAdded', params: { name: account.name || account.email }, anchor: 'collaborators' };
   }));
 
   router.post('/ui/apps/:slug/collaborators/remove', ...action(appBack, (req, user) => {
-    core.apps.removeCollaborator(ownedApp(user, param(req, 'slug')).id, field(req, 'id'), user.id);
+    const app = ownedApp(user, param(req, 'slug'));
+    // Only someone who works on the app is named: any other account id must not be turned into a name here.
+    const who = core.apps.listCollaborators(app.id).find((c) => c.id === field(req, 'id'));
+    if (!who) throw new Notice('notice.missing');
+    core.apps.removeCollaborator(app.id, who.id, user.id);
+    return { ok: 'notice.ok.collaboratorRemoved', params: { name: who.name || who.email }, anchor: 'collaborators' };
   }));
 
   router.post('/ui/apps/:slug/self-instances', ...action(appBack, (req, user) => {
     core.apps.setSelfInstances(ownedApp(user, param(req, 'slug')).id, field(req, 'mode') as SelfInstances, user.id);
+    return { ok: 'notice.ok.saved', anchor: 'details' };
   }));
 
   router.post('/ui/apps/:slug/model', ...action(appBack, (req, user) => {
     setAppModel(core, user, appOf(param(req, 'slug')), field(req, 'model', 100) || null);
+    return { ok: 'notice.ok.saved', anchor: 'details' };
   }));
 
   router.post('/ui/apps/:slug/delete', ...action(appBack, (req, user) => {
     const app = ownedApp(user, param(req, 'slug'));
     if (field(req, 'confirm') !== app.slug) throw new Notice('notice.confirmName');
     core.apps.deleteApp(app.id, user.id);
-    return '/';
+    return { ok: 'notice.ok.appDeleted', params: { name: app.title }, to: '/' };
   }));
 };
