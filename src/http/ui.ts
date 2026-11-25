@@ -31,6 +31,7 @@ const ICONS: Record<string, string> = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
   upload: '<path d="M12 16V4M7 9l5-5 5 5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   eyeOff: '<path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.9 8.4 2 12 2 12s3.6 7 10 7a10 10 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
 };
@@ -98,6 +99,17 @@ export const callout = (locale: Locale, title: string, secret: string, warning: 
  * An empty list: what is missing, and optionally one more sentence (`detail`, plain text) on what the list is for or when it
  * fills up, and the next step (`action`, trusted markup: links styled as buttons).
  */
+/** From this many entries on, a list gets a filter field: below it the whole list fits on a screen or two. */
+export const FILTER_FROM = 8;
+
+/**
+ * A field that narrows a list while typing: the script hides the entries (`targets`, a selector) whose text does not contain what
+ * was typed, and says so when nothing is left. Hidden until the script shows it: without script there is nothing to filter with.
+ */
+export const filterField = (locale: Locale, id: string, targets: string, label: string): string =>
+  `<div class="filter" hidden>${icon('search', 'i-sm')}<label class="sr-only" for="${esc(id)}">${esc(label)}</label><input type="search" id="${esc(id)}" data-filter="${esc(targets)}" placeholder="${esc(label)}" autocomplete="off" spellcheck="false" enterkeyhint="search">`
+  + `<p class="filter-none hint" role="status" hidden>${esc(t(locale, 'filter.none'))}</p></div>`;
+
 export const emptyState = (text: string, name: IconName = 'grid', opts: { detail?: string; action?: string } = {}): string =>
   `<div class="empty">${icon(name)}<p>${esc(text)}</p>${opts.detail ? `<p class="empty-detail">${esc(opts.detail)}</p>` : ''}${opts.action ? `<div class="empty-actions">${opts.action}</div>` : ''}</div>`;
 

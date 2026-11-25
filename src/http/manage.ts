@@ -100,6 +100,9 @@ function hero(app: App, title: string, sub: string, badges: string[], actions: s
 ${description ? `<p class="hero-desc">${esc(description)}</p>` : ''}<div class="badges">${badges.join('')}</div></div>${actions ? `<div class="hero-actions">${actions}</div>` : ''}</header>`;
 }
 
+/** How many of the newest versions a version list shows before "Show all". */
+const VERSIONS_SHOWN = 5;
+
 /** Deployed versions, plus the ones `instanceId` saved itself; other instances' saved versions are never listed. */
 function versionsList(core: Core, locale: Locale, user: User, app: App, base: string | null, csrf: string, active?: number, instanceId?: string): string {
   const shown = core.apps.listVersions(app.id).filter((v) => v.instanceId === null || v.instanceId === instanceId);
@@ -111,7 +114,8 @@ function versionsList(core: Core, locale: Locale, user: User, app: App, base: st
   };
   if (!shown.length) return emptyState(t(locale, 'notice.versionMissing'));
   const latest = core.apps.latestDeployedVersion(app.id)?.number;
-  const items = [...shown].reverse().map((v) => {
+  const newest = [...shown].reverse();
+  const item = (v: Version): string => {
     const isActive = v.number === active;
     const note = v.instanceId !== null ? badge(t(locale, 'instance.savedBySelf'), { icon: 'user' }) : '';
     const download = mayDownload(v)
@@ -123,8 +127,13 @@ function versionsList(core: Core, locale: Locale, user: User, app: App, base: st
 <div class="tl-body"><div class="tl-title"><strong>v${v.number}</strong>${isActive ? badge(t(locale, 'common.active'), { tone: 'success', dot: true }) : ''}${v.number === latest && v.instanceId === null ? badge(t(locale, 'instance.latest')) : ''}${note}</div>
 <span class="tl-meta">${dateText(locale, v.createdAt)} · ${sizeText(locale, v.sizeBytes)}</span>${v.instanceId === null && v.note ? `<span class="tl-note">${esc(v.note)}</span>` : ''}</div>
 <div class="tl-actions">${download}${activate}</div></li>`;
-  }).join('');
-  return `<ol class="timeline">${items}</ol>`;
+  };
+  // An assistant that keeps improving an app leaves dozens of versions: the newest few and the active one first, the rest on request.
+  const first = newest.filter((v, i) => i < VERSIONS_SHOWN || v.number === active);
+  const rest = newest.filter((v) => !first.includes(v));
+  const more = rest.length
+    ? `<details class="more-versions"><summary class="${btn('quiet', true)}">${icon('chevron')}${esc(t(locale, 'instance.versions.all', { count: newest.length }))}</summary><ol class="timeline">${rest.map(item).join('')}</ol></details>` : '';
+  return `<ol class="timeline">${first.map(item).join('')}</ol>${more}`;
 }
 
 /** Who can open an instance that is shared with nobody by name, by its visibility. */

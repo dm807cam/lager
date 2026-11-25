@@ -56,6 +56,22 @@
     if (focused) input.focus();
   });
 
+  // Filters above long lists: entries whose text does not hold what was typed are hidden while typing.
+  document.querySelectorAll('input[data-filter]').forEach(function (input) {
+    var box = input.parentNode;
+    var none = box.querySelector('.filter-none');
+    box.hidden = false;
+    input.addEventListener('input', function () {
+      var q = input.value.trim().toLowerCase();
+      var left = 0;
+      document.querySelectorAll(input.getAttribute('data-filter')).forEach(function (el) {
+        el.hidden = q !== '' && el.textContent.toLowerCase().indexOf(q) === -1;
+        if (!el.hidden) left++;
+      });
+      if (none) none.hidden = left > 0;
+    });
+  });
+
   // Dates: the server writes them in UTC and says so; here they become the viewer's own time, in the page's language.
   var DATE_FORMATS = {
     datetime: { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' },
