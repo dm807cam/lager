@@ -17,7 +17,7 @@ import { AppIcons } from './platform/icons.js';
 import { Ingest } from './platform/ingest.js';
 import { Embed } from './platform/embed.js';
 import { Groups } from './platform/groups.js';
-import { createMailer, type Mailer } from './platform/mail.js';
+import { createMailer, MailSettings, SMTP_TIMEOUT_MS, type Mailer, type MailSource } from './platform/mail.js';
 import { Settings } from './platform/settings.js';
 import { ApiTokens } from './platform/tokens.js';
 import { TwoFactor } from './platform/two-factor.js';
@@ -38,6 +38,10 @@ export interface Core {
   /** Persisted instance-wide settings (registration mode, instance limit). */
   settings: Settings;
   mailer: Mailer;
+  /** The mail server saved in the administration area; LAGER_SMTP_URL takes precedence over it. */
+  mailSettings: MailSettings;
+  /** Where the mail server in use comes from: `env` (LAGER_SMTP_URL), `admin` (the administration area) or `none`. */
+  readonly mailSource: MailSource;
   /** Registration, e-mail verification, password reset and invitations. */
   accounts: Accounts;
   /** Deleting an account for good, with what it owns handed on or deleted. */
@@ -106,7 +110,8 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
       + `LAGER_ADMIN_PASSWORD (at least ${MIN_PASSWORD_LENGTH} characters) for the first start. The password line can be removed afterwards.`);
   }
   users.ensureAdmin(config.adminEmail, config.adminPassword);
-  const mailer = opts?.mailer ?? createMailer(config);
+  const mailSettings = new MailSettings(db, config.secret);
+  const mailer = opts?.mailer ?? createMailer(config, SMTP_TIMEOUT_MS, mailSettings);
   const settings = new Settings(db, { registration: mailer.enabled ? 'open' : 'invite' });
   const apps = new Apps(db, config.dataDir, users, settings);
   const tokens = new ApiTokens(db, users);
@@ -159,7 +164,9 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   const privatePurge = new PrivatePurge((instanceId, userId) => data.purgePrivateArea(instanceId, userId), PRIVATE_PURGE_LIMIT);
   removal.onRemoved((userId) => { privatePurge.start(userId, apps.listAllInstances().map((instance) => instance.id)); });
   return {
-    config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, twoFactor: new TwoFactor(db, config.secret), oauth, settings, mailer, accounts, groups, domains, access,
+    config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, twoFactor: new TwoFactor(db, config.secret), oauth, settings, mailer, mailSettings,
+    get mailSource(): MailSource { return config.smtpUrl ? 'env' : mailSettings.get() ? 'admin' : 'none'; },
+    accounts, groups, domains, access,
     icons, ai, removal, privatePurge, deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000), ingest,
     embed: new Embed(db, config, domains),
     close() {

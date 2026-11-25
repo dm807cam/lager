@@ -34,7 +34,7 @@ export interface Harness {
 
 export interface HarnessOptions {
   publicUrl?: string; extensions?: PlatformExtension[]; trustProxy?: number | false; instanceQuotaBytes?: number; mailer?: Mailer; defaultLocale?: Locale; accessLog?: boolean; fetch?: typeof fetch;
-  ingestQuotaBytes?: number; countryHeader?: string; appsDomain?: string;
+  ingestQuotaBytes?: number; countryHeader?: string; appsDomain?: string; smtpUrl?: string;
 }
 
 export function makeHarness(opts: HarnessOptions = {}): Harness {
@@ -44,6 +44,7 @@ export function makeHarness(opts: HarnessOptions = {}): Harness {
     adminEmail: 'admin@x.y', adminPassword: 'admin-password-1', secret: 'test-secret', snapshotKeep: 20, trustProxy: opts.trustProxy ?? false,
     instanceQuotaBytes: opts.instanceQuotaBytes ?? 50 * 1024 * 1024, accessLog: opts.accessLog,
     ...(opts.ingestQuotaBytes === undefined ? {} : { ingestQuotaBytes: opts.ingestQuotaBytes }), countryHeader: opts.countryHeader,
+    ...(opts.smtpUrl ? { smtpUrl: opts.smtpUrl } : {}),
   };
   const core = createCore(config, { ...(opts.mailer ? { mailer: opts.mailer } : {}), ...(opts.fetch ? { fetch: opts.fetch } : {}) });
   // The stylesheet, the script and the public account pages are part of every platform host, so every harness registers them.
