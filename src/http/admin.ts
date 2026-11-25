@@ -585,8 +585,6 @@ export const adminExtension: PlatformExtension = (router, core) => {
   };
   /** After a form whose outcome is a success or a refusal: back to `path` with it, so reloading never sends the form again. */
   const redirectWith = (res: Response, path: string, flash: Flash): void => { res.redirect(flashUrl(core, adminOf(res), path, flash)); };
-  /** Text from elsewhere (a mail server's or a provider's answer) fits into a flash value. */
-  const clip = (text: string): string => (text.length > 300 ? `${text.slice(0, 299)}…` : text);
   /**
    * The question before a change that cannot be taken back, when the form came without the answer (no script): asked on a page of
    * its own that sends the same fields again. True when it was asked, so the route stops there.
@@ -936,7 +934,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
       redirectWith(res, '/admin/mail', { ok: 'admin.mail.testOk', params: { email: user.email } });
     } catch (e) {
       // The error code and the SMTP reply tell a wrong password from a server that is down; nothing else the far end said is shown.
-      redirectWith(res, '/admin/mail', { error: 'admin.mail.testFailed', params: { error: clip(smtpErrorText(e)) } });
+      redirectWith(res, '/admin/mail', { error: 'admin.mail.testFailed', params: { error: smtpErrorText(e) } });
     }
   }));
 
@@ -1011,11 +1009,11 @@ export const adminExtension: PlatformExtension = (router, core) => {
     try {
       const out = await core.ai.complete(core.ai.testRoute(id), [{ role: 'user', content: TEST_PROMPT }], { maxTokens: Math.min(core.ai.maxTokens, 2000) });
       const answer = out.text.trim().slice(0, 200) || '–';
-      redirectWith(res, `/admin/ai/providers/${encodeURIComponent(id)}`, { ok: 'admin.ai.testOk', params: { model: clip(out.model), answer } });
+      redirectWith(res, `/admin/ai/providers/${encodeURIComponent(id)}`, { ok: 'admin.ai.testOk', params: { model: out.model, answer } });
     } catch (e) {
       if (e instanceof AiError) {
         // The administrator sees what the provider said; app viewers never do.
-        redirectWith(res, `/admin/ai/providers/${encodeURIComponent(id)}`, { error: 'admin.ai.testFailed', params: { error: clip([e.message, e.detail].filter(Boolean).join(' ')) } });
+        redirectWith(res, `/admin/ai/providers/${encodeURIComponent(id)}`, { error: 'admin.ai.testFailed', params: { error: [e.message, e.detail].filter(Boolean).join(' ') } });
         return;
       }
       aiFail(res, user, e, (m) => aiProviderPage(core, locale, user, id, m));
