@@ -66,7 +66,7 @@ const bodyText = (req: Request, name: string): string => {
 // The error is part of the signature every field mapping shares; a one-field form puts any of them at its field.
 const at = (id: string, name: string): FieldOf => (req, _error) => ({ field: id, values: { [id]: bodyText(req, name) } });
 /** Refusals that are about what was typed into the name of a new instance; any other (a limit, the owner) is no field's. */
-const NAME_ERRORS: ReadonlySet<MessageKey> = new Set(['notice.slugInvalid', 'notice.slugTaken', 'notice.slugRetired', 'validation.generic']);
+const NAME_ERRORS: ReadonlySet<MessageKey> = new Set(['notice.slugInvalid', 'notice.slugTaken', 'notice.slugRetired']);
 
 /** What a form did: the notice for the next page, the values it names, the section it is shown above, and another page to go to. */
 interface Done { ok: MessageKey; params?: Record<string, string>; anchor?: string; to?: string; undo?: Undo }

@@ -308,15 +308,15 @@ export function questionPage(locale: Locale, q: Question, req: { body?: unknown;
 export const field = (id: string, label: string, control: string, hint = ''): string =>
   `<div class="field"><label for="${esc(id)}">${esc(label)}</label>${control}${hint ? `<p class="hint" id="${esc(id)}-hint">${esc(hint)}</p>` : ''}</div>`;
 
+/** A control id that may be written into markup without escaping. */
+const CONTROL_ID = /^[A-Za-z][A-Za-z0-9_-]{0,100}$/;
+
 /**
  * `html` with an error message at the control whose id is `id`: the message between the label and the control (so a button next to
  * the field stays level with it), the control marked invalid and described by the message, and focused when the page opens; the
  * values a refused form sent come back in the text fields they came from (`values` maps control ids to text; never a password).
  * A closed "get your own" panel around the control opens. Null when the page has no such control.
  */
-/** A control id that may be written into markup without escaping. */
-const CONTROL_ID = /^[A-Za-z][A-Za-z0-9_-]{0,100}$/;
-
 export function withFieldError(html: string, id: string, message: string, values: Record<string, string> = {}): string | null {
   // Ids are written into the markup as they are: anything but a plain id (it may come from a request) is refused, not cleaned.
   if (!CONTROL_ID.test(id)) return null;
