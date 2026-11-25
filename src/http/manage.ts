@@ -15,8 +15,8 @@ import { sendVersionDownload, streamExport, versionParam } from './api.js';
 import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { declaredModel, downloadableVersion, setAppModel } from '../mcp/tools.js';
 import {
-  confirmAttrs, confirmed, questionPage, dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, formErrorPage, hiddenField, levelLabel, levelOptions, missingPage, optionList, type Option, page, type Question,
-  sizeText, visibilityLabel, visibilityOptions, withNotice,
+  confirmAttrs, confirmed, questionPage, dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, hiddenField, levelLabel, levelOptions, missingPage, optionList, type Option, page, type Question,
+  sizeText, staleFormPage, visibilityLabel, visibilityOptions, withNotice,
 } from './pages.js';
 import { appTile, avatar, badge, btn, named, card, copyField, dataTable, emptyState, icon, linkButton, meter, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash, type Undo } from './session.js';
@@ -426,7 +426,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     noStore, auth, formBody,
     (req, res) => {
       const user = userOf(res);
-      if (!csrfValid(core, user, field(req, 'csrf', 2000))) { send(res, 403, formErrorPage(localeOf(res), 'error.sessionExpired', undefined, shellOf(res))); return; }
+      if (!csrfValid(core, user, field(req, 'csrf', 2000))) { send(res, 403, staleFormPage(localeOf(res), back(req, user), shellOf(res))); return; }
       try {
         const done = run(req, user);
         if ('ask' in done) {

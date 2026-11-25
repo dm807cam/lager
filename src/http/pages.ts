@@ -189,9 +189,16 @@ export const disabledPage = (locale: Locale, opts: PageOpts = {}): string =>
   messagePage(locale, t(locale, 'error.disabled.title'), t(locale, 'error.disabled.text'), '', opts);
 export const badCodePage = (locale: Locale, opts: PageOpts = {}): string =>
   messagePage(locale, t(locale, 'error.badCode.title'), t(locale, 'error.badCode.text'), '', opts, 'danger');
-/** A form post whose CSRF token was missing or stale; `back` is the local path of the page to return to. */
-export const sessionExpiredPage = (locale: Locale, back = '/', backLabel = t(locale, 'common.backToOverview')): string =>
-  page(locale, t(locale, 'error.failed.title'), authCard(`<div class="auth-icon is-danger">${icon('alert')}</div><h1>${esc(t(locale, 'error.failed.title'))}</h1>${notice('danger', t(locale, 'error.sessionExpired'))}${backLink(locale, back, backLabel)}`));
+/**
+ * A form post whose CSRF token was missing or stale: the page was open too long, or the account signed in again elsewhere. It says
+ * so, and its one button opens the page the form was on (`back`, a local path), fresh, with a new token. Nothing suggests a reload,
+ * which would send the same stale form again.
+ */
+export function staleFormPage(locale: Locale, back = '/', opts: PageOpts = {}): string {
+  const title = t(locale, 'error.stale.title');
+  return page(locale, title, messageCard(`<div class="auth-icon is-danger">${icon('alert')}</div><h1>${esc(title)}</h1><p>${esc(t(locale, 'error.stale.text'))}</p>
+<div class="btn-row gap-top"><a class="${btn('primary')}" href="${esc(back)}">${esc(t(locale, 'error.stale.back'))}</a></div>`, opts), { ...opts, returnPath: back });
+}
 
 export const backLink = (locale: Locale, href = '/', label = t(locale, 'common.backToOverview')): string => `<p class="auth-links"><a href="${esc(href)}">${esc(label)}</a></p>`;
 

@@ -26,7 +26,9 @@ export const es: Record<MessageKey, string> = {
   'error.badCode.title': 'Inicio de sesión no válido',
   'error.badCode.text': 'El enlace de inicio de sesión no es válido o ha caducado. Vuelve a abrir la aplicación.',
   'error.failed.title': 'No ha funcionado',
-  'error.sessionExpired': 'Tu sesión ha caducado. Recarga la página e inténtalo de nuevo.',
+  'error.stale.title': "Esta página está desactualizada",
+  'error.stale.text': "Por seguridad, el formulario no se envió: la página llevaba mucho tiempo abierta o volviste a iniciar sesión en otra pestaña. Abre la página de nuevo y repite el cambio.",
+  'error.stale.back': "Abrir la página de nuevo",
   'error.crossOrigin': 'La solicitud procedía de otro sitio y se ha rechazado.',
   'error.tooMany.title': 'Demasiadas solicitudes',
   'error.tooMany.text': 'Espera un momento e inténtalo de nuevo más tarde.',
@@ -84,7 +86,6 @@ export const es: Record<MessageKey, string> = {
   'auth.reset.done': 'Contraseña cambiada. Se han revocado todas las conexiones con asistentes de IA y todos los tokens de API de esta cuenta.',
 
   'account.title': 'Cuenta',
-  'account.back': 'Volver a la cuenta',
   'account.name.saved': 'Nombre guardado.',
   'account.locale.label': 'Idioma',
   'account.locale.browser': 'Idioma del navegador',

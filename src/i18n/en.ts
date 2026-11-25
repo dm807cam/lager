@@ -24,7 +24,9 @@ export const en = {
   'error.badCode.title': 'Sign-in failed',
   'error.badCode.text': 'The sign-in link is invalid or has expired. Please open the application again.',
   'error.failed.title': 'That did not work',
-  'error.sessionExpired': 'Your session has expired. Please reload the page and try again.',
+  'error.stale.title': "This page is out of date",
+  'error.stale.text': "For your safety the form was not sent: the page was open for a long time, or you signed in again in another tab. Open the page again and repeat the change.",
+  'error.stale.back': "Open the page again",
   'error.crossOrigin': 'The request came from another site and was rejected.',
   'error.tooMany.title': 'Too many requests',
   'error.tooMany.text': 'Please wait a while and try again later.',
@@ -82,7 +84,6 @@ export const en = {
   'auth.reset.done': 'Password changed. All connections to AI assistants and all API tokens of this account were revoked.',
 
   'account.title': 'Account',
-  'account.back': 'Back to account',
   'account.name.saved': 'Name saved.',
   'account.locale.label': 'Language',
   'account.locale.browser': 'Browser default',

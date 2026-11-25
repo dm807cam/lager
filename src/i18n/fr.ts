@@ -26,7 +26,9 @@ export const fr: Record<MessageKey, string> = {
   'error.badCode.title': 'Connexion impossible',
   'error.badCode.text': "Le lien de connexion n’est pas valide ou a expiré. Veuillez rouvrir l’application.",
   'error.failed.title': "L’opération a échoué",
-  'error.sessionExpired': 'Votre session a expiré. Veuillez recharger la page et réessayer.',
+  'error.stale.title': "Cette page n’est plus à jour",
+  'error.stale.text': "Par sécurité, le formulaire n’a pas été envoyé : la page était ouverte depuis longtemps, ou vous vous êtes reconnecté dans un autre onglet. Rouvrez la page et refaites la modification.",
+  'error.stale.back': "Rouvrir la page",
   'error.crossOrigin': 'La requête provenait d’un autre site et a été refusée.',
   'error.tooMany.title': 'Trop de requêtes',
   'error.tooMany.text': 'Veuillez patienter un moment, puis réessayer.',
@@ -84,7 +86,6 @@ export const fr: Record<MessageKey, string> = {
   'auth.reset.done': 'Mot de passe modifié. Toutes les connexions aux assistants IA et tous les jetons d’API de ce compte ont été révoqués.',
 
   'account.title': 'Compte',
-  'account.back': 'Retour au compte',
   'account.name.saved': 'Nom enregistré.',
   'account.locale.label': 'Langue',
   'account.locale.browser': 'Langue du navigateur',
