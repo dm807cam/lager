@@ -37,7 +37,7 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 
 ### Fixed
 
-- **Small polish across the interface:**
+- **Small polish across the interface (#100):**
   - Page titles name the product ("Account · Lager"), and "Sign in" is the heading of the sign-in page instead of the tagline.
   - In dark mode the current item of the main navigation is visible again: a small shadow token of `none` had dropped its outline, and it now has the accent line in both themes.
   - Long words in card titles break with a hyphen.

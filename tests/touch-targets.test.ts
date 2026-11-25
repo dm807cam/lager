@@ -28,7 +28,11 @@ describe('touch targets', () => {
   it('a link that fills a table cell stays within its column, and only a linked address grows', () => {
     const rules = coarse();
     // Without a width limit an inline-flex link takes its text's full width: a long group name would lose its "…" and leave the cell.
-    expect(rules).toMatch(/\.cell-user a:only-child \{[^}]*display: inline-flex;[^}]*max-width: 100%;/);
+    // Both selectors, so the limit stays if the rule is ever split in two.
+    for (const selector of ['td > a:only-child', '.cell-user a:only-child']) {
+      const rule = rules.replace(/\/\*[\s\S]*?\*\//g, '').split('}').find((r) => r.split('{')[0].split(',').map((x) => x.trim()).includes(selector));
+      expect(rule, selector).toMatch(/display: inline-flex;[^}]*max-width: 100%;/);
+    }
     // The address is text, not a target, on a disabled instance and on the app page.
     expect(rules).not.toMatch(/\.hero \.url\b/);
   });
