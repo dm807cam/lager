@@ -197,9 +197,9 @@ function homePage(core: Core, locale: Locale, user: User, flash: Flash = {}): st
     own.length ? t(locale, plural(own.length, 'home.summary.apps.one', 'home.summary.apps.other'), { count: own.length }) : '',
     shared.length ? t(locale, plural(shared.length, 'home.summary.shared.one', 'home.summary.shared.other'), { count: shared.length }) : '',
   ].filter(Boolean);
+  // The notice comes first, under the page head and above the filter: the sections it might name follow right after.
   return page(locale, 'Lager', `<div class="page-head"><h1 class="display">${esc(t(locale, 'home.title'))}</h1>${parts.length ? `<p class="lede">${esc(parts.join(' · '))}</p>` : ''}</div>
-${own.length + shared.length >= FILTER_FROM ? filterField(locale, 'filter-apps', '#mine .app-card, #shared .app-card', t(locale, 'filter.apps')) : ''}
-${withNotice(locale, flash, `${ownSection(core, locale, user, own, offered)}${sharedSection(core, locale, user, shared)}${offered && own.length ? catalogLink(locale) : ''}`)}`, opts);
+${withNotice(locale, { ...flash, anchor: undefined }, `${own.length + shared.length >= FILTER_FROM ? filterField(locale, 'filter-apps', '#mine .app-card, #shared .app-card', t(locale, 'filter.apps')) : ''}${ownSection(core, locale, user, own, offered)}${sharedSection(core, locale, user, shared)}${offered && own.length ? catalogLink(locale) : ''}`)}`, opts);
 }
 
 /** Everything about publishing: the apps the viewer deploys, the MCP connector and the API tokens. */

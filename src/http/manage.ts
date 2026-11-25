@@ -132,7 +132,7 @@ function versionsList(core: Core, locale: Locale, user: User, app: App, base: st
   const first = newest.filter((v, i) => i < VERSIONS_SHOWN || v.number === active);
   const rest = newest.filter((v) => !first.includes(v));
   const more = rest.length
-    ? `<details class="more-versions"><summary class="${btn('quiet', true)}">${icon('chevron')}${esc(t(locale, 'instance.versions.all', { count: newest.length }))}</summary><ol class="timeline">${rest.map(item).join('')}</ol></details>` : '';
+    ? `<details class="more-versions"><summary class="${btn('quiet', true)}">${icon('chevron')}${esc(t(locale, rest.length === 1 ? 'instance.versions.older.one' : 'instance.versions.older.other', { count: rest.length }))}</summary><ol class="timeline">${rest.map(item).join('')}</ol></details>` : '';
   return `<ol class="timeline">${first.map(item).join('')}</ol>${more}`;
 }
 

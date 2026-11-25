@@ -16,7 +16,12 @@ describe('markdown', () => {
       '```json', '{"a": "<b>"}', '```', '', '| A | B |', '|---|--:|', '| 1 | 2 |', '', '---', '',
       '![A shelf with boxes](/assets/x.webp)',
     ].join('\n'));
-    expect(html).toContain('<h3 id="a-heading">A heading</h3>');
+    // The shallowest heading is an h2, under the page's h1, whichever number of # it was written with.
+    expect(html).toContain('<h2 id="a-heading">A heading</h2>');
+    expect(site.markdown('# Top\n\n## Sub')).toMatch(/<h2 id="top">Top<\/h2>[\s\S]*<h3 id="sub">Sub<\/h3>/);
+    expect(site.markdown('### Deep\n\n```\n# not a heading\n```')).toContain('<h2 id="deep">Deep</h2>');
+    // A code block that may scroll sideways can be reached by keyboard.
+    expect(html).toContain('<pre tabindex="0">');
     expect(html).toContain('<strong>bold</strong>');
     expect(html).toContain('<em>italic</em>');
     expect(html).toContain('<code>code</code>');
@@ -24,7 +29,7 @@ describe('markdown', () => {
     expect(html).toContain('<ul><li>one</li><li>two<ul><li>nested</li></ul></li></ul>');
     expect(html).toContain('<ol><li>first</li><li>second</li></ol>');
     expect(html).toContain('<blockquote><p>quoted</p></blockquote>');
-    expect(html).toContain('<pre><code class="language-json">{&quot;a&quot;: &quot;&lt;b&gt;&quot;}</code></pre>');
+    expect(html).toContain('<pre tabindex="0"><code class="language-json">{&quot;a&quot;: &quot;&lt;b&gt;&quot;}</code></pre>');
     expect(html).toContain('<th style="text-align:right">B</th>');
     expect(html).toContain('<hr>');
     expect(html).toContain('<figure><img src="/assets/x.webp" alt="A shelf with boxes" loading="lazy"><figcaption>A shelf with boxes</figcaption></figure>');
