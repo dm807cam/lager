@@ -489,7 +489,8 @@ ${g.isDefault ? '' : `<div class="subsection">${form(`${base}/delete`, csrf, '',
 function appsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const csrf = csrfToken(core, admin);
   const emailOf = new Map(core.users.list().map((u) => [u.id, u.email]));
-  const html = core.apps.listAllApps().map((app) => {
+  const apps = core.apps.listAllApps();
+  const html = apps.map((app) => {
     const rows = core.apps.listInstances(app.id).map((i) => [
       `<a class="mono" href="${esc(instanceUrl(core.config, i.slug))}">${esc(i.slug)}</a>`, esc(emailOf.get(i.ownerId) ?? '–'), `<span class="num">v${i.activeVersion}</span>`,
       badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) }), `<span class="num">${storageText(core, locale, i.id, storageUsed(core, i))}</span>`,
@@ -506,7 +507,7 @@ ${quota}
 ${rows.length ? dataTable(locale, [t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'common.version'), t(locale, 'common.visibility'), t(locale, 'admin.apps.data'), t(locale, 'common.status'), ''], rows, 'table-instances') : emptyState(t(locale, 'app.noInstances'))}</section>`;
   }).join('');
   const hint = `<p class="hint gap-bottom">${esc(t(locale, 'admin.apps.quotaHint', { size: defaultQuotaText(core, locale) }))}</p>`;
-  const filter = core.apps.listAllApps().length >= FILTER_FROM ? filterField(locale, 'filter-apps', 'main .app-group', t(locale, 'filter.apps')) : '';
+  const filter = apps.length >= FILTER_FROM ? filterField(locale, 'filter-apps', 'main .app-group', t(locale, 'filter.apps')) : '';
   return shell(core, locale, admin, 'apps', t(locale, 'admin.section.apps'), html ? `${hint}${filter}${html}` : emptyState(t(locale, 'admin.apps.none')), msg);
 }
 

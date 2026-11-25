@@ -29,8 +29,8 @@
     });
   });
 
-  // Passwords: a button in the field shows what was typed, and hides it again. Before the form is sent the field is a password
-  // field again, so browsers still offer to save it and nothing readable lands in form history. Pasted keys (data-reveal="off") keep none.
+  // Passwords: a button in the field shows or hides what was typed; on submit it is a password field again, for password managers.
+  // Pasted keys (data-reveal="off") get none.
   var SHOW = document.body.getAttribute('data-show-password');
   var HIDE = document.body.getAttribute('data-hide-password');
   if (SHOW && HIDE) document.querySelectorAll('input[type="password"]:not([data-reveal="off"])').forEach(function (input) {
@@ -56,23 +56,27 @@
     if (focused) input.focus();
   });
 
-  // Filters above long lists: entries whose text does not hold what was typed are hidden while typing.
+  // Filters above long lists: entries without what was typed are hidden.
   document.querySelectorAll('input[data-filter]').forEach(function (input) {
     var box = input.parentNode;
     var none = box.querySelector('.filter-none');
     box.hidden = false;
     input.addEventListener('input', function () {
       var q = input.value.trim().toLowerCase();
+      var sel = input.getAttribute('data-filter');
       var left = 0;
-      document.querySelectorAll(input.getAttribute('data-filter')).forEach(function (el) {
+      document.querySelectorAll(sel).forEach(function (el) {
         el.hidden = q !== '' && el.textContent.toLowerCase().indexOf(q) === -1;
         if (!el.hidden) left++;
+        // A section left without entries goes too, heading and all.
+        var sec = el.closest('section');
+        if (sec && !sec.contains(box)) sec.hidden = !sec.querySelector(sel + ':not([hidden])');
       });
-      if (none) none.hidden = left > 0;
+      if (none) none.textContent = left ? '' : none.getAttribute('data-none');
     });
   });
 
-  // Dates: the server writes them in UTC and says so; here they become the viewer's own time, in the page's language.
+  // Dates: the server writes UTC; here they become the viewer's own time, in the page's language.
   var DATE_FORMATS = {
     datetime: { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' },
     day: { year: 'numeric', month: 'short', day: 'numeric' }
@@ -87,12 +91,12 @@
     } catch (e) { /* the UTC text stays */ }
   });
 
-  // The name of a new instance: the address under the field follows what is typed. Opening the "get your own" panel puts the cursor in it.
+  // A new instance's name: the address under it follows what is typed; opening "get your own" focuses the field.
   document.querySelectorAll('input[data-address-template]').forEach(function (input) {
     var out = document.querySelector('[data-address-for="' + input.id + '"]');
     var template = input.getAttribute('data-address-template');
     if (!out || !template) return;
-    // Also once at the start: a refused name comes back in the field, while the address was rendered from the suggestion.
+    // Also at the start: a refused name comes back in the field.
     var update = function () { out.textContent = template.replace('__slug__', input.value.trim() || '…'); };
     update();
     input.addEventListener('input', update);
@@ -104,7 +108,7 @@
     });
   });
 
-  // Copy buttons: the text to copy and the confirmation label come from data attributes rendered by the server.
+  // Copy buttons: text and labels come from data attributes.
   document.querySelectorAll('[data-copy]').forEach(function (btn) {
     if (!navigator.clipboard) return;
     btn.hidden = false;
@@ -147,10 +151,10 @@
     });
   });
 
-  // Sending: the pressed button says the form is on its way, and pressing again sends nothing. The button is not disabled, so its own
-  // name and value still go with the form; coming back to this page (back button, page cache) shows it as it was.
-  // A load the person stopped (Esc, the stop button) shows no new page: after 100 s the form can be sent again. That is longer than
-  // the server ever takes to answer (the AI test waits up to DEFAULT_REQUEST_TIMEOUT_MS, 90 s, in src/platform/ai.ts).
+  // Sending: the pressed button shows the form is on its way; pressing again sends nothing. Not disabled, so its name and value
+  // still go with the form.
+  // A stopped load shows no new page: after 100 s the form can be sent again, longer than any answer takes (the AI test waits up
+  // to DEFAULT_REQUEST_TIMEOUT_MS, 90 s, in src/platform/ai.ts).
   var idle = function (form) {
     clearTimeout(form._busyTimer);
     form.removeAttribute('data-busy');
@@ -162,7 +166,7 @@
     if (button) button.setAttribute('aria-busy', 'true');
     form._busyTimer = setTimeout(function () { idle(form); }, 100000);
   };
-  // Capture: a busy form stops here, before its own listeners (a question below would ask again and send a second time).
+  // Capture: a busy form stops here, before its own listeners (a question would ask again).
   window.addEventListener('submit', function (e) {
     if (e.target.hasAttribute('data-busy')) { e.preventDefault(); e.stopImmediatePropagation(); }
   }, true);
@@ -172,12 +176,11 @@
   });
   window.addEventListener('pageshow', function () { document.querySelectorAll('form[data-busy]').forEach(idle); });
 
-  // Questions before changes that cannot be taken back. The form carries the question; the dialog asks it, and only a yes sends the
-  // form, with confirmed=1. Cancel has the focus, so Enter or Escape keep everything as it is. Without this script, or in a browser
-  // without <dialog>, the server asks on a page of its own: the change never happens on one click either way.
+  // Questions before changes that cannot be taken back: only a yes in the dialog sends the form, with confirmed=1; Cancel has the
+  // focus. Without this script or <dialog>, the server asks on a page of its own.
   document.querySelectorAll('form[data-confirm]').forEach(function (form) {
     form.addEventListener('submit', function (e) {
-      // Asked every time: a yes from before (a page from the back/forward cache, a send that failed) does not count again.
+      // Asked every time: a yes from before (page cache, a failed send) does not count again.
       if (typeof HTMLDialogElement === 'undefined') return;
       e.preventDefault();
       var trigger = e.submitter || form.querySelector('[type="submit"]');
@@ -230,7 +233,7 @@
     });
   });
 
-  // Confirm by typing: the danger button stays disabled until the name matches (a Cancel button next to it stays usable). The server checks it again.
+  // Confirm by typing: the danger button stays disabled until the name matches; the server checks it again.
   document.querySelectorAll('input[data-confirm]').forEach(function (input) {
     var form = input.form;
     var btn = form && (form.querySelector('button.btn-danger[type="submit"]') || form.querySelector('button[type="submit"]'));

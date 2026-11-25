@@ -2,10 +2,14 @@ import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
+import { adminExtension } from '../src/http/admin.js';
+import { csrfToken } from '../src/http/session.js';
 import { t } from '../src/i18n/index.js';
+import { makeHarness } from './support/http.js';
 import { showcase, type Showcase } from './support/pages.js';
 
 let s: Showcase | undefined;
+const win = (doc: Document) => doc.defaultView!;
 afterEach(() => { s?.h.core.close(); s = undefined; });
 
 const page = async (sc: Showcase, path: string): Promise<Document> =>
@@ -47,23 +51,42 @@ describe('long lists', () => {
     expect(doc.querySelectorAll('#catalog .app-card').length).toBeGreaterThanOrEqual(8);
   });
 
-  it('the script shows the field and hides what does not match while typing, and says when nothing does', () => {
-    const win = new JSDOM(`<!doctype html><body><div class="filter" hidden><input type="search" id="f" data-filter="li"><p class="filter-none" hidden>None</p></div>
-      <ul><li>Notes</li><li>Groceries</li><li>Pin board</li></ul></body>`, { runScripts: 'outside-only' }).window;
+  it('the script shows the field and hides what does not match while typing, the sections left empty too, and says when nothing does', () => {
+    const win = new JSDOM(`<!doctype html><body><div class="filter" hidden><input type="search" id="f" data-filter="li"><p class="filter-none" role="status" data-none="None"></p></div>
+      <section id="a"><h2>Yours</h2><ul><li>Notes</li><li>Groceries</li></ul></section><section id="b"><h2>Shared</h2><ul><li>Pin board</li></ul></section></body>`, { runScripts: 'outside-only' }).window;
     win.eval(fs.readFileSync(new URL('../src/static/app.js', import.meta.url), 'utf8'));
     const doc = win.document;
     const input = doc.getElementById('f') as HTMLInputElement;
+    const none = doc.querySelector('.filter-none')!;
     expect(input.parentElement!.hidden).toBe(false);
+    // The status line is in the page from the start and empty: a screen reader announces the text when it comes.
+    expect([none.hasAttribute('hidden'), none.textContent]).toEqual([false, '']);
     const type = (v: string): string[] => {
       input.value = v;
       input.dispatchEvent(new win.Event('input'));
       return [...doc.querySelectorAll('li')].filter((li) => !li.hidden).map((li) => li.textContent!);
     };
     expect(type('BOARD')).toEqual(['Pin board']);
-    expect(doc.querySelector<HTMLElement>('.filter-none')!.hidden).toBe(true);
+    expect([(doc.getElementById('a') as HTMLElement).hidden, (doc.getElementById('b') as HTMLElement).hidden]).toEqual([true, false]);
+    expect(none.textContent).toBe('');
     expect(type('xyz')).toEqual([]);
-    expect(doc.querySelector<HTMLElement>('.filter-none')!.hidden).toBe(false);
+    expect(none.textContent).toBe('None');
     expect(type('')).toEqual(['Notes', 'Groceries', 'Pin board']);
+    expect([(doc.getElementById('a') as HTMLElement).hidden, (doc.getElementById('b') as HTMLElement).hidden, none.textContent]).toEqual([false, false, '']);
+  });
+
+  it('on the home page the filter comes after the notice, under the page head', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const notes = core.apps.getApp('notes')!;
+    for (let i = 1; i <= 7; i++) core.apps.createInstance({ appId: notes.id, slug: `notes-${i}`, ownerId: s.h.adminId });
+    const cookie = await s.h.login();
+    const csrf = csrfToken(core, core.users.get(s.h.adminId)!);
+    const made = await request(s.h.app).post('/ui/apps/notes/instances').set('Host', s.h.host).set('Cookie', cookie).type('form').send({ csrf, slug: 'notes-8', from: 'catalog' });
+    const doc = new JSDOM((await request(s.h.app).get(made.headers.location.split('#')[0]).set('Host', s.h.host).set('Cookie', cookie)).text).window.document;
+    const notice = doc.querySelector('main .notice')!;
+    const filter = doc.querySelector('main .filter')!;
+    expect(notice.compareDocumentPosition(filter) & win(doc).Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('a version list shows the five newest and the active one; the rest behind "Show all"', async () => {
@@ -75,8 +98,23 @@ describe('long lists', () => {
     const first = [...doc.querySelectorAll('#versions > ol.timeline > li')].map((li) => li.getAttribute('data-version'));
     expect(first).toEqual(['12', '11', '10', '9', '8', '2']);
     const more = doc.querySelector('#versions details.more-versions')!;
-    expect(more.querySelector('summary')!.textContent).toBe(t('en', 'instance.versions.all', { count: 12 }));
+    expect(more.querySelector('summary')!.textContent).toBe(t('en', 'instance.versions.older.other', { count: 6 }));
     expect([...more.querySelectorAll('li')].map((li) => li.getAttribute('data-version'))).toEqual(['7', '6', '5', '4', '3', '1']);
+  });
+
+  it('with the active version among the five newest, it shows exactly five, and the app page shows the five newest', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    for (let i = 3; i <= 7; i++) core.apps.deploy({ slug: 'notes', html: `<p>${i}</p>`, userId: s.h.adminId });
+    core.apps.activate(core.apps.getInstanceBySlug('notes')!.id, 5, s.h.adminId);
+    for (const path of ['/instances/notes', '/apps/notes']) {
+      const doc = await page(s, path);
+      const first = [...doc.querySelectorAll('#versions > ol.timeline > li')].map((li) => li.getAttribute('data-version'));
+      expect(first, path).toEqual(['7', '6', '5', '4', '3']);
+      const more = doc.querySelector('#versions details.more-versions')!;
+      expect(more.querySelector('summary')!.textContent, path).toBe(t('en', 'instance.versions.older.other', { count: 2 }));
+      expect([...more.querySelectorAll('li')].map((li) => li.getAttribute('data-version')), path).toEqual(['2', '1']);
+    }
   });
 
   it('Users lists active administrators first, then by name, and says how many accounts there are', async () => {
@@ -92,6 +130,23 @@ describe('long lists', () => {
     expect(emails.slice(admins.length).map((text) => others.find((u) => text!.includes(u.email))?.email)).toEqual(others.map((u) => u.email));
     const n = core.users.list().length;
     expect(doc.querySelector('main .hint')!.textContent).toBe(t('en', 'admin.users.count.other', { count: n }));
+  });
+
+  it('a disabled administrator is listed among the others by name, and one account is counted as one', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const amy = core.users.create({ email: 'amy@x.y', name: 'Amy', password: 'password-123', role: 'admin' });
+    core.users.setDisabled(amy.id, true);
+    const rows = [...(await page(s, '/admin/users')).querySelectorAll('main .table-users tbody tr')].map((tr) => tr.querySelector('td')!.textContent!);
+    const activeAdmins = core.users.list().filter((u) => u.role === 'admin' && !u.disabled).length;
+    // Amy sorts first by name, but as a disabled account she is not among the active administrators at the top.
+    expect(rows.slice(0, activeAdmins).some((r) => r.includes('amy@x.y'))).toBe(false);
+    expect(rows[activeAdmins]).toContain('amy@x.y');
+    const h = makeHarness({ extensions: [adminExtension] });
+    try {
+      const doc = new JSDOM((await request(h.app).get('/admin/users').set('Host', h.host).set('Cookie', await h.login())).text).window.document;
+      expect(doc.querySelector('main .hint')!.textContent).toBe(t('en', 'admin.users.count.one', { count: 1 }));
+    } finally { h.core.close(); }
   });
 
   it('Administration › Apps gives every app’s table the same columns', async () => {

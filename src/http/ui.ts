@@ -95,21 +95,22 @@ export const copyField = (locale: Locale, value: string, style: ButtonStyle = 's
 export const callout = (locale: Locale, title: string, secret: string, warning: string): string =>
   `<div class="callout" role="status"><strong>${icon('check')}${esc(title)}</strong>${copyField(locale, secret, 'primary')}<p class="warn">${icon('alert', 'i-sm')}${esc(warning)}</p></div>`;
 
-/**
- * An empty list: what is missing, and optionally one more sentence (`detail`, plain text) on what the list is for or when it
- * fills up, and the next step (`action`, trusted markup: links styled as buttons).
- */
 /** From this many entries on, a list gets a filter field: below it the whole list fits on a screen or two. */
 export const FILTER_FROM = 8;
 
 /**
  * A field that narrows a list while typing: the script hides the entries (`targets`, a selector) whose text does not contain what
- * was typed, and says so when nothing is left. Hidden until the script shows it: without script there is nothing to filter with.
+ * was typed, and the sections left without one. Hidden until the script shows it: without script there is nothing to filter with.
+ * The status line is in the page from the start, empty, so screen readers announce the text the script puts in when nothing is left.
  */
 export const filterField = (locale: Locale, id: string, targets: string, label: string): string =>
   `<div class="filter" hidden>${icon('search', 'i-sm')}<label class="sr-only" for="${esc(id)}">${esc(label)}</label><input type="search" id="${esc(id)}" data-filter="${esc(targets)}" placeholder="${esc(label)}" autocomplete="off" spellcheck="false" enterkeyhint="search">`
-  + `<p class="filter-none hint" role="status" hidden>${esc(t(locale, 'filter.none'))}</p></div>`;
+  + `<p class="filter-none hint" role="status" data-none="${esc(t(locale, 'filter.none'))}"></p></div>`;
 
+/**
+ * An empty list: what is missing, and optionally one more sentence (`detail`, plain text) on what the list is for or when it
+ * fills up, and the next step (`action`, trusted markup: links styled as buttons).
+ */
 export const emptyState = (text: string, name: IconName = 'grid', opts: { detail?: string; action?: string } = {}): string =>
   `<div class="empty">${icon(name)}<p>${esc(text)}</p>${opts.detail ? `<p class="empty-detail">${esc(opts.detail)}</p>` : ''}${opts.action ? `<div class="empty-actions">${opts.action}</div>` : ''}</div>`;
 
