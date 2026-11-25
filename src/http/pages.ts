@@ -64,12 +64,14 @@ function languageLinks(locale: Locale, returnPath: string, cls: string): string 
     `<a href="/lang/${l}?return=${encodeURIComponent(returnPath)}" lang="${l}" hreflang="${l}"${cls ? ` class="${cls}"` : ''}${l === locale ? ' aria-current="true"' : ''}>${esc(LOCALE_NAMES[l])}</a>`).join('');
 }
 
-/** Footer with one link per language; `GET /lang/<locale>` stores the choice and redirects to `returnPath`. */
 /** System, light or dark: the script shows the button and steps through the three; the choice stays in this browser. */
 const themeToggle = (locale: Locale, cls: string): string =>
   `<button type="button" class="${cls}" data-theme-toggle data-system="${esc(t(locale, 'theme.system'))}" data-light="${esc(t(locale, 'theme.light'))}" data-dark="${esc(t(locale, 'theme.dark'))}" hidden>${icon('sun')}<span>${esc(t(locale, 'theme.label'))} <span data-theme-name>${esc(t(locale, 'theme.system'))}</span></span></button>`;
 
-/** The footer of signed-out pages: the languages and, since the account menu with its theme is not there, the theme. */
+/**
+ * The footer of signed-out pages: one link per language (`GET /lang/<locale>` stores the choice and redirects to `returnPath`) and,
+ * since the account menu with its theme is not there, the theme.
+ */
 function footer(locale: Locale, returnPath: string | null): string {
   if (returnPath === null) return '';
   return `<footer class="site-footer"><nav aria-label="${esc(t(locale, 'footer.language'))}">${icon('globe', 'i-sm')}<span class="sr-only">${esc(t(locale, 'footer.language'))}</span>${languageLinks(locale, returnPath, '')}</nav>${themeToggle(locale, 'footer-theme')}</footer>`;

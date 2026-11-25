@@ -599,6 +599,7 @@ export const es: Record<MessageKey, string> = {
   'instance.versions.older.other': "Mostrar {count} versiones anteriores",
   'home.step.connect.title': "Añade Lager a tu IA",
   'common.copyFailed': "No se pudo copiar. Selecciona el texto y cópialo tú.",
+  'common.notCopied': "No copiado",
   'home.copyName': "Nombre de tu copia",
   'notice.ok.copyCreated': "Tu copia {slug} está lista.",
   'dash.instanceCount.one': '{count} instancia',

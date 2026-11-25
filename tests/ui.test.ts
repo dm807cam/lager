@@ -48,10 +48,10 @@ describe('static assets', () => {
       const wrong = url.replace(/\.[0-9a-f]{12}\./, '.000000000000.');
       expect((await request(h.app).get(wrong).set('Host', h.host)).status, wrong).toBe(404);
     }
-    // Every page works without the script; it only adds conveniences (menus, copy, theme, the question before a change that cannot
-    // be taken back, show password, the busy state of a form being sent) and stays small: about 3.5 KB compressed, cached for good
-    // under its hashed address. The comments that explain it count too.
-    expect(fs.statSync(path.join(STATIC, 'app.js')).size).toBeLessThan(12 * 1024);
+    // Every page works without the script; it only adds conveniences (menus, copy with its announced result, theme, the question
+    // before a change that cannot be taken back, show password, the busy state of a form being sent, list filters) and stays small:
+    // about 4 KB compressed, cached for good under its hashed address. The comments that explain it count too.
+    expect(fs.statSync(path.join(STATIC, 'app.js')).size).toBeLessThan(13 * 1024);
   });
 
   it('every page links the stylesheet and has no inline <style> block beyond the pre-paint theme snippet', async () => {

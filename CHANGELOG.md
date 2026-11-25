@@ -44,7 +44,7 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
   - Names and addresses that are cut with "…" in a table wrap where the table is stacked as cards.
   - The sharing list shows people with name and address.
   - The Publish panel's step 1 no longer repeats its heading.
-  - "Copied", and a copy the browser refused, are announced to screen readers.
+  - "Copied", and a copy the browser refused, are announced to screen readers and shown on the button.
   - Signed out, the footer offers the theme.
   - Account › Language › "Browser default" forgets the language the top bar left in this browser.
   - Two places where a label or hint touched what was above it have their gap back.

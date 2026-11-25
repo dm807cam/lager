@@ -599,6 +599,7 @@ export const de: Record<MessageKey, string> = {
   'instance.versions.older.other': "{count} ältere Versionen zeigen",
   'home.step.connect.title': "Lager zu deiner KI hinzufügen",
   'common.copyFailed': "Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn selbst.",
+  'common.notCopied': "Nicht kopiert",
   'home.copyName': "Name deiner Kopie",
   'notice.ok.copyCreated': "Deine Kopie {slug} ist bereit.",
   'dash.instanceCount.one': '{count} Instanz',

@@ -84,7 +84,7 @@ export function notice(kind: 'success' | 'danger' | 'warning', text: string, ext
  * feedback", and "Copied: Token feedback" once the script swaps the label (an aria-label would hide that swap from screen readers).
  */
 export const copyButton = (locale: Locale, value: string, style: ButtonStyle = 'secondary', label = t(locale, 'common.copy'), small = true, what = ''): string =>
-  `<button type="button" class="${btn(style, small)}" data-copy="${esc(value)}" data-copied="${esc(t(locale, 'common.copied'))}" data-copy-failed="${esc(t(locale, 'common.copyFailed'))}" hidden>${icon('copy')}<span data-label>${esc(label)}</span>${
+  `<button type="button" class="${btn(style, small)}" data-copy="${esc(value)}" data-copied="${esc(t(locale, 'common.copied'))}" data-copy-failed="${esc(t(locale, 'common.copyFailed'))}" data-not-copied="${esc(t(locale, 'common.notCopied'))}" hidden>${icon('copy')}<span data-label>${esc(label)}</span>${
     what ? `<span class="sr-only">${esc(t(locale, 'common.actionOn', { action: '', what }))}</span>` : ''}</button>`;
 
 /** A value to copy: selectable text with a copy button. */

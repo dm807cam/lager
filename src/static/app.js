@@ -110,31 +110,33 @@
     });
   });
 
-  // Copy buttons: text and labels come from data attributes.
-  // A hidden status line tells screen readers "Copied" or that copying failed: a label that changes is not read out.
-  var said;
-  var say = function (text) {
-    if (!said) { said = document.createElement('p'); said.className = 'sr-only'; said.setAttribute('role', 'status'); document.body.appendChild(said); }
-    said.textContent = '';
-    setTimeout(function () { said.textContent = text; }, 50);
-  };
-  document.querySelectorAll('[data-copy]').forEach(function (btn) {
-    if (!navigator.clipboard) return;
+  // Copy buttons: the result shows on the button for a moment, and a status line, in the page from the start, reads it out in full.
+  // A refusal selects the text beside the button, so only the copy keys are left.
+  var copies = navigator.clipboard ? document.querySelectorAll('[data-copy]') : [];
+  var said = document.createElement('p');
+  said.className = 'sr-only';
+  said.setAttribute('role', 'status');
+  if (copies.length) document.body.appendChild(said);
+  copies.forEach(function (btn) {
     btn.hidden = false;
     var label = btn.querySelector('[data-label]');
     var original = label ? label.textContent : '';
     var timer;
+    var show = function (text, ok, short) {
+      if (label) label.textContent = short || text || original;
+      btn.classList.toggle('copy-done', ok);
+      said.textContent = '';
+      setTimeout(function () { said.textContent = text; }, 50);
+      clearTimeout(timer);
+      timer = setTimeout(function () { if (label) label.textContent = original; btn.classList.remove('copy-done'); }, ok ? 1800 : 4000);
+    };
     btn.addEventListener('click', function () {
-      navigator.clipboard.writeText(btn.getAttribute('data-copy') || '').then(function () {
-        if (label) label.textContent = btn.getAttribute('data-copied') || original;
-        say(btn.getAttribute('data-copied') || '');
-        btn.classList.add('copy-done');
-        clearTimeout(timer);
-        timer = setTimeout(function () {
-          if (label) label.textContent = original;
-          btn.classList.remove('copy-done');
-        }, 1800);
-      }, function () { say(btn.getAttribute('data-copy-failed') || ''); });
+      navigator.clipboard.writeText(btn.getAttribute('data-copy') || '').then(function () { show(btn.getAttribute('data-copied'), true); },
+        function () {
+          show(btn.getAttribute('data-copy-failed'), false, btn.getAttribute('data-not-copied'));
+          var code = btn.parentNode.querySelector('code');
+          if (code) getSelection().selectAllChildren(code);
+        });
     });
   });
 
