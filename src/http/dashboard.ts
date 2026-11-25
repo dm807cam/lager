@@ -10,7 +10,7 @@ import { localeOf } from './locale.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { MAX_NAME } from '../platform/tokens.js';
 import { confirmAttrs, confirmed, questionPage, dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, type Question, slugField, staleFormPage, visibilityLabel, withNotice } from './pages.js';
-import { aiBadge, appCard, badge, btn, named, callout, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
+import { aiBadge, appCard, badge, btn, named, callout, repeatsCardLink, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash } from './session.js';
 
 const deploys = (user: User): boolean => user.role === 'admin' || user.role === 'publisher';
@@ -18,7 +18,7 @@ const plural = (count: number, one: MessageKey, other: MessageKey): MessageKey =
 
 /** Open (for everyone who reaches the card) and Manage (only for those who may manage or delete the instance). */
 function instanceActions(core: Core, locale: Locale, i: Instance, title: string, manage: boolean): string {
-  const open = i.disabled ? '' : linkButton(instanceUrl(core.config, i.slug), `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary', true, named(t(locale, 'card.open', { title })));
+  const open = i.disabled ? '' : linkButton(instanceUrl(core.config, i.slug), `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary', true, repeatsCardLink);
   const admin = manage ? linkButton(`/instances/${encodeURIComponent(i.slug)}`, `${icon('settings')}<span class="btn-label">${esc(t(locale, 'common.manage'))}</span>`, 'quiet', true, named(t(locale, 'card.manage', { title }))) : '';
   return open + admin;
 }
@@ -45,6 +45,7 @@ function instanceCard(core: Core, locale: Locale, i: Instance, extra: { badges?:
     : extra.manage ? [badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) }), badge(`v${i.activeVersion}`)] : [];
   return appCard({
     app, title, slug: i.slug, description: app?.description, corner: aiCorner(core, locale, i.appId, i.activeVersion),
+    href: i.disabled ? undefined : instanceUrl(core.config, i.slug), linkLabel: t(locale, 'card.open', { title }),
     badges: [...state, ...(extra.badges ?? [])],
     actions: instanceActions(core, locale, i, title, extra.manage),
   });
@@ -75,8 +76,9 @@ function catalogSection(core: Core, locale: Locale, user: User, csrf: string, ca
     const app = core.apps.getApp(i.appId);
     return appCard({
       app, title: i.appTitle, slug: i.slug, description: app?.description, corner: aiCorner(core, locale, i.appId, i.activeVersion),
+      href: instanceUrl(core.config, i.slug), linkLabel: t(locale, 'card.open', { title: i.appTitle }),
       badges: [badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) }), badge(i.ownerName, { icon: 'user' })],
-      actions: linkButton(instanceUrl(core.config, i.slug), `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary', true, named(t(locale, 'card.open', { title: i.appTitle }))),
+      actions: linkButton(instanceUrl(core.config, i.slug), `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary', true, repeatsCardLink),
     });
   });
   const appCards = apps.map((a) => {
@@ -104,9 +106,10 @@ function appsSection(core: Core, locale: Locale, apps: App[]): string {
     const count = core.apps.listInstances(a.id).length;
     return appCard({
       app: a, title: a.title, slug: a.slug, description: a.description, corner: aiCorner(core, locale, a.id, latest || undefined),
+      href: `/apps/${encodeURIComponent(a.slug)}`, linkLabel: t(locale, 'card.manage', { title: a.title }),
       badges: [`<span class="badge"><span class="sr-only">${esc(t(locale, 'dash.latestVersion'))} </span>v${latest}</span>`,
         badge(t(locale, plural(count, 'dash.instanceCount.one', 'dash.instanceCount.other'), { count }), { icon: 'grid' })],
-      actions: linkButton(`/apps/${encodeURIComponent(a.slug)}`, `${icon('settings')}${esc(t(locale, 'common.manage'))}`, 'secondary', true, named(t(locale, 'card.manage', { title: a.title }))),
+      actions: linkButton(`/apps/${encodeURIComponent(a.slug)}`, `${icon('settings')}${esc(t(locale, 'common.manage'))}`, 'secondary', true, repeatsCardLink),
     });
   }).join('');
   return section('apps', t(locale, 'dash.apps'), apps.length ? `<div class="grid">${cards}</div>` : emptyState(t(locale, 'dash.noApps')), { count: apps.length || undefined });
