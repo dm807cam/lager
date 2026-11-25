@@ -3,6 +3,7 @@ import { JSDOM } from 'jsdom';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { csrfToken } from '../src/http/session.js';
+import { copyField } from '../src/http/ui.js';
 import { t } from '../src/i18n/index.js';
 import { showcase, type Showcase } from './support/pages.js';
 
@@ -79,6 +80,33 @@ describe('small polish (#100)', () => {
     await settle();
     expect([region!.textContent, label()]).toEqual(['Copying did not work.', 'Copying did not work.']);
     expect(doc.querySelectorAll('[role="status"]')).toHaveLength(1);
+  });
+
+  it('a refused copy puts a short word on the button, the full sentence in the status line, and selects the text to copy', async () => {
+    const win = new JSDOM(`<!doctype html><body>${copyField('en', 'secret-value')}</body>`, { runScripts: 'outside-only', pretendToBeVisual: true }).window;
+    Object.defineProperty(win.navigator, 'clipboard', { value: { writeText: () => Promise.reject(new Error('no')) } });
+    win.eval(fs.readFileSync(new URL('../src/static/app.js', import.meta.url), 'utf8'));
+    const doc = win.document;
+    doc.querySelector('button')!.click();
+    await new Promise((r) => setTimeout(r, 80));
+    // The button keeps its size: the sentence would squeeze the field it asks to copy from.
+    expect(doc.querySelector('[data-label]')!.textContent).toBe(t('en', 'common.notCopied'));
+    expect(doc.querySelector('[role="status"]')!.textContent).toBe(t('en', 'common.copyFailed'));
+    expect(win.getSelection()!.toString()).toBe('secret-value');
+  });
+
+  it('two copies in quick succession leave the status line with the second result', async () => {
+    const win = new JSDOM(`<!doctype html><body>${copyField('en', 'one')}${copyField('en', 'two')}</body>`, { runScripts: 'outside-only', pretendToBeVisual: true }).window;
+    let ok = true;
+    Object.defineProperty(win.navigator, 'clipboard', { value: { writeText: () => (ok ? Promise.resolve() : Promise.reject(new Error('no'))) } });
+    win.eval(fs.readFileSync(new URL('../src/static/app.js', import.meta.url), 'utf8'));
+    const [first, second] = [...win.document.querySelectorAll('button')];
+    first.click();
+    await new Promise((r) => setTimeout(r, 5));
+    ok = false;
+    second.click();
+    await new Promise((r) => setTimeout(r, 120));
+    expect(win.document.querySelector('[role="status"]')!.textContent).toBe(t('en', 'common.copyFailed'));
   });
 
   it('a page without copy buttons gets no status line', () => {

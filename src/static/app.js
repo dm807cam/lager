@@ -110,8 +110,8 @@
     });
   });
 
-  // Copy buttons: text and labels come from data attributes. The result shows on the button for a moment, and a hidden status line,
-  // in the page before the first copy, reads it out: a label that changes is not.
+  // Copy buttons: the result shows on the button for a moment, and a status line, in the page from the start, reads it out in full.
+  // A refusal selects the text beside the button, so only the copy keys are left.
   var copies = navigator.clipboard ? document.querySelectorAll('[data-copy]') : [];
   var said = document.createElement('p');
   said.className = 'sr-only';
@@ -122,8 +122,8 @@
     var label = btn.querySelector('[data-label]');
     var original = label ? label.textContent : '';
     var timer;
-    var show = function (text, ok) {
-      if (label) label.textContent = text || original;
+    var show = function (text, ok, short) {
+      if (label) label.textContent = short || text || original;
       btn.classList.toggle('copy-done', ok);
       said.textContent = '';
       setTimeout(function () { said.textContent = text; }, 50);
@@ -132,7 +132,11 @@
     };
     btn.addEventListener('click', function () {
       navigator.clipboard.writeText(btn.getAttribute('data-copy') || '').then(function () { show(btn.getAttribute('data-copied'), true); },
-        function () { show(btn.getAttribute('data-copy-failed'), false); });
+        function () {
+          show(btn.getAttribute('data-copy-failed'), false, btn.getAttribute('data-not-copied'));
+          var code = btn.parentNode.querySelector('code');
+          if (code) getSelection().selectAllChildren(code);
+        });
     });
   });
 
