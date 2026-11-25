@@ -84,14 +84,23 @@ describe('"Made with Lager" badge', () => {
     const s = setup();
     const cookie = await s.hh.login();
     const pageHtml = (await request(s.hh.app).get('/instances/notes').set('Host', s.hh.host).set('Cookie', cookie)).text;
-    expect(pageHtml).toContain('action="/ui/instances/notes/badge"');
-    const res = await request(s.hh.app).post('/ui/instances/notes/badge').set('Host', s.hh.host).set('Cookie', cookie).type('form')
-      .send({ csrf: csrfToken(s.hh.core, s.admin), on: '0' });
+    expect(pageHtml).toContain('action="/ui/instances/notes/settings"');
+    expect(pageHtml).toContain('name="badge"');
+    const autoBefore = s.hh.core.apps.getInstance(s.inst.id)!.autoUpdate;
+    const keepAuto = autoBefore ? ['0', '1'] : '0';
+    const res = await request(s.hh.app).post('/ui/instances/notes/settings').set('Host', s.hh.host).set('Cookie', cookie).type('form')
+      .send({ csrf: csrfToken(s.hh.core, s.admin), auto_update: keepAuto, badge: '0' });
     expect(res.status).toBe(302);
     expect(s.hh.core.apps.getInstance(s.inst.id)!.showBadge).toBe(false);
-    await request(s.hh.app).post('/ui/instances/notes/badge').set('Host', s.hh.host).set('Cookie', cookie).type('form')
-      .send({ csrf: csrfToken(s.hh.core, s.admin), on: ['0', '1'] });
+    // The other switch of the same form is left as it was.
+    expect(s.hh.core.apps.getInstance(s.inst.id)!.autoUpdate).toBe(autoBefore);
+    await request(s.hh.app).post('/ui/instances/notes/settings').set('Host', s.hh.host).set('Cookie', cookie).type('form')
+      .send({ csrf: csrfToken(s.hh.core, s.admin), auto_update: keepAuto, badge: ['0', '1'] });
     expect(s.hh.core.apps.getInstance(s.inst.id)!.showBadge).toBe(true);
+    // The older single-switch route still works for forms from pages opened before.
+    await request(s.hh.app).post('/ui/instances/notes/badge').set('Host', s.hh.host).set('Cookie', cookie).type('form')
+      .send({ csrf: csrfToken(s.hh.core, s.admin), on: '0' });
+    expect(s.hh.core.apps.getInstance(s.inst.id)!.showBadge).toBe(false);
   });
 
   it('the server setting turns it off everywhere and hides the instance switch', async () => {

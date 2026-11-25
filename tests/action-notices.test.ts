@@ -40,7 +40,7 @@ describe('after a form', () => {
 
     const visible = await submit(s, cookie, admin, `${base}/visibility`, { visibility: 'public' });
     expect(visible.location).toMatch(/^\/instances\/notes\?flash=[^#]+#notice$/);
-    expect(noticeOf(visible.doc)).toEqual({ text: t('en', 'notice.ok.public', { slug: 'notes' }), before: 'details', role: 'status' });
+    expect(noticeOf(visible.doc)).toEqual({ text: t('en', 'notice.ok.public', { slug: 'notes' }), before: 'sharing', role: 'status' });
 
     const shared = await submit(s, cookie, admin, `${base}/grants`, { email: 'pia@x.y', level: 'interact' });
     // The address is in the notice, not in the address bar.

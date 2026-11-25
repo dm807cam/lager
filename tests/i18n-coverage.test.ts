@@ -227,7 +227,7 @@ describe('signed-in pages in every locale', () => {
   const SENTINELS: Record<string, MessageKey[]> = {
     home: ['dash.ownInstances', 'dash.createOwn', 'home.title', 'nav.main', 'nav.skip', 'theme.label', 'nav.publish', 'dash.getOwn'],
     publish: ['dash.tokens.create', 'dash.latestVersion', 'dash.connect', 'publish.lede', 'common.copy', 'common.copied', 'nav.publish'],
-    instance: ['instance.delete.title', 'instance.grants.title', 'instance.snapshots.title', 'instance.visibility.who', 'instance.autoUpdate.label', 'common.dangerZone', 'instance.storage', 'instance.autoUpdate.title'],
+    instance: ['instance.delete.title', 'instance.grants.title', 'instance.snapshots.title', 'instance.visibility.who', 'instance.autoUpdate.label', 'common.dangerZone', 'instance.storage', 'instance.settings', 'instance.grants.people'],
     app: ['app.collaborators', 'app.self.title', 'app.delete.title', 'app.newInstance', 'app.collaboratorEmail'],
     users: ['admin.section.settings', 'admin.users.role', 'admin.users.aiGroup', 'common.manage'],
     user: ['admin.users.resetLink', 'admin.users.role', 'admin.users.role.hint', 'admin.users.aiGroup.hint', 'admin.users.signIn', 'admin.users.access', 'admin.users.deactivate.hint', 'admin.users.delete.active'],

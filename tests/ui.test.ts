@@ -575,8 +575,12 @@ describe('management and administration', () => {
     expect(versions[0].querySelector('form')).toBeNull();
     expect(versions[1].querySelector('form[action="/ui/instances/notes/activate"]')).not.toBeNull();
     const side = doc.querySelector('aside.side-col')!;
-    expect(side.querySelector('input[type="checkbox"].switch[name="on"]')).not.toBeNull();
-    expect(side.querySelector('select[name="visibility"]')).not.toBeNull();
+    // Both switches in one form with one Save; who may open the instance is part of Sharing.
+    const settings = side.querySelector('form[action="/ui/instances/notes/settings"]')!;
+    expect([...settings.querySelectorAll('input[type="checkbox"].switch')].map((i) => i.getAttribute('name'))).toEqual(['auto_update', 'badge']);
+    expect(settings.querySelectorAll('button[type="submit"]')).toHaveLength(1);
+    expect(side.querySelector('select[name="visibility"]')).toBeNull();
+    expect(doc.querySelector('#sharing select[name="visibility"]')).not.toBeNull();
     expect(side.textContent).toContain(t('en', 'instance.storage'));
     const danger = doc.querySelector('.main-col > .card-danger:last-child')!;
     expect(danger.querySelector('input[name="confirm"]')!.getAttribute('data-confirm')).toBe('notes');
@@ -657,6 +661,7 @@ describe('behaviour of the forms', () => {
   // "Data from outside" card (ingest/switch, ingest/token) were added with that card.
   // The storage forms of a group page and of every app in the apps overview (quota) were added with storage per group and app.
   // The forms of each account (role, ai-group, disabled, reset-link) moved from the users list to the account's own page (#73).
+  // The auto-update and badge forms of the instance page became one settings form (#83); their old routes still work.
   it('forms post the same fields to the same routes as before', async () => {
     s = await showcase();
     const expected = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')) as Record<string, unknown>;
