@@ -42,4 +42,51 @@ describe('Administration › AI model shows the setup order', () => {
     doc = await page();
     expect(status(doc)).toEqual({ kind: 'success', text: t('en', 'admin.ai.status.ready', { model: 'small' }), link: null });
   });
+
+
+  /** A provider that needs a key, saved with one that no longer decrypts (as after a change of the server secret). */
+  const brokenCloud = (sc: Showcase) => {
+    const cloud = sc.h.core.ai.createProvider({ name: 'Cloud', type: 'anthropic', apiKey: 'sk-test' });
+    (sc.h.core.ai as unknown as { db: { prepare(sql: string): { run(...a: unknown[]): unknown } } }).db
+      .prepare('UPDATE ai_providers SET key_enc = ? WHERE id = ?').run('v1:broken:x:y', cloud.id);
+    return cloud;
+  };
+
+  /** The page's notice: its kind, its text and where its link leads. */
+  const statusOf = async (sc: Showcase) => {
+    const doc = new JSDOM((await request(sc.h.app).get('/admin/ai').set('Host', sc.h.host).set('Cookie', await sc.h.login())).text).window.document;
+    const n = doc.querySelector('main .notice')!;
+    return { kind: n.className.replace('notice notice-', ''), text: n.querySelector('span')!.textContent, link: n.querySelector('a')?.getAttribute('href') ?? null };
+  };
+
+  it('a default model whose provider cannot be used points to that provider, not to a step that is done', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const cloud = brokenCloud(s);
+    core.ai.createModel({ id: 'big', providerId: cloud.id, model: 'claude' });
+    const everyone = core.ai.listGroups().find((g) => g.isDefault)!;
+    core.ai.updateGroup(everyone.id, { name: everyone.name, modelId: 'big', hourlyLimit: everyone.hourlyLimit });
+    expect(await statusOf(s)).toEqual({
+      kind: 'warning', text: t('en', 'admin.ai.status.unreachable', { model: 'big', provider: 'Cloud' }), link: `/admin/ai/providers/${cloud.id}`,
+    });
+  });
+
+  it('says Ready only when Everyone else\'s own default works, not when another group\'s does', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const local = core.ai.createProvider({ name: 'Local', type: 'ollama' });
+    core.ai.createModel({ id: 'small', providerId: local.id, model: 'llama3.2' });
+    const cloud = brokenCloud(s);
+    core.ai.createModel({ id: 'big', providerId: cloud.id, model: 'claude' });
+    core.ai.createGroup({ name: 'Family', modelId: 'small', hourlyLimit: 10 });
+    const everyone = core.ai.listGroups().find((g) => g.isDefault)!;
+    core.ai.updateGroup(everyone.id, { name: everyone.name, modelId: 'big', hourlyLimit: everyone.hourlyLimit });
+    expect(core.ai.configured).toBe(true);
+    const status = await statusOf(s);
+    expect(status.kind).toBe('warning');
+    expect(status.text).not.toBe(t('en', 'admin.ai.status.ready', { model: 'big' }));
+    // With no default for Everyone else at all, a working group is reported as such, without a claim about the default.
+    core.ai.updateGroup(everyone.id, { name: everyone.name, modelId: null, hourlyLimit: everyone.hourlyLimit });
+    expect(await statusOf(s)).toEqual({ kind: 'success', text: t('en', 'admin.ai.status.on'), link: null });
+  });
 });

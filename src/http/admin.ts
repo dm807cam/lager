@@ -400,11 +400,17 @@ function aiSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   // lager.complete fails, so the page says so at the top and links to the next step.
   const step = (n: number, key: MessageKey, href: string, label: string): string =>
     notice('warning', t(locale, key, { n, total: 3 }), ` <a href="${esc(href)}">${esc(label)}</a>`);
-  const status = core.ai.configured
-    ? notice('success', everyone?.modelId ? t(locale, 'admin.ai.status.ready', { model: everyone.modelId }) : t(locale, 'admin.ai.status.on'))
-    : !providers.length ? step(1, 'admin.ai.step.provider', '#add-provider', t(locale, 'admin.ai.providers.add'))
-      : !models.length ? step(2, 'admin.ai.step.model', '#add-model', t(locale, 'admin.ai.models.add'))
-        : step(3, 'admin.ai.step.group', `/admin/ai/groups/${encodeURIComponent(everyone?.id ?? DEFAULT_GROUP)}`, t(locale, 'admin.ai.everyoneElse'));
+  // Everyone else's default is what apps get for most people, so "Ready" speaks of it alone. A default that is chosen but cannot be
+  // reached (a key missing, or one that no longer decrypts after the server secret changed) points to its provider, not to step 3.
+  const fallback = everyone?.modelId ? models.find((m) => m.id === everyone.modelId) : undefined;
+  const status = everyone && core.ai.defaultReachable(everyone)
+    ? notice('success', t(locale, 'admin.ai.status.ready', { model: everyone.modelId! }))
+    : fallback ? notice('warning', t(locale, 'admin.ai.status.unreachable', { model: fallback.id, provider: nameOf.get(fallback.providerId) ?? '' }),
+      ` <a href="/admin/ai/providers/${encodeURIComponent(fallback.providerId)}">${esc(nameOf.get(fallback.providerId) ?? '')}</a>`)
+      : core.ai.configured ? notice('success', t(locale, 'admin.ai.status.on'))
+        : !providers.length ? step(1, 'admin.ai.step.provider', '#add-provider', t(locale, 'admin.ai.providers.add'))
+          : !models.length ? step(2, 'admin.ai.step.model', '#add-model', t(locale, 'admin.ai.models.add'))
+            : step(3, 'admin.ai.step.group', `/admin/ai/groups/${encodeURIComponent(everyone?.id ?? DEFAULT_GROUP)}`, t(locale, 'admin.ai.everyoneElse'));
   /** An "Add …" form behind its button, open while the list it adds to is empty, so a filled page is a list and not a stack of forms. */
   const adder = (id: string, open: boolean, label: string, what: string, action: string, fields: string): string =>
     `<details class="adder gap-top" id="${id}"${open ? ' open' : ''}><summary class="${btn('secondary', true)}">${icon('plus')}${esc(label)}</summary>

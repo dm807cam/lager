@@ -148,6 +148,21 @@ describe('instance host', () => {
     expect(res.status).toBe(200);
     expect(res.body.viewer).toMatchObject({ id: null, name: '', email: null, level: 'view' });
     expect(res.body.loginUrl).toContain('/auth/instance?slug=workout');
+    // Signing in from a public app is a sign-in like any other: its address carries this browser's nonce.
+    const nonce = (res.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith('lager_nonce='))!.split(';')[0];
+    expect(new URL(res.body.loginUrl).searchParams.get('n')).toBe(nonce.split('=')[1]);
+  });
+
+  it('a public app’s anonymous visitor who signs in through the session’s address ends signed in on the app', async () => {
+    const { h } = setup({ visibility: 'public' });
+    const session = await request(h.app).get('/__lager/session').set('Host', W);
+    const nonce = (session.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith('lager_nonce='))!.split(';')[0];
+    const loginUrl = new URL(session.body.loginUrl);
+    const code = new URL((await request(h.app).get(loginUrl.pathname + loginUrl.search).set('Host', h.host).set('Cookie', await h.login())).headers.location);
+    expect(code.pathname).toBe('/__lager/callback');
+    const callback = await request(h.app).get(code.pathname + code.search).set('Host', code.host).set('Cookie', nonce);
+    expect(callback.status).toBe(302);
+    expect((callback.headers['set-cookie'] as unknown as string[]).some((c) => c.startsWith('lager_inst='))).toBe(true);
   });
 
   it('session reports owner', async () => {

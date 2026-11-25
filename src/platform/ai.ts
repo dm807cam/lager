@@ -459,9 +459,14 @@ export class AiModels {
     return { groupId: '', modelId: entry?.id ?? '', providerId, model: entry?.model ?? PRESETS[p.type].modelHint, hourlyLimit: 1 };
   }
 
+  /** Whether the group's default model can be called right now: it is set, still in the catalog, and its provider is usable. */
+  defaultReachable(group: AiGroup): boolean {
+    return group.modelId !== null && this.routeTo(group, group.modelId) !== null;
+  }
+
   /** Whether anyone can call a model right now: some AI group's default model is reachable (the model every app falls back to). */
   get configured(): boolean {
-    return this.listGroups().some((g) => g.modelId !== null && this.routeTo(g, g.modelId) !== null);
+    return this.listGroups().some((g) => this.defaultReachable(g));
   }
 
   /** Sends one conversation to the route's provider and returns its text answer. */
