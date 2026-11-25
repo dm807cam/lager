@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { csrfToken, readFlash } from '../src/http/session.js';
 import { sealToken } from '../src/http/tokens.js';
 import { t } from '../src/i18n/index.js';
-import { showcase, type Showcase } from './support/pages.js';
+import { PASSWORD, showcase, type Showcase } from './support/pages.js';
 
 let s: Showcase | undefined;
 afterEach(() => { s?.h.core.close(); s = undefined; });
@@ -175,8 +175,31 @@ describe('changes that are easy to redo offer Undo', () => {
     // Deactivating what is already off: no Undo that would switch it on against the first decision.
     core.users.setDisabled(s.ids.uwe, true);
     expect(await undoAfter(`/admin/users/${s.ids.uwe}/disabled`, { disabled: '1' })).toBe(false);
+    // Websites that are not on the list, of an endpoint and of the embed list (an app built to be shown elsewhere).
+    expect(await undoAfter('/ui/instances/notes/ingest/origins/remove', { name: 'feedback', origin: 'https://nowhere.example' })).toBe(false);
+    core.apps.deploy({ slug: 'board', html: '<p>b</p>', title: 'Board', userId: s.h.adminId, capabilities: { embed: {} } });
+    core.embed.setOrigins(core.apps.getInstanceBySlug('board')!.id, ['https://blog.example']);
+    expect(await undoAfter('/ui/instances/board/embed/remove', { origin: 'https://nowhere.example' })).toBe(false);
+    expect(await undoAfter('/ui/instances/board/embed/remove', { origin: 'https://blog.example' })).toBe(true);
     core.apps.setInstanceDisabled(core.apps.getInstanceBySlug('notes')!.id, true);
     expect(await undoAfter('/admin/instances/notes/disabled', { disabled: '1' })).toBe(false);
+  });
+
+  it('an Undo is refused once the person who pressed it may no longer make that change', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const notes = core.apps.getInstanceBySlug('notes')!;
+    const admin = core.users.get(s.h.adminId)!;
+    // Pia manages notes and removes Uwe's share; then she is no longer a manager.
+    core.access.setGrant(notes, 'user', s.ids.pia, 'admin', admin);
+    const pia = client(s, await s.h.login('pia@x.y', PASSWORD), s.ids.pia);
+    const removed = await pia.post('/ui/instances/notes/grants/remove', { type: 'user', id: s.ids.uwe });
+    const page = dom((await pia.get(removed.headers.location.split('#')[0])).text);
+    const form = page.querySelector<HTMLFormElement>('form.notice-undo')!;
+    const fields = Object.fromEntries([...form.querySelectorAll('input')].map((i) => [i.getAttribute('name')!, i.getAttribute('value')!]));
+    core.access.setGrant(notes, 'user', s.ids.pia, 'view', admin);
+    expect((await pia.post(form.getAttribute('action')!, fields)).status).toBe(403);
+    expect(core.access.listGrants(notes.id).some((g) => g.principalId === s!.ids.uwe)).toBe(false);
   });
 
   it('an Undo can only post to the platform’s own form routes', async () => {
