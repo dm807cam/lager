@@ -48,18 +48,44 @@ describe('small polish (#100)', () => {
     expect(cell.querySelector(':scope > div > span')!.textContent).toBe('uwe@x.y');
   });
 
-  it('copying is announced to screen readers, and so is a refusal', async () => {
+  it('a person without a name shows the address once, and a group its name', async () => {
+    s = await showcase();
+    (s.h.core.users as unknown as { db: { prepare(sql: string): { run(...a: unknown[]): unknown } } }).db.prepare("UPDATE users SET name = '' WHERE id = ?").run(s.ids.uwe);
+    const doc = dom((await request(s.h.app).get('/instances/notes').set('Host', s.h.host).set('Cookie', await s.h.login())).text);
+    const cells = [...doc.querySelectorAll('#sharing .cell-user')];
+    const uwe = cells.find((c) => c.textContent!.includes('uwe@x.y'))!;
+    expect([uwe.querySelector('strong')!.textContent, uwe.textContent!.split('uwe@x.y').length - 1]).toEqual(['uwe@x.y', 1]);
+    const group = cells.find((c) => c.textContent!.includes('Team'))!;
+    expect(group.querySelector('strong')!.textContent).toBe('Team');
+    expect(group.querySelector('.tile, .avatar')).not.toBeNull();
+  });
+
+  it('copying is announced through a status line that is in the page before the first copy, and a refusal shows on the button too', async () => {
     const win = new JSDOM('<!doctype html><body><button data-copy="abc" data-copied="Copied" data-copy-failed="Copying did not work." hidden><span data-label>Copy</span></button></body>', { runScripts: 'outside-only', pretendToBeVisual: true }).window;
     let ok = true;
     Object.defineProperty(win.navigator, 'clipboard', { value: { writeText: () => (ok ? Promise.resolve() : Promise.reject(new Error('no'))) } });
     win.eval(fs.readFileSync(new URL('../src/static/app.js', import.meta.url), 'utf8'));
     const doc = win.document;
-    const status = async (): Promise<string> => { await new Promise((r) => setTimeout(r, 80)); return doc.querySelector('[role="status"]')?.textContent ?? ''; };
+    // A live region added at the moment of the change is often not read out: it is there, empty, from the start.
+    const region = doc.querySelector('[role="status"]');
+    expect([region !== null, region?.textContent]).toEqual([true, '']);
+    const label = (): string => doc.querySelector('[data-label]')!.textContent!;
+    const settle = async (): Promise<void> => { await new Promise((r) => setTimeout(r, 80)); };
     doc.querySelector('button')!.click();
-    expect(await status()).toBe('Copied');
+    await settle();
+    expect([region!.textContent, label()]).toEqual(['Copied', 'Copied']);
     ok = false;
     doc.querySelector('button')!.click();
-    expect(await status()).toBe('Copying did not work.');
+    await settle();
+    expect([region!.textContent, label()]).toEqual(['Copying did not work.', 'Copying did not work.']);
+    expect(doc.querySelectorAll('[role="status"]')).toHaveLength(1);
+  });
+
+  it('a page without copy buttons gets no status line', () => {
+    const win = new JSDOM('<!doctype html><body><p>Nothing to copy</p></body>', { runScripts: 'outside-only' }).window;
+    Object.defineProperty(win.navigator, 'clipboard', { value: { writeText: () => Promise.resolve() } });
+    win.eval(fs.readFileSync(new URL('../src/static/app.js', import.meta.url), 'utf8'));
+    expect(win.document.querySelector('[role="status"]')).toBeNull();
   });
 
   it('dark mode marks the current tab with the accent line, long titles hyphenate, and the spacing is in place', () => {
