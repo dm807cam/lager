@@ -18,7 +18,7 @@ import { loginLimiter } from './platform.js';
 import { confirmAttrs, confirmed, questionPage, noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, sizeText, undoForm, visibilityLabel, type Option, type Question } from './pages.js';
 import { domainsBody, storageUsed } from './manage.js';
 import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
-import { csrfToken, csrfValid, flashUrl, readFlash, type Undo } from './session.js';
+import { csrfToken, csrfValid, flashUrl, readFlash, type Flash, type Undo } from './session.js';
 import { RateLimiter } from './ratelimit.js';
 import { codeRefusal } from './two-factor.js';
 import { MAX_CODE_INPUT } from '../platform/two-factor.js';
@@ -492,6 +492,19 @@ function domainsPage(core: Core, locale: Locale, admin: User, inst: Instance, ms
     `<a class="back" href="/admin/apps">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.section.apps'))}</a>`);
 }
 
+/** The page a form under /admin belongs to, for a GET of the form's own address; null for addresses that are no form's. */
+export function formPageOf(path: string): string | null {
+  const seg = path.split('/').filter(Boolean);
+  if (seg[0] !== 'admin' || seg.length < 3) return null;
+  const [, section, id] = seg;
+  if (section === 'users' || section === 'groups') return `/admin/${section}/${id}`;
+  if (section === 'ai' && seg.length >= 4 && ['providers', 'models', 'groups'].includes(id)) return `/admin/ai/${id}/${seg[3]}`;
+  if (section === 'instances' && seg[3] === 'domains') return `/admin/instances/${id}/domains`;
+  if (section === 'instances') return '/admin/apps';
+  if (['invites', 'mail', 'ai', 'apps', 'settings'].includes(section)) return `/admin/${section}`;
+  return null;
+}
+
 /** Platform administrators only: no session goes to /login, any other role gets a 403 page. */
 export function requireAdmin(core: Core): RequestHandler {
   const auth = requireUser(core);
@@ -564,6 +577,10 @@ export const adminExtension: PlatformExtension = (router, core) => {
   const done = (res: Response, path: string, ok: MessageKey, params?: Record<string, string>, undo?: Undo): void => {
     res.redirect(flashUrl(core, adminOf(res), path, { ok, params, undo }));
   };
+  /** After a form whose outcome is a success or a refusal: back to `path` with it, so reloading never sends the form again. */
+  const redirectWith = (res: Response, path: string, flash: Flash): void => { res.redirect(flashUrl(core, adminOf(res), path, flash)); };
+  /** Text from elsewhere (a mail server's or a provider's answer) fits into a flash value. */
+  const clip = (text: string): string => (text.length > 300 ? `${text.slice(0, 299)}…` : text);
   /**
    * The question before a change that cannot be taken back, when the form came without the answer (no script): asked on a page of
    * its own that sends the same fields again. True when it was asked, so the route stops there.
@@ -708,7 +725,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
       core.tokens.revokeAll(target.id);
       core.accounts.noticeTwoFactor(target, 'reset');
     }
-    send(res, 200, userView(res, user, target.id)({ ok: t(locale, 'admin.users.twoFactorResetDone', { email: target.email }) }));
+    redirectWith(res, userPath(target.id), { ok: 'admin.users.twoFactorResetDone', params: { email: target.email } });
   }));
 
   // Deleting an account: a page that says what goes with it, then the deletion itself. Not offered over REST or MCP.
@@ -756,11 +773,10 @@ export const adminExtension: PlatformExtension = (router, core) => {
       const { cleanedUp } = core.removal.remove(id, user, plan);
       // A pause the address had collected at the sign-in page does not wait for the next account of that name.
       loginLimiter(core).succeed(target.email.trim().toLowerCase());
-      const locale = localeOf(res);
       // The account is gone either way; files that could not be moved are the administrator's to look at, in the log.
-      send(res, 200, usersSection(core, locale, user, cleanedUp
-        ? { ok: t(locale, 'admin.users.delete.done', { email: target.email }) }
-        : { error: t(locale, 'admin.users.delete.cleanupFailed', { email: target.email }) }));
+      redirectWith(res, '/admin/users', cleanedUp
+        ? { ok: 'admin.users.delete.done', params: { email: target.email } }
+        : { error: 'admin.users.delete.cleanupFailed', params: { email: target.email } });
     } catch (e) { deleteRefused(res, user, id, e, answered); }
   }));
 
@@ -899,7 +915,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
       const { passwordDropped } = core.mailSettings.save({ host: field(req, 'host'), port, security, user: field(req, 'user'), password: password === '' ? undefined : password, from: field(req, 'from') });
       // Registration must not open by itself at the next restart just because mail is on now. Only after a save that succeeded.
       core.settings.keepRegistration();
-      send(res, 200, mailSection(core, locale, user, { ok: t(locale, passwordDropped ? 'admin.mail.savedPasswordDropped' : 'admin.mail.saved') }));
+      redirectWith(res, '/admin/mail', { ok: passwordDropped ? 'admin.mail.savedPasswordDropped' : 'admin.mail.saved' });
     } catch (e) { failWith(res, e, (m) => mailSection(core, locale, user, m), { invalid_argument: 'admin.mail.invalid' }); }
   }));
 
@@ -911,10 +927,10 @@ export const adminExtension: PlatformExtension = (router, core) => {
     }
     try {
       await core.mailer.send({ to: user.email, subject: t(locale, 'admin.mail.testSubject'), text: `${t(locale, 'admin.mail.testText', { url: core.config.publicUrl.origin })}\n` });
-      send(res, 200, mailSection(core, locale, user, { ok: t(locale, 'admin.mail.testOk', { email: user.email }) }));
+      redirectWith(res, '/admin/mail', { ok: 'admin.mail.testOk', params: { email: user.email } });
     } catch (e) {
       // The error code and the SMTP reply tell a wrong password from a server that is down; nothing else the far end said is shown.
-      send(res, 200, mailSection(core, locale, user, { error: t(locale, 'admin.mail.testFailed', { error: smtpErrorText(e) }) }));
+      redirectWith(res, '/admin/mail', { error: 'admin.mail.testFailed', params: { error: clip(smtpErrorText(e)) } });
     }
   }));
 
@@ -925,7 +941,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     }
     if (asked(req, res, QUESTIONS.mail(localeOf(res)), '/admin/mail')) return;
     core.mailSettings.clear();
-    send(res, 200, mailSection(core, localeOf(res), user, { ok: t(localeOf(res), 'admin.mail.removed') }));
+    redirectWith(res, '/admin/mail', { ok: 'admin.mail.removed' });
   }));
 
   // --- language model ---
@@ -989,11 +1005,11 @@ export const adminExtension: PlatformExtension = (router, core) => {
     try {
       const out = await core.ai.complete(core.ai.testRoute(id), [{ role: 'user', content: TEST_PROMPT }], { maxTokens: Math.min(core.ai.maxTokens, 2000) });
       const answer = out.text.trim().slice(0, 200) || '–';
-      send(res, 200, aiProviderPage(core, locale, user, id, { ok: t(locale, 'admin.ai.testOk', { model: out.model, answer }) }) ?? '');
+      redirectWith(res, `/admin/ai/providers/${encodeURIComponent(id)}`, { ok: 'admin.ai.testOk', params: { model: clip(out.model), answer } });
     } catch (e) {
       if (e instanceof AiError) {
         // The administrator sees what the provider said; app viewers never do.
-        send(res, 200, aiProviderPage(core, locale, user, id, { error: t(locale, 'admin.ai.testFailed', { error: [e.message, e.detail].filter(Boolean).join(' ') }) }) ?? '');
+        redirectWith(res, `/admin/ai/providers/${encodeURIComponent(id)}`, { error: 'admin.ai.testFailed', params: { error: clip([e.message, e.detail].filter(Boolean).join(' ')) } });
         return;
       }
       aiFail(res, user, e, (m) => aiProviderPage(core, locale, user, id, m));
@@ -1090,4 +1106,11 @@ export const adminExtension: PlatformExtension = (router, core) => {
         value === '1' && !instance.disabled ? { action: `/admin/instances/${encodeURIComponent(instance.slug)}/disabled`, fields: { disabled: '0' } } : undefined);
     } catch (e) { failWith(res, e, (m) => appsSection(core, localeOf(res), user, m), { not_found: 'admin.instances.notFound' }); }
   }));
+
+  // A page some forms answer with stays at the form's address (a one-time link, a refusal). Opening that address again, from the
+  // address bar, a bookmark or a reload, leads to the page the form belongs to instead of a dead end.
+  router.get('/admin/*rest', (req, res, next) => {
+    const to = formPageOf(req.path);
+    if (to) res.redirect(to); else next();
+  });
 };

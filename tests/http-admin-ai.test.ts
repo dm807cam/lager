@@ -179,8 +179,10 @@ describe('/admin/ai', () => {
     const p = env.core.ai.createProvider({ name: 'Work', type: 'anthropic', apiKey: 'sk-ant-1' });
     env.core.ai.createGroup({ name: 'Fam', modelId: entry(env.core.ai, p.id, 'claude-haiku-5-5'), hourlyLimit: 5 });
     const res = await env.post(`/admin/ai/providers/${p.id}/test`);
-    expect(res.status).toBe(200);
-    expect(res.text).toContain('claude-opus-5-5 answered: OK');
+    // The result comes on the provider's page after a redirect, so a reload does not send another request to the provider.
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(new RegExp(`^/admin/ai/providers/${p.id}\\?flash=`));
+    expect((await env.get(res.headers.location)).text).toContain('claude-opus-5-5 answered: OK');
     expect(env.sent.at(-1).model).toBe('claude-haiku-5-5');
   });
 
@@ -188,8 +190,8 @@ describe('/admin/ai', () => {
     const env = await setup(() => json({ error: { message: 'Incorrect API key provided' } }, 401));
     const p = env.core.ai.createProvider({ name: 'Work', type: 'openai', apiKey: 'sk-1' });
     const res = await env.post(`/admin/ai/providers/${p.id}/test`);
-    expect(res.status).toBe(200);
-    expect(res.text).toContain('Incorrect API key provided');
+    expect(res.status).toBe(302);
+    expect((await env.get(res.headers.location)).text).toContain('Incorrect API key provided');
   });
 
   it('saves the longest answer', async () => {

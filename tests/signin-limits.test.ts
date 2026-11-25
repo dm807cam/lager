@@ -291,7 +291,7 @@ describe('form tokens', () => {
     const post = (csrf: string) => request(h!.app).post('/account/name').set('Host', h!.host).set('Cookie', fresh).type('form').send({ csrf, name: 'Renamed' });
     expect((await post(token)).status).toBe(403);
     expect(h.core.users.get(user.id)!.name).not.toBe('Renamed');
-    expect((await post(csrfToken(h.core, h.core.users.get(user.id)!))).status).toBe(200);
+    expect((await post(csrfToken(h.core, h.core.users.get(user.id)!))).status).toBe(302);
     expect(cookie).not.toBe(fresh);
   });
 });
@@ -484,7 +484,7 @@ describe('the browser that proved control of the account is remembered', () => {
     const session = ([] as string[]).concat(signedIn.headers['set-cookie']).find((c) => c.startsWith('lager_session='))!.split(';')[0];
     const changed = await request(h.app).post('/account/password').set('Host', h.host).set('Cookie', session).type('form')
       .send({ csrf: csrfToken(h.core, h.core.users.get(h.adminId)!), current: 'admin-password-1', password: 'a brand new password' });
-    expect(changed.status).toBe(200);
+    expect(changed.status).toBe(302);
     const fresh = deviceOf(changed)!;
     expect(fresh).not.toBe(deviceOf(signedIn));
     await attack(h, 9, 'admin@x.y');

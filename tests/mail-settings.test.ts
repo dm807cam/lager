@@ -197,8 +197,9 @@ describe('administration page for mail', () => {
     expect(page.text).toContain('name="host"');
     expect((await s.get('/admin/settings', cookie)).text).toContain('href="/admin/mail"');
 
-    const saved = await s.post('/admin/mail', cookie, { host: 'smtp.example.com', security: 'tls', port: '', user: 'u@example.com', password: 'pw', from: '' });
-    expect(saved.status).toBe(200);
+    const posted = await s.post('/admin/mail', cookie, { host: 'smtp.example.com', security: 'tls', port: '', user: 'u@example.com', password: 'pw', from: '' });
+    expect(posted.status).toBe(302);
+    const saved = await s.get(posted.headers.location, cookie);
     expect(saved.text).toContain(en('admin.mail.saved'));
     expect(saved.text).toContain(en('admin.mail.passwordSaved'));
     expect(saved.text).not.toContain('value="pw"');
@@ -211,7 +212,8 @@ describe('administration page for mail', () => {
     db.close();
 
     // Pointing the settings elsewhere without a password does not take the saved one along.
-    const moved = await s.post('/admin/mail', cookie, { host: 'evil.example.net', security: 'none', port: '25', user: 'u@example.com', password: '', from: '' });
+    const movedPost = await s.post('/admin/mail', cookie, { host: 'evil.example.net', security: 'none', port: '25', user: 'u@example.com', password: '', from: '' });
+    const moved = await s.get(movedPost.headers.location, cookie);
     expect(moved.text).toContain(en('admin.mail.savedPasswordDropped'));
     expect(moved.text).toContain(en('admin.mail.cleartext'));
     expect(s.hh.core.mailSettings.get()?.passwordSaved).toBe(false);
@@ -221,8 +223,8 @@ describe('administration page for mail', () => {
     expect(bad.text).toContain(en('admin.mail.invalid'));
     expect(s.hh.core.mailSettings.get()?.host).toBe('evil.example.net');
 
-    const removed = await s.post('/admin/mail/delete', cookie, { confirmed: '1' });
-    expect(removed.text).toContain(en('admin.mail.removed'));
+    const removedPost = await s.post('/admin/mail/delete', cookie, { confirmed: '1' });
+    expect((await s.get(removedPost.headers.location, cookie)).text).toContain(en('admin.mail.removed'));
     expect(s.hh.core.mailer.enabled).toBe(false);
   });
 
@@ -232,8 +234,9 @@ describe('administration page for mail', () => {
     const cookie = await s.hh.login();
     s.hh.core.mailSettings.save(BASE);
     const res = await s.post('/admin/mail/test', cookie, {});
-    expect(res.status).toBe(200);
-    expect(res.text).toContain(en('admin.mail.testOk', { email: 'admin@x.y' }));
+    // A redirect: reloading the result sends no second test mail.
+    expect(res.status).toBe(302);
+    expect((await s.get(res.headers.location, cookie)).text).toContain(en('admin.mail.testOk', { email: 'admin@x.y' }));
     expect(mailer.sent).toEqual([expect.objectContaining({ to: 'admin@x.y', subject: t('en', 'admin.mail.testSubject') })]);
   });
 
@@ -244,8 +247,11 @@ describe('administration page for mail', () => {
     const cookie = await hh.login();
     const res = await request(hh.app).post('/admin/mail/test').set('Host', hh.host).set('Cookie', cookie).type('form')
       .send({ csrf: csrfToken(hh.core, hh.core.users.get(hh.adminId)!) });
-    expect(res.text).toContain(en('admin.mail.testFailed', { error: 'EAUTH: 535 Authentication failed' }));
-    expect(res.text).not.toContain('10.0.0.5');
+    expect(res.status).toBe(302);
+    const page = await request(hh.app).get(res.headers.location as string).set('Host', hh.host).set('Cookie', cookie);
+    expect(page.text).toContain(en('admin.mail.testFailed', { error: 'EAUTH: 535 Authentication failed' }));
+    expect(page.text).not.toContain('10.0.0.5');
+    expect(res.headers.location).not.toContain('10.0.0.5');
   });
 
   it('a refused save stores no registration mode', async () => {

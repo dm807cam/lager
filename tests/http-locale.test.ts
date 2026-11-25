@@ -83,8 +83,11 @@ describe('page language', () => {
     const csrf = csrfToken(s.h.core, user);
     expect((await s.post('/account/locale', { locale: 'es' }, { Cookie: admin })).status).toBe(403);
     const saved = await s.post('/account/locale', { csrf, locale: 'es' }, { Cookie: admin });
-    expect(saved.status).toBe(200);
-    expect(saved.text).toContain('<html lang="es"');
+    expect(saved.status).toBe(302);
+    // The account page then answers in the language just chosen, and says so in it.
+    const after = await s.get(saved.headers.location, { Cookie: admin });
+    expect(after.text).toContain('<html lang="es"');
+    expect(after.text).toContain(esc(t('es', 'account.locale.saved')));
     expect(s.h.core.users.get(user.id)!.locale).toBe('es');
     const res = await s.get('/account', { Cookie: `${admin}; lager_lang=fr`, 'Accept-Language': 'de' });
     expect(res.text).toContain('<html lang="es"');
