@@ -344,11 +344,6 @@ export const authExtension: PlatformExtension = (router, core) => {
   /** After a change that shows nothing secret: back to the account page, which says what happened, so a reload sends nothing again. */
   const toAccount = (res: Response, user: User, ok: MessageKey): void => { res.redirect(flashUrl(core, user, '/account', { ok })); };
 
-  // The forms of the account page answer some posts with a page at their own address (a refusal, a new key, recovery codes).
-  // Opening that address again leads to the account page instead of a dead end; nothing is sent again.
-  router.get('/account/*rest', (_req, res) => { res.redirect('/account'); });
-  router.get('/verify/resend', (_req, res) => { res.redirect('/login'); });
-
   router.post('/account/name', ...accountAction((req, res, user, locale) => {
     try {
       core.users.setName(user.id, field(req, 'name'));
@@ -493,4 +488,9 @@ export const authExtension: PlatformExtension = (router, core) => {
     core.accounts.noticeTwoFactor(user, 'disabled', locale);
     toAccount(res, user, 'account.twoFactor.disabled');
   }));
+
+  // Last, after every real page: the forms of the account page answer some posts with a page at their own address (a refusal, a new key, recovery codes).
+  // Opening that address again leads to the account page instead of a dead end; nothing is sent again.
+  router.get('/account/*rest', (_req, res) => { res.redirect('/account'); });
+  router.get('/verify/resend', (_req, res) => { res.redirect('/login'); });
 };

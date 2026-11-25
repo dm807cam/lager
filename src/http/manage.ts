@@ -53,6 +53,21 @@ const NOTICES: Record<string, MessageKey> = {
   domain_limit: 'notice.domainLimit',
 };
 
+/**
+ * Where a refused form's message goes: the id of the control it is about, and what was typed into the form's text fields (by
+ * control id), so the page comes back with the message at the field and the input still there.
+ */
+type FieldOf = (req: Request, error: MessageKey) => { field: string; values: Record<string, string> } | undefined;
+const bodyText = (req: Request, name: string): string => {
+  const v = (req.body as Record<string, unknown> | undefined)?.[name];
+  return typeof v === 'string' ? v.slice(0, 300) : '';
+};
+/** The message of a one-field form: at control `id`, with what was typed into body field `name`. */
+// The error is part of the signature every field mapping shares; a one-field form puts any of them at its field.
+const at = (id: string, name: string): FieldOf => (req, _error) => ({ field: id, values: { [id]: bodyText(req, name) } });
+/** Refusals that are about what was typed into the name of a new instance; any other (a limit, the owner) is no field's. */
+const NAME_ERRORS: ReadonlySet<MessageKey> = new Set(['notice.slugInvalid', 'notice.slugTaken', 'notice.slugRetired', 'validation.generic']);
+
 /** What a form did: the notice for the next page, the values it names, the section it is shown above, and another page to go to. */
 interface Done { ok: MessageKey; params?: Record<string, string>; anchor?: string; to?: string; undo?: Undo }
 /** A form that needs a yes first: the question, asked on a page of its own when the form came without the answer. */
@@ -407,7 +422,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
    * shows above the section that changed, and may name another page to go to. Domain errors become a notice on `back`,
    * forbidden and unknown targets error pages.
    */
-  const action = (back: (req: Request, user: User) => string, run: (req: Request, user: User) => Done | Ask): RequestHandler[] => [
+  const action = (back: (req: Request, user: User) => string, run: (req: Request, user: User) => Done | Ask, fieldOf?: FieldOf): RequestHandler[] => [
     noStore, auth, formBody,
     (req, res) => {
       const user = userOf(res);
@@ -421,11 +436,14 @@ export const manageExtension: PlatformExtension = (router, core) => {
         }
         toPage(res, user, done.to ?? back(req, user), { ok: done.ok, params: done.params, anchor: done.anchor, undo: done.undo });
       } catch (e) {
-        if (e instanceof Notice) { toPage(res, user, back(req, user), { error: e.key }); return; }
+        if (e instanceof Notice) { toPage(res, user, back(req, user), { error: e.key, ...fieldOf?.(req, e.key) }); return; }
         if (!(e instanceof LagerError)) throw e;
         if (e.code === 'forbidden') send(res, 403, forbiddenInstancePage(localeOf(res), shellOf(res)));
         else if (e.code === 'not_found') send(res, 404, missingPage(localeOf(res), 'notice.missing', undefined, shellOf(res)));
-        else toPage(res, user, back(req, user), { error: NOTICES[e.reason ?? ''] ?? 'validation.generic' });
+        else {
+          const key = NOTICES[e.reason ?? ''] ?? 'validation.generic';
+          toPage(res, user, back(req, user), { error: key, ...fieldOf?.(req, key) });
+        }
       }
     },
   ];
@@ -530,7 +548,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
       name = core.groups.get(group)?.name ?? group;
     } else throw new Notice('notice.grantTarget');
     return { ok: 'notice.ok.shared', params: { name, level: levelLabel(localeOf(req.res!), level) }, anchor: 'sharing' };
-  }));
+  }, (req, error) => (error === 'notice.grantTarget' ? undefined : at('grant-email', 'email')(req, error))));
 
   router.post('/ui/instances/:slug/grants/remove', ...action(instBack, (req, user) => {
     const inst = managed(user, param(req, 'slug'));
@@ -549,7 +567,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const host = field(req, 'host', 300);
     core.domains.add(managed(user, param(req, 'slug')), host, user, true);
     return { ok: 'notice.ok.domainAdded', params: { host: host.trim().toLowerCase() }, anchor: 'domains' };
-  }));
+  }, at('domain-host', 'host')));
 
   router.post('/ui/instances/:slug/domains/remove', ...action(instBack, (req, user) => {
     const host = field(req, 'host', 300);
@@ -588,7 +606,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const origin = field(req, 'origin', 300).trim().replace(/\/$/, '');
     core.ingest.setOrigins(inst.id, endpoint, [...core.ingest.instanceOrigins(inst.id, name), origin]);
     return { ok: 'notice.ok.added', params: { name: origin }, anchor: 'ingest' };
-  }));
+  }, (req, error) => at(`origin-${bodyText(req, 'name')}`, 'origin')(req, error)));
 
   router.post('/ui/instances/:slug/ingest/origins/remove', ...action(instBack, (req, user) => {
     const { inst, name, endpoint } = managedEndpoint(req, user);
@@ -612,7 +630,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const origin = field(req, 'origin', 300).trim().replace(/\/$/, '');
     core.embed.setOrigins(inst.id, [...core.embed.origins(inst.id), origin]);
     return { ok: 'notice.ok.added', params: { name: origin }, anchor: 'embed' };
-  }));
+  }, at('embed-origin', 'origin')));
 
   router.post('/ui/instances/:slug/embed/remove', ...action(instBack, (req, user) => {
     const inst = embedInstance(req, user);
@@ -630,7 +648,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     if (field(req, 'confirm') !== inst.slug) throw new Notice('notice.confirmName');
     core.apps.deleteInstance(inst.id, user.id);
     return { ok: 'notice.ok.instanceDeleted', params: { slug: inst.slug }, to: '/' };
-  }));
+  }, at('confirm', 'confirm')));
 
   // --- app page ---
 
@@ -659,6 +677,13 @@ export const manageExtension: PlatformExtension = (router, core) => {
       // From the home page the new instance shows among one's own; from the app page in its list of instances.
       return { ok: 'notice.ok.instanceCreated', params: { slug: created.slug }, anchor: field(req, 'from') === 'home' ? 'mine' : 'instances' };
     },
+    // On the home page each app's name field is its own; an unknown owner is the owner field's problem, anything else the name's.
+    (req, error) => {
+      if (error !== 'notice.noAccount' && !NAME_ERRORS.has(error)) return undefined;
+      if (field(req, 'from') === 'home') return at(`new-${param(req, 'slug')}`, 'slug')(req, error);
+      const values = { 'new-slug': bodyText(req, 'slug'), 'owner-email': bodyText(req, 'owner_email') };
+      return { field: error === 'notice.noAccount' ? 'owner-email' : 'new-slug', values };
+    },
   ));
 
   router.post('/ui/apps/:slug/collaborators', ...action(appBack, (req, user) => {
@@ -666,7 +691,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const account = accountByEmail(field(req, 'email', 254));
     core.apps.addCollaborator(app.id, account.id, user.id);
     return { ok: 'notice.ok.collaboratorAdded', params: { name: account.name || account.email }, anchor: 'collaborators' };
-  }));
+  }, at('collab-email', 'email')));
 
   router.post('/ui/apps/:slug/collaborators/remove', ...action(appBack, (req, user) => {
     const app = ownedApp(user, param(req, 'slug'));
@@ -695,7 +720,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     if (field(req, 'confirm') !== app.slug) throw new Notice('notice.confirmName');
     core.apps.deleteApp(app.id, user.id);
     return { ok: 'notice.ok.appDeleted', params: { name: app.title }, to: '/' };
-  }));
+  }, at('confirm', 'confirm')));
 
   // Opening the address of a form (a reload of a page it answered with, a bookmark) leads to the page the form is on.
   router.get('/ui/*rest', (req, res, next) => {

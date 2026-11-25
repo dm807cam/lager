@@ -80,6 +80,7 @@ function catalogSection(core: Core, locale: Locale, csrf: string, catalog: Retur
     return appCard({
       app: a, title: a.title, slug: a.slug, description: a.description, badges: [],
       corner: aiCorner(core, locale, a.id, core.apps.latestDeployedVersion(a.id)?.number),
+      // withFieldError (pages.ts) finds this panel by `<details class="getown"` to open it again at a refused name: keep it so.
       actions: `<details class="getown"><summary class="${btn('secondary', true)} btn-block">${icon('plus')}${esc(t(locale, 'dash.getOwn'))}</summary>${create}</details>`,
     });
   });
@@ -215,7 +216,15 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
   // The new token is shown on the response to the creating request itself and is never stored in plain text.
   router.post('/ui/tokens', ...action((req, res, user) => {
     const name = field(req, 'name').trim();
-    const { token } = core.tokens.create(user.id, name);
+    let token: string;
+    try {
+      ({ token } = core.tokens.create(user.id, name));
+    } catch (e) {
+      // A name the server refuses comes back at the name field, with what was typed.
+      if (!(e instanceof LagerError) || e.reason !== 'token_name_invalid') throw e;
+      res.redirect(flashUrl(core, user, '/publish', { error: 'dash.tokens.nameInvalid', field: 'token-name', values: { 'token-name': field(req, 'name').slice(0, 300) } }));
+      return;
+    }
     res.type('html').send(publishPage(core, localeOf(res), user, { name, token }));
   }));
 

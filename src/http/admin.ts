@@ -15,7 +15,7 @@ import { defaultSender, MAX_SMTP_PASSWORD, SMTP_SECURITY, smtpErrorText, type Sm
 import type { Role, User } from '../platform/users.js';
 import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { loginLimiter } from './platform.js';
-import { confirmAttrs, confirmed, questionPage, noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, sizeText, undoForm, visibilityLabel, type Option, type Question } from './pages.js';
+import { confirmAttrs, confirmed, questionPage, withFieldError, noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, sizeText, undoForm, visibilityLabel, type Option, type Question } from './pages.js';
 import { domainsBody, storageUsed } from './manage.js';
 import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash, type Undo } from './session.js';
@@ -36,7 +36,9 @@ const providerLabel = (locale: Locale, id: ProviderId): string =>
 
 type Section = 'users' | 'invites' | 'groups' | 'settings' | 'mail' | 'ai' | 'apps';
 /** A note above the section; `once` carries a one-time link and is never stored. */
-interface Msg { ok?: string; error?: string; once?: { title: string; link: string }; undo?: Undo }
+interface Msg { ok?: string; error?: string; once?: { title: string; link: string }; undo?: Undo; field?: FieldError }
+/** The control a refusal is about, and what was typed into the form's text fields (by control id). */
+interface FieldError { id: string; values: Record<string, string> }
 
 const roleLabel = (locale: Locale, role: Role): string => t(locale, ROLE_KEYS[role]);
 const options = <K extends string>(locale: Locale, keys: Record<K, MessageKey>): Option[] => (Object.keys(keys) as K[]).map((k) => [k, t(locale, keys[k])]);
@@ -46,9 +48,11 @@ function shell(core: Core, locale: Locale, admin: User, active: Section, title: 
   const nav = `<nav class="pills" aria-label="${esc(t(locale, 'admin.sections'))}">${SECTIONS.map(([id, key]) =>
     `<a href="/admin/${id}"${id === active ? ' aria-current="page"' : ''}>${esc(t(locale, key))}</a>`).join('')}</nav>`;
   const once = msg.once ? callout(locale, msg.once.title, msg.once.link, t(locale, 'admin.oneTime')) : '';
+  // A refusal about one field is shown at that field, with what was typed.
+  const atField = msg.error && msg.field ? withFieldError(body, msg.field.id, msg.error, msg.field.values) : null;
   return page(locale, t(locale, 'admin.pageTitle', { section: title }), `<div class="page-head"><h1>${esc(t(locale, 'nav.admin'))}</h1>${nav}</div>
-${msg.ok ? notice('success', msg.ok, msg.undo ? undoForm(locale, msg.undo, csrfToken(core, admin)) : '') : ''}${msg.error ? notice('danger', msg.error) : ''}${once}${back}
-<section class="card" aria-labelledby="admin-section"><h2 id="admin-section">${esc(title)}</h2>${body}</section>`, signedIn(core, admin, 'admin', returnPath));
+${msg.ok ? notice('success', msg.ok, msg.undo ? undoForm(locale, msg.undo, csrfToken(core, admin)) : '') : ''}${msg.error && !atField ? notice('danger', msg.error) : ''}${once}${back}
+<section class="card" aria-labelledby="admin-section"><h2 id="admin-section">${esc(title)}</h2>${atField ?? body}</section>`, signedIn(core, admin, 'admin', returnPath));
 }
 
 const mono = (v: string): string => `<span class="mono">${esc(v)}</span>`;
@@ -556,13 +560,15 @@ export const adminExtension: PlatformExtension = (router, core) => {
   /** "Does not exist" inside the administration shell; `back` is where the link below the message leads. */
   const missing = (req: Request, res: Response, what: MessageKey, href: string, label: MessageKey): string =>
     missingPage(localeOf(res), what, backLink(localeOf(res), href, t(localeOf(res), label)), shellFor(core, req, adminOf(res)));
-  const failWith = (res: Response, e: unknown, view: (msg: Msg) => string | null, messages: Partial<Record<string, MessageKey>> = {}): void => {
+  const failWith = (res: Response, e: unknown, view: (msg: Msg) => string | null, messages: Partial<Record<string, MessageKey>> = {}, field?: FieldError): void => {
     if (!(e instanceof LagerError)) throw e;
     const status = e.code === 'not_found' ? 404 : e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400;
     const locale = localeOf(res);
     const error = noticeText(locale, messages[e.code] ?? 'validation.generic');
-    send(res, status, view({ error }) ?? missing(res.req, res, 'error.notFound.text', '/admin', 'admin.back'));
+    send(res, status, view({ error, ...(field ? { field } : {}) }) ?? missing(res.req, res, 'error.notFound.text', '/admin', 'admin.back'));
   };
+  /** The field of a one-field form: control `id`, with what was typed into body field `name`. */
+  const typed = (req: Request, id: string, name: string): FieldError => ({ id, values: { [id]: field(req, name, MAX_FIELD) } });
 
   /** The notice a form left for this page view, in the viewer's language. */
   const msgOf = (req: Request, res: Response): Msg => {
@@ -579,8 +585,6 @@ export const adminExtension: PlatformExtension = (router, core) => {
   };
   /** After a form whose outcome is a success or a refusal: back to `path` with it, so reloading never sends the form again. */
   const redirectWith = (res: Response, path: string, flash: Flash): void => { res.redirect(flashUrl(core, adminOf(res), path, flash)); };
-  /** Text from elsewhere (a mail server's or a provider's answer) fits into a flash value. */
-  const clip = (text: string): string => (text.length > 300 ? `${text.slice(0, 299)}…` : text);
   /**
    * The question before a change that cannot be taken back, when the form came without the answer (no script): asked on a page of
    * its own that sends the same fields again. True when it was asked, so the route stops there.
@@ -644,7 +648,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
         const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
         const key = (e.reason !== undefined ? DOMAIN_NOTICES[e.reason] : undefined) ?? (e.code === 'not_found' ? 'admin.instances.notFound' : 'validation.generic');
         if (!inst) send(res, 404, missing(req, res, 'admin.instances.notFound', '/admin/apps', 'admin.section.apps'));
-        else showDomains(res, inst, e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400, { error: noticeText(localeOf(res), key) });
+        else showDomains(res, inst, e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400, { error: noticeText(localeOf(res), key), field: typed(req, 'domain-host', 'host') });
       }
     }));
   }
@@ -791,7 +795,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
         once: { title: t(localeOf(res), 'admin.invites.linkTitle'), link: url },
         ok: t(localeOf(res), mailed ? 'admin.invites.mailed' : 'admin.invites.notMailed'),
       }));
-    } catch (e) { failWith(res, e, (m) => invitesSection(core, localeOf(res), user, m), { invalid_argument: 'admin.invites.invalid' }); }
+    } catch (e) { failWith(res, e, (m) => invitesSection(core, localeOf(res), user, m), { invalid_argument: 'admin.invites.invalid' }, typed(req, 'invite-email', 'email')); }
   }));
 
   router.post('/admin/invites/:id/revoke', ...action((req, res, user) => {
@@ -811,7 +815,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     try {
       const group = core.groups.create(field(req, 'name'));
       done(res, '/admin/groups', 'notice.ok.created', { name: group.name });
-    } catch (e) { failWith(res, e, (m) => groupsSection(core, localeOf(res), user, m), groupMessages); }
+    } catch (e) { failWith(res, e, (m) => groupsSection(core, localeOf(res), user, m), groupMessages, typed(req, 'group-name', 'name')); }
   }));
 
   router.post('/admin/groups/:id/rename', ...action((req, res, user) => {
@@ -819,7 +823,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     try {
       core.groups.rename(id, field(req, 'name'));
       done(res, `/admin/groups/${encodeURIComponent(id)}`, 'notice.ok.renamed', { name: core.groups.get(id)?.name ?? '' });
-    } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), groupMessages); }
+    } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), groupMessages, typed(req, 'group-name', 'name')); }
   }));
 
   router.post('/admin/groups/:id/members', ...action((req, res, user) => {
@@ -829,7 +833,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
       if (!member) throw new LagerError('not_found', 'No account with this email address.');
       core.groups.addMember(id, member.id);
       done(res, `/admin/groups/${encodeURIComponent(id)}`, 'notice.ok.memberAdded', { name: member.name || member.email });
-    } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), { ...groupMessages, not_found: core.groups.get(id) ? 'notice.noAccount' : 'admin.groups.notFound' }); }
+    } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), { ...groupMessages, not_found: core.groups.get(id) ? 'notice.noAccount' : 'admin.groups.notFound' }, typed(req, 'member-email', 'email')); }
   }));
 
   router.post('/admin/groups/:id/members/:userId/remove', ...action((req, res, user) => {
@@ -857,14 +861,14 @@ export const adminExtension: PlatformExtension = (router, core) => {
     try {
       core.quotas.setGroup(id, quotaField(req));
       done(res, `/admin/groups/${encodeURIComponent(id)}`, 'notice.ok.saved');
-    } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), { ...groupMessages, ...quotaMessages }); }
+    } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), { ...groupMessages, ...quotaMessages }, typed(req, 'group-quota', 'quota')); }
   }));
 
   router.post('/admin/apps/:id/quota', ...action((req, res, user) => {
     try {
       core.quotas.setApp(param(req, 'id'), quotaField(req));
       done(res, '/admin/apps', 'notice.ok.saved');
-    } catch (e) { failWith(res, e, (m) => appsSection(core, localeOf(res), user, m), { ...quotaMessages, not_found: 'error.notFound.text' }); }
+    } catch (e) { failWith(res, e, (m) => appsSection(core, localeOf(res), user, m), { ...quotaMessages, not_found: 'error.notFound.text' }, typed(req, `quota-${param(req, 'id')}`, 'quota')); }
   }));
 
   router.post('/admin/groups/:id/delete', ...action((req, res, user) => {
@@ -930,7 +934,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
       redirectWith(res, '/admin/mail', { ok: 'admin.mail.testOk', params: { email: user.email } });
     } catch (e) {
       // The error code and the SMTP reply tell a wrong password from a server that is down; nothing else the far end said is shown.
-      redirectWith(res, '/admin/mail', { error: 'admin.mail.testFailed', params: { error: clip(smtpErrorText(e)) } });
+      redirectWith(res, '/admin/mail', { error: 'admin.mail.testFailed', params: { error: smtpErrorText(e) } });
     }
   }));
 
@@ -1005,11 +1009,11 @@ export const adminExtension: PlatformExtension = (router, core) => {
     try {
       const out = await core.ai.complete(core.ai.testRoute(id), [{ role: 'user', content: TEST_PROMPT }], { maxTokens: Math.min(core.ai.maxTokens, 2000) });
       const answer = out.text.trim().slice(0, 200) || '–';
-      redirectWith(res, `/admin/ai/providers/${encodeURIComponent(id)}`, { ok: 'admin.ai.testOk', params: { model: clip(out.model), answer } });
+      redirectWith(res, `/admin/ai/providers/${encodeURIComponent(id)}`, { ok: 'admin.ai.testOk', params: { model: out.model, answer } });
     } catch (e) {
       if (e instanceof AiError) {
         // The administrator sees what the provider said; app viewers never do.
-        redirectWith(res, `/admin/ai/providers/${encodeURIComponent(id)}`, { error: 'admin.ai.testFailed', params: { error: clip([e.message, e.detail].filter(Boolean).join(' ')) } });
+        redirectWith(res, `/admin/ai/providers/${encodeURIComponent(id)}`, { error: 'admin.ai.testFailed', params: { error: [e.message, e.detail].filter(Boolean).join(' ') } });
         return;
       }
       aiFail(res, user, e, (m) => aiProviderPage(core, locale, user, id, m));

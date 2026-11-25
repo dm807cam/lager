@@ -71,14 +71,14 @@ const FLASH_TTL_SECONDS = 120;
 const MAX_FLASH_PARAMS = 4;
 const MAX_FLASH_PARAM = 300;
 /** Ids of the sections a notice may be placed above: plain words, so they can never end an attribute or a URL fragment. */
-const FLASH_ANCHOR = /^[a-z][a-z0-9-]{0,40}$/;
+const FLASH_ANCHOR = /^[a-z][a-z0-9-]{0,80}$/;
 
 /**
  * A one-line notice for the next page view, as a catalog key; the page renders it in the viewer's language. `params` fill the
  * key's placeholders (names, addresses, versions); they are plain text and escaped where shown. `anchor` is the id of the section
  * that changed: the notice is shown right above it, and the redirect scrolls there.
  */
-export interface Flash { ok?: MessageKey; error?: MessageKey; params?: Record<string, string>; anchor?: string; undo?: Undo }
+export interface Flash { ok?: MessageKey; error?: MessageKey; params?: Record<string, string>; anchor?: string; undo?: Undo; field?: string; values?: Record<string, string> }
 /** A form that takes a change back: the route it posts to (a path of this platform) and the fields it sends besides the CSRF token. */
 export interface Undo { action: string; fields: Record<string, string> }
 /** Undo forms post only to the platform's own form routes. */
@@ -96,6 +96,7 @@ export const flashToken = (core: Core, user: User, flash: Flash): string =>
     uid: user.id, k: 'flash', e: flash.error !== undefined ? 1 : 0, m: flash.error ?? flash.ok ?? '',
     ...(flash.params ? { p: Object.fromEntries(Object.entries(flash.params).slice(0, MAX_FLASH_PARAMS).map(([k, v]) => [k, clipParam(v)])) } : {}),
     ...(flash.anchor ? { a: flash.anchor } : {}), ...(flash.undo ? { u: flash.undo } : {}),
+    ...(flash.field ? { f: flash.field } : {}), ...(flash.values ? { v: Object.fromEntries(Object.entries(flash.values).slice(0, MAX_FLASH_PARAMS).map(([k, v]) => [k, v.slice(0, MAX_FLASH_PARAM)])) } : {}),
   }, core.config.secret, FLASH_TTL_SECONDS);
 
 /** A value cut to what a notice shows, with an ellipsis where it was cut. */
@@ -111,16 +112,23 @@ function flashParams(value: unknown): Record<string, string> | undefined {
 
 /** The notice of a valid flash value issued to this user; anything else, including a value that is not a catalog key, yields nothing. */
 export function readFlash(core: Core, user: User, value: unknown): Flash {
-  const t = openToken<{ uid?: unknown; k?: unknown; e?: unknown; m?: unknown; p?: unknown; a?: unknown; u?: unknown }>(typeof value === 'string' ? value : undefined, core.config.secret);
+  const t = openToken<{ uid?: unknown; k?: unknown; e?: unknown; m?: unknown; p?: unknown; a?: unknown; u?: unknown; f?: unknown; v?: unknown }>(typeof value === 'string' ? value : undefined, core.config.secret);
   if (t === null || t.k !== 'flash' || t.uid !== user.id || !isMessageKey(t.m)) return {};
   const params = flashParams(t.p);
   const u = t.u as { action?: unknown; fields?: unknown } | null | undefined;
   const undoFields = u && typeof u === 'object' ? flashParams(u.fields) : undefined;
   const undo = u && typeof u.action === 'string' && UNDO_ACTION.test(u.action) && !ENCODED_DOT.test(u.action) && undoFields ? { action: u.action, fields: undoFields } : undefined;
-  const extra = { ...(params ? { params } : {}), ...(typeof t.a === 'string' && FLASH_ANCHOR.test(t.a) ? { anchor: t.a } : {}), ...(undo ? { undo } : {}) };
+  const values = flashParams(t.v);
+  const extra = {
+    ...(params ? { params } : {}), ...(typeof t.a === 'string' && FLASH_ANCHOR.test(t.a) ? { anchor: t.a } : {}), ...(undo ? { undo } : {}),
+    ...(typeof t.f === 'string' && FLASH_ANCHOR.test(t.f) ? { field: t.f } : {}), ...(values ? { values } : {}),
+  };
   return t.e === 1 ? { error: t.m, ...extra } : { ok: t.m, ...extra };
 }
 
 /** Where a POST sends the browser to show `flash` on `path`: the sealed value in the query, the changed section as the fragment. */
-export const flashUrl = (core: Core, user: User, path: string, flash: Flash): string =>
-  `${path}?flash=${encodeURIComponent(flashToken(core, user, flash))}${flash.anchor && FLASH_ANCHOR.test(flash.anchor) ? '#notice' : ''}`;
+export const flashUrl = (core: Core, user: User, path: string, flash: Flash): string => {
+  // An error that belongs to a field goes to that field, which takes the focus; a notice above a section to the notice.
+  const target = flash.field && FLASH_ANCHOR.test(flash.field) ? flash.field : flash.anchor && FLASH_ANCHOR.test(flash.anchor) ? 'notice' : '';
+  return `${path}?flash=${encodeURIComponent(flashToken(core, user, flash))}${target ? `#${target}` : ''}`;
+};
