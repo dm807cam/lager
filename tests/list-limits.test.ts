@@ -31,6 +31,22 @@ describe('long lists', () => {
     }
   });
 
+  it('the catalog gets one too, from eight entries on', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const catalog = async (): Promise<Document> =>
+      new JSDOM((await request(s!.h.app).get('/catalog').set('Host', s!.h.host).set('Cookie', await s!.h.login('uwe@x.y', 'password-123'))).text).window.document;
+    expect((await catalog()).querySelector('input[data-filter]')).toBeNull();
+    for (let i = 1; i <= 8; i++) {
+      core.apps.deploy({ slug: `tool-${i}`, html: '<p>t</p>', title: `Tool ${i}`, userId: s.h.adminId });
+      core.apps.setSelfInstances(core.apps.getApp(`tool-${i}`)!.id, 'users', s.h.adminId);
+    }
+    const doc = await catalog();
+    const input = doc.querySelector('input[data-filter]')!;
+    expect(input.getAttribute('data-filter')).toBe('#catalog .app-card');
+    expect(doc.querySelectorAll('#catalog .app-card').length).toBeGreaterThanOrEqual(8);
+  });
+
   it('the script shows the field and hides what does not match while typing, and says when nothing does', () => {
     const win = new JSDOM(`<!doctype html><body><div class="filter" hidden><input type="search" id="f" data-filter="li"><p class="filter-none" hidden>None</p></div>
       <ul><li>Notes</li><li>Groceries</li><li>Pin board</li></ul></body>`, { runScripts: 'outside-only' }).window;
@@ -71,6 +87,9 @@ describe('long lists', () => {
     const emails = [...doc.querySelectorAll('main .table-users tbody tr')].map((tr) => tr.querySelector('td')!.textContent);
     const admins = core.users.list().filter((u) => u.role === 'admin');
     expect(emails.slice(0, admins.length).every((text) => admins.some((a) => text!.includes(a.email)))).toBe(true);
+    // Everyone else follows by name.
+    const others = core.users.list().filter((u) => u.role !== 'admin').sort((a, b) => a.name.localeCompare(b.name, 'en'));
+    expect(emails.slice(admins.length).map((text) => others.find((u) => text!.includes(u.email))?.email)).toEqual(others.map((u) => u.email));
     const n = core.users.list().length;
     expect(doc.querySelector('main .hint')!.textContent).toBe(t('en', 'admin.users.count.other', { count: n }));
   });
