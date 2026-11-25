@@ -78,11 +78,15 @@ describe.each(Object.entries(SOURCES))('%s', (_file, css) => {
   });
 
   it('switches the focus ring back to the bright orange on every dark surface that can hold a focusable element', () => {
-    // Every rule that paints a navy or code background. Those that never hold anything focusable are named here; a code block in a
-    // post draws its ring outside itself, on the page background.
+    // Every rule that paints a navy or code background (shorthand or background-color). Those that never hold anything focusable are
+    // named here; a code block in a post draws its ring outside itself, on the page background. The stylesheets keep each rule's
+    // selector on the line of its "{", which is what this reads.
     const NOTHING_FOCUSABLE = new Set(['ol.steps li::before', '.msg.me', '.prose pre']);
-    const dark = [...css.matchAll(/^\s*([^{}\n]+?)\s*\{[^}]*background:[^;}]*var\(--(?:navy|code-bg)\)/gm)].map((m) => m[1].trim());
+    const dark = [...css.matchAll(/^\s*([^{}\n]+?)\s*\{[^}]*background(?:-color)?:[^;}]*var\(--(?:navy(?:-2)?|code-bg)\)/gm)].map((m) => m[1].trim());
     expect(dark.length).toBeGreaterThan(0);
+    // The pattern also sees the other ways of writing a dark background.
+    const sample = '.a { background-color: var(--navy); }\n.b { color: #fff; background: var(--navy-2); }';
+    expect([...sample.matchAll(/^\s*([^{}\n]+?)\s*\{[^}]*background(?:-color)?:[^;}]*var\(--(?:navy(?:-2)?|code-bg)\)/gm)].map((m) => m[1])).toEqual(['.a', '.b']);
     const switched = [...css.matchAll(/^\s*([^{}\n]+?)\s*\{ outline-color: var\(--accent\); \}/gm)]
       .flatMap((m) => m[1].split(',').map((sel) => sel.trim().replace(/ :focus-visible$/, '')));
     expect(dark.filter((sel) => !NOTHING_FOCUSABLE.has(sel) && !switched.includes(sel))).toEqual([]);
