@@ -154,7 +154,7 @@ export function twoFactorCard(core: Core, locale: Locale, user: User, csrf: stri
   const password = (id: string): string => field(id, t(locale, 'account.password.current'), `<input id="${id}" name="current" type="password" required autocomplete="current-password">`);
   if (!status.enabled) {
     return `<section class="card">${title}<p>${esc(t(locale, 'account.twoFactor.offText'))}</p>
-<form method="post" action="/account/two-factor/setup" class="stack">${hiddenField('csrf', csrf)}
+<form method="post" action="/account/two-factor/setup" class="stack gap-top">${hiddenField('csrf', csrf)}
 ${password('tf-setup-current')}
 <div><button type="submit" class="${btn('primary')}">${icon('shield')}${esc(t(locale, 'account.twoFactor.setupSubmit'))}</button></div></form></section>`;
   }

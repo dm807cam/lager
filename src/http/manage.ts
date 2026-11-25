@@ -154,9 +154,13 @@ function grantsCard(core: Core, locale: Locale, inst: Instance, base: string, cs
     esc(t(locale, 'common.save')), 'secondary', 'form-row', false, '', namedAction(locale, t(locale, 'common.save'), t(locale, 'instance.visibility.who')));
   const rows = core.access.listGrants(inst.id).map((g) => {
     const who = g.principalType === 'user' ? hiddenField('email', g.principalLabel) : hiddenField('group', g.principalId);
-    const face = g.principalType === 'user' ? avatar({ id: g.principalId, name: '', email: g.principalLabel }, 'sm') : `<span class="tile tile-xs" aria-hidden="true">${icon('users', 'i-sm')}</span>`;
+    // A person shows with name and address, as in every other list of people; a group with its name.
+    const person = g.principalType === 'user' ? core.users.get(g.principalId) : null;
+    const face = person ? avatar(person, 'sm') : `<span class="tile tile-xs" aria-hidden="true">${icon('users', 'i-sm')}</span>`;
+    const label = person?.name ? `<strong title="${esc(person.name)}">${esc(person.name)}</strong><span title="${esc(g.principalLabel)}">${esc(g.principalLabel)}</span>`
+      : `<strong title="${esc(g.principalLabel)}">${esc(g.principalLabel)}</strong>`;
     return [
-      `<div class="cell-user">${face}<div><strong title="${esc(g.principalLabel)}">${esc(g.principalLabel)}</strong></div></div>`,
+      `<div class="cell-user">${face}<div>${label}</div></div>`,
       badge(t(locale, g.principalType === 'user' ? 'instance.grants.user' : 'instance.grants.group'), { icon: g.principalType === 'user' ? 'user' : 'users' }),
       `<form method="post" action="${base}/grants" class="inline-form">${hiddenField('csrf', csrf)}${who}
 <select name="level" aria-label="${esc(t(locale, 'instance.grants.levelOf', { name: g.principalLabel }))}">${optionList(grantLevels, g.level)}</select><button type="submit" class="${btn('secondary', true)}"${namedAction(locale, t(locale, 'common.save'), t(locale, 'instance.grants.levelOf', { name: g.principalLabel }))}>${esc(t(locale, 'common.save'))}</button></form>`,

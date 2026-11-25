@@ -148,7 +148,7 @@ function appsSection(core: Core, locale: Locale, apps: App[]): string {
 /** The three steps from connecting an AI assistant to a running app; the first carries the connector address for those who deploy. */
 function steps(locale: Locale, connector: string | null, cls = ''): string {
   return `<ol class="steps${cls ? ` ${cls}` : ''}">
-<li><strong>${esc(t(locale, 'dash.connect'))}</strong><span>${esc(t(locale, 'home.step.connect'))}</span>${connector && cls ? copyField(locale, connector) : ''}</li>
+<li><strong>${esc(t(locale, 'home.step.connect.title'))}</strong><span>${esc(t(locale, 'home.step.connect'))}</span>${connector && cls ? copyField(locale, connector) : ''}</li>
 <li><strong>${esc(t(locale, 'home.step.ask'))}</strong><span>${esc(t(locale, 'home.step.ask.text'))}</span></li>
 <li><strong>${esc(t(locale, 'home.step.appears'))}</strong><span>${esc(t(locale, 'home.step.appears.text'))}</span></li></ol>`;
 }

@@ -7,7 +7,7 @@ import { hashSecret } from '../platform/tokens.js';
 import { MAX_NAME_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, type User } from '../platform/users.js';
 import { requireUser, type PlatformExtension } from './app.js';
 import { addressKey } from './client-address.js';
-import { requestLocale } from './locale.js';
+import { LANG_COOKIE, requestLocale } from './locale.js';
 import { loginLimiter } from './platform.js';
 import { sameOriginGuard } from './origin.js';
 import { authCard, esc, field, messagePage, noticeText, page, resendForm, staleFormPage } from './pages.js';
@@ -373,6 +373,8 @@ export const authExtension: PlatformExtension = (router, core) => {
       return;
     }
     core.users.setLocale(user.id, chosen === '' ? null : (chosen as Locale));
+    // "Browser default" also forgets the language the switcher in the top bar left in this browser; otherwise that would still win.
+    if (chosen === '') res.clearCookie(LANG_COOKIE, { path: '/' });
     // The account page then answers in the language just chosen; "browser default" falls back to what the browser asks for.
     toAccount(res, user, 'account.locale.saved');
   }));

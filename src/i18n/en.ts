@@ -595,6 +595,8 @@ export const en = {
   'admin.users.count.other': "{count} accounts",
   'instance.versions.older.one': "Show 1 older version",
   'instance.versions.older.other': "Show {count} older versions",
+  'home.step.connect.title': "Add Lager to your AI",
+  'common.copyFailed': "Copying did not work. Select the text and copy it yourself.",
   'home.copyName': "Name of your copy",
   'notice.ok.copyCreated': "Your copy {slug} is ready.",
   'dash.instanceCount.one': '{count} instance',

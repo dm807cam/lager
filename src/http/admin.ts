@@ -451,7 +451,7 @@ ${dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.ai.defaultModel'
 ${models.length ? adder('add-group', false, t(locale, 'admin.ai.groups.add'), t(locale, 'admin.users.aiGroup'), '/admin/ai/groups', groupFields(core, locale)) : ''}</div>
 <div class="subsection">${form('/admin/ai/max-tokens', csrf, `<div>${settingRow('ai-max-tokens', t(locale, 'admin.ai.maxTokens'), t(locale, 'admin.ai.maxTokens.hint'),
     `<input id="ai-max-tokens" name="maxTokens" type="number" inputmode="numeric" min="1" max="${MAX_TOKENS_LIMIT}" step="1" required value="${core.ai.maxTokens}">`)}</div>`, esc(t(locale, 'common.save')), 'secondary', 'stack settings-form')}</div>
-<p class="hint">${esc(t(locale, 'admin.ai.access'))}</p>`;
+<p class="hint gap-top">${esc(t(locale, 'admin.ai.access'))}</p>`;
   return shell(core, locale, admin, 'ai', t(locale, 'admin.section.ai'), body, msg);
 }
 
