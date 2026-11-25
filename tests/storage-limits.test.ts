@@ -351,7 +351,7 @@ describe('http', () => {
     const csrf = signToken({ uid: admin.id, k: 'ui', ep: admin.sessionEpoch }, h.core.config.secret, 3600);
     const post = (route: string, body: Record<string, string>) => request(h.app).post(`/ui/instances/todo/${route}`).set('Host', h.host)
       .set('Cookie', cookie).type('form').send({ csrf, ...body });
-    for (const res of [await post('restore', { snapshot: before[0].id }), await post('activate', { version: '1' })]) {
+    for (const res of [await post('restore', { snapshot: before[0].id, confirmed: '1' }), await post('activate', { version: '1' })]) {
       expect(res.status).toBe(302);
       const page = await request(h.app).get(res.headers.location as string).set('Host', h.host).set('Cookie', cookie);
       expect(page.text).toContain(t('en', 'notice.snapshotRate'));
@@ -512,7 +512,7 @@ describe('http', () => {
     expect(h.core.data.listSnapshots(instId).map((s) => s.id)).toEqual([snap.id]);
     // The whole budget is still there for what really takes a snapshot.
     for (let i = 0; i < SNAPSHOT_ACTIONS_PER_HOUR - 1; i++) expect((await activate(i % 2 === 0 ? 1 : 2)).status).toBe(200);
-    expect((await ui(admin, 'restore', { snapshot: snap.id })).status).toBe(302);
+    expect((await ui(admin, 'restore', { snapshot: snap.id, confirmed: '1' })).status).toBe(302);
     expect(h.core.data.listSnapshots(instId).length).toBe(1 + SNAPSHOT_ACTIONS_PER_HOUR);
     expect((await activate(2)).status).toBe(429);
     // An instance without data takes no snapshot, so its version changes are free.

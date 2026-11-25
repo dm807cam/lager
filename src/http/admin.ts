@@ -15,10 +15,10 @@ import { defaultSender, MAX_SMTP_PASSWORD, SMTP_SECURITY, smtpErrorText, type Sm
 import type { Role, User } from '../platform/users.js';
 import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { loginLimiter } from './platform.js';
-import { noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, sizeText, visibilityLabel, type Option } from './pages.js';
+import { confirmAttrs, confirmed, confirmPage, noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, sizeText, undoForm, visibilityLabel, type Option, type Question } from './pages.js';
 import { domainsBody, storageUsed } from './manage.js';
 import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
-import { csrfToken, csrfValid, flashUrl, readFlash } from './session.js';
+import { csrfToken, csrfValid, flashUrl, readFlash, type Undo } from './session.js';
 import { RateLimiter } from './ratelimit.js';
 import { codeRefusal } from './two-factor.js';
 import { MAX_CODE_INPUT } from '../platform/two-factor.js';
@@ -36,7 +36,7 @@ const providerLabel = (locale: Locale, id: ProviderId): string =>
 
 type Section = 'users' | 'invites' | 'groups' | 'settings' | 'mail' | 'ai' | 'apps';
 /** A note above the section; `once` carries a one-time link and is never stored. */
-interface Msg { ok?: string; error?: string; once?: { title: string; link: string } }
+interface Msg { ok?: string; error?: string; once?: { title: string; link: string }; undo?: Undo }
 
 const roleLabel = (locale: Locale, role: Role): string => t(locale, ROLE_KEYS[role]);
 const options = <K extends string>(locale: Locale, keys: Record<K, MessageKey>): Option[] => (Object.keys(keys) as K[]).map((k) => [k, t(locale, keys[k])]);
@@ -47,11 +47,21 @@ function shell(core: Core, locale: Locale, admin: User, active: Section, title: 
     `<a href="/admin/${id}"${id === active ? ' aria-current="page"' : ''}>${esc(t(locale, key))}</a>`).join('')}</nav>`;
   const once = msg.once ? callout(locale, msg.once.title, msg.once.link, t(locale, 'admin.oneTime')) : '';
   return page(locale, t(locale, 'admin.pageTitle', { section: title }), `<div class="page-head"><h1>${esc(t(locale, 'nav.admin'))}</h1>${nav}</div>
-${msg.ok ? notice('success', msg.ok) : ''}${msg.error ? notice('danger', msg.error) : ''}${once}${back}
+${msg.ok ? notice('success', msg.ok, msg.undo ? undoForm(locale, msg.undo, csrfToken(core, admin)) : '') : ''}${msg.error ? notice('danger', msg.error) : ''}${once}${back}
 <section class="card" aria-labelledby="admin-section"><h2 id="admin-section">${esc(title)}</h2>${body}</section>`, signedIn(core, admin, 'admin', returnPath));
 }
 
 const mono = (v: string): string => `<span class="mono">${esc(v)}</span>`;
+
+/** The questions before changes that cannot be taken back; the forms carry them for the script, the routes ask them without it. */
+const QUESTIONS = {
+  invite: (locale: Locale): Question => ({ title: t(locale, 'confirm.inviteRevoke.title'), text: t(locale, 'confirm.inviteRevoke.text'), submit: t(locale, 'common.revoke') }),
+  group: (locale: Locale, name: string): Question => ({ title: t(locale, 'confirm.groupDelete.title', { name }), text: t(locale, 'confirm.groupDelete.text'), submit: t(locale, 'admin.groups.delete') }),
+  mail: (locale: Locale): Question => ({ title: t(locale, 'confirm.mailRemove.title'), text: t(locale, 'confirm.mailRemove.text'), submit: t(locale, 'admin.mail.remove') }),
+  provider: (locale: Locale, name: string): Question => ({ title: t(locale, 'confirm.providerDelete.title', { name }), text: t(locale, 'confirm.providerDelete.text'), submit: t(locale, 'admin.ai.deleteProvider') }),
+  model: (locale: Locale, name: string): Question => ({ title: t(locale, 'confirm.modelDelete.title', { name }), text: t(locale, 'confirm.modelDelete.text'), submit: t(locale, 'admin.ai.deleteModel') }),
+  aiGroup: (locale: Locale, name: string): Question => ({ title: t(locale, 'confirm.aiGroupDelete.title', { name }), text: t(locale, 'confirm.aiGroupDelete.text'), submit: t(locale, 'admin.ai.deleteGroup') }),
+};
 const none = '<span class="muted">–</span>';
 
 const STATUS_TONES = { disabled: 'danger', active: 'success', unverified: 'warning' } as const;
@@ -183,7 +193,7 @@ function invitesSection(core: Core, locale: Locale, admin: User, msg?: Msg): str
   const rows = open.map((i) => [
     i.email ? esc(i.email) : `<span class="muted">${esc(t(locale, 'common.any'))}</span>`, badge(roleLabel(locale, i.role)),
     `<span class="num">${dateText(locale, i.createdAt)}</span>`, `<span class="num">${dateText(locale, i.expiresAt)}</span>`,
-    form(`/admin/invites/${encodeURIComponent(i.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), 'danger', '', true),
+    form(`/admin/invites/${encodeURIComponent(i.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), 'danger', '', true, confirmAttrs(locale, QUESTIONS.invite(locale))),
   ]);
   const create = form('/admin/invites', csrf,
     `${field('invite-email', t(locale, 'admin.invites.email'), '<input id="invite-email" name="email" type="email" maxlength="254" autocomplete="off">')}
@@ -229,7 +239,7 @@ ${members.length ? dataTable(locale, [t(locale, 'common.name'), ''], rows) : emp
 ${form(`${base}/quota`, csrf, field('group-quota', t(locale, 'admin.quota.label'), quotaInput(core, 'group-quota', core.quotas.ofGroup(group.id))),
     esc(t(locale, 'common.save')), 'secondary', 'form-row')}
 <p class="hint gap-top">${esc(t(locale, 'admin.quota.groupHint', { size: defaultQuotaText(core, locale) }))}</p></div>
-<div class="subsection">${form(`${base}/delete`, csrf, '', `${icon('trash')}${esc(t(locale, 'admin.groups.delete'))}`, 'danger')}</div>`;
+<div class="subsection">${form(`${base}/delete`, csrf, '', `${icon('trash')}${esc(t(locale, 'admin.groups.delete'))}`, 'danger', '', false, confirmAttrs(locale, QUESTIONS.group(locale, group.name)))}</div>`;
   return shell(core, locale, admin, 'groups', t(locale, 'admin.groups.pageTitle', { name: group.name }), body, msg, base,
     `<a class="back" href="/admin/groups">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.groups.all'))}</a>`);
 }
@@ -289,7 +299,7 @@ function mailSection(core: Core, locale: Locale, admin: User, msg?: Msg): string
   const cleartext = source === 'admin' && saved?.security === 'none' && saved.user ? notice('warning', t(locale, 'admin.mail.cleartext')) : '';
   const test = source === 'none' ? '' : `<div class="subsection"><h3>${esc(t(locale, 'admin.mail.test'))}</h3><p class="hint">${esc(t(locale, 'admin.mail.test.hint', { email: admin.email }))}</p>
 <div class="btn-row">${form('/admin/mail/test', csrf, '', `${icon('check')}${esc(t(locale, 'admin.mail.test'))}`, 'secondary')}
-${source === 'admin' ? form('/admin/mail/delete', csrf, '', `${icon('trash')}${esc(t(locale, 'admin.mail.remove'))}`, 'danger') : ''}</div></div>`;
+${source === 'admin' ? form('/admin/mail/delete', csrf, '', `${icon('trash')}${esc(t(locale, 'admin.mail.remove'))}`, 'danger', '', false, confirmAttrs(locale, QUESTIONS.mail(locale))) : ''}</div></div>`;
   if (source === 'env') return shell(core, locale, admin, 'mail', t(locale, 'admin.section.mail'), `<p class="hint">${esc(t(locale, 'admin.mail.intro'))}</p>${status}${test}`, msg);
   const from = defaultSender(core.config);
   const fields = `<div>
@@ -416,7 +426,7 @@ function aiProviderPage(core: Core, locale: Locale, admin: User, id: string, msg
   const base = `/admin/ai/providers/${encodeURIComponent(p.id)}`;
   const body = `${form(base, csrf, providerFields(locale, p), esc(t(locale, 'common.save')), 'primary', 'stack settings-form')}
 <div class="subsection btn-row">${form(`${base}/test`, csrf, '', esc(t(locale, 'admin.ai.test')), 'secondary')}
-${form(`${base}/delete`, csrf, '', `${icon('trash')}${esc(t(locale, 'admin.ai.deleteProvider'))}`, 'danger')}</div>`;
+${form(`${base}/delete`, csrf, '', `${icon('trash')}${esc(t(locale, 'admin.ai.deleteProvider'))}`, 'danger', '', false, confirmAttrs(locale, QUESTIONS.provider(locale, p.name)))}</div>`;
   return shell(core, locale, admin, 'ai', t(locale, 'admin.ai.providerPage', { name: p.name }), body, msg, base, aiBack(locale));
 }
 
@@ -426,7 +436,7 @@ function aiModelPage(core: Core, locale: Locale, admin: User, id: string, msg?: 
   const csrf = csrfToken(core, admin);
   const base = `/admin/ai/models/${encodeURIComponent(m.id)}`;
   const body = `${form(base, csrf, modelFields(core, locale, m), esc(t(locale, 'common.save')), 'primary', 'stack settings-form')}
-<div class="subsection">${form(`${base}/delete`, csrf, '', `${icon('trash')}${esc(t(locale, 'admin.ai.deleteModel'))}`, 'danger')}</div>`;
+<div class="subsection">${form(`${base}/delete`, csrf, '', `${icon('trash')}${esc(t(locale, 'admin.ai.deleteModel'))}`, 'danger', '', false, confirmAttrs(locale, QUESTIONS.model(locale, m.id)))}</div>`;
   return shell(core, locale, admin, 'ai', t(locale, 'admin.ai.modelPage', { name: m.id }), body, msg, base, aiBack(locale));
 }
 
@@ -436,7 +446,7 @@ function aiGroupPage(core: Core, locale: Locale, admin: User, id: string, msg?: 
   const csrf = csrfToken(core, admin);
   const base = `/admin/ai/groups/${encodeURIComponent(g.id)}`;
   const body = `${g.isDefault ? `<p class="hint">${esc(t(locale, 'admin.ai.groups.hint'))}</p>` : ''}${form(base, csrf, groupFields(core, locale, g), esc(t(locale, 'common.save')), 'primary', 'stack settings-form')}
-${g.isDefault ? '' : `<div class="subsection">${form(`${base}/delete`, csrf, '', `${icon('trash')}${esc(t(locale, 'admin.ai.deleteGroup'))}`, 'danger')}</div>`}`;
+${g.isDefault ? '' : `<div class="subsection">${form(`${base}/delete`, csrf, '', `${icon('trash')}${esc(t(locale, 'admin.ai.deleteGroup'))}`, 'danger', '', false, confirmAttrs(locale, QUESTIONS.aiGroup(locale, g.name)))}</div>`}`;
   return shell(core, locale, admin, 'ai', t(locale, 'admin.ai.groupPage', { name: aiGroupName(locale, g) }), body, msg, base, aiBack(locale));
 }
 
@@ -537,11 +547,24 @@ export const adminExtension: PlatformExtension = (router, core) => {
   const msgOf = (req: Request, res: Response): Msg => {
     const flash = readFlash(core, adminOf(res), req.query.flash);
     const locale = localeOf(res);
-    return { ...(flash.ok ? { ok: noticeText(locale, flash.ok, flash.params) } : {}), ...(flash.error ? { error: noticeText(locale, flash.error, flash.params) } : {}) };
+    return {
+      ...(flash.ok ? { ok: noticeText(locale, flash.ok, flash.params) } : {}), ...(flash.error ? { error: noticeText(locale, flash.error, flash.params) } : {}),
+      ...(flash.undo ? { undo: flash.undo } : {}),
+    };
   };
-  /** After a form: back to `path`, which says what happened. */
-  const done = (res: Response, path: string, ok: MessageKey, params?: Record<string, string>): void => {
-    res.redirect(flashUrl(core, adminOf(res), path, { ok, params }));
+  /** After a form: back to `path`, which says what happened, with a way to take it back where there is one. */
+  const done = (res: Response, path: string, ok: MessageKey, params?: Record<string, string>, undo?: Undo): void => {
+    res.redirect(flashUrl(core, adminOf(res), path, { ok, params, undo }));
+  };
+  /**
+   * The question before a change that cannot be taken back, when the form came without the answer (no script): asked on a page of
+   * its own that sends the same fields again. True when it was asked, so the route stops there.
+   */
+  const asked = (req: Request, res: Response, q: Question, cancel: string): boolean => {
+    if (confirmed(req.body)) return false;
+    const fields = Object.fromEntries(Object.entries(req.body as Record<string, unknown>).filter(([k, v]) => k !== 'csrf' && k !== 'confirmed' && typeof v === 'string')) as Record<string, string>;
+    send(res, 200, confirmPage(localeOf(res), q, { action: req.originalUrl.split('?')[0], csrf: csrfToken(core, adminOf(res)), fields, cancel }, shellFor(core, req, adminOf(res))));
+    return true;
   };
   const showUsers = (req: Request, res: Response): void => send(res, 200, usersSection(core, localeOf(res), adminOf(res), msgOf(req, res)));
   /** An account's page with a message, or the list when the account is gone. */
@@ -589,8 +612,9 @@ export const adminExtension: PlatformExtension = (router, core) => {
         const inst = domainInstanceOf(req);
         const host = field(req, 'host', MAX_FIELD);
         core.domains[change](inst, host, user, false);
-        done(res, `/admin/instances/${encodeURIComponent(inst.slug)}/domains`, change === 'add' ? 'notice.ok.domainAdded' : 'notice.ok.removed',
-          change === 'add' ? { host: host.trim().toLowerCase() } : { name: host });
+        const path = `/admin/instances/${encodeURIComponent(inst.slug)}/domains`;
+        if (change === 'add') done(res, path, 'notice.ok.domainAdded', { host: host.trim().toLowerCase() });
+        else done(res, path, 'notice.ok.removed', { name: host }, { action: path, fields: { host } });
       } catch (e) {
         if (!(e instanceof LagerError)) throw e;
         const inst = core.apps.getInstanceBySlug(param(req, 'slug'));
@@ -619,7 +643,8 @@ export const adminExtension: PlatformExtension = (router, core) => {
       // Deactivating signs the account out everywhere: one's own session would end with it. The page does not offer it either.
       if (value === '1' && param(req, 'id') === user.id) throw new LagerError('forbidden', 'You cannot deactivate your own account.', 'disable_self');
       const u = core.users.setDisabled(param(req, 'id'), value === '1');
-      done(res, userPath(u.id), u.disabled ? 'notice.ok.userDisabled' : 'notice.ok.userEnabled', { name: u.name || u.email });
+      done(res, userPath(u.id), u.disabled ? 'notice.ok.userDisabled' : 'notice.ok.userEnabled', { name: u.name || u.email },
+        u.disabled ? { action: `${userPath(u.id)}/disabled`, fields: { disabled: '0' } } : undefined);
     } catch (e) { failWith(res, e, userView(res, user, param(req, 'id')), userMessages); }
   }));
 
@@ -746,6 +771,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
   }));
 
   router.post('/admin/invites/:id/revoke', ...action((req, res, user) => {
+    if (asked(req, res, QUESTIONS.invite(localeOf(res)), '/admin/invites')) return;
     if (!core.accounts.revokeInvite(param(req, 'id'))) {
       send(res, 404, invitesSection(core, localeOf(res), user, { error: t(localeOf(res), 'admin.invites.notFound') }));
       return;
@@ -787,7 +813,8 @@ export const adminExtension: PlatformExtension = (router, core) => {
     try {
       const member = core.users.get(param(req, 'userId'));
       core.groups.removeMember(id, param(req, 'userId'));
-      done(res, `/admin/groups/${encodeURIComponent(id)}`, 'notice.ok.memberRemoved', { name: member ? member.name || member.email : '' });
+      const base = `/admin/groups/${encodeURIComponent(id)}`;
+      done(res, base, 'notice.ok.memberRemoved', { name: member ? member.name || member.email : '' }, member ? { action: `${base}/members`, fields: { email: member.email } } : undefined);
     } catch (e) { failWith(res, e, (m) => groupPage(core, localeOf(res), user, id, m), groupMessages); }
   }));
 
@@ -817,6 +844,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
   router.post('/admin/groups/:id/delete', ...action((req, res, user) => {
     try {
       const name = core.groups.get(param(req, 'id'))?.name ?? '';
+      if (name && asked(req, res, QUESTIONS.group(localeOf(res), name), `/admin/groups/${encodeURIComponent(param(req, 'id'))}`)) return;
       core.groups.delete(param(req, 'id'));
       done(res, '/admin/groups', 'notice.ok.deleted', { name });
     } catch (e) { failWith(res, e, (m) => groupsSection(core, localeOf(res), user, m), groupMessages); }
@@ -880,11 +908,12 @@ export const adminExtension: PlatformExtension = (router, core) => {
     }
   }));
 
-  router.post('/admin/mail/delete', ...action((_req, res, user) => {
+  router.post('/admin/mail/delete', ...action((req, res, user) => {
     if (core.mailSource === 'env') {
       send(res, 409, mailSection(core, localeOf(res), user, { error: t(localeOf(res), 'admin.mail.env') }));
       return;
     }
+    if (asked(req, res, QUESTIONS.mail(localeOf(res)), '/admin/mail')) return;
     core.mailSettings.clear();
     send(res, 200, mailSection(core, localeOf(res), user, { ok: t(localeOf(res), 'admin.mail.removed') }));
   }));
@@ -931,6 +960,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     const locale = localeOf(res);
     try {
       const name = core.ai.getProvider(id)?.name ?? id;
+      if (core.ai.getProvider(id) && asked(req, res, QUESTIONS.provider(locale, name), `/admin/ai/providers/${encodeURIComponent(id)}`)) return;
       core.ai.deleteProvider(id);
       done(res, '/admin/ai', 'notice.ok.deleted', { name });
     } catch (e) {
@@ -980,6 +1010,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     const id = param(req, 'id');
     const locale = localeOf(res);
     try {
+      if (core.ai.getModel(id) && asked(req, res, QUESTIONS.model(locale, id), `/admin/ai/models/${encodeURIComponent(id)}`)) return;
       core.ai.deleteModel(id);
       done(res, '/admin/ai', 'notice.ok.deleted', { name: id });
     } catch (e) {
@@ -1011,7 +1042,9 @@ export const adminExtension: PlatformExtension = (router, core) => {
   router.post('/admin/ai/groups/:id/delete', ...action((req, res, user) => {
     const id = param(req, 'id');
     try {
-      const name = core.ai.getGroup(id)?.name ?? id;
+      const g = core.ai.getGroup(id);
+      const name = g?.name ?? id;
+      if (g && !g.isDefault && asked(req, res, QUESTIONS.aiGroup(localeOf(res), name), `/admin/ai/groups/${encodeURIComponent(id)}`)) return;
       core.ai.deleteGroup(id);
       done(res, '/admin/ai', 'notice.ok.deleted', { name });
     } catch (e) { aiFail(res, user, e, (m) => aiGroupPage(core, localeOf(res), user, id, m)); }
@@ -1043,7 +1076,8 @@ export const adminExtension: PlatformExtension = (router, core) => {
       if (!instance) throw new LagerError('not_found', 'Instance not found.');
       if (value !== '0' && value !== '1') throw new LagerError('invalid_argument', 'disabled must be 0 or 1.');
       core.apps.setInstanceDisabled(instance.id, value === '1');
-      done(res, '/admin/apps', value === '1' ? 'notice.ok.instanceDisabled' : 'notice.ok.instanceEnabled', { slug: instance.slug });
+      done(res, '/admin/apps', value === '1' ? 'notice.ok.instanceDisabled' : 'notice.ok.instanceEnabled', { slug: instance.slug },
+        value === '1' ? { action: `/admin/instances/${encodeURIComponent(instance.slug)}/disabled`, fields: { disabled: '0' } } : undefined);
     } catch (e) { failWith(res, e, (m) => appsSection(core, localeOf(res), user, m), { not_found: 'admin.instances.notFound' }); }
   }));
 };

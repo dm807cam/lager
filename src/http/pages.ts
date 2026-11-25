@@ -253,9 +253,36 @@ export const hiddenField = (name: string, value: string): string => `<input type
  * A POST form with the CSRF field; `fields` and `button` are trusted markup. `style` is the button's look (`true` is the
  * older spelling of a quiet one); `cls` classes the form itself, e.g. `stack` or `form-row` for its layout.
  */
-export function form(action: string, csrf: string, fields: string, button: string, style: ButtonStyle | boolean = 'primary', cls = '', small = false): string {
+export function form(action: string, csrf: string, fields: string, button: string, style: ButtonStyle | boolean = 'primary', cls = '', small = false, attrs = ''): string {
   const look: ButtonStyle = style === true ? 'quiet' : style === false ? 'primary' : style;
-  return `<form method="post" action="${esc(action)}"${cls ? ` class="${cls}"` : ''}>${hiddenField('csrf', csrf)}${fields}<button type="submit" class="${btn(look, small)}">${button}</button></form>`;
+  return `<form method="post" action="${esc(action)}"${cls ? ` class="${cls}"` : ''}${attrs}>${hiddenField('csrf', csrf)}${fields}<button type="submit" class="${btn(look, small)}">${button}</button></form>`;
+}
+
+/**
+ * The question before a change that cannot be taken back: what it is about, what happens, and the word on the button. The form
+ * posts `confirmed=1` with its other fields once the answer is yes.
+ */
+export interface Question { title: string; text: string; submit: string }
+
+/**
+ * Attributes that let the script ask `q` in a dialog before the form is sent; without the script the server asks on a page of
+ * its own (`confirmPage`), so the change never happens on one click either way.
+ */
+export const confirmAttrs = (locale: Locale, q: Question): string =>
+  ` data-confirm="${esc(q.title)}" data-confirm-text="${esc(q.text)}" data-confirm-ok="${esc(q.submit)}" data-confirm-cancel="${esc(t(locale, 'signin.cancel'))}"`;
+
+/** Whether the form carried the answer to its question. */
+export const confirmed = (body: unknown): boolean => (body as Record<string, unknown> | undefined)?.confirmed === '1';
+
+/**
+ * The page that asks `q` when a form arrives without `confirmed=1` (no script, or a form from elsewhere). Cancel comes first and is a
+ * link back to `cancel`; the danger button sends the same fields again with the answer.
+ */
+export function confirmPage(locale: Locale, q: Question, target: { action: string; csrf: string; fields: Record<string, string>; cancel: string }, opts: PageOpts): string {
+  const fields = Object.entries(target.fields).map(([k, v]) => hiddenField(k, v)).join('');
+  return page(locale, q.title, messageCard(`<div class="auth-icon is-danger">${icon('alert')}</div><h1>${esc(q.title)}</h1><p>${esc(q.text)}</p>
+<form method="post" action="${esc(target.action)}" class="gap-top">${hiddenField('csrf', target.csrf)}${fields}${hiddenField('confirmed', '1')}
+<div class="btn-row"><a class="${btn('secondary')}" href="${esc(target.cancel)}">${esc(t(locale, 'signin.cancel'))}</a><button type="submit" class="${btn('danger')}">${esc(q.submit)}</button></div></form>`, opts), opts);
 }
 
 /** A labelled control in a form; `control` is trusted markup, `hint` plain text. */
@@ -275,10 +302,20 @@ export const noticeHtml = (locale: Locale, flash: { ok?: MessageKey; error?: Mes
  * and the word about it are on screen together after the redirect, else at the top. The notice carries the id the redirect's
  * fragment names (`#notice`).
  */
-export function withNotice(locale: Locale, flash: { ok?: MessageKey; error?: MessageKey; params?: Record<string, string>; anchor?: string }, body: string): string {
-  const html = noticeHtml(locale, flash).replace('<div class="notice', '<div id="notice" tabindex="-1" class="notice');
+export function withNotice(locale: Locale, flash: { ok?: MessageKey; error?: MessageKey; params?: Record<string, string>; anchor?: string; undo?: { action: string; fields: Record<string, string> } }, body: string, csrf = ''): string {
+  const undo = flash.ok && flash.undo && csrf ? undoForm(locale, flash.undo, csrf) : '';
+  const html = (flash.ok ? notice('success', noticeText(locale, flash.ok, flash.params), undo) : '') + (flash.error ? notice('danger', noticeText(locale, flash.error, flash.params)) : '');
+  return placeNotice(html.replace('<div class="notice', '<div id="notice" tabindex="-1" class="notice'), flash.anchor, body);
+}
+
+/** The Undo button inside a notice: a form that sends the change back. */
+export const undoForm = (locale: Locale, undo: { action: string; fields: Record<string, string> }, csrf: string): string =>
+  `<form method="post" action="${esc(undo.action)}" class="notice-undo">${hiddenField('csrf', csrf)}${Object.entries(undo.fields).map(([k, v]) => hiddenField(k, v)).join('')}<button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.undo'))}</button></form>`;
+
+/** `html` inserted right before the element of `body` whose id is `anchor`, or at the top. */
+function placeNotice(html: string, anchor: string | undefined, body: string): string {
   if (!html) return body;
-  const at = flash.anchor ? body.indexOf(` id="${flash.anchor}"`) : -1;
+  const at = anchor ? body.indexOf(` id="${anchor}"`) : -1;
   const start = at < 0 ? -1 : body.lastIndexOf('<', at);
   return start < 0 ? html + body : body.slice(0, start) + html + body.slice(start);
 }

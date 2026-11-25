@@ -62,10 +62,10 @@ export const badge = (text: string, opts: { icon?: IconName; tone?: Tone; dot?: 
 const VISIBILITY_ICONS: Record<string, IconName> = { private: 'lock', users: 'users', public: 'globe' };
 export const visibilityIcon = (visibility: string): IconName => VISIBILITY_ICONS[visibility] ?? 'lock';
 
-/** Success, error or warning line; the roles are what assistive technology announces. */
-export function notice(kind: 'success' | 'danger' | 'warning', text: string): string {
+/** Success, error or warning line; the roles are what assistive technology announces. `extra` is trusted markup after the text (an Undo form). */
+export function notice(kind: 'success' | 'danger' | 'warning', text: string, extra = ''): string {
   const role = kind === 'success' ? 'status' : 'alert';
-  return `<div class="notice notice-${kind}" role="${role}">${icon(kind === 'success' ? 'check' : 'alert')}<span>${esc(text)}</span></div>`;
+  return `<div class="notice notice-${kind}" role="${role}">${icon(kind === 'success' ? 'check' : 'alert')}<span>${esc(text)}</span>${extra}</div>`;
 }
 
 /** A copy button, hidden until the script can use the clipboard; without it the text next to it stays selectable. */
