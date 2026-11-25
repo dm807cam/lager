@@ -20,9 +20,11 @@
   :root {
     color-scheme: light dark;
     --canvas: #f6f4f0; --surface: #ffffff; --surface-2: #efede8;
-    --ink: #0e1020; --ink-2: #4a4f66; --ink-3: #6b7088;
+    --ink: #0e1020; --ink-2: #4a4f66; --ink-3: #5f6479;
     --line: #e4e1da; --navy: #1f2a5c; --navy-2: #2c3a7a;
     --accent: #f58220; --accent-hover: #e6741a; --accent-ink: #1c1200; --accent-soft: #fdf1e4;
+    /* Orange as text or as a thin line on the light background needs a darker tone for contrast (AA); #f58220 stays for fills. */
+    --accent-text: #9a4b00;
     --code-bg: #141729; --code-ink: #e8ebf5; --code-dim: #8a90ad;
     --shadow: 0 20px 60px rgb(15 18 40 / .14), 0 2px 6px rgb(15 18 40 / .06);
     --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -33,7 +35,7 @@
     :root {
       --canvas: #0b0d18; --surface: #141729; --surface-2: #1b1f36;
       --ink: #eef0fa; --ink-2: #b3b8d0; --ink-3: #8a90ad;
-      --line: #272c47; --accent: #ff9a3d; --accent-hover: #ffab5c; --accent-soft: rgb(255 154 61 / .12);
+      --line: #272c47; --accent: #ff9a3d; --accent-hover: #ffab5c; --accent-soft: rgb(255 154 61 / .12); --accent-text: #ff9a3d;
       --code-bg: #070912; --shadow: 0 20px 60px rgb(0 0 0 / .45);
     }
   }
@@ -44,7 +46,7 @@
   img { max-width: 100%; height: auto; display: block; }
   .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+  :focus-visible { outline: 2px solid var(--accent-text); outline-offset: 3px; border-radius: 6px; }
 
   /* header */
   header { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--canvas) 85%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid transparent; }
@@ -55,14 +57,21 @@
   nav a { text-decoration: none; color: var(--ink-2); font-weight: 500; font-size: .95rem; padding: 8px 12px; border-radius: 999px; }
   nav a:hover { color: var(--ink); background: var(--surface-2); }
   nav a.gh { color: var(--ink); border: 1px solid var(--line); background: var(--surface); }
-  @media (max-width: 560px) { nav a.hide-sm { display: none; } }
+  /* On a phone the links take a second row under the brand instead of disappearing: each stays one tap away. */
+  @media (max-width: 560px) {
+    /* Two rows are too tall to stay on screen: on a phone the header scrolls away, as on the blog. */
+    header { position: static; }
+    header .wrap { height: auto; flex-wrap: wrap; row-gap: 2px; padding-top: 10px; padding-bottom: 6px; }
+    header nav { display: flex; flex-wrap: wrap; width: calc(100% + 18px); margin-left: -9px; }
+    nav a { padding: 8px 9px; font-size: .9rem; }
+  }
 
   /* hero */
   .hero { text-align: center; padding-top: 72px; padding-bottom: 40px; }
   .hero-icon { width: 104px; height: 104px; margin: 0 auto 28px; border-radius: 24px; box-shadow: var(--shadow); }
   .eyebrow { display: inline-block; font-size: .85rem; font-weight: 600; color: var(--ink-2); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px; margin-bottom: 22px; }
   h1 { font-size: clamp(2.4rem, 6.5vw, 4.4rem); line-height: 1.04; letter-spacing: -.035em; margin: 0 auto 20px; font-weight: 800; text-wrap: balance; }
-  h1 em { font-style: normal; color: var(--accent); }
+  h1 em { font-style: normal; color: var(--accent-text); }
   .lede { font-size: clamp(1.08rem, 2.2vw, 1.25rem); color: var(--ink-2); max-width: 38rem; margin: 0 auto 32px; }
 
   .cmd { display: flex; align-items: center; gap: 12px; max-width: 46rem; margin: 0 auto 18px; background: var(--code-bg); color: var(--code-ink); border-radius: 14px; padding: 14px 14px 14px 20px; text-align: left; box-shadow: var(--shadow); }
@@ -87,8 +96,9 @@
   .sub { color: var(--ink-2); max-width: 40rem; margin: 0 0 40px; font-size: 1.1rem; }
 
   /* how it works */
-  .how { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
-  @media (max-width: 860px) { .how { grid-template-columns: 1fr; } }
+  /* minmax(0, …): a column may shrink below its widest line (the chat's unbroken address), so nothing pushes past a 320 px screen. */
+  .how { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px; align-items: center; }
+  @media (max-width: 860px) { .how { grid-template-columns: minmax(0, 1fr); } }
   ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 26px; counter-reset: s; }
   ol.steps li { display: grid; grid-template-columns: 40px 1fr; gap: 16px; counter-increment: s; }
   ol.steps li::before { content: counter(s); display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--navy); color: #fff; font-weight: 700; }
@@ -101,14 +111,14 @@
   .msg.ai { background: var(--surface-2); border-bottom-left-radius: 6px; }
   .tool { font: 500 .82rem var(--mono); color: var(--ink-3); display: flex; align-items: center; gap: 8px; }
   .tool::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #2fa36b; }
-  .msg a { color: var(--accent); font-weight: 600; text-decoration: none; white-space: nowrap; }
+  .msg a { color: var(--accent-text); font-weight: 600; text-decoration: none; white-space: nowrap; }
 
   /* features */
   .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
   @media (max-width: 860px) { .grid { grid-template-columns: 1fr 1fr; } }
   @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
   .card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 24px; }
-  .card .ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); margin-bottom: 14px; }
+  .card .ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); margin-bottom: 14px; }
   .card .ic svg { width: 22px; height: 22px; }
   .card h3 { margin: 0 0 6px; font-size: 1.08rem; }
   .card p { margin: 0; color: var(--ink-2); font-size: .98rem; }
@@ -124,7 +134,7 @@
   .install .sub { color: rgb(255 255 255 / .78); }
   .install .cmd { margin: 0 0 18px; max-width: none; box-shadow: none; background: rgb(0 0 0 / .28); }
   .install ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; color: rgb(255 255 255 / .85); }
-  .install li::before { content: "✓"; color: var(--accent); font-weight: 700; margin-right: 10px; }
+  .install li::before { content: "✓"; color: var(--accent-text); font-weight: 700; margin-right: 10px; }
   .install .more { margin-top: 24px; }
   .install .more a { color: #fff; font-weight: 600; }
 
@@ -143,10 +153,10 @@
   <div class="wrap">
     <a class="brand" href="#top"><img src="assets/icon-192.png" alt="" width="32" height="32">Lager</a>
     <nav aria-label="Main">
-      <a class="hide-sm" href="#how">How it works</a>
+      <a href="#how">How it works</a>
       <a href="/blog/">Blog</a>
-      <a class="hide-sm" href="/changelog/">Changelog</a>
-      <a class="hide-sm" href="https://github.com/dm807cam/lager/blob/main/docs/README.md">Docs</a>
+      <a href="/changelog/">Changelog</a>
+      <a href="https://github.com/dm807cam/lager/blob/main/docs/README.md">Docs</a>
       <a class="gh" href="https://github.com/dm807cam/lager">GitHub</a>
     </nav>
   </div>
@@ -159,7 +169,7 @@
     <h1>Your AI builds the app.<br> <em>Lager keeps it.</em></h1>
     <p class="lede">Ask Claude, ChatGPT or any other assistant for a small app. Lager puts it on your own server, with its own address, its own data and a link you can share.</p>
     <div class="cmd">
-      <code id="install-cmd"><span class="p">$ </span>curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | sudo bash</code>
+      <code id="install-cmd" tabindex="0" role="group" aria-label="Install command"><span class="p">$ </span>curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | sudo bash</code>
       <button class="copy" type="button" data-copy="install-cmd">Copy</button>
     </div>
     <p class="hint">Linux server or Raspberry Pi. Run it again to update.</p>
@@ -235,7 +245,7 @@
       <h2>Five minutes on a Raspberry Pi</h2>
       <p class="sub">One command sets up Docker if needed, asks three short questions and starts Lager.</p>
       <div class="cmd">
-        <code id="install-cmd-2"><span class="p">$ </span>curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | sudo bash</code>
+        <code id="install-cmd-2" tabindex="0" role="group" aria-label="Install command"><span class="p">$ </span>curl -fsSL https://raw.githubusercontent.com/dm807cam/lager/main/install.sh | sudo bash</code>
         <button class="copy" type="button" data-copy="install-cmd-2">Copy</button>
       </div>
       <ul>

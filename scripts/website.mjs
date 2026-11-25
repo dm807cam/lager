@@ -66,10 +66,16 @@ export const slugify = (s) => String(s).toLowerCase().normalize('NFKD').replace(
 
 /**
  * Block Markdown: headings (with ids), paragraphs, fenced code, block quotes, nested lists, tables and rules.
- * `headingOffset` shifts heading levels, so a post's "#" never competes with the page's own h1.
+ * `headingOffset` shifts heading levels. Left out, the shallowest heading of the text becomes an h2: under the page's own h1,
+ * whether a post starts its sections with "#" or "##", so the outline never skips a level (WCAG 1.3.1).
  */
-export function markdown(src, { headingOffset = 1 } = {}) {
+export function markdown(src, { headingOffset } = {}) {
   const lines = String(src).replace(/\r\n?/g, '\n').split('\n');
+  if (headingOffset === undefined) {
+    let fenced = false;
+    const levels = lines.filter((l) => { if (/^```/.test(l)) fenced = !fenced; return !fenced && /^#{1,6}\s/.test(l); }).map((l) => /^#+/.exec(l)[0].length);
+    headingOffset = levels.length ? 2 - Math.min(...levels) : 1;
+  }
   const out = [];
   let i = 0;
   const isBlank = (l) => /^\s*$/.test(l);
@@ -107,7 +113,8 @@ export function markdown(src, { headingOffset = 1 } = {}) {
       const lang = m[1]; const code = []; i++;
       while (i < lines.length && !/^```\s*$/.test(lines[i])) code.push(lines[i++]);
       i++;
-      out.push(`<pre><code${lang ? ` class="language-${esc(lang)}"` : ''}>${esc(code.join('\n'))}</code></pre>`);
+      // A long line scrolls sideways; tabindex lets a keyboard reach the block to scroll it (WCAG 2.1.1).
+      out.push(`<pre tabindex="0"><code${lang ? ` class="language-${esc(lang)}"` : ''}>${esc(code.join('\n'))}</code></pre>`);
     } else if ((m = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line))) {
       const level = Math.min(6, m[1].length + headingOffset);
       out.push(`<h${level} id="${slugify(m[2])}">${inline(m[2])}</h${level}>`); i++;
@@ -274,7 +281,7 @@ ${extraHead}${tracker}</head>
   <div class="wrap">
     <a class="brand" href="/"><img src="/assets/icon-192.png" alt="" width="32" height="32">Lager</a>
     <nav aria-label="Main">
-      ${nav.map(([href, label, key]) => `<a class="${key === 'docs' ? 'hide-sm' : ''}${active === key ? ' on' : ''}" href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}</a>`).join('\n      ')}
+      ${nav.map(([href, label, key]) => `<a${active === key ? ' class="on"' : ''} href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}</a>`).join('\n      ')}
       <a class="gh" href="${REPO_URL}">GitHub</a>
     </nav>
   </div>
@@ -339,7 +346,7 @@ ${post.html}
   <aside class="cta">
     <h2>Try it on your own server</h2>
     <p>One command sets up Lager on a Raspberry Pi or any 64-bit Linux machine. Then ask your assistant for an app.</p>
-    <pre><code>${esc(INSTALL)}</code></pre>
+    <pre tabindex="0" aria-label="Install command"><code>${esc(INSTALL)}</code></pre>
     <p><a class="btn primary" href="${REPO_URL}#quick-start">Get started</a> <a class="btn ghost" href="/blog/feed.xml">Follow the blog</a></p>
   </aside>
   <nav class="pager" aria-label="More posts">

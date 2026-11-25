@@ -2,9 +2,11 @@
 :root {
   color-scheme: light dark;
   --canvas: #f6f4f0; --surface: #ffffff; --surface-2: #efede8;
-  --ink: #0e1020; --ink-2: #4a4f66; --ink-3: #6b7088;
+  --ink: #0e1020; --ink-2: #4a4f66; --ink-3: #5f6479;
   --line: #e4e1da; --navy: #1f2a5c; --navy-2: #2c3a7a;
   --accent: #f58220; --accent-hover: #e6741a; --accent-ink: #1c1200; --accent-soft: #fdf1e4;
+  /* Orange as text or as a thin line on the light background needs a darker tone for contrast (AA); #f58220 stays for fills. */
+  --accent-text: #9a4b00;
   --code-bg: #141729; --code-ink: #e8ebf5; --code-dim: #8a90ad; --inline-code: #ece9e2;
   --added: #1f7a4d; --changed: #2c5fb3; --fixed: #a3541a; --security: #b02a3a;
   --shadow: 0 20px 60px rgb(15 18 40 / .14), 0 2px 6px rgb(15 18 40 / .06);
@@ -16,7 +18,7 @@
   :root {
     --canvas: #0b0d18; --surface: #141729; --surface-2: #1b1f36;
     --ink: #eef0fa; --ink-2: #b3b8d0; --ink-3: #8a90ad;
-    --line: #272c47; --accent: #ff9a3d; --accent-hover: #ffab5c; --accent-soft: rgb(255 154 61 / .12);
+    --line: #272c47; --accent: #ff9a3d; --accent-hover: #ffab5c; --accent-soft: rgb(255 154 61 / .12); --accent-text: #ff9a3d;
     --code-bg: #070912; --inline-code: #1f2440; --shadow: 0 20px 60px rgb(0 0 0 / .45);
     --added: #4fc48a; --changed: #7aa7ff; --fixed: #f0a060; --security: #ff7a88;
   }
@@ -26,7 +28,7 @@ body { margin: 0; background: var(--canvas); color: var(--ink); font: 400 1.05re
 a { color: inherit; }
 img { max-width: 100%; height: auto; }
 .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 3px; border-radius: 6px; }
 
 /* The site header scrolls away with the page: on a laptop screen every line of height belongs to the text. */
 header.site .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
@@ -36,13 +38,18 @@ nav { display: flex; align-items: center; gap: 6px; }
 nav a { text-decoration: none; color: var(--ink-2); font-weight: 500; font-size: .95rem; padding: 8px 12px; border-radius: 999px; }
 nav a:hover, nav a.on { color: var(--ink); background: var(--surface-2); }
 nav a.gh { color: var(--ink); border: 1px solid var(--line); background: var(--surface); }
-@media (max-width: 560px) { nav a.hide-sm { display: none; } nav a { padding: 8px 9px; } }
+/* On a phone the links take a second row under the brand instead of disappearing: each stays one tap away. */
+@media (max-width: 560px) {
+  header.site .wrap { height: auto; flex-wrap: wrap; row-gap: 2px; padding-top: 10px; padding-bottom: 6px; }
+  header.site nav { display: flex; flex-wrap: wrap; width: calc(100% + 18px); margin-left: -9px; }
+  nav a { padding: 8px 9px; font-size: .9rem; }
+}
 
 .page { padding-top: 56px; }
 .eyebrow { display: inline-block; font-size: .85rem; font-weight: 600; color: var(--ink-2); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px; margin: 0 0 18px; }
 h1 { font-size: clamp(2.1rem, 5.5vw, 3.6rem); line-height: 1.06; letter-spacing: -.03em; margin: 0 0 16px; font-weight: 800; text-wrap: balance; max-width: 18em; }
 .lede { font-size: clamp(1.05rem, 2vw, 1.2rem); color: var(--ink-2); max-width: 40rem; margin: 0 0 40px; }
-.lede a { color: var(--accent); font-weight: 600; text-decoration: none; }
+.lede a { color: var(--accent-text); font-weight: 600; text-decoration: none; }
 .meta { font-size: .9rem; color: var(--ink-3); margin: 0 0 8px; }
 .meta a { color: var(--ink-2); }
 .tags { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; padding: 0; }
@@ -73,7 +80,7 @@ h1 { font-size: clamp(2.1rem, 5.5vw, 3.6rem); line-height: 1.06; letter-spacing:
 .post { max-width: calc(var(--read) + 40px); padding-top: 40px; }
 .back { margin: 0 0 28px; font-size: .95rem; }
 .back a { color: var(--ink-3); text-decoration: none; }
-.back a:hover { color: var(--accent); }
+.back a:hover { color: var(--accent-text); }
 .post-head { margin-bottom: 36px; }
 .post-head h1 { max-width: none; }
 .post-head .lede { margin-bottom: 0; }
@@ -84,12 +91,12 @@ h1 { font-size: clamp(2.1rem, 5.5vw, 3.6rem); line-height: 1.06; letter-spacing:
 .prose h3 { font-size: 1.25rem; margin: 1.8em 0 .5em; }
 .prose h4 { font-size: 1.05rem; margin: 1.5em 0 .4em; }
 .prose p, .prose ul, .prose ol, .prose blockquote, .prose pre, .prose figure, .prose .table { margin: 0 0 1.2em; }
-.prose a { color: var(--accent); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
-.prose a:hover { color: var(--accent-hover); }
+.prose a { color: var(--accent-text); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.prose a:hover { color: var(--ink); }
 .prose li { margin: .3em 0; }
 .prose li > ul, .prose li > ol { margin: .3em 0; }
 .prose strong { font-weight: 700; }
-.prose code { font: .88em var(--mono); background: var(--inline-code); padding: .12em .38em; border-radius: 6px; }
+.prose code { font: .88em var(--mono); background: var(--inline-code); padding: .12em .38em; border-radius: 6px; overflow-wrap: anywhere; }
 .prose pre { background: var(--code-bg); color: var(--code-ink); border-radius: 14px; padding: 18px 20px; overflow-x: auto; font-size: .9rem; line-height: 1.6; }
 .prose pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
 .prose blockquote { border-left: 4px solid var(--accent); background: var(--accent-soft); margin-left: 0; padding: 14px 20px; border-radius: 0 14px 14px 0; color: var(--ink); }

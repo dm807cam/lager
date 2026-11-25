@@ -37,6 +37,12 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 
 ### Fixed
 
+- **Website (lager.im):**
+  - **Contrast:** orange text and the grey of small print reach AA contrast in light mode. Orange as text and the focus ring use a darker tone, and the bright orange stays for buttons.
+  - **Keyboard:** the install command and code blocks that scroll sideways can be reached by keyboard.
+  - **Headings:** a blog post's section headings start at the level under its title.
+  - **Phones:** nothing is wider than a 320 px screen. All five links of the header stay on phones, on a second row, instead of three of them disappearing.
+  - **Tests:** contrast tests cover the website's colours in both themes.
 - **Sign-in from an app, for a visitor who lost access:** an app that sent such a visitor to sign in (the address from `/__lager/session`) led, after "Use another account", to "Sign-in failed": the address carried no nonce. It does now, as the app's own page already did (follow-up to #124).
 - **Buttons that repeat say what they act on:** for screen readers and voice control, every repeated button and link now has a name of its own that starts with its visible word: "Save: Level of jonas@example.com", "Remove: notes.example.com", "Activate: v3", "Revoke: laptop", "Save: Role". On the instance page alone there were five "Save", four "HTML" and three "Activate". The version link "HTML" now reads **Download** ("Download: v3 (HTML)"), and two copies of one app on the home page are told apart by their address. A test fails on any page where two controls that do different things share a name (#94).
 - **An expired reset link says so first:** opening a reset link that has expired or was used showed the "New password" form, and only after the new password was typed did it answer "Link invalid". It now says at once that the link no longer works, with a button to ask for a new one (without mail, whom to ask). Without mail, an expired reset link no longer speaks of a "confirmation link", and the page about sending a confirmation link again is titled "Confirm email address" (#82, follow-up to #74).
