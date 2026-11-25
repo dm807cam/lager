@@ -339,11 +339,11 @@ describe('signed-in pages in every locale', () => {
 
 /** Values that are the same word in the language as in English (loanwords, shared Latin vocabulary, product and role names). */
 const SAME_AS_ENGLISH: Record<'de' | 'fr' | 'es', readonly string[]> = {
-  de: ['common.name', 'nav.admin', 'nav.apps', 'nav.tab.apps', 'nav.tab.admin', 'theme.system', 'instance.details', 'common.version', 'common.status', 'role.admin', 'role.publisher', 'instance.version', 'instance.downloadHtml',
+  de: ['common.actionOn', 'common.name', 'nav.admin', 'nav.apps', 'nav.tab.apps', 'nav.tab.admin', 'theme.system', 'instance.details', 'common.version', 'common.status', 'role.admin', 'role.publisher', 'instance.version',
     'instance.domains.domain', 'instance.domains.host', 'app.pageTitle', 'admin.pageTitle', 'admin.section.apps', 'admin.apps.domains', 'instance.ingest.token', 'instance.ingest.origin', 'instance.embed.origin', 'admin.mail.port'],
   fr: ['nav.admin', 'nav.tab.apps', 'nav.tab.admin', 'common.actions', 'common.instance', 'common.version', 'common.date', 'role.publisher', 'instance.pageTitle', 'instance.version', 'dash.instanceCount.one', 'dash.instanceCount.other',
-    'instance.downloadHtml', 'instance.grants.type', 'app.versions', 'app.instances', 'admin.section.invites', 'admin.ai.provider.ollama', 'admin.mail.port', 'confirm.groupDelete.instances.one', 'confirm.groupDelete.instances.other'],
-  es: ['role.publisher', 'instance.downloadHtml', 'nav.tab.apps', 'nav.tab.admin', 'admin.ai.provider.ollama', 'instance.ingest.token'],
+    'instance.grants.type', 'app.versions', 'app.instances', 'admin.section.invites', 'admin.ai.provider.ollama', 'admin.mail.port', 'confirm.groupDelete.instances.one', 'confirm.groupDelete.instances.other'],
+  es: ['common.actionOn', 'role.publisher', 'nav.tab.apps', 'nav.tab.admin', 'admin.ai.provider.ollama', 'instance.ingest.token'],
 };
 
 describe('translations', () => {

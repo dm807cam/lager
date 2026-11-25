@@ -10,7 +10,7 @@ import { localeOf } from './locale.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { MAX_NAME } from '../platform/tokens.js';
 import { confirmAttrs, confirmed, questionPage, dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, type Question, slugField, staleFormPage, visibilityLabel, withNotice } from './pages.js';
-import { aiBadge, appCard, badge, btn, named, callout, repeatsCardLink, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
+import { aiBadge, appCard, badge, btn, named, namedAction, callout, repeatsCardLink, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash } from './session.js';
 
 const deploys = (user: User): boolean => user.role === 'admin' || user.role === 'publisher';
@@ -41,13 +41,15 @@ const aiCorner = (core: Core, locale: Locale, appId: string, version: number | u
 function instanceCard(core: Core, locale: Locale, i: Instance, extra: { badges?: string[]; manage: boolean }): string {
   const app = core.apps.getApp(i.appId);
   const title = app?.title ?? i.slug;
+  // Two copies of one app share its title; the names of their Open and Manage say which copy (WCAG 2.4.6), unless the address is the title.
+  const label = app && app.title.toLowerCase() !== i.slug ? `${app.title} (${i.slug})` : title;
   const state = i.disabled ? [badge(t(locale, 'common.disabled'), { tone: 'danger', icon: 'alert' })]
     : extra.manage ? [badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) }), badge(`v${i.activeVersion}`)] : [];
   return appCard({
     app, title, slug: i.slug, description: app?.description, corner: aiCorner(core, locale, i.appId, i.activeVersion),
-    href: i.disabled ? undefined : instanceUrl(core.config, i.slug), linkLabel: t(locale, 'card.open', { title }),
+    href: i.disabled ? undefined : instanceUrl(core.config, i.slug), linkLabel: t(locale, 'card.open', { title: label }),
     badges: [...state, ...(extra.badges ?? [])],
-    actions: instanceActions(core, locale, i, title, extra.manage),
+    actions: instanceActions(core, locale, i, label, extra.manage),
   });
 }
 
@@ -164,7 +166,8 @@ function tokenSection(core: Core, locale: Locale, user: User, csrf: string): str
   const rows = tokens.map((tk) => [
     `<strong>${esc(tk.name)}</strong>`, dateText(locale, tk.createdAt),
     tk.lastUsedAt ? dateText(locale, tk.lastUsedAt) : `<span class="muted">${esc(t(locale, 'common.never'))}</span>`,
-    form(`/ui/tokens/${encodeURIComponent(tk.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), 'danger', '', true, confirmAttrs(locale, revokeQuestion(locale, tk.name))),
+    form(`/ui/tokens/${encodeURIComponent(tk.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), 'danger', '', true, confirmAttrs(locale, revokeQuestion(locale, tk.name)),
+      namedAction(locale, t(locale, 'common.revoke'), tk.name)),
   ]);
   const list = tokens.length
     ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'common.created'), t(locale, 'dash.tokens.lastUsed'), ''], rows)

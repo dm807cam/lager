@@ -7,6 +7,7 @@ import { dashboardExtension } from '../src/http/dashboard.js';
 import { esc, notFoundPage } from '../src/http/pages.js';
 import { staticUrls } from '../src/http/static.js';
 import { LOCALES, t, type MessageKey } from '../src/i18n/index.js';
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '../src/platform/ai.js';
 import { makeHarness, type Harness } from './support/http.js';
 import { consentHtml, cookies, emptyHomes, formDetailsOf, formsOf, idNames, pageVisits, PASSWORD, showcase, visit, type PageVisit, type Showcase } from './support/pages.js';
 
@@ -696,8 +697,10 @@ describe('a form being sent', () => {
     win.HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute('open', ''); };
     win.HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.removeAttribute('open'); this.dispatchEvent(new win.Event('close')); };
     // Timers the script sets, run by hand.
-    const timers: Array<{ fn: () => void; ms: number }> = [];
-    (win as unknown as { setTimeout: (fn: () => void, ms: number) => number }).setTimeout = (fn, ms) => timers.push({ fn, ms });
+    const timers: Array<{ fn: () => void; ms: number; cleared?: boolean }> = [];
+    const w = win as unknown as { setTimeout: (fn: () => void, ms: number) => number; clearTimeout: (id?: number) => void };
+    w.setTimeout = (fn, ms) => timers.push({ fn, ms });
+    w.clearTimeout = (id) => { if (id) timers[id - 1].cleared = true; };
     win.eval(SCRIPT);
     /** Sends `form` as the browser would; returns whether the browser goes on to send it. */
     const submit = (form: HTMLFormElement, submitter?: HTMLElement): boolean =>
@@ -750,15 +753,29 @@ describe('a form being sent', () => {
     expect(sent).toEqual(['f']);
   });
 
-  it('a load that was stopped leaves the form busy for 30 seconds, then it can be sent again', () => {
+  it('a load that was stopped leaves the form busy for 100 seconds, longer than any answer takes, then it can be sent again', () => {
     const { doc, submit, timers } = page(`<form id="f"><button type="submit" id="save">Save</button></form>`);
     const form = doc.getElementById('f') as HTMLFormElement;
     expect(submit(form, doc.getElementById('save')!)).toBe(true);
     expect(submit(form, doc.getElementById('save')!)).toBe(false);
-    expect(timers.map((x) => x.ms)).toEqual([30000]);
+    // Longer than the slowest answer: the AI test waits up to DEFAULT_REQUEST_TIMEOUT_MS for the provider.
+    expect(timers.map((x) => x.ms)).toEqual([100000]);
+    expect(timers[0].ms).toBeGreaterThan(DEFAULT_REQUEST_TIMEOUT_MS);
     timers[0].fn();
     expect(doc.getElementById('save')!.hasAttribute('aria-busy')).toBe(false);
     expect(submit(form, doc.getElementById('save')!)).toBe(true);
+  });
+
+  it('a timer left from before the page came back from the cache does not end a newer send early', () => {
+    const { win, doc, submit, timers } = page(`<form id="f"><button type="submit" id="save">Save</button></form>`);
+    const form = doc.getElementById('f') as HTMLFormElement;
+    submit(form, doc.getElementById('save')!);
+    win.dispatchEvent(new win.Event('pageshow'));
+    expect(timers[0].cleared).toBe(true);
+    // The old timer was cancelled when the page came back, so only the new send's timer can end the new busy state.
+    submit(form, doc.getElementById('save')!);
+    expect(form.hasAttribute('data-busy')).toBe(true);
+    expect(timers.filter((x) => !x.cleared)).toHaveLength(1);
   });
 
   it('the busy button shows a spinner instead of its icon, and a still ellipsis without motion', () => {

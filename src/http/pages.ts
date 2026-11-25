@@ -269,9 +269,9 @@ export const hiddenField = (name: string, value: string): string => `<input type
  * A POST form with the CSRF field; `fields` and `button` are trusted markup. `style` is the button's look (`true` is the
  * older spelling of a quiet one); `cls` classes the form itself, e.g. `stack` or `form-row` for its layout.
  */
-export function form(action: string, csrf: string, fields: string, button: string, style: ButtonStyle | boolean = 'primary', cls = '', small = false, attrs = ''): string {
+export function form(action: string, csrf: string, fields: string, button: string, style: ButtonStyle | boolean = 'primary', cls = '', small = false, attrs = '', buttonAttrs = ''): string {
   const look: ButtonStyle = style === true ? 'quiet' : style === false ? 'primary' : style;
-  return `<form method="post" action="${esc(action)}"${cls ? ` class="${cls}"` : ''}${attrs}>${hiddenField('csrf', csrf)}${fields}<button type="submit" class="${btn(look, small)}">${button}</button></form>`;
+  return `<form method="post" action="${esc(action)}"${cls ? ` class="${cls}"` : ''}${attrs}>${hiddenField('csrf', csrf)}${fields}<button type="submit" class="${btn(look, small)}"${buttonAttrs}>${button}</button></form>`;
 }
 
 /**

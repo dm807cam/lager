@@ -18,7 +18,7 @@ import {
   confirmAttrs, confirmed, questionPage, dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, hiddenField, levelLabel, levelOptions, missingPage, optionList, type Option, page, type Question,
   sizeText, slugField, staleFormPage, visibilityLabel, visibilityOptions, withNotice,
 } from './pages.js';
-import { appTile, avatar, badge, btn, named, card, copyButton, copyField, dataTable, emptyState, icon, linkButton, meter, notice, personCell, signedIn, visibilityIcon } from './ui.js';
+import { appTile, avatar, badge, btn, named, namedAction, card, copyButton, copyField, dataTable, emptyState, icon, linkButton, meter, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash, type Undo } from './session.js';
 
 const GRANT_LEVELS = ['view', 'interact', 'admin'] as const;
@@ -115,8 +115,10 @@ function versionsList(core: Core, locale: Locale, user: User, app: App, base: st
     const isActive = v.number === active;
     const note = v.instanceId !== null ? badge(t(locale, 'instance.savedBySelf'), { icon: 'user' }) : '';
     const download = mayDownload(v)
-      ? linkButton(`/apps/${encodeURIComponent(app.slug)}/versions/${v.number}/html`, `${icon('download')}${esc(t(locale, 'instance.downloadHtml'))}`, 'quiet', true) : '';
-    const activate = base === null || isActive ? '' : form(`${base}/activate`, csrf, hiddenField('version', String(v.number)), esc(t(locale, 'common.activate')), 'secondary', '', true);
+      ? linkButton(`/apps/${encodeURIComponent(app.slug)}/versions/${v.number}/html`, `${icon('download')}${esc(t(locale, 'instance.downloadHtml'))}`, 'quiet', true,
+        namedAction(locale, t(locale, 'instance.downloadHtml'), `v${v.number} (HTML)`)) : '';
+    const activate = base === null || isActive ? '' : form(`${base}/activate`, csrf, hiddenField('version', String(v.number)), esc(t(locale, 'common.activate')), 'secondary', '', true, '',
+      namedAction(locale, t(locale, 'common.activate'), `v${v.number}`));
     return `<li data-version="${v.number}"${isActive ? ' class="is-active"' : ''}><span class="dot" aria-hidden="true"></span>
 <div class="tl-body"><div class="tl-title"><strong>v${v.number}</strong>${isActive ? badge(t(locale, 'common.active'), { tone: 'success', dot: true }) : ''}${v.number === latest && v.instanceId === null ? badge(t(locale, 'instance.latest')) : ''}${note}</div>
 <span class="tl-meta">${dateText(locale, v.createdAt)} · ${sizeText(locale, v.sizeBytes)}</span>${v.instanceId === null && v.note ? `<span class="tl-note">${esc(v.note)}</span>` : ''}</div>
@@ -140,7 +142,7 @@ function grantsCard(core: Core, locale: Locale, inst: Instance, base: string, cs
     ? field('users-level', t(locale, 'instance.usersLevel'), `<select id="users-level" name="users_level">${optionList(levelOptions(locale, USERS_LEVELS), inst.usersLevel)}</select>`) : '';
   const visibility = form(`${base}/visibility`, csrf,
     `${field('visibility', t(locale, 'instance.visibility.who'), `<select id="visibility" name="visibility">${optionList(visibilityOptions(locale), inst.visibility)}</select>`)}${level}`,
-    esc(t(locale, 'common.save')), 'secondary', 'form-row');
+    esc(t(locale, 'common.save')), 'secondary', 'form-row', false, '', namedAction(locale, t(locale, 'common.save'), t(locale, 'instance.visibility.who')));
   const rows = core.access.listGrants(inst.id).map((g) => {
     const who = g.principalType === 'user' ? hiddenField('email', g.principalLabel) : hiddenField('group', g.principalId);
     const face = g.principalType === 'user' ? avatar({ id: g.principalId, name: '', email: g.principalLabel }, 'sm') : `<span class="tile tile-xs" aria-hidden="true">${icon('users', 'i-sm')}</span>`;
@@ -148,8 +150,9 @@ function grantsCard(core: Core, locale: Locale, inst: Instance, base: string, cs
       `<div class="cell-user">${face}<div><strong title="${esc(g.principalLabel)}">${esc(g.principalLabel)}</strong></div></div>`,
       badge(t(locale, g.principalType === 'user' ? 'instance.grants.user' : 'instance.grants.group'), { icon: g.principalType === 'user' ? 'user' : 'users' }),
       `<form method="post" action="${base}/grants" class="inline-form">${hiddenField('csrf', csrf)}${who}
-<select name="level" aria-label="${esc(t(locale, 'instance.grants.levelOf', { name: g.principalLabel }))}">${optionList(grantLevels, g.level)}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
-      form(`${base}/grants/remove`, csrf, hiddenField('type', g.principalType) + hiddenField('id', g.principalId), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true),
+<select name="level" aria-label="${esc(t(locale, 'instance.grants.levelOf', { name: g.principalLabel }))}">${optionList(grantLevels, g.level)}</select><button type="submit" class="${btn('secondary', true)}"${namedAction(locale, t(locale, 'common.save'), t(locale, 'instance.grants.levelOf', { name: g.principalLabel }))}>${esc(t(locale, 'common.save'))}</button></form>`,
+      form(`${base}/grants/remove`, csrf, hiddenField('type', g.principalType) + hiddenField('id', g.principalId), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true, '',
+        namedAction(locale, t(locale, 'common.remove'), g.principalLabel)),
     ];
   });
   const groups = core.groups.list().map((g) => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('');
@@ -160,10 +163,10 @@ function grantsCard(core: Core, locale: Locale, inst: Instance, base: string, cs
   // A person and a group are two forms: one of two fields that silently wins over the other cannot happen.
   const person = form(`${base}/grants`, csrf, `${field('grant-email', t(locale, 'instance.grants.email'), '<input id="grant-email" name="email" type="email" maxlength="254" autocomplete="off">')}
 ${field('grant-level', t(locale, 'common.level'), `<select id="grant-level" name="level">${optionList(grantLevels, 'view')}</select>`)}`,
-  `${icon('share')}${esc(t(locale, 'instance.grants.add'))}`, 'primary', 'form-row');
+  `${icon('share')}${esc(t(locale, 'instance.grants.add'))}`, 'primary', 'form-row', false, '', namedAction(locale, t(locale, 'instance.grants.add'), t(locale, 'instance.grants.user')));
   const group = groups ? form(`${base}/grants`, csrf, `${field('grant-group', t(locale, 'instance.grants.groupLabel'), `<select id="grant-group" name="group" required><option value="">–</option>${groups}</select>`)}
 ${field('grant-group-level', t(locale, 'common.level'), `<select id="grant-group-level" name="level">${optionList(grantLevels, 'view')}</select>`)}`,
-  `${icon('share')}${esc(t(locale, 'instance.grants.add'))}`, 'secondary', 'form-row') : '';
+  `${icon('share')}${esc(t(locale, 'instance.grants.add'))}`, 'secondary', 'form-row', false, '', namedAction(locale, t(locale, 'instance.grants.add'), t(locale, 'instance.grants.group'))) : '';
   const add = `<h4>${esc(t(locale, 'instance.grants.person'))}</h4>${person}${group ? `<h4 class="gap-top">${esc(t(locale, 'instance.grants.withGroup'))}</h4>${group}` : ''}`;
   return card(t(locale, 'instance.grants.title'), `${visibility}<div class="subsection"><h3>${esc(t(locale, 'instance.grants.people'))}</h3>${list}<div class="gap-top">${add}</div></div>`, '', 'sharing');
 }
@@ -172,7 +175,7 @@ ${field('grant-group-level', t(locale, 'common.level'), `<select id="grant-group
 export function domainsBody(core: Core, locale: Locale, inst: Instance, base: string, csrf: string): string {
   const rows = core.domains.list(inst.id).map((host) => [
     `<a class="mono" href="${esc(hostUrl(core.config, host))}">${esc(host)}</a>`,
-    form(`${base}/remove`, csrf, hiddenField('host', host), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true),
+    form(`${base}/remove`, csrf, hiddenField('host', host), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true, '', namedAction(locale, t(locale, 'common.remove'), host)),
   ]);
   const list = rows.length ? dataTable(locale, [t(locale, 'instance.domains.domain'), ''], rows) : emptyState(t(locale, 'instance.domains.none'), 'globe');
   const add = form(base, csrf, field('domain-host', t(locale, 'instance.domains.host'),
@@ -206,15 +209,16 @@ function ingestCard(core: Core, locale: Locale, inst: Instance, base: string, cs
         : `${esc(t(locale, 'instance.ingest.byOrigins'))} ${origins.map((o) => `<code>${esc(o)}</code>`).join(' ')}`;
     const name = hiddenField('name', e.name);
     const managed = e.managedOrigins ? managedOriginsBody(core, locale, inst, e, base, csrf) : '';
-    const token = e.auth === 'token' ? `<div class="field"><span class="hint">${esc(t(locale, 'instance.ingest.token'))}</span>${copyField(locale, core.ingest.token(inst.id, e.name))}
+    const token = e.auth === 'token' ? `<div class="field"><span class="hint">${esc(t(locale, 'instance.ingest.token'))}</span>${copyField(locale, core.ingest.token(inst.id, e.name), 'secondary', `${t(locale, 'instance.ingest.token')} ${e.name}`)}
 <p class="hint">${esc(t(locale, 'instance.ingest.tokenHint'))}</p></div>` : '';
     return `<div class="subsection" data-endpoint="${esc(e.name)}"><div class="card-title"><h3 class="mono">${esc(e.name)}</h3>${off
       ? badge(t(locale, 'instance.ingest.off'), { tone: 'warning', icon: 'alert' }) : badge(t(locale, 'instance.ingest.on'), { tone: 'success', dot: true })}</div>
-${copyField(locale, `${url}/_ingest/${e.name}`)}
+${copyField(locale, `${url}/_ingest/${e.name}`, 'secondary', `${url}/_ingest/${e.name}`)}
 <p class="hint">${who}</p><p class="hint">${esc(t(locale, 'instance.ingest.into', { collection: e.collection }))}</p>${token}
 <p class="hint">${esc(t(locale, 'instance.ingest.counts', { accepted: counts.accepted, refused: counts.refused, limited: counts.limited, date: since }))}</p>
-<div class="btn-row">${form(`${base}/ingest/switch`, csrf, name + hiddenField('on', off ? '1' : '0'), esc(t(locale, off ? 'instance.ingest.turnOn' : 'instance.ingest.turnOff')), 'secondary', '', true)}
-${e.auth === 'token' ? form(`${base}/ingest/token`, csrf, name, esc(t(locale, 'instance.ingest.rotate')), 'quiet', '', true, confirmAttrs(locale, rotateQuestion(locale, e.name))) : ''}</div>${managed}</div>`;
+<div class="btn-row">${form(`${base}/ingest/switch`, csrf, name + hiddenField('on', off ? '1' : '0'), esc(t(locale, off ? 'instance.ingest.turnOn' : 'instance.ingest.turnOff')), 'secondary', '', true, '',
+  namedAction(locale, t(locale, off ? 'instance.ingest.turnOn' : 'instance.ingest.turnOff'), e.name))}
+${e.auth === 'token' ? form(`${base}/ingest/token`, csrf, name, esc(t(locale, 'instance.ingest.rotate')), 'quiet', '', true, confirmAttrs(locale, rotateQuestion(locale, e.name)), namedAction(locale, t(locale, 'instance.ingest.rotate'), e.name)) : ''}</div>${managed}</div>`;
   }).join('');
   const used = core.data.ingestUsage(inst.id);
   return card(title, `<p class="hint">${esc(t(locale, 'instance.ingest.intro'))}</p>${items}
@@ -229,7 +233,7 @@ function managedOriginsBody(core: Core, locale: Locale, inst: Instance, e: Inges
   const counted = core.ingest.originsFor(inst.id, e);
   const rows = core.ingest.instanceOrigins(inst.id, e.name).map((origin) => [
     `<span class="mono">${esc(origin)}</span>${counted.includes(origin) ? '' : ` ${badge(t(locale, 'instance.ingest.overLimit'), { tone: 'warning', icon: 'alert' })}`}`,
-    form(`${base}/ingest/origins/remove`, csrf, name + hiddenField('origin', origin), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true),
+    form(`${base}/ingest/origins/remove`, csrf, name + hiddenField('origin', origin), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true, '', namedAction(locale, t(locale, 'common.remove'), origin)),
   ]);
   const list = rows.length ? dataTable(locale, [t(locale, 'instance.ingest.origin'), ''], rows) : emptyState(t(locale, 'instance.ingest.managedNone'), 'globe');
   const add = form(`${base}/ingest/origins`, csrf, name + field(id, t(locale, 'instance.ingest.origin'),
@@ -249,7 +253,7 @@ function embedCard(core: Core, locale: Locale, inst: Instance, base: string, csr
   const active = core.embed.frameAncestors(inst.id, caps);
   const rows = core.embed.origins(inst.id).map((origin) => [
     `<span class="mono">${esc(origin)}</span>${active.includes(origin) ? '' : ` ${badge(t(locale, 'instance.embed.inactive'), { tone: 'warning', icon: 'alert' })}`}`,
-    form(`${base}/embed/remove`, csrf, hiddenField('origin', origin), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true),
+    form(`${base}/embed/remove`, csrf, hiddenField('origin', origin), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true, '', namedAction(locale, t(locale, 'common.remove'), origin)),
   ]);
   const list = rows.length ? dataTable(locale, [t(locale, 'instance.embed.origin'), ''], rows) : emptyState(t(locale, 'instance.embed.none'), 'globe');
   const add = form(`${base}/embed`, csrf, field('embed-origin', t(locale, 'instance.embed.origin'),
@@ -297,7 +301,7 @@ ${notice('warning', t(locale, 'instance.disabledNotice'))}<div class="main-col">
   const mayRestore = core.access.canRestoreInstance(inst, user);
   const snapRows = snapshots.map((s) => [`<span class="mono">${esc(s.label)}</span>`, dateText(locale, s.createdAt), sizeText(locale, s.sizeBytes),
     mayRestore ? form(`${base}/restore`, csrf, hiddenField('snapshot', s.id), esc(t(locale, 'instance.snapshots.restore')), 'secondary', '', true,
-      confirmAttrs(locale, restoreQuestion(locale, inst.slug, s.label))) : '']);
+      confirmAttrs(locale, restoreQuestion(locale, inst.slug, s.label)), namedAction(locale, t(locale, 'instance.snapshots.restore'), s.label)) : '']);
   const quota = core.quotas.of(inst.id);
   const used = storageUsed(core, inst);
   const storage = quota > 0
@@ -311,7 +315,7 @@ ${fact(t(locale, 'instance.settings'), form(`${base}/settings`, csrf,
     // Both switches in one form with one Save: changing two and pressing one button keeps both.
     `${hiddenField('auto_update', '0')}<label class="check"><input type="checkbox" class="switch" name="auto_update" value="1"${inst.autoUpdate ? ' checked' : ''}><span><strong>${esc(t(locale, 'instance.autoUpdate.label'))}</strong><span class="hint">${esc(t(locale, 'instance.autoUpdate.hint'))}</span></span></label>
 ${core.settings.madeWithBadge ? `${hiddenField('badge', '0')}<label class="check"><input type="checkbox" class="switch" name="badge" value="1"${inst.showBadge ? ' checked' : ''}><span><strong>${esc(t(locale, 'instance.badge.label'))}</strong><span class="hint">${esc(t(locale, 'instance.badge.hint'))}</span></span></label>` : ''}`,
-    esc(t(locale, 'common.save')), 'secondary', 'stack', true))}
+    esc(t(locale, 'common.save')), 'secondary', 'stack', true, '', namedAction(locale, t(locale, 'common.save'), t(locale, 'instance.settings'))))}
 ${fact(t(locale, 'instance.storage'), `${storage}${snapshotStorage}`)}</dl></section>`;
   // A rolled-back instance with updates on goes forward again with the next deploy: the page says so where the versions are.
   const latest = core.apps.latestDeployedVersion(app.id)?.number ?? 0;
@@ -353,13 +357,14 @@ function appPage(core: Core, locale: Locale, user: User, app: App, flash: Flash)
   let selfService = '';
   let del = '';
   if (isOwner) {
-    const collabRows = core.apps.listCollaborators(app.id).map((c) => [person(c), form(`${base}/collaborators/remove`, csrf, hiddenField('id', c.id), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true)]);
+    const collabRows = core.apps.listCollaborators(app.id).map((c) => [person(c), form(`${base}/collaborators/remove`, csrf, hiddenField('id', c.id), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true, '', namedAction(locale, t(locale, 'common.remove'), c.name || c.email))]);
     const selfModes: Option[] = [['off', t(locale, 'self.off')], ['users', t(locale, 'self.users')]];
     collaborators = card(t(locale, 'app.collaborators'), `${collabRows.length ? dataTable(locale, [t(locale, 'common.name'), ''], collabRows) : emptyState(t(locale, 'app.noCollaborators'), 'users', { detail: t(locale, 'app.noCollaborators.detail') })}
 <div class="subsection">${form(`${base}/collaborators`, csrf, field('collab-email', t(locale, 'app.collaboratorEmail'), '<input id="collab-email" name="email" type="email" required maxlength="254" autocomplete="off">'),
     `${icon('plus')}${esc(t(locale, 'common.add'))}`, 'secondary', 'form-row')}</div>`, '', 'collaborators');
     selfService = fact(t(locale, 'app.self.title'), form(`${base}/self-instances`, csrf,
-      field('self-mode', t(locale, 'app.self.label'), `<select id="self-mode" name="mode">${optionList(selfModes, app.selfInstances)}</select>`), esc(t(locale, 'common.save')), 'secondary', 'stack', true));
+      field('self-mode', t(locale, 'app.self.label'), `<select id="self-mode" name="mode">${optionList(selfModes, app.selfInstances)}</select>`), esc(t(locale, 'common.save')), 'secondary', 'stack', true, '',
+      namedAction(locale, t(locale, 'common.save'), t(locale, 'app.self.title'))));
     del = dangerZone(locale, t(locale, 'app.delete.title'), t(locale, 'app.delete.text'), `${base}/delete`, csrf, app.slug, t(locale, 'app.delete.submit'));
   }
   const details = `<section class="card" id="details"><h2>${esc(t(locale, 'instance.details'))}</h2><dl class="facts">${fact(t(locale, 'common.owner'), person(core.users.get(app.ownerId)))}${selfService}${modelFact(core, locale, user, app, base, csrf)}</dl></section>`;
@@ -390,7 +395,7 @@ function modelFact(core: Core, locale: Locale, user: User, app: App, base: strin
   if (app.aiModelId && !allowed.some((m) => m.id === app.aiModelId)) choices.push([app.aiModelId, t(locale, 'app.model.unavailable', { model: app.aiModelId })]);
   return fact(t(locale, 'app.model.title'), form(`${base}/model`, csrf,
     field('app-model', t(locale, 'app.model.label'), `<select id="app-model" name="model">${optionList(choices, app.aiModelId ?? '')}</select>`)
-      + `<p class="hint">${esc(t(locale, 'app.model.hint'))}</p>`, esc(t(locale, 'common.save')), 'secondary', 'stack', true));
+      + `<p class="hint">${esc(t(locale, 'app.model.hint'))}</p>`, esc(t(locale, 'common.save')), 'secondary', 'stack', true, '', namedAction(locale, t(locale, 'common.save'), t(locale, 'app.model.title'))));
 }
 
 /** Pages and forms for one instance (sharing, versions, snapshots, deletion) and for one app (instances, collaborators). */

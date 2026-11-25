@@ -11,7 +11,7 @@ import { requestLocale } from './locale.js';
 import { loginLimiter } from './platform.js';
 import { sameOriginGuard } from './origin.js';
 import { authCard, esc, field, messagePage, noticeText, page, resendForm, staleFormPage } from './pages.js';
-import { avatar, btn, icon, notice as noticeBox, signedIn } from './ui.js';
+import { avatar, btn, icon, namedAction, notice as noticeBox, signedIn } from './ui.js';
 import { RateLimiter } from './ratelimit.js';
 import { csrfToken, csrfValid, flashUrl, issueSession, markDevice, readFlash } from './session.js';
 import { codeRefusal, recoveryCodesPage, setupPage, setupToken, setupTokenValid, twoFactorCard } from './two-factor.js';
@@ -88,16 +88,16 @@ function accountPage(core: Core, locale: Locale, user: User, msg: { ok?: string;
   const csrf = esc(csrfToken(core, user));
   const choices = [['', t(locale, 'account.locale.browser')], ...LOCALES.map((l) => [l, LOCALE_NAMES[l]])];
   const options = choices.map(([value, label]) => `<option value="${esc(value)}"${value === (user.locale ?? '') ? ' selected' : ''}>${esc(label)}</option>`).join('');
-  const save = `<button type="submit" class="${btn('secondary')}">${esc(t(locale, 'common.save'))}</button>`;
+  const save = (what: string): string => `<button type="submit" class="${btn('secondary')}"${namedAction(locale, t(locale, 'common.save'), what)}>${esc(t(locale, 'common.save'))}</button>`;
   return page(locale, t(locale, 'account.title'), `<div class="narrow"><div class="page-head account-head">${avatar(user, 'lg')}<div><h1>${esc(t(locale, 'account.title'))}</h1><p class="lede">${esc(user.email)}</p></div></div>
 ${msg.ok ? noticeBox('success', msg.ok) : ''}${errorLine(msg.error)}
 <section class="card"><h2>${esc(t(locale, 'account.profile'))}</h2>
 <form method="post" action="/account/name" class="form-row"><input type="hidden" name="csrf" value="${csrf}">
 ${field('name', t(locale, 'common.name'), `<input id="name" name="name" required maxlength="${MAX_NAME_LENGTH}" value="${esc(user.name)}" autocomplete="name">`)}
-${save}</form>
+${save(t(locale, 'common.name'))}</form>
 <form method="post" action="/account/locale" class="form-row gap-top"><input type="hidden" name="csrf" value="${csrf}">
 ${field('locale', t(locale, 'account.locale.label'), `<select id="locale" name="locale">${options}</select>`)}
-${save}</form></section>
+${save(t(locale, 'account.locale.label'))}</form></section>
 <section class="card"><h2>${esc(t(locale, 'account.password.title'))}</h2>
 <form method="post" action="/account/password" class="stack"><input type="hidden" name="csrf" value="${csrf}">
 ${field('current', t(locale, 'account.password.current'), '<input id="current" name="current" type="password" required autocomplete="current-password">')}
