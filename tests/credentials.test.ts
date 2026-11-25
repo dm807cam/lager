@@ -45,7 +45,7 @@ describe('credentials do not survive password changes', () => {
     expect(f.core.tokens.list(f.user.id)).toEqual([]);
     const dead = await request(h!.app).post('/reset').set('Host', h!.host).type('form').send({ token: f.resetToken, password: 'yet another password' });
     expect(dead.status).toBe(400);
-    expect(dead.text).toContain(t('en', 'auth.link.invalid'));
+    expect(dead.text).toContain(t('en', 'auth.reset.invalid'));
   });
 
   it('password reset revokes OAuth tokens, codes and API tokens and says so', async () => {

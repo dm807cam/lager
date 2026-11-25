@@ -240,6 +240,12 @@ export class Accounts {
     return row !== null && row.user_id !== null && this.users.get(row.user_id) !== null;
   }
 
+  /** Whether a reset link still works, without using it up: the form is only shown for one that does. */
+  checkResetToken(token: string): boolean {
+    const row = this.find('reset', token);
+    return row !== null && row.user_id !== null && this.users.get(row.user_id) !== null;
+  }
+
   /**
    * Confirms the address of whoever holds both the link and the account's password. The link alone is not enough: anyone can
    * register someone else's address, and the owner of the mailbox must not confirm an account whose password another person chose.

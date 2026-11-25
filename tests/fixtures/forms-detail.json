@@ -1677,6 +1677,7 @@
       ]
     }
   ],
+  "reset (invalid link)": [],
   "verify": [
     {
       "action": "/verify",

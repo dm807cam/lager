@@ -82,6 +82,8 @@ export const en = {
   'auth.reset.submit': 'Save password',
   'auth.reset.done.title': 'Password reset',
   'auth.reset.done': 'Password changed. All connections to AI assistants and all API tokens of this account were revoked.',
+  'auth.reset.invalid': "The link to set a new password has expired or was already used. Links from the mail work for one hour and once.",
+  'auth.reset.again': "Send a new link",
 
   'account.title': 'Account',
   'account.name.saved': 'Name saved.',

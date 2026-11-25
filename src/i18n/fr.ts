@@ -84,6 +84,8 @@ export const fr: Record<MessageKey, string> = {
   'auth.reset.submit': 'Enregistrer le mot de passe',
   'auth.reset.done.title': 'Mot de passe réinitialisé',
   'auth.reset.done': 'Mot de passe modifié. Toutes les connexions aux assistants IA et tous les jetons d’API de ce compte ont été révoqués.',
+  'auth.reset.invalid': "Le lien pour définir un nouveau mot de passe a expiré ou a déjà servi. Les liens de l’e-mail sont valables une heure et une seule fois.",
+  'auth.reset.again': "Envoyer un nouveau lien",
 
   'account.title': 'Compte',
   'account.name.saved': 'Nom enregistré.',
