@@ -84,7 +84,7 @@ export const de: Record<MessageKey, string> = {
   'auth.reset.submit': 'Passwort speichern',
   'auth.reset.done.title': 'Passwort zurückgesetzt',
   'auth.reset.done': 'Passwort geändert. Alle Verbindungen zu KI-Assistenten und alle API-Tokens dieses Kontos wurden widerrufen.',
-  'auth.reset.invalid': "Der Link zum Setzen eines neuen Passworts ist abgelaufen oder wurde schon benutzt. Links aus der Mail gelten eine Stunde und einmal.",
+  'auth.reset.invalid': "Der Link zum Setzen eines neuen Passworts ist abgelaufen oder wurde schon benutzt. Solche Links gelten eine Stunde und nur einmal.",
   'auth.reset.again': "Neuen Link senden",
 
   'account.title': 'Konto',

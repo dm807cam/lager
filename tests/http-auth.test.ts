@@ -431,6 +431,35 @@ describe('password reset', () => {
     expect((await request(hh.app).get('/forgot').set('Host', hh.host)).text).toContain('action="/forgot"');
   });
 
+  it('a reset link past its hour, and a used one an administrator made, answer with the invalid-link page and no form', async () => {
+    for (const withMail of [true, false]) {
+      h?.core.close();
+      h = withMail ? makeHarness({ mailer: new MemoryMailer(), extensions: [dashboardExtension] }) : makeHarness({ extensions: [dashboardExtension] });
+      const hh = h;
+      const user = hh.core.users.create({ email: 'ann@example.org', name: 'Ann', password: PASSWORD, role: 'user' });
+      const tokenOf = (link: string): string => new URL(link).searchParams.get('token')!;
+      const answers = async (token: string) => [
+        await request(hh.app).get(`/reset?token=${encodeURIComponent(token)}`).set('Host', hh.host),
+        await request(hh.app).post('/reset').set('Host', hh.host).type('form').send({ token, password: 'long-enough-password' }),
+      ];
+      const expectInvalid = async (token: string, label: string): Promise<void> => {
+        for (const res of await answers(token)) {
+          expect(res.status, label).toBe(400);
+          expect(res.text, label).toContain(t('en', 'auth.reset.invalid'));
+          expect(res.text, label).not.toContain('action="/reset"');
+        }
+      };
+      // Past its hour: the clock moves on, the link is the same.
+      const late = tokenOf(hh.core.accounts.createResetLink(user.id));
+      vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 61 * 60_000 });
+      try { await expectInvalid(late, `expired, mail ${withMail}`); } finally { vi.useRealTimers(); }
+      // An administrator's link, used once.
+      const used = tokenOf(hh.core.accounts.createResetLink(user.id));
+      await hh.core.accounts.resetPassword(used, 'another-long-password');
+      await expectInvalid(used, `used, mail ${withMail}`);
+    }
+  });
+
   it('with mail, an unconfirmed account and a stale link still get the form to send the link again', async () => {
     const s = setup();
     await s.register();

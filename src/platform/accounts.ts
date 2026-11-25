@@ -236,13 +236,17 @@ export class Accounts {
 
   /** True while the token is an unused, unexpired verification link; consumes nothing. */
   checkVerificationToken(token: string): boolean {
-    const row = this.find('verify', token);
-    return row !== null && row.user_id !== null && this.users.get(row.user_id) !== null;
+    return this.check('verify', token);
   }
 
   /** Whether a reset link still works, without using it up: the form is only shown for one that does. */
   checkResetToken(token: string): boolean {
-    const row = this.find('reset', token);
+    return this.check('reset', token);
+  }
+
+  /** Whether a link of `kind` still works for an account that exists, without using it up. One rule for both kinds of link. */
+  private check(kind: Kind, token: string): boolean {
+    const row = this.find(kind, token);
     return row !== null && row.user_id !== null && this.users.get(row.user_id) !== null;
   }
 
