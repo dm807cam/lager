@@ -326,6 +326,7 @@ export const en = {
   'instance.embed.hint': 'Write each website as https://blog.example.com, without a path; https://www.example.com is a website of its own. Addresses of this Lager server, and websites on its domain, cannot be added: they would get their visitors’ sign-in inside the frame. Visitors see the app only if the instance is open to them, usually public. The app can show this list and remove websites from it, but only this page adds them.',
   'instance.ingest.overLimit': 'over the limit, not used',
   'instance.ingest.into': 'Stored in the collection “{collection}”.',
+  'instance.ingest.address': 'Address',
   'instance.ingest.token': 'Token',
   'instance.ingest.tokenHint': 'Send it as the header “Authorization: Bearer <token>”. Whoever has it can add data here and nothing else. Replacing it ends the old one at once.',
   'instance.ingest.rotate': 'Replace token',

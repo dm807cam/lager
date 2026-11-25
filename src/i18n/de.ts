@@ -328,6 +328,7 @@ export const de: Record<MessageKey, string> = {
   'instance.embed.hint': 'Schreibe jede Website als https://blog.example.com, ohne Pfad; https://www.example.com ist eine eigene Website. Adressen dieses Lager-Servers und Websites unter seiner Domain lassen sich nicht hinzufügen: Sie bekämen die Anmeldung ihrer Besucher im Rahmen mit. Besucher sehen die App nur, wenn die Instanz für sie offen ist, meist öffentlich. Die App kann diese Liste anzeigen und Websites daraus entfernen, hinzufügen lassen sie sich nur hier.',
   'instance.ingest.overLimit': 'über dem Limit, nicht genutzt',
   'instance.ingest.into': 'Gespeichert in der Sammlung „{collection}“.',
+  'instance.ingest.address': 'Adresse',
   'instance.ingest.token': 'Token',
   'instance.ingest.tokenHint': 'Sende es als Header „Authorization: Bearer <Token>“. Wer es hat, kann hier Daten hinzufügen und sonst nichts. Wird es ersetzt, gilt das alte sofort nicht mehr.',
   'instance.ingest.rotate': 'Token ersetzen',

@@ -213,7 +213,7 @@ function ingestCard(core: Core, locale: Locale, inst: Instance, base: string, cs
 <p class="hint">${esc(t(locale, 'instance.ingest.tokenHint'))}</p></div>` : '';
     return `<div class="subsection" data-endpoint="${esc(e.name)}"><div class="card-title"><h3 class="mono">${esc(e.name)}</h3>${off
       ? badge(t(locale, 'instance.ingest.off'), { tone: 'warning', icon: 'alert' }) : badge(t(locale, 'instance.ingest.on'), { tone: 'success', dot: true })}</div>
-${copyField(locale, `${url}/_ingest/${e.name}`, 'secondary', `${url}/_ingest/${e.name}`)}
+${copyField(locale, `${url}/_ingest/${e.name}`, 'secondary', `${t(locale, 'instance.ingest.address')} ${e.name}`)}
 <p class="hint">${who}</p><p class="hint">${esc(t(locale, 'instance.ingest.into', { collection: e.collection }))}</p>${token}
 <p class="hint">${esc(t(locale, 'instance.ingest.counts', { accepted: counts.accepted, refused: counts.refused, limited: counts.limited, date: since }))}</p>
 <div class="btn-row">${form(`${base}/ingest/switch`, csrf, name + hiddenField('on', off ? '1' : '0'), esc(t(locale, off ? 'instance.ingest.turnOn' : 'instance.ingest.turnOff')), 'secondary', '', true, '',

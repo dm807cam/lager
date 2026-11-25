@@ -699,7 +699,8 @@ describe('a form being sent', () => {
     // Timers the script sets, run by hand.
     const timers: Array<{ fn: () => void; ms: number; cleared?: boolean }> = [];
     const w = win as unknown as { setTimeout: (fn: () => void, ms: number) => number; clearTimeout: (id?: number) => void };
-    w.setTimeout = (fn, ms) => timers.push({ fn, ms });
+    // As a browser does, a cleared timer's callback does nothing when its time comes.
+    w.setTimeout = (fn, ms) => { const entry: { fn: () => void; ms: number; cleared?: boolean } = { fn: () => { if (!entry.cleared) fn(); }, ms }; return timers.push(entry); };
     w.clearTimeout = (id) => { if (id) timers[id - 1].cleared = true; };
     win.eval(SCRIPT);
     /** Sends `form` as the browser would; returns whether the browser goes on to send it. */
@@ -772,8 +773,9 @@ describe('a form being sent', () => {
     submit(form, doc.getElementById('save')!);
     win.dispatchEvent(new win.Event('pageshow'));
     expect(timers[0].cleared).toBe(true);
-    // The old timer was cancelled when the page came back, so only the new send's timer can end the new busy state.
+    // The old timer was cancelled when the page came back: when its time comes, the new send is still busy.
     submit(form, doc.getElementById('save')!);
+    timers[0].fn();
     expect(form.hasAttribute('data-busy')).toBe(true);
     expect(timers.filter((x) => !x.cleared)).toHaveLength(1);
   });

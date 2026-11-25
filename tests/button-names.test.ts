@@ -1,5 +1,9 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import request from 'supertest';
+import { copyField } from '../src/http/ui.js';
+import { t } from '../src/i18n/index.js';
 import { cookies, pageVisits, showcase, visit, type Showcase } from './support/pages.js';
 
 let s: Showcase | undefined;
@@ -55,5 +59,28 @@ describe('every control on a page has a name of its own', () => {
     }
     expect(clashes).toEqual([]);
     expect(notInName).toEqual([]);
+  });
+});
+
+describe('names that change or carry a time', () => {
+  it('a copy button keeps what it copies in its name, and says Copied in it once it has', async () => {
+    const dom = new JSDOM(`<!doctype html><body>${copyField('fr', 'secret', 'secondary', 'Token feedback')}</body>`, { runScripts: 'outside-only' });
+    const win = dom.window;
+    Object.defineProperty(win.navigator, 'clipboard', { value: { writeText: () => Promise.resolve() } });
+    win.eval(fs.readFileSync(new URL('../src/static/app.js', import.meta.url), 'utf8'));
+    const button = win.document.querySelector('button')!;
+    expect(button.hasAttribute('aria-label')).toBe(false);
+    expect(nameOf(button)).toBe(`${t('fr', 'common.copy')} : Token feedback`);
+    button.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(nameOf(button)).toBe(`${t('fr', 'common.copied')} : Token feedback`);
+  });
+
+  it('an invitation\'s Revoke says its expiry in UTC, since the cell next to it shows the viewer\'s own time', async () => {
+    s = await showcase();
+    const doc = new JSDOM((await request(s.h.app).get('/admin/invites').set('Host', s.h.host).set('Cookie', await s.h.login())).text).window.document;
+    const names = [...doc.querySelectorAll('form[action$="/revoke"] button')].map((b) => b.getAttribute('aria-label')!);
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) expect(name).toMatch(/UTC$/);
   });
 });

@@ -328,6 +328,7 @@ export const es: Record<MessageKey, string> = {
   'instance.embed.hint': 'Escribe cada sitio como https://blog.example.com, sin ruta; https://www.example.com es un sitio distinto. Las direcciones de este servidor Lager, y los sitios en su dominio, no se pueden añadir: recibirían en el marco la sesión de sus visitantes. Los visitantes solo ven la app si la instancia está abierta para ellos, normalmente pública. La app puede mostrar esta lista y quitar sitios de ella, pero solo esta página los añade.',
   'instance.ingest.overLimit': 'por encima del límite, sin uso',
   'instance.ingest.into': 'Se guarda en la colección «{collection}».',
+  'instance.ingest.address': 'Dirección',
   'instance.ingest.token': 'Token',
   'instance.ingest.tokenHint': 'Envíalo en la cabecera «Authorization: Bearer <token>». Quien lo tenga puede añadir datos aquí y nada más. Al reemplazarlo, el anterior deja de valer al instante.',
   'instance.ingest.rotate': 'Reemplazar el token',

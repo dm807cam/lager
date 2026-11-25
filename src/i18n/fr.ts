@@ -328,6 +328,7 @@ export const fr: Record<MessageKey, string> = {
   'instance.embed.hint': 'Écrivez chaque site sous la forme https://blog.example.com, sans chemin ; https://www.example.com est un site à part. Les adresses de ce serveur Lager, et les sites sur son domaine, ne peuvent pas être ajoutés : ils recevraient la connexion de leurs visiteurs dans le cadre. Les visiteurs ne voient l’app que si l’instance leur est ouverte, en général publique. L’app peut afficher cette liste et en retirer des sites, mais seule cette page en ajoute.',
   'instance.ingest.overLimit': 'au-delà de la limite, non utilisé',
   'instance.ingest.into': 'Enregistré dans la collection « {collection} ».',
+  'instance.ingest.address': 'Adresse',
   'instance.ingest.token': 'Jeton',
   'instance.ingest.tokenHint': 'Envoyez-le dans l’en-tête « Authorization: Bearer <jeton> ». Qui le détient peut ajouter des données ici, et rien d’autre. Le remplacer met fin à l’ancien immédiatement.',
   'instance.ingest.rotate': 'Remplacer le jeton',
