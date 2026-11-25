@@ -125,6 +125,11 @@ function versionsList(core: Core, locale: Locale, user: User, app: App, base: st
   return `<ol class="timeline">${items}</ol>`;
 }
 
+/** Who can open an instance that is shared with nobody by name, by its visibility. */
+const NOBODY_NAMED: Record<Visibility, MessageKey> = {
+  private: 'instance.grants.none.private', users: 'instance.grants.none.users', public: 'instance.grants.none.public',
+};
+
 /**
  * Who may open the instance, in one place: first who may open it at all (private, everyone signed in, public) and at which level,
  * then the people and groups it is shared with.
@@ -150,7 +155,8 @@ function grantsCard(core: Core, locale: Locale, inst: Instance, base: string, cs
   const groups = core.groups.list().map((g) => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('');
   const list = rows.length
     ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'instance.grants.type'), t(locale, 'common.level'), ''], rows)
-    : emptyState(t(locale, 'instance.grants.none'), 'share');
+    // Nobody named yet is not nobody: who can open the instance right now follows from the visibility above.
+    : emptyState(t(locale, 'instance.grants.none'), 'share', { detail: t(locale, NOBODY_NAMED[inst.visibility]) });
   // A person and a group are two forms: one of two fields that silently wins over the other cannot happen.
   const person = form(`${base}/grants`, csrf, `${field('grant-email', t(locale, 'instance.grants.email'), '<input id="grant-email" name="email" type="email" maxlength="254" autocomplete="off">')}
 ${field('grant-level', t(locale, 'common.level'), `<select id="grant-level" name="level">${optionList(grantLevels, 'view')}</select>`)}`,
@@ -318,7 +324,7 @@ ${behind}${versionsList(core, locale, user, app, base, csrf, inst.activeVersion,
 <p class="hint gap-top">${esc(t(locale, 'instance.data.hint', { slug: inst.slug }))}</p>
 <div class="subsection"><h3>${esc(t(locale, 'instance.snapshots.title'))}</h3>${snapshots.length
     ? `${dataTable(locale, [t(locale, 'common.name'), t(locale, 'common.date'), t(locale, 'common.size'), ''], snapRows)}${mayRestore ? '' : `<p class="hint gap-top">${esc(t(locale, 'instance.snapshots.ownerOnly'))}</p>`}`
-    : emptyState(t(locale, 'instance.snapshots.none'), 'download')}</div></section>`;
+    : emptyState(t(locale, 'instance.snapshots.none'), 'download', { detail: t(locale, 'instance.snapshots.none.detail') })}</div></section>`;
   const domains = core.domains.canManage(user, core.access.canManageInstance(inst, user)) ? card(t(locale, 'instance.domains.title'), domainsBody(core, locale, inst, `${base}/domains`, csrf), '', 'domains') : '';
   return shell(core, locale, user, title, `${hero(app, app.title, `<a class="url" href="${esc(url)}">${esc(url)}</a>`, [visibility, badge(`v${inst.activeVersion}`)],
     linkButton(url, `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary') + copyButton(locale, url, 'secondary', t(locale, 'instance.copyLink'), false))}
@@ -349,7 +355,7 @@ function appPage(core: Core, locale: Locale, user: User, app: App, flash: Flash)
   if (isOwner) {
     const collabRows = core.apps.listCollaborators(app.id).map((c) => [person(c), form(`${base}/collaborators/remove`, csrf, hiddenField('id', c.id), `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true)]);
     const selfModes: Option[] = [['off', t(locale, 'self.off')], ['users', t(locale, 'self.users')]];
-    collaborators = card(t(locale, 'app.collaborators'), `${collabRows.length ? dataTable(locale, [t(locale, 'common.name'), ''], collabRows) : emptyState(t(locale, 'app.noCollaborators'), 'users')}
+    collaborators = card(t(locale, 'app.collaborators'), `${collabRows.length ? dataTable(locale, [t(locale, 'common.name'), ''], collabRows) : emptyState(t(locale, 'app.noCollaborators'), 'users', { detail: t(locale, 'app.noCollaborators.detail') })}
 <div class="subsection">${form(`${base}/collaborators`, csrf, field('collab-email', t(locale, 'app.collaboratorEmail'), '<input id="collab-email" name="email" type="email" required maxlength="254" autocomplete="off">'),
     `${icon('plus')}${esc(t(locale, 'common.add'))}`, 'secondary', 'form-row')}</div>`, '', 'collaborators');
     selfService = fact(t(locale, 'app.self.title'), form(`${base}/self-instances`, csrf,
@@ -709,7 +715,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
 
   const appBack = (req: Request): string => `/apps/${encodeURIComponent(param(req, 'slug'))}`;
 
-  /** The catalog's "Get your own copy" forms; "home" is what they sent while the catalog was part of the home page. */
+  /**
+   * The catalog's "Get your own copy" forms. "home" is what they sent while the catalog was part of the home page (up to 0.2.0),
+   * kept for pages loaded before the update; it can go with the release after the next one.
+   */
   const fromCatalog = (req: Request): boolean => ['catalog', 'home'].includes(field(req, 'from'));
   router.post('/ui/apps/:slug/instances', ...action(
     (req, user) => {
