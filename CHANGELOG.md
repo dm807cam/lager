@@ -37,6 +37,7 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 
 ### Fixed
 
+- **Touch targets:** on touch screens the Administration section pills, the brand link, links that fill a table cell (instances, groups), the instance address under its name and the link of a notice are 44 px high, as the rest of the interface already was. The hide button of the "Made with Lager" badge is a 32 px target (it was 22 px, under the 24 px WCAG 2.2 asks for), with the same small ×, and a little further from the badge link.
 - **Website (lager.im):**
   - **Contrast:** orange text and the grey of small print reach AA contrast in light mode. Orange as text and the focus ring use a darker tone, and the bright orange stays for buttons.
   - **Keyboard:** the install command and code blocks that scroll sideways can be reached by keyboard.

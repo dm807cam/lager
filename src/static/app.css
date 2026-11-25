@@ -310,6 +310,11 @@ details.menu > summary::-webkit-details-marker { display: none; }
   .menu-trigger { min-height: 44px; }
   .menu-trigger.avatar-trigger { padding: 4px; }
   .back, .site-footer a, .auth-links a { display: inline-flex; align-items: center; min-height: 44px; }
+  .brand { min-height: 44px; }
+  /* A link that is all of a table cell (an instance, a group) gets the cell's height to be tapped, not just its line of text. */
+  td > a:only-child, .cell-user a:only-child { display: inline-flex; align-items: center; min-height: 44px; }
+  /* The instance address under its name, and the link of a notice (the next setup step). */
+  .hero .url, .notice > a { display: inline-flex; align-items: center; min-height: 44px; }
 }
 .btn-row { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
 
@@ -633,6 +638,7 @@ td.actions .btn-row { justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
   background: var(--surface); color: var(--ink-2); font-weight: 600; font-size: 0.9rem; text-decoration: none; transition: background var(--ease), color var(--ease);
 }
 .pills a:hover { color: var(--ink); border-color: var(--line-strong); }
+@media (pointer: coarse) { .pills a { min-height: 44px; } }
 .pills a[aria-current="page"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
 .settings-row { display: grid; gap: var(--s2) var(--s5); padding: var(--s4) 0; border-top: 1px solid var(--line); }
 .settings-row:first-child, .subsection > h3 + .settings-row { border-top: 0; padding-top: 0; }

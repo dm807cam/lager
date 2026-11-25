@@ -36,6 +36,11 @@ describe('badge.js', () => {
     expect(link.getAttribute('aria-label')).toBe('Made with Lager: learn more');
     expect(link.textContent).toBe('Made with Lager');
     expect(root.querySelector('button')!.getAttribute('aria-label')).toBe('Hide');
+    // The hide button is a 32 px target with the same small glyph, a little apart from the link (WCAG 2.5.8 asks for 24 px).
+    const css = root.querySelector('style')!.textContent!;
+    expect(css).toMatch(/button\{[^}]*width:32px;height:32px/);
+    expect(css).toMatch(/\.b\{[^}]*gap:4px/);
+    expect(css).toMatch(/button\{[^}]*font-size:15px/);
     // The app's styles live outside the shadow root.
     expect(document.body.querySelectorAll('a')).toHaveLength(0);
   });
