@@ -9,7 +9,7 @@ import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { localeOf } from './locale.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { MAX_NAME } from '../platform/tokens.js';
-import { confirmAttrs, confirmed, questionPage, dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, type Question, visibilityLabel, withNotice } from './pages.js';
+import { confirmAttrs, confirmed, questionPage, dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, type Question, staleFormPage, visibilityLabel, withNotice } from './pages.js';
 import { aiBadge, appCard, badge, btn, named, callout, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash } from './session.js';
 
@@ -184,7 +184,7 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
     (req, res) => {
       const user = userOf(res);
       if (!csrfValid(core, user, field(req, 'csrf'))) {
-        res.status(403).type('html').send(formErrorPage(localeOf(res), 'error.sessionExpired', undefined, shellOf(res)));
+        res.status(403).type('html').send(staleFormPage(localeOf(res), '/publish', shellOf(res)));
         return;
       }
       if (!deploys(user)) {

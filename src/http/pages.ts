@@ -189,9 +189,16 @@ export const disabledPage = (locale: Locale, opts: PageOpts = {}): string =>
   messagePage(locale, t(locale, 'error.disabled.title'), t(locale, 'error.disabled.text'), '', opts);
 export const badCodePage = (locale: Locale, opts: PageOpts = {}): string =>
   messagePage(locale, t(locale, 'error.badCode.title'), t(locale, 'error.badCode.text'), '', opts, 'danger');
-/** A form post whose CSRF token was missing or stale; `back` is the local path of the page to return to. */
-export const sessionExpiredPage = (locale: Locale, back = '/', backLabel = t(locale, 'common.backToOverview')): string =>
-  page(locale, t(locale, 'error.failed.title'), authCard(`<div class="auth-icon is-danger">${icon('alert')}</div><h1>${esc(t(locale, 'error.failed.title'))}</h1>${notice('danger', t(locale, 'error.sessionExpired'))}${backLink(locale, back, backLabel)}`));
+/**
+ * A form post whose CSRF token was missing or stale: the page was open too long, or the account signed in again elsewhere. It says
+ * so, and its one button opens the page the form was on (`back`, a local path), fresh, with a new token. Nothing suggests a reload,
+ * which would send the same stale form again.
+ */
+export function staleFormPage(locale: Locale, back = '/', opts: PageOpts = {}): string {
+  const title = t(locale, 'error.stale.title');
+  return page(locale, title, messageCard(`<div class="auth-icon is-danger">${icon('alert')}</div><h1>${esc(title)}</h1><p>${esc(t(locale, 'error.stale.text'))}</p>
+<div class="btn-row gap-top"><a class="${btn('primary')}" href="${esc(back)}">${esc(t(locale, 'error.stale.back'))}</a></div>`, opts), { ...opts, returnPath: back });
+}
 
 export const backLink = (locale: Locale, href = '/', label = t(locale, 'common.backToOverview')): string => `<p class="auth-links"><a href="${esc(href)}">${esc(label)}</a></p>`;
 
@@ -301,15 +308,15 @@ export function questionPage(locale: Locale, q: Question, req: { body?: unknown;
 export const field = (id: string, label: string, control: string, hint = ''): string =>
   `<div class="field"><label for="${esc(id)}">${esc(label)}</label>${control}${hint ? `<p class="hint" id="${esc(id)}-hint">${esc(hint)}</p>` : ''}</div>`;
 
+/** A control id that may be written into markup without escaping. */
+const CONTROL_ID = /^[A-Za-z][A-Za-z0-9_-]{0,100}$/;
+
 /**
  * `html` with an error message at the control whose id is `id`: the message between the label and the control (so a button next to
  * the field stays level with it), the control marked invalid and described by the message, and focused when the page opens; the
  * values a refused form sent come back in the text fields they came from (`values` maps control ids to text; never a password).
  * A closed "get your own" panel around the control opens. Null when the page has no such control.
  */
-/** A control id that may be written into markup without escaping. */
-const CONTROL_ID = /^[A-Za-z][A-Za-z0-9_-]{0,100}$/;
-
 export function withFieldError(html: string, id: string, message: string, values: Record<string, string> = {}): string | null {
   // Ids are written into the markup as they are: anything but a plain id (it may come from a request) is refused, not cleaned.
   if (!CONTROL_ID.test(id)) return null;

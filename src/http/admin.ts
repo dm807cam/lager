@@ -15,7 +15,7 @@ import { defaultSender, MAX_SMTP_PASSWORD, SMTP_SECURITY, smtpErrorText, type Sm
 import type { Role, User } from '../platform/users.js';
 import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { loginLimiter } from './platform.js';
-import { confirmAttrs, confirmed, questionPage, withFieldError, noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, formErrorPage, hiddenField, missingPage, optionList, page, sizeText, undoForm, visibilityLabel, type Option, type Question } from './pages.js';
+import { confirmAttrs, confirmed, questionPage, staleFormPage, withFieldError, noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, hiddenField, missingPage, optionList, page, sizeText, undoForm, visibilityLabel, type Option, type Question } from './pages.js';
 import { domainsBody, storageUsed } from './manage.js';
 import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash, type Undo } from './session.js';
@@ -546,7 +546,9 @@ export const adminExtension: PlatformExtension = (router, core) => {
     async (req, res, next) => {
       const user = adminOf(res);
       if (!csrfValid(core, user, field(req, 'csrf', 2000))) {
-        send(res, 403, formErrorPage(localeOf(res), 'error.sessionExpired', backLink(localeOf(res), '/admin', t(localeOf(res), 'admin.back')), shellFor(core, req, user)));
+        // Back to the page the form is on: the form's own address where that is a page, else the page it belongs to.
+        const seg = req.path.split('/').filter(Boolean);
+        send(res, 403, staleFormPage(localeOf(res), formPageOf(req.path) ?? (seg.length === 2 ? req.path : '/admin'), shellFor(core, req, user)));
         return;
       }
       try {

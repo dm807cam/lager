@@ -10,7 +10,7 @@ import { addressKey } from './client-address.js';
 import { requestLocale } from './locale.js';
 import { loginLimiter } from './platform.js';
 import { sameOriginGuard } from './origin.js';
-import { authCard, esc, field, messagePage, noticeText, page, resendForm, sessionExpiredPage } from './pages.js';
+import { authCard, esc, field, messagePage, noticeText, page, resendForm, staleFormPage } from './pages.js';
 import { avatar, btn, icon, notice as noticeBox, signedIn } from './ui.js';
 import { RateLimiter } from './ratelimit.js';
 import { csrfToken, csrfValid, flashUrl, issueSession, markDevice, readFlash } from './session.js';
@@ -320,7 +320,7 @@ export const authExtension: PlatformExtension = (router, core) => {
       const user = userOf(res);
       const locale = requestLocale(core, req, user);
       if (!csrfValid(core, user, field(req, 'csrf', 2000))) {
-        html(res, 403, sessionExpiredPage(locale, '/account', t(locale, 'account.back')));
+        html(res, 403, staleFormPage(locale, '/account', signedIn(core, user, null, '/account')));
         return;
       }
       try {

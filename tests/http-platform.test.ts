@@ -136,7 +136,10 @@ describe('platform host', () => {
     expect(none.headers['set-cookie']).toBeUndefined();
     const bad = await request(h.app).post('/logout').set('Host', PLATFORM_HOST).set('Cookie', cookie).type('form').send({ csrf: 'nope' });
     expect(bad.status).toBe(403);
-    expect((await request(h.app).post('/logout').set('Host', PLATFORM_HOST)).status).toBe(403);
+    // Without a session there is nothing to sign out of: on to the sign-in page.
+    const anon = await request(h.app).post('/logout').set('Host', PLATFORM_HOST);
+    expect(anon.status).toBe(302);
+    expect(anon.headers.location).toBe('/login');
   });
 
   it('auth/instance: anonymous goes to login, unknown slug 404, none level 403', async () => {

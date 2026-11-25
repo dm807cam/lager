@@ -229,18 +229,30 @@ describe('shell', () => {
     expect((await request(s.h.app).post('/no/such/page').set('Host', s.h.host).set('Cookie', await cookieOf('admin'))).status).toBe(404);
   });
 
-  it('a failed form post shows its error inside the shell as well', async () => {
+  it('a form sent from an out-of-date page says so inside the shell, and its one button reopens the page the form was on', async () => {
     s = await showcase();
     const cookie = await s.h.login();
-    for (const path of ['/ui/instances/notes/delete', '/admin/groups', '/ui/tokens']) {
+    const cases: Array<[string, string]> = [
+      ['/ui/instances/notes/delete', '/instances/notes'], ['/ui/apps/notes/collaborators', '/apps/notes'], ['/admin/groups', '/admin/groups'],
+      [`/admin/users/${s.ids.uwe}/role`, `/admin/users/${s.ids.uwe}`], ['/admin/mail/test', '/admin/mail'], ['/ui/tokens', '/publish'],
+      ['/account/name', '/account'], ['/logout', '/'],
+    ];
+    for (const [path, back] of cases) {
       const res = await request(s.h.app).post(path).set('Host', s.h.host).set('Cookie', cookie).type('form').send({ csrf: 'stale' });
       expect(res.status, path).toBe(403);
       const doc = dom(res.text);
       expect(doc.querySelector('header.topbar'), path).not.toBeNull();
-      expect(doc.querySelector('main .auth-card [role="alert"]')!.textContent, path).toBe(t('en', 'error.sessionExpired'));
-      // The language switcher of a failed post leads home: there is no page at the form's address.
-      expect(doc.querySelector('.lang-menu a')!.getAttribute('href'), path).toBe('/lang/en?return=%2F');
+      expect(doc.querySelector('main h1')!.textContent, path).toBe(t('en', 'error.stale.title'));
+      expect(doc.querySelector('main p')!.textContent, path).toBe(t('en', 'error.stale.text'));
+      const button = doc.querySelector('main .auth-card a.btn')!;
+      expect([button.getAttribute('href'), button.textContent], path).toEqual([back, t('en', 'error.stale.back')]);
+      // Nothing suggests reloading, which would send the same out-of-date form again.
+      expect(res.text.toLowerCase(), path).not.toContain('reload');
+      // The language switcher returns to that page too.
+      expect(doc.querySelector('.lang-menu a')!.getAttribute('href'), path).toBe(`/lang/en?return=${encodeURIComponent(back)}`);
     }
+    // The session survived: the stale sign-out signed nobody out.
+    expect((await request(s.h.app).get('/').set('Host', s.h.host).set('Cookie', cookie)).status).toBe(200);
   });
 
   it('the primary navigation marks the current item and offers Administration to administrators only', async () => {

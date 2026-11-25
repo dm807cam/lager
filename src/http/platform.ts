@@ -6,8 +6,8 @@ import { addressKey } from './client-address.js';
 import { clearCookie, NONCE_RE, sessionCookieName, warnIfPlainHttp } from './cookies.js';
 import { csrfToken, csrfValid, issueSession, knownDevice, markDevice, sessionUser } from './session.js';
 import { isLocale, t } from '../i18n/index.js';
-import { authCard, badCodePage, disabledPage, esc, forbiddenPage, hiddenField, loginPage, notFoundPage, page, sessionExpiredPage } from './pages.js';
-import { btn, icon } from './ui.js';
+import { authCard, badCodePage, disabledPage, esc, forbiddenPage, hiddenField, loginPage, notFoundPage, page, staleFormPage } from './pages.js';
+import { btn, icon, signedIn } from './ui.js';
 import { LANG_COOKIE, ONE_YEAR_SECONDS, requestLocale } from './locale.js';
 import { LagerError } from '../errors.js';
 import { safeReturnPath, sendError } from './errors.js';
@@ -431,8 +431,10 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
   router.post('/logout', express.urlencoded({ extended: false, limit: '10kb' }), (req, res) => {
     const user = sessionUser(core, req);
     const csrf = (req.body as Record<string, unknown> | undefined)?.csrf;
-    if (!user || !csrfValid(core, user, csrf)) {
-      res.status(403).type('html').send(sessionExpiredPage(requestLocale(core, req, user)));
+    // Already signed out: nothing to do. A stale form from an open page: sign-out needs a fresh one, so nobody can sign others out.
+    if (!user) { res.redirect('/login'); return; }
+    if (!csrfValid(core, user, csrf)) {
+      res.status(403).type('html').send(staleFormPage(requestLocale(core, req, user), '/', signedIn(core, user, null, '/')));
       return;
     }
     // Ending the epoch signs the account out everywhere: every platform session, instance cookie and pending code.
@@ -456,7 +458,7 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
     }
     const locale = requestLocale(core, req, user);
     if (answer && !csrfValid(core, user, params.csrf)) {
-      res.status(403).type('html').send(sessionExpiredPage(locale));
+      res.status(403).type('html').send(staleFormPage(locale, '/', signedIn(core, user, null, '/')));
       return;
     }
     const slug = typeof params.slug === 'string' ? params.slug : '';

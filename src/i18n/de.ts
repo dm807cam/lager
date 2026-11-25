@@ -26,7 +26,9 @@ export const de: Record<MessageKey, string> = {
   'error.badCode.title': 'Anmeldung ungültig',
   'error.badCode.text': 'Der Anmeldelink ist ungültig oder abgelaufen. Bitte öffne die App erneut.',
   'error.failed.title': 'Das hat nicht geklappt',
-  'error.sessionExpired': 'Die Sitzung ist abgelaufen. Bitte lade die Seite neu und versuche es erneut.',
+  'error.stale.title': "Diese Seite ist veraltet",
+  'error.stale.text': "Zu deiner Sicherheit wurde das Formular nicht gesendet: Die Seite war lange offen, oder du hast dich in einem anderen Tab neu angemeldet. Öffne die Seite neu und wiederhole die Änderung.",
+  'error.stale.back': "Seite neu öffnen",
   'error.crossOrigin': 'Die Anfrage kam von einer anderen Website und wurde abgelehnt.',
   'error.tooMany.title': 'Zu viele Anfragen',
   'error.tooMany.text': 'Bitte warte eine Weile und versuche es später erneut.',
@@ -84,7 +86,6 @@ export const de: Record<MessageKey, string> = {
   'auth.reset.done': 'Passwort geändert. Alle Verbindungen zu KI-Assistenten und alle API-Tokens dieses Kontos wurden widerrufen.',
 
   'account.title': 'Konto',
-  'account.back': 'Zurück zum Konto',
   'account.name.saved': 'Name gespeichert.',
   'account.locale.label': 'Sprache',
   'account.locale.browser': 'Browser-Standard',
