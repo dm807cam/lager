@@ -131,6 +131,23 @@
     });
   });
 
+  // Sending: the pressed button says the form is on its way, and pressing again sends nothing. The button is not disabled, so its own
+  // name and value still go with the form; coming back to this page (back button, page cache) shows it as it was.
+  var busy = function (form, button) {
+    form.setAttribute('data-busy', '');
+    if (button && button.setAttribute) button.setAttribute('aria-busy', 'true');
+  };
+  window.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (form.hasAttribute('data-busy')) { e.preventDefault(); return; }
+    // A form that asks first (below) is sent once the answer is yes.
+    if (!e.defaultPrevented) busy(form, e.submitter || form.querySelector('[type="submit"]'));
+  });
+  window.addEventListener('pageshow', function () {
+    document.querySelectorAll('form[data-busy]').forEach(function (f) { f.removeAttribute('data-busy'); });
+    document.querySelectorAll('[aria-busy="true"]').forEach(function (b) { b.removeAttribute('aria-busy'); });
+  });
+
   // Questions before changes that cannot be taken back. The form carries the question; the dialog asks it, and only a yes sends the
   // form, with confirmed=1. Cancel has the focus, so Enter or Escape keep everything as it is. Without this script, or in a browser
   // without <dialog>, the server asks on a page of its own: the change never happens on one click either way.
@@ -181,6 +198,7 @@
         input.value = '1';
         form.appendChild(input);
         dialog.close();
+        busy(form, trigger);
         form.submit();
       });
       dialog.showModal();
