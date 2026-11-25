@@ -718,7 +718,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
       const owner = email !== '' && core.access.canDeploy(app, user) ? accountByEmail(email) : user;
       const created = core.apps.createInstance({ appId: app.id, slug: field(req, 'slug', 100).trim(), ownerId: owner.id, createdBy: user.id });
       // From the home page the new instance shows among one's own; from the app page in its list of instances.
-      return { ok: 'notice.ok.instanceCreated', params: { slug: created.slug }, anchor: field(req, 'from') === 'home' ? 'mine' : 'instances' };
+      // On the home page it is "your copy"; the word instance belongs to the app page.
+      return field(req, 'from') === 'home'
+        ? { ok: 'notice.ok.copyCreated', params: { slug: created.slug }, anchor: 'mine' }
+        : { ok: 'notice.ok.instanceCreated', params: { slug: created.slug }, anchor: 'instances' };
     },
     // On the home page each app's name field is its own; an unknown owner is the owner field's problem, anything else the name's.
     (req, error) => {

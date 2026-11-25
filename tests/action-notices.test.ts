@@ -100,7 +100,7 @@ describe('after a form', () => {
     // A user who gets their own instance from the catalog sees it named above their own instances.
     const uwe = await s.h.login('uwe@x.y', PASSWORD);
     const own = await submit(s, uwe, s.ids.uwe, '/ui/apps/tasks/instances', { slug: 'uwe-tasks', from: 'home' });
-    expect(noticeOf(own.doc)).toMatchObject({ text: t('en', 'notice.ok.instanceCreated', { slug: 'uwe-tasks' }), before: 'mine' });
+    expect(noticeOf(own.doc)).toMatchObject({ text: t('en', 'notice.ok.copyCreated', { slug: 'uwe-tasks' }), before: 'mine' });
 
     const token = s.h.core.tokens.list(admin)[0];
     const revoked = await submit(s, cookie, admin, `/ui/tokens/${token.id}/revoke`, { confirmed: '1' });
