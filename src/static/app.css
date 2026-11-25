@@ -332,6 +332,15 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, t
   background: var(--surface); color: var(--ink); font: inherit; font-size: 0.95rem; transition: border-color var(--ease), box-shadow var(--ease);
 }
 input::placeholder { color: var(--ink-3); }
+/* Show/hide in a password field: a 44 px button at the field's end, the text kept clear of it. */
+.reveal { position: relative; display: block; }
+.reveal > input { padding-right: 48px; }
+.reveal-btn {
+  position: absolute; top: 0; right: 0; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 100%; min-height: 44px;
+  padding: 0; border: 0; border-radius: var(--r-ctl); background: transparent; color: var(--ink-2); cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.reveal-btn:hover { color: var(--ink); }
+.reveal-btn:focus-visible { outline-offset: -4px; }
 input:hover:not([readonly]):not([type="checkbox"]), select:hover { border-color: var(--ink-3); }
 input[readonly] { background: var(--surface-2); color: var(--ink-2); }
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-color: var(--focus); }

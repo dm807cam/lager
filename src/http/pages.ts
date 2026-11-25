@@ -138,7 +138,7 @@ export function page(locale: Locale, title: string, body: string, opts: PageOpts
 <html lang="${locale}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${esc(title)}</title><meta name="color-scheme" content="light dark"><meta name="theme-color" content="#1f2a5c">
 ${head}</head>
-<body class="${bodyClass}">${SPRITE}${content}</body></html>`;
+<body class="${bodyClass}"${origin ? '' : ` data-show-password="${esc(t(locale, 'password.show'))}" data-hide-password="${esc(t(locale, 'password.hide'))}"`}>${SPRITE}${content}</body></html>`;
 }
 
 /** Signed-out content: a card, optionally with an icon above the heading; `inner` is trusted markup. */

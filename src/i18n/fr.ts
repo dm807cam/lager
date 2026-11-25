@@ -580,6 +580,8 @@ export const fr: Record<MessageKey, string> = {
   'instance.snapshots.none.detail': "Lager en crée un avant chaque changement de version et avant chaque restauration, dès que l’instance contient des données, pour que vous puissiez revenir en arrière.",
   'app.noCollaborators.detail': "Les collaborateurs déploient de nouvelles versions de cette app, comme vous. Vous pouvez ajouter des Publisher et des administrateurs par leur adresse e-mail.",
   'admin.groups.none.detail': "Un groupe partage une instance avec plusieurs personnes à la fois, et peut donner à ses membres plus ou moins d’espace de stockage.",
+  'password.show': "Afficher le mot de passe",
+  'password.hide': "Masquer le mot de passe",
   'home.copyName': "Nom de votre copie",
   'notice.ok.copyCreated': "Votre copie {slug} est prête.",
   'dash.instanceCount.one': '{count} instance',

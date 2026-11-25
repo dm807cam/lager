@@ -29,6 +29,33 @@
     });
   });
 
+  // Passwords: a button in the field shows what was typed, and hides it again. Before the form is sent the field is a password
+  // field again, so browsers still offer to save it and nothing readable lands in form history. Pasted keys (data-reveal="off") keep none.
+  var SHOW = document.body.getAttribute('data-show-password');
+  var HIDE = document.body.getAttribute('data-hide-password');
+  if (SHOW && HIDE) document.querySelectorAll('input[type="password"]:not([data-reveal="off"])').forEach(function (input) {
+    var focused = document.activeElement === input;
+    var wrap = document.createElement('span');
+    wrap.className = 'reveal';
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'reveal-btn';
+    b.innerHTML = '<svg class="i" aria-hidden="true" focusable="false"><use href="#i-eye"></use></svg>';
+    var set = function (shown) {
+      input.type = shown ? 'text' : 'password';
+      b.setAttribute('aria-pressed', String(shown));
+      b.setAttribute('aria-label', shown ? HIDE : SHOW);
+      b.firstChild.firstChild.setAttribute('href', shown ? '#i-eyeOff' : '#i-eye');
+    };
+    set(false);
+    b.addEventListener('click', function () { set(input.type === 'password'); });
+    if (input.form) input.form.addEventListener('submit', function () { set(false); });
+    wrap.appendChild(b);
+    if (focused) input.focus();
+  });
+
   // Dates: the server writes them in UTC and says so; here they become the viewer's own time, in the page's language.
   var DATE_FORMATS = {
     datetime: { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' },

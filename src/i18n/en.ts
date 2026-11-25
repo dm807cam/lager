@@ -578,6 +578,8 @@ export const en = {
   'instance.snapshots.none.detail': "Lager takes one before each change of version and before each restore, once the instance holds data, so you can go back.",
   'app.noCollaborators.detail': "Collaborators deploy new versions of this app, as you do. You can add publishers and administrators by their email address.",
   'admin.groups.none.detail': "A group shares an instance with several people at once, and can give its members more or less storage.",
+  'password.show': "Show password",
+  'password.hide': "Hide password",
   'home.copyName': "Name of your copy",
   'notice.ok.copyCreated': "Your copy {slug} is ready.",
   'dash.instanceCount.one': '{count} instance',

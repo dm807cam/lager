@@ -580,6 +580,8 @@ export const es: Record<MessageKey, string> = {
   'instance.snapshots.none.detail': "Lager crea una antes de cada cambio de versión y antes de cada restauración, en cuanto la instancia contiene datos, para que puedas volver atrás.",
   'app.noCollaborators.detail': "Los colaboradores despliegan nuevas versiones de esta app, como tú. Puedes añadir Publisher y administradores por su dirección de correo.",
   'admin.groups.none.detail': "Un grupo comparte una instancia con varias personas a la vez y puede dar a sus miembros más o menos almacenamiento.",
+  'password.show': "Mostrar contraseña",
+  'password.hide': "Ocultar contraseña",
   'home.copyName': "Nombre de tu copia",
   'notice.ok.copyCreated': "Tu copia {slug} está lista.",
   'dash.instanceCount.one': '{count} instancia',
