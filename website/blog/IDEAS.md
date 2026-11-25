@@ -14,6 +14,7 @@ Topics for the Lager blog. Tick one off (`- [x]`) in the pull request that publi
 - [ ] The family recipe box that finally has photos (`assets` uploads)
 - [ ] A chore wheel that is fair, because the data lives in one place everyone can see
 - [ ] Holiday budget splitter for a group trip, shared by link
+- [ ] A reading log for the kitchen tablet: a card per book, a heart for favourites, and a sticker for every tenth book
 
 ## Data from outside
 
@@ -41,13 +42,14 @@ Topics for the Lager blog. Tick one off (`- [x]`) in the pull request that publi
 
 ## Under the hood
 
-- [ ] Versions you can undo: the story of a deploy that broke a list, and the snapshot that saved it
+- [x] Versions you can undo: the story of a deploy that broke a list, and the snapshot that saved it (the-deploy-that-ate-143-books)
 - [ ] Your own domain for one app: notes.example.org pointing at a Lager instance
 - [ ] Five minutes on a Raspberry Pi, step by step, with what each installer question means
 - [ ] Pages that save themselves: an app the owner edits without asking the AI again
 - [ ] Private by default: who can see what, explained with one shared grocery list
 - [ ] Why Lager has no telemetry, and what "your data" means in practice
 - [ ] One letterbox per house: why an open guestbook and a token endpoint belong on separate instances, told through the ingest quota
+- [ ] Growing an app without migrating it: new fields with defaults on read, `update` instead of `set`, and old documents that never need touching
 
 ## Small business and clubs
 
