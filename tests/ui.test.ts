@@ -287,20 +287,31 @@ describe('shell', () => {
     const publisher = await nav('pia', '/publish');
     expect([...publisher!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/', '/#catalog', '/publish']);
     expect(publisher!.querySelector('[aria-current="page"]')!.getAttribute('href')).toBe('/publish');
-    expect(publisher!.querySelector('a[href="/publish"]')!.getAttribute('aria-label')).toBe(t('en', 'nav.publish'));
+    expect(publisher!.querySelector('a[href="/publish"] .nav-full')!.textContent).toBe(t('en', 'nav.publish'));
   });
 
-  it('the phone tab bar uses the short labels and keeps the full label as the accessible name', async () => {
+  it('the phone tab bar uses the short labels, and each link is named by the label on screen at either width', async () => {
     s = await showcase();
     const cookie = await s.h.login();
     for (const locale of ['en', 'de'] as const) {
       const html = (await request(s.h.app).get('/').set('Host', s.h.host).set('Cookie', `${cookie}; lager_lang=${locale}`)).text;
       const links = [...dom(html).querySelectorAll('nav.primary a')];
       const expected: Array<[string, MessageKey, MessageKey]> = [['/', 'nav.apps', 'nav.tab.apps'], ['/#catalog', 'dash.catalog', 'dash.catalog'], ['/publish', 'nav.publish', 'nav.tab.publish'], ['/admin', 'nav.admin', 'nav.tab.admin']];
-      expect(links.map((a) => [a.getAttribute('href'), a.getAttribute('aria-label'), a.querySelector('.nav-short')!.textContent])).toEqual(
+      expect(links.map((a) => [a.getAttribute('href'), a.querySelector('.nav-full')!.textContent, a.querySelector('.nav-short')!.textContent])).toEqual(
         expected.map(([href, full, tab]) => [href, t(locale, full), t(locale, tab)]));
+      // No name of its own and no hidden text: a link's accessible name is whichever label is displayed (WCAG 2.5.3, Label in Name).
+      for (const a of links) {
+        expect(a.hasAttribute('aria-label')).toBe(false);
+        expect(a.querySelectorAll('[aria-hidden="true"]:not(svg)')).toHaveLength(0);
+      }
       expect(links.filter((a) => a.getAttribute('aria-current') === 'page').map((a) => a.getAttribute('href'))).toEqual(['/']);
     }
+    // Exactly one of the two labels is displayed at each width, so the name never holds both.
+    const css = fs.readFileSync(path.join(STATIC, 'app.css'), 'utf8');
+    expect(css).toContain('.primary a .nav-short { display: none; }');
+    const phone = css.slice(css.indexOf('@media (max-width: 720px) {'));
+    expect(phone).toContain('.primary a .nav-full { display: none; }');
+    expect(phone).toContain('.primary a .nav-short { display: block; }');
   });
 
   it('account menu and language menu are <details> and work as plain links/forms without script', async () => {

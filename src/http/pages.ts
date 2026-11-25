@@ -70,7 +70,10 @@ function footer(locale: Locale, returnPath: string | null): string {
   return `<footer class="site-footer"><nav aria-label="${esc(t(locale, 'footer.language'))}">${icon('globe', 'i-sm')}<span class="sr-only">${esc(t(locale, 'footer.language'))}</span>${languageLinks(locale, returnPath, '')}</nav></footer>`;
 }
 
-/** `tab` is the shorter label of the phone tab bar; the full label stays the link's accessible name. */
+/**
+ * `tab` is the shorter label of the phone tab bar. Only one of the two labels is displayed at a time (the other is `display: none`),
+ * so the link's accessible name is always the text on screen, and voice control finds the link by what it shows.
+ */
 const NAV: Array<{ id: NavItem; href: string; key: MessageKey; tab: MessageKey; icon: IconName }> = [
   { id: 'apps', href: '/', key: 'nav.apps', tab: 'nav.tab.apps', icon: 'grid' },
   { id: 'catalog', href: '/#catalog', key: 'dash.catalog', tab: 'dash.catalog', icon: 'compass' },
@@ -84,7 +87,7 @@ function topBar(locale: Locale, opts: PageOpts, returnPath: string): { html: str
   const items = NAV.filter((n) => n.id === 'apps' || (n.id === 'catalog' && opts.catalog) || (n.id === 'publish' && user.publisher) || (n.id === 'admin' && user.admin));
   // A navigation with a single destination is noise: the brand already links home.
   const nav = items.length > 1 ? `<nav class="primary" aria-label="${esc(t(locale, 'nav.main'))}">${items.map((n) =>
-    `<a href="${n.href}" aria-label="${esc(t(locale, n.key))}"${n.id === opts.current ? ' aria-current="page"' : ''}>${icon(n.icon)}<span class="nav-full" aria-hidden="true">${esc(t(locale, n.key))}</span><span class="nav-short" aria-hidden="true">${esc(t(locale, n.tab))}</span></a>`).join('')}</nav>` : '';
+    `<a href="${n.href}"${n.id === opts.current ? ' aria-current="page"' : ''}>${icon(n.icon)}<span class="nav-full">${esc(t(locale, n.key))}</span><span class="nav-short">${esc(t(locale, n.tab))}</span></a>`).join('')}</nav>` : '';
   const lang = opts.switcher === false ? '' : `<details class="menu lang-menu"><summary class="menu-trigger">${icon('globe', 'i-sm')}<span aria-hidden="true">${locale}</span><span class="sr-only">${esc(t(locale, 'footer.language'))}</span></summary>
 <div class="menu-panel">${languageLinks(locale, returnPath, 'menu-item')}</div></details>`;
   const theme = `<button type="button" class="menu-item" data-theme-toggle data-system="${esc(t(locale, 'theme.system'))}" data-light="${esc(t(locale, 'theme.light'))}" data-dark="${esc(t(locale, 'theme.dark'))}" hidden>${icon('sun')}<span>${esc(t(locale, 'theme.label'))} <span data-theme-name>${esc(t(locale, 'theme.system'))}</span></span></button>`;
