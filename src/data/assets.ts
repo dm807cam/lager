@@ -4,6 +4,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { LagerError } from '../errors.js';
 import { HandleCache } from './handles.js';
+import { quotaFor, type Quota } from './quota.js';
 
 export interface AssetInfo { id: string; contentType: string; sizeBytes: number; createdAt: string; uploadedBy: string | null }
 
@@ -125,8 +126,8 @@ const toInfo = (r: AssetRow): AssetInfo => ({
 export class InstanceAssets {
   private dbs: HandleCache;
 
-  /** `quotaBytes` caps documents plus assets of one instance (0 = unlimited); `dbUsage` reports the document bytes. */
-  constructor(private dataDir: string, private quotaBytes: number, private dbUsage: (instanceId: string) => number, maxOpen?: number) {
+  /** `quota` caps documents plus assets of one instance (0 = unlimited), one size for all or per instance; `dbUsage` reports the document bytes. */
+  constructor(private dataDir: string, private quota: Quota, private dbUsage: (instanceId: string) => number, maxOpen?: number) {
     this.dbs = new HandleCache(maxOpen);
   }
 
@@ -169,8 +170,9 @@ export class InstanceAssets {
 
   /** The most the instance may still hold in assets, counted from zero: stored bytes plus the room left after documents. */
   maxBytes(instanceId: string): number {
-    if (this.quotaBytes <= 0) return 2 ** 40;
-    return Math.max(this.usage(instanceId).bytes, this.quotaBytes - this.dbUsage(instanceId));
+    const quota = quotaFor(this.quota, instanceId);
+    if (quota <= 0) return 2 ** 40;
+    return Math.max(this.usage(instanceId).bytes, quota - this.dbUsage(instanceId));
   }
 
   put(instanceId: string, bytes: Buffer, declaredType: string | undefined, by: string | null): AssetInfo {
@@ -178,7 +180,8 @@ export class InstanceAssets {
     const contentType = normalizeAssetType(declaredType, bytes);
     const used = this.usage(instanceId);
     if (used.files >= ASSET_LIMITS.maxFiles) throw new LagerError('conflict', 'This instance has reached the maximum number of files.');
-    if (this.quotaBytes > 0 && this.dbUsage(instanceId) + used.bytes + bytes.length > this.quotaBytes) {
+    const quota = quotaFor(this.quota, instanceId);
+    if (quota > 0 && this.dbUsage(instanceId) + used.bytes + bytes.length > quota) {
       throw new LagerError('quota_exceeded', 'This instance\'s storage is full.');
     }
     const db = this.open(instanceId, true)!;

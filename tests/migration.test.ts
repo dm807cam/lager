@@ -120,6 +120,24 @@ describe('platform database migrations', () => {
     }
   });
 
+  it('a version-6 database keeps its apps and groups, which follow the default storage until an administrator sets one', () => {
+    const dir = versionOne();
+    const old = new DatabaseSync(path.join(dir, 'platform.sqlite'));
+    old.exec('PRAGMA foreign_keys = ON');
+    for (const m of MIGRATIONS.slice(1, 6)) old.exec(m);
+    old.exec('PRAGMA user_version = 6');
+    old.prepare('INSERT INTO groups (id, name, created_at) VALUES (?, ?, ?)').run('g1', 'Team', '2026-11-21T00:00:00.000Z');
+    old.close();
+    const db = openPlatformDb(dir);
+    try {
+      expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
+      expect({ ...db.prepare('SELECT slug, quota_bytes FROM apps').get() }).toEqual({ slug: 'notes', quota_bytes: null });
+      expect({ ...db.prepare('SELECT name, quota_bytes FROM groups').get() }).toEqual({ name: 'Team', quota_bytes: null });
+    } finally {
+      db.close();
+    }
+  });
+
   it('a fresh database and a migrated one have the same schema', () => {
     const schema = (db: DatabaseSync): string[] =>
       (db.prepare("SELECT name FROM pragma_table_list WHERE schema = 'main' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>)
@@ -134,6 +152,8 @@ describe('platform database migrations', () => {
     expect(schema(fresh)).toContain('embed_origins.origins TEXT');
     expect(schema(fresh)).toContain('user_two_factor.secret_enc TEXT');
     expect(schema(fresh)).toContain('user_recovery_codes.code_hash TEXT');
+    expect(schema(fresh)).toContain('apps.quota_bytes INTEGER');
+    expect(schema(fresh)).toContain('groups.quota_bytes INTEGER');
     fresh.close();
     migrated.close();
   });

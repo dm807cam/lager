@@ -7,6 +7,7 @@ import { LagerError } from '../errors.js';
 import { checkApp } from './check.js';
 import { effectiveRules, ingestEndpoints } from './ingest.js';
 import { DEFAULT_THEME_COLOR } from './icons.js';
+import { quotaFor, type Quota } from '../data/quota.js';
 import type { Settings } from './settings.js';
 import type { User, Users } from './users.js';
 
@@ -158,7 +159,7 @@ export class Apps {
   private activatedHooks: ActivatedHook[] = [];
   private deleteHooks: Array<(instance: Instance) => void> = [];
   private checks: AccessChecks | null = null;
-  private quota: { bytes: number; otherUsage: (instanceId: string) => number } | null = null;
+  private quota: { bytes: Quota; otherUsage: (instanceId: string) => number } | null = null;
   private reservedSlugs = new Set<string>();
 
   constructor(private db: DatabaseSync, private dataDir: string, private users: Users, private settings?: Settings) {}
@@ -180,7 +181,7 @@ export class Apps {
   }
 
   /** Saved pages count against the instance quota together with `otherUsage` (documents and assets); 0 = unlimited. */
-  setQuota(bytes: number, otherUsage: (instanceId: string) => number): void {
+  setQuota(bytes: Quota, otherUsage: (instanceId: string) => number): void {
     this.quota = { bytes, otherUsage };
   }
 
@@ -659,9 +660,10 @@ export class Apps {
       const mine = this.db.prepare('SELECT number, size_bytes FROM versions WHERE instance_id = ? ORDER BY number DESC')
         .all(instance.id) as unknown as Array<{ number: number; size_bytes: number }>;
       const dropped = mine.slice(MAX_SAVED_VERSIONS - 1);
-      if (this.quota && this.quota.bytes > 0) {
+      const quota = this.quota ? quotaFor(this.quota.bytes, instance.id) : 0;
+      if (this.quota && quota > 0) {
         const kept = this.savedBytes(instance.id) - dropped.reduce((sum, r) => sum + Number(r.size_bytes), 0);
-        if (this.quota.otherUsage(instance.id) + kept + sizeBytes > this.quota.bytes) {
+        if (this.quota.otherUsage(instance.id) + kept + sizeBytes > quota) {
           throw new LagerError('quota_exceeded', 'This instance\'s storage is full.');
         }
       }

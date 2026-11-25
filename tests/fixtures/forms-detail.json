@@ -1345,6 +1345,24 @@
       ]
     },
     {
+      "action": "/admin/groups/{group:Team}/quota",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "quota",
+          "type": "number",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
       "action": "/admin/groups/{group:Team}/rename",
       "method": "post",
       "fields": [
@@ -1433,6 +1451,42 @@
     }
   ],
   "admin apps": [
+    {
+      "action": "/admin/apps/{app:notes}/quota",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "quota",
+          "type": "number",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/admin/apps/{app:tasks}/quota",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "quota",
+          "type": "number",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
     {
       "action": "/admin/instances/notes/disabled",
       "method": "post",

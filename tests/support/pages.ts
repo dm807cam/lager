@@ -128,6 +128,7 @@ export function idNames(s: Showcase): Map<string, string> {
   const names = new Map<string, string>();
   for (const u of core.users.list()) names.set(u.id, `{user:${u.email}}`);
   for (const g of core.groups.list()) names.set(g.id, `{group:${g.name}}`);
+  for (const a of core.apps.listAllApps()) names.set(a.id, `{app:${a.slug}}`);
   for (const i of core.accounts.listInvites()) names.set(i.id, `{invite:${i.role}}`);
   for (const u of core.users.list()) for (const tk of core.tokens.list(u.id)) names.set(tk.id, `{token:${tk.name}}`);
   return names;
