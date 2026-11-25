@@ -432,7 +432,8 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
     const user = sessionUser(core, req);
     const csrf = (req.body as Record<string, unknown> | undefined)?.csrf;
     // Already signed out: nothing to do. A stale form from an open page: sign-out needs a fresh one, so nobody can sign others out.
-    if (!user) { res.redirect('/login'); return; }
+    // A cookie whose session is over (signed out elsewhere, expired) is taken away on the way.
+    if (!user) { clearCookie(res, config, sessionCookieName(config)); res.redirect('/login'); return; }
     if (!csrfValid(core, user, csrf)) {
       res.status(403).type('html').send(staleFormPage(requestLocale(core, req, user), '/', signedIn(core, user, null, '/')));
       return;

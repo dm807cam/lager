@@ -154,6 +154,18 @@ describe('response hardening', () => {
   });
 });
 
+describe('reflow', () => {
+  it('button labels wrap instead of pushing out of their card at 320 px; short row buttons stay on one line', () => {
+    const css = fs.readFileSync(path.join(STATIC, 'app.css'), 'utf8');
+    const rule = (selector: string): string => new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([^}]*)\\}`).exec(css)?.[1] ?? '';
+    const button = rule('.btn, button');
+    expect(button).toContain('white-space: normal');
+    expect(button).not.toContain('white-space: nowrap');
+    expect(button).toContain('max-width: 100%');
+    expect(rule('.btn-sm')).toContain('white-space: nowrap');
+  });
+});
+
 describe('shell', () => {
   it('shell has a skip link, one <main>, one <h1>, and landmarks for banner and navigation', async () => {
     s = await showcase();
@@ -251,6 +263,12 @@ describe('shell', () => {
       // The language switcher returns to that page too.
       expect(doc.querySelector('.lang-menu a')!.getAttribute('href'), path).toBe(`/lang/en?return=${encodeURIComponent(back)}`);
     }
+    // Nothing was changed by any of them.
+    const { core } = s.h;
+    expect(core.apps.getInstanceBySlug('notes')).not.toBeNull();
+    expect(core.apps.listCollaborators(core.apps.getApp('notes')!.id).map((u) => u.id)).toEqual([s.ids.pia]);
+    expect(core.users.get(s.ids.uwe)!.role).toBe('user');
+    expect(core.groups.list().map((g) => g.name)).toEqual(['Team']);
     // The session survived: the stale sign-out signed nobody out.
     expect((await request(s.h.app).get('/').set('Host', s.h.host).set('Cookie', cookie)).status).toBe(200);
   });
