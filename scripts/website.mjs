@@ -346,7 +346,7 @@ ${post.html}
   <aside class="cta">
     <h2>Try it on your own server</h2>
     <p>One command sets up Lager on a Raspberry Pi or any 64-bit Linux machine. Then ask your assistant for an app.</p>
-    <pre tabindex="0" aria-label="Install command"><code>${esc(INSTALL)}</code></pre>
+    <pre tabindex="0" role="group" aria-label="Install command"><code>${esc(INSTALL)}</code></pre>
     <p><a class="btn primary" href="${REPO_URL}#quick-start">Get started</a> <a class="btn ghost" href="/blog/feed.xml">Follow the blog</a></p>
   </aside>
   <nav class="pager" aria-label="More posts">

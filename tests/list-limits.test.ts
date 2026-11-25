@@ -75,6 +75,51 @@ describe('long lists', () => {
     expect([(doc.getElementById('a') as HTMLElement).hidden, (doc.getElementById('b') as HTMLElement).hidden, none.textContent]).toEqual([false, false, '']);
   });
 
+  /** Runs app.js on `html` and returns a function that types into the filter and reports what is hidden. */
+  const filterPage = (html: string) => {
+    const w = new JSDOM(`<!doctype html><body>${html}</body>`, { runScripts: 'outside-only' }).window;
+    w.eval(fs.readFileSync(new URL('../src/static/app.js', import.meta.url), 'utf8'));
+    const input = w.document.querySelector<HTMLInputElement>('input[data-filter]')!;
+    return (v: string): string[] => {
+      input.value = v;
+      input.dispatchEvent(new w.Event('input'));
+      return [...w.document.querySelectorAll<HTMLElement>('[id]')].filter((e) => e.hidden && e.id !== 'f').map((e) => e.id);
+    };
+  };
+  const FIELD = (sel: string) => `<div class="filter" hidden><input type="search" id="f" data-filter="${sel}"><p class="filter-none" role="status" data-none="None"></p></div>`;
+
+  it('entries that are sections themselves (Administration › Apps) stay while they match and all come back when cleared', () => {
+    const type = filterPage(`<main>${FIELD('main .app-group')}<section class="app-group" id="notes"><h2>Notes</h2></section><section class="app-group" id="pins"><h2>Pins</h2></section></main>`);
+    expect(type('notes')).toEqual(['pins']);
+    expect(type('')).toEqual([]);
+  });
+
+  it('with entries from two sections (the home page), a section whose entries are all gone hides, the other stays', () => {
+    const type = filterPage(`${FIELD('#mine .app-card, #shared .app-card')}<section id="mine"><h2>Yours</h2><div class="app-card" id="c1">Notes</div></section>
+      <section id="shared"><h2>Shared</h2><div class="app-card" id="c2">Pin board</div></section>`);
+    expect(type('board')).toEqual(['mine', 'c1']);
+    expect(type('notes')).toEqual(['shared', 'c2']);
+    expect(type('')).toEqual([]);
+  });
+
+  it('on Administration › Apps, typing narrows the apps and clearing brings them all back', async () => {
+    s = await showcase();
+    for (let i = 1; i <= 8; i++) s.h.core.apps.deploy({ slug: `app-${i}`, html: '<p>a</p>', title: `App ${i}`, userId: s.h.adminId });
+    const html = (await request(s.h.app).get('/admin/apps').set('Host', s.h.host).set('Cookie', await s.h.login())).text;
+    const w = new JSDOM(html, { runScripts: 'outside-only' }).window;
+    w.eval(fs.readFileSync(new URL('../src/static/app.js', import.meta.url), 'utf8'));
+    const input = w.document.querySelector<HTMLInputElement>('input[data-filter]')!;
+    const shown = (v: string): number => {
+      input.value = v;
+      input.dispatchEvent(new w.Event('input'));
+      return [...w.document.querySelectorAll<HTMLElement>('main .app-group')].filter((g) => !g.hidden).length;
+    };
+    const all = w.document.querySelectorAll('main .app-group').length;
+    expect(all).toBeGreaterThanOrEqual(8);
+    expect(shown('App 3')).toBe(1);
+    expect(shown('')).toBe(all);
+  });
+
   it('on the home page the filter comes after the notice, under the page head', async () => {
     s = await showcase();
     const { core } = s.h;

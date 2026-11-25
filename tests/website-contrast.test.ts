@@ -58,11 +58,30 @@ describe.each(Object.entries(SOURCES))('%s', (_file, css) => {
     expect(failing).toEqual([]);
   });
 
-  it('orange is a fill only: text and the focus ring use the darker text tone', () => {
-    // The one exception: the "$" prompt on the dark code background, where the bright orange reaches 4.5:1 in both themes.
-    const onCode = ratio(rgb('#f58220'), rgb('#141729'));
-    expect(onCode).toBeGreaterThan(4.5);
-    expect(css.replace(/\.cmd code \.p \{[^}]*\}/, '')).not.toMatch(/(?<![-\w])color:\s*var\(--accent\)/);
+  it('orange is a fill only on light surfaces: text and the focus ring there use the darker text tone', () => {
+    // The exceptions are on dark surfaces, where the bright orange is the one that reaches the contrast (tested below): the "$"
+    // prompt in the code box and the ✓ of the install section.
+    const rest = css.replace(/\.cmd code \.p \{[^}]*\}/, '').replace(/\.install li::before \{[^}]*\}/, '');
+    expect(rest).not.toMatch(/(?<![-\w])color:\s*var\(--accent\)/);
     expect(css).toMatch(/:focus-visible \{ outline: 2px solid var\(--accent-text\)/);
+  });
+
+  it.each([['light', light], ['dark', dark]] as const)('%s: on the dark surfaces the bright orange marks focus (3:1) and the ✓ (4.5:1)', (_name, theme) => {
+    const navy = rgb(theme.navy);
+    // The code box, the navy sections, and the translucent black boxes on navy (install command, the blog's call to action).
+    const surfaces: Array<[string, RGB]> = [['code-bg', rgb(theme['code-bg'])], ['navy', navy], ['black .28 on navy', rgb('rgb(0 0 0 / .28)', navy)], ['black .3 on navy', rgb('rgb(0 0 0 / .3)', navy)]];
+    const accent = rgb(theme.accent);
+    const failing = surfaces.filter(([, bg]) => ratio(accent, bg) < 4.5).map(([name, bg]) => `accent on ${name}: ${ratio(accent, bg).toFixed(2)}`);
+    expect(failing).toEqual([]);
+    // The darker text tone would not do there in light mode, which is why those surfaces switch back.
+    if (_name === 'light') expect(ratio(rgb(theme['accent-text']), navy)).toBeLessThan(3);
+  });
+
+  it('switches the focus ring back to the bright orange on each dark surface it has', () => {
+    if (css.includes('.install {')) {
+      expect(css).toMatch(/\.cmd :focus-visible, \.install :focus-visible \{ outline-color: var\(--accent\); \}/);
+      expect(css).toMatch(/\.install li::before \{[^}]*color: var\(--accent\);/);
+    }
+    if (css.includes('.cta {')) expect(css).toMatch(/\.cta :focus-visible \{ outline-color: var\(--accent\); \}/);
   });
 });

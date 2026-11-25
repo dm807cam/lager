@@ -29,6 +29,8 @@ a { color: inherit; }
 img { max-width: 100%; height: auto; }
 .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
 :focus-visible { outline: 2px solid var(--accent-text); outline-offset: 3px; border-radius: 6px; }
+/* On the navy call to action the bright orange is the one that stands out. */
+.cta :focus-visible { outline-color: var(--accent); }
 
 /* The site header scrolls away with the page: on a laptop screen every line of height belongs to the text. */
 header.site .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }

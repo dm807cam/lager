@@ -65,13 +65,15 @@
       var q = input.value.trim().toLowerCase();
       var sel = input.getAttribute('data-filter');
       var left = 0;
+      var secs = [];
       document.querySelectorAll(sel).forEach(function (el) {
         el.hidden = q !== '' && el.textContent.toLowerCase().indexOf(q) === -1;
         if (!el.hidden) left++;
-        // A section left without entries goes too, heading and all.
-        var sec = el.closest('section');
-        if (sec && !sec.contains(box)) sec.hidden = !sec.querySelector(sel + ':not([hidden])');
+        var sec = el.parentNode.closest('section');
+        if (sec && !sec.contains(box) && secs.indexOf(sec) < 0) secs.push(sec);
       });
+      // A section left without entries goes too, heading and all.
+      secs.forEach(function (sec) { sec.hidden = ![].some.call(sec.querySelectorAll(sel), function (e) { return !e.hidden; }); });
       if (none) none.textContent = left ? '' : none.getAttribute('data-none');
     });
   });
@@ -91,7 +93,7 @@
     } catch (e) { /* the UTC text stays */ }
   });
 
-  // A new instance's name: the address under it follows what is typed; opening "get your own" focuses the field.
+  // A new instance's name: its address follows what is typed; opening "get your own" focuses it.
   document.querySelectorAll('input[data-address-template]').forEach(function (input) {
     var out = document.querySelector('[data-address-for="' + input.id + '"]');
     var template = input.getAttribute('data-address-template');
@@ -151,10 +153,8 @@
     });
   });
 
-  // Sending: the pressed button shows the form is on its way; pressing again sends nothing. Not disabled, so its name and value
-  // still go with the form.
-  // A stopped load shows no new page: after 100 s the form can be sent again, longer than any answer takes (the AI test waits up
-  // to DEFAULT_REQUEST_TIMEOUT_MS, 90 s, in src/platform/ai.ts).
+  // Sending: the pressed button shows it; pressing again sends nothing. Not disabled: its name and value still go with the form.
+  // A stopped load shows no new page: after 100 s, longer than any answer (DEFAULT_REQUEST_TIMEOUT_MS, 90 s), it can go again.
   var idle = function (form) {
     clearTimeout(form._busyTimer);
     form.removeAttribute('data-busy');
