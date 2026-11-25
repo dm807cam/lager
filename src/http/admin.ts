@@ -496,10 +496,10 @@ function domainsPage(core: Core, locale: Locale, admin: User, inst: Instance, ms
     `<a class="back" href="/admin/apps">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.section.apps'))}</a>`);
 }
 
-/** The page a form under /admin belongs to, for a GET of the form's own address; null for addresses that are no form's. */
 /** The sections of the administration that have a page of their own at /admin/<section>. */
 const ADMIN_SECTIONS: ReadonlySet<string> = new Set(['users', 'groups', 'invites', 'mail', 'ai', 'apps', 'settings']);
 
+/** The page a form under /admin belongs to, for a GET of the form's own address; null for addresses that are no form's. */
 export function formPageOf(path: string): string | null {
   const seg = path.split('/').filter(Boolean);
   if (seg[0] !== 'admin' || seg.length < 2) return null;
