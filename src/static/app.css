@@ -506,6 +506,24 @@ td.actions .btn-row { justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
 .qr-setup { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s5); margin-top: var(--s3); }
 .qr-setup > .stack { flex: 1 1 16rem; min-width: 0; }
 .qr { flex: none; max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 0 0 1px var(--line); }
+/* A filter above a long list; the icon sits in the field. */
+.filter { position: relative; max-width: 28rem; margin-bottom: var(--s4); }
+.filter > .i { position: absolute; left: 12px; top: 14px; color: var(--ink-3); pointer-events: none; }
+.filter > input { padding-left: 36px; }
+.filter-none { margin-top: var(--s2); }
+/* Older versions behind "Show all". */
+.more-versions > summary { list-style: none; width: fit-content; margin-top: var(--s2); }
+.more-versions > summary::-webkit-details-marker { display: none; }
+.more-versions > summary .i { transition: transform var(--ease); }
+.more-versions[open] > summary .i { transform: rotate(90deg); }
+/* Administration › Apps: the same column widths in every app's table, so the eye can run down a column across the blocks. */
+@media (min-width: 641px) {
+  .table-instances { table-layout: fixed; width: 100%; }
+  .table-instances td { overflow-wrap: anywhere; }
+  .table-instances th:nth-child(1) { width: 17%; } .table-instances th:nth-child(2) { width: 19%; } .table-instances th:nth-child(3) { width: 7%; }
+  .table-instances th:nth-child(4) { width: 17%; } .table-instances th:nth-child(5) { width: 12%; } .table-instances th:nth-child(6) { width: 11%; }
+  .table-instances th:nth-child(7) { width: 17%; }
+}
 .empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--s2); margin-top: var(--s2); }
 .card .empty { border: 0; padding: var(--s5) var(--s3); }
 .empty-hero { max-width: 760px; margin: var(--s6) auto 0; text-align: center; }

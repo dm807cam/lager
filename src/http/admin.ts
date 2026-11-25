@@ -17,7 +17,7 @@ import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { loginLimiter } from './platform.js';
 import { confirmAttrs, confirmed, questionPage, staleFormPage, withFieldError, noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, hiddenField, missingPage, optionList, page, sizeText, undoForm, visibilityLabel, type Option, type Question } from './pages.js';
 import { domainsBody, storageUsed } from './manage.js';
-import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, namedAction, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
+import { appTile, avatar, badge, btn, callout, dataTable, emptyState, FILTER_FROM, filterField, icon, namedAction, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash, type Undo } from './session.js';
 import { RateLimiter } from './ratelimit.js';
 import { codeRefusal } from './two-factor.js';
@@ -96,7 +96,10 @@ function userBadges(core: Core, locale: Locale, u: User): string {
  */
 function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const groupName = new Map(core.ai.listGroups().map((g) => [g.id, aiGroupName(locale, g)]));
-  const rows = core.users.list().map((u) => [
+  // Active administrators first, then everyone by name: the people to ask are at the top.
+  const users = [...core.users.list()].sort((a, b) => Number(b.role === 'admin' && !b.disabled) - Number(a.role === 'admin' && !a.disabled)
+    || (a.name || a.email).localeCompare(b.name || b.email, locale));
+  const rows = users.map((u) => [
     personCell(u),
     esc(roleLabel(locale, u.role)),
     esc(groupName.get(core.ai.groupIdOf(u.id)) ?? t(locale, 'admin.ai.everyoneElse')),
@@ -104,8 +107,10 @@ function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): strin
     `<time class="num nowrap" datetime="${esc(u.createdAt)}" data-local="day" title="${esc(formatDate(locale, u.createdAt, true))}">${esc(formatDay(locale, u.createdAt))}</time>`,
     linkButton(userPath(u.id), `${icon('settings')}${esc(t(locale, 'common.manage'))}`, 'quiet', true, named(t(locale, 'card.manage', { title: u.email }))),
   ]);
+  const count = `<p class="hint gap-bottom">${esc(t(locale, users.length === 1 ? 'admin.users.count.one' : 'admin.users.count.other', { count: users.length }))}</p>`;
+  const filter = users.length >= FILTER_FROM ? filterField(locale, 'filter-users', 'main .table-users tbody tr', t(locale, 'filter.users')) : '';
   return shell(core, locale, admin, 'users', t(locale, 'admin.section.users'),
-    dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.users.role'), t(locale, 'admin.users.aiGroup'), t(locale, 'common.status'), t(locale, 'common.created'), ''], rows, 'table-dense'), msg);
+    count + filter + dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.users.role'), t(locale, 'admin.users.aiGroup'), t(locale, 'common.status'), t(locale, 'common.created'), ''], rows, 'table-dense table-users'), msg);
 }
 
 /**
@@ -498,10 +503,11 @@ ${linkButton(`/admin/instances/${encodeURIComponent(i.slug)}/domains`, `${icon('
       + `<button type="submit" class="${btn('secondary', true)}"${namedAction(locale, t(locale, 'common.save'), t(locale, 'admin.apps.quotaOf', { app: app.title }))}>${esc(t(locale, 'common.save'))}</button></form>`;
     return `<section class="app-group subsection"><div class="app-group-head">${appTile(app, app.title, 'sm')}<div><h3>${esc(app.title)}</h3><span class="slug">${esc(app.slug)} · ${esc(emailOf.get(app.ownerId) ?? '–')}</span></div></div>
 ${quota}
-${rows.length ? dataTable(locale, [t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'common.version'), t(locale, 'common.visibility'), t(locale, 'admin.apps.data'), t(locale, 'common.status'), ''], rows) : emptyState(t(locale, 'app.noInstances'))}</section>`;
+${rows.length ? dataTable(locale, [t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'common.version'), t(locale, 'common.visibility'), t(locale, 'admin.apps.data'), t(locale, 'common.status'), ''], rows, 'table-instances') : emptyState(t(locale, 'app.noInstances'))}</section>`;
   }).join('');
   const hint = `<p class="hint gap-bottom">${esc(t(locale, 'admin.apps.quotaHint', { size: defaultQuotaText(core, locale) }))}</p>`;
-  return shell(core, locale, admin, 'apps', t(locale, 'admin.section.apps'), html ? `${hint}${html}` : emptyState(t(locale, 'admin.apps.none')), msg);
+  const filter = core.apps.listAllApps().length >= FILTER_FROM ? filterField(locale, 'filter-apps', 'main .app-group', t(locale, 'filter.apps')) : '';
+  return shell(core, locale, admin, 'apps', t(locale, 'admin.section.apps'), html ? `${hint}${filter}${html}` : emptyState(t(locale, 'admin.apps.none')), msg);
 }
 
 const DOMAIN_NOTICES: Record<string, MessageKey> = {

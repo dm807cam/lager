@@ -546,7 +546,7 @@ describe('management and administration', () => {
     const dense = all.filter((p) => dom(p.html).querySelector('table.table-dense')).map((p) => p.name);
     expect(dense).toEqual(['admin users']);
     const users = dom(all.find((p) => p.name === 'admin users')!.html).querySelectorAll('table');
-    expect([...users].map((table) => table.className)).toEqual(['table-stack table-dense']);
+    expect([...users].map((table) => table.className)).toEqual(['table-stack table-dense table-users']);
     // Every other table of the interface is there to compare with, and none of them carries the class.
     expect(all.filter((p) => dom(p.html).querySelector('table.table-stack')).length).toBeGreaterThan(5);
     const css = fs.readFileSync(path.join(STATIC, 'app.css'), 'utf8');

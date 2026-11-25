@@ -10,7 +10,7 @@ import { localeOf } from './locale.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { MAX_NAME } from '../platform/tokens.js';
 import { confirmAttrs, confirmed, questionPage, dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, type Question, slugField, staleFormPage, visibilityLabel, withNotice } from './pages.js';
-import { aiBadge, appCard, badge, btn, named, namedAction, callout, repeatsCardLink, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
+import { aiBadge, appCard, badge, btn, FILTER_FROM, filterField, named, namedAction, callout, repeatsCardLink, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash } from './session.js';
 
 const deploys = (user: User): boolean => user.role === 'admin' || user.role === 'publisher';
@@ -107,8 +107,9 @@ function catalogPage(core: Core, locale: Locale, user: User, flash: Flash = {}):
   const { instCards, appCards } = catalogCards(core, locale, user, csrfToken(core, user), core.access.catalog(user), core.apps.listInstancesOwnedBy(user.id));
   // Two kinds of entries, under headings of their own: the cards' titles are third-level headings.
   const part = (id: string, title: MessageKey, cards: string[]): string => cards.length ? section(id, t(locale, title), `<div class="grid">${cards.join('')}</div>`) : '';
+  const filter = instCards.length + appCards.length >= FILTER_FROM ? filterField(locale, 'filter-catalog', '#catalog .app-card', t(locale, 'filter.apps')) : '';
   const body = instCards.length || appCards.length
-    ? `<div id="catalog">${part('catalog-open', 'catalog.instances', instCards)}${part('catalog-copy', 'catalog.apps', appCards)}</div>`
+    ? `${filter}<div id="catalog">${part('catalog-open', 'catalog.instances', instCards)}${part('catalog-copy', 'catalog.apps', appCards)}</div>`
     : emptyState(t(locale, 'catalog.none'), 'compass');
   return page(locale, t(locale, 'dash.catalog'), `<div class="page-head"><h1 class="display">${esc(t(locale, 'dash.catalog'))}</h1><p class="lede">${esc(t(locale, 'catalog.lede'))}</p></div>
 ${withNotice(locale, flash, body)}`, signedIn(core, user, 'catalog', '/catalog'));
@@ -197,6 +198,7 @@ function homePage(core: Core, locale: Locale, user: User, flash: Flash = {}): st
     shared.length ? t(locale, plural(shared.length, 'home.summary.shared.one', 'home.summary.shared.other'), { count: shared.length }) : '',
   ].filter(Boolean);
   return page(locale, 'Lager', `<div class="page-head"><h1 class="display">${esc(t(locale, 'home.title'))}</h1>${parts.length ? `<p class="lede">${esc(parts.join(' · '))}</p>` : ''}</div>
+${own.length + shared.length >= FILTER_FROM ? filterField(locale, 'filter-apps', '#mine .app-card, #shared .app-card', t(locale, 'filter.apps')) : ''}
 ${withNotice(locale, flash, `${ownSection(core, locale, user, own, offered)}${sharedSection(core, locale, user, shared)}${offered && own.length ? catalogLink(locale) : ''}`)}`, opts);
 }
 
