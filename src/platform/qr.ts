@@ -262,7 +262,8 @@ class Symbol {
 
 /**
  * Rule 3 of the mask penalty for one row or column: 40 for each dark-light-dark-dark-dark-light-dark run with four light modules
- * before it, and 40 more with four after it. Outside the symbol is the quiet zone, which is light.
+ * before it, and 40 more with four after it (each side on its own, as in Nayuki's encoder; ZXing scores one penalty per run).
+ * Outside the symbol is the quiet zone, which is light, as the standard has it.
  */
 export function finderPenalty(line: boolean[]): number {
   const finderLike = [true, false, true, true, true, false, true];
@@ -276,11 +277,17 @@ export function finderPenalty(line: boolean[]): number {
   return score;
 }
 
+/** Whether `version` holds `bytes` bytes in byte mode at level M: mode, length and data bits against its data codewords. */
+const holds = (version: number, bytes: number): boolean => 4 + (version <= 9 ? 8 : 16) + bytes * 8 <= dataCodewords(version) * 8;
+
+/** Whether `text` fits in a QR code at all (version 40 at level M); encodeQr refuses anything longer. */
+export const fitsQr = (text: string): boolean => holds(40, new TextEncoder().encode(text).length);
+
 /** Encodes `text` at level M in the smallest version it fits; `mask` forces a mask pattern (0 to 7) instead of the best one. */
 export function encodeQr(text: string, mask?: number): QrCode {
   const bytes = new TextEncoder().encode(text);
   let version = 1;
-  while (4 + (version <= 9 ? 8 : 16) + bytes.length * 8 > dataCodewords(version) * 8) {
+  while (!holds(version, bytes.length)) {
     if (++version > 40) throw new RangeError('Too long for a QR code.');
   }
   const data = withErrorCorrection(codewords(bytes, version), version);

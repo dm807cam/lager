@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
+import { page } from '../src/http/pages.js';
 import { t } from '../src/i18n/index.js';
 import { showcase, type Showcase } from './support/pages.js';
 
@@ -26,6 +27,33 @@ describe('show password', () => {
     // The pasted keys of the administration area keep a plain password field.
     const mail = new JSDOM((await request(s.h.app).get('/admin/mail').set('Host', s.h.host).set('Cookie', await s.h.login())).text).window.document;
     expect(mail.getElementById('smtp-password')!.getAttribute('data-reveal')).toBe('off');
+    const ai = new JSDOM((await request(s.h.app).get('/admin/ai').set('Host', s.h.host).set('Cookie', await s.h.login())).text).window.document;
+    expect(ai.getElementById('ai-key')!.getAttribute('data-reveal')).toBe('off');
+    // A page served on an instance host (its origin set) carries no labels, even with a password field on it.
+    const instance = new JSDOM(page('de', 'Notes', '<form><input id="p" type="password"></form>', { origin: 'http://localhost:8080' })).window.document;
+    expect(instance.querySelector('#p')).not.toBeNull();
+    expect([instance.body.hasAttribute('data-show-password'), instance.body.hasAttribute('data-hide-password')]).toEqual([false, false]);
+  });
+
+  it('a shown password is a password field again while a question about the form is open, and when it is sent', () => {
+    const dom = new JSDOM(`<!doctype html><body data-show-password="Show password" data-hide-password="Hide password">
+      <form method="post" action="/x" data-confirm="Delete your account?" data-confirm-ok="Delete"><input id="current" type="password">
+      <button type="submit" id="go">Delete</button></form></body>`, { runScripts: 'outside-only' });
+    const win = dom.window;
+    win.HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute('open', ''); };
+    win.HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.removeAttribute('open'); this.dispatchEvent(new win.Event('close')); };
+    const types: string[] = [];
+    win.HTMLFormElement.prototype.submit = function (this: HTMLFormElement) { types.push((this.querySelector('#current') as HTMLInputElement).type); };
+    win.eval(SCRIPT);
+    const doc = win.document;
+    const input = doc.getElementById('current') as HTMLInputElement;
+    (input.parentElement!.querySelector('button.reveal-btn') as HTMLButtonElement).click();
+    expect(input.type).toBe('text');
+    doc.querySelector('form')!.dispatchEvent(new win.SubmitEvent('submit', { cancelable: true, submitter: doc.getElementById('go') }));
+    expect(doc.querySelector('dialog[open]')).not.toBeNull();
+    expect(input.type).toBe('password');
+    (doc.querySelector('dialog .btn-danger') as HTMLButtonElement).click();
+    expect(types).toEqual(['password']);
   });
 
   it('a button in the field shows and hides it, and the field is a password field again when the form is sent', () => {
