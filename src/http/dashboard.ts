@@ -51,10 +51,10 @@ function instanceCard(core: Core, locale: Locale, i: Instance, extra: { badges?:
   });
 }
 
-function ownSection(core: Core, locale: Locale, user: User, own: Instance[]): string {
+function ownSection(core: Core, locale: Locale, user: User, own: Instance[], offered: boolean): string {
   const body = own.length
     ? `<div class="grid">${own.map((i) => instanceCard(core, locale, i, { manage: core.access.canManageInstance(i, user) || core.access.canDeleteInstance(i, user) })).join('')}</div>`
-    : emptyState(t(locale, 'dash.noInstances'));
+    : noOwnApps(locale, deploys(user), offered);
   return section('mine', t(locale, 'dash.ownInstances'), body, { count: own.length || undefined });
 }
 
@@ -112,9 +112,19 @@ function catalogPage(core: Core, locale: Locale, user: User, flash: Flash = {}):
 ${withNotice(locale, flash, body)}`, signedIn(core, user, 'catalog', '/catalog'));
 }
 
-/** The way from the home page to the catalog; the main call to action while the viewer has no app of their own. */
-const catalogLink = (locale: Locale, prominent: boolean): string =>
-  `<div class="${prominent ? 'empty-cta' : 'section-more'}">${linkButton('/catalog', `${icon('compass')}${esc(t(locale, 'home.catalogLink'))}`, prominent ? 'primary' : 'secondary')}</div>`;
+/** The way from the home page to the catalog, below one's own apps. */
+const catalogLink = (locale: Locale): string =>
+  `<div class="section-more">${linkButton('/catalog', `${icon('compass')}${esc(t(locale, 'home.catalogLink'))}`, 'secondary')}</div>`;
+
+/** "Yours" without an app: where one comes from, with a button for each way there is (the catalog first, then publishing). */
+function noOwnApps(locale: Locale, publisher: boolean, offered: boolean): string {
+  const detail: MessageKey = offered ? (publisher ? 'home.empty.catalogPublish' : 'home.empty.catalog') : (publisher ? 'home.empty.publish' : 'home.empty.user');
+  const action = [
+    offered ? linkButton('/catalog', `${icon('compass')}${esc(t(locale, 'home.browseCatalog'))}`, 'primary', true) : '',
+    publisher ? linkButton('/publish', `${icon('upload')}${esc(t(locale, 'nav.publish'))}`, offered ? 'secondary' : 'primary', true) : '',
+  ].join('');
+  return emptyState(t(locale, 'dash.noInstances'), 'grid', { detail: t(locale, detail), action });
+}
 
 function appsSection(core: Core, locale: Locale, apps: App[]): string {
   const cards = apps.map((a) => {
@@ -157,7 +167,7 @@ function tokenSection(core: Core, locale: Locale, user: User, csrf: string): str
   ]);
   const list = tokens.length
     ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'common.created'), t(locale, 'dash.tokens.lastUsed'), ''], rows)
-    : emptyState(t(locale, 'dash.tokens.none'), 'lock');
+    : emptyState(t(locale, 'dash.tokens.none'), 'lock', { detail: t(locale, 'dash.tokens.none.detail') });
   const create = form('/ui/tokens', csrf,
     field('token-name', t(locale, 'dash.tokens.nameLabel'), `<input id="token-name" name="name" required maxlength="${MAX_NAME}" autocomplete="off">`),
     `${icon('plus')}${esc(t(locale, 'dash.tokens.create'))}`, 'secondary', 'form-row');
@@ -183,7 +193,7 @@ function homePage(core: Core, locale: Locale, user: User, flash: Flash = {}): st
     shared.length ? t(locale, plural(shared.length, 'home.summary.shared.one', 'home.summary.shared.other'), { count: shared.length }) : '',
   ].filter(Boolean);
   return page(locale, 'Lager', `<div class="page-head"><h1 class="display">${esc(t(locale, 'home.title'))}</h1>${parts.length ? `<p class="lede">${esc(parts.join(' · '))}</p>` : ''}</div>
-${withNotice(locale, flash, `${ownSection(core, locale, user, own)}${offered && !own.length ? catalogLink(locale, true) : ''}${sharedSection(core, locale, user, shared)}${offered && own.length ? catalogLink(locale, false) : ''}`)}`, opts);
+${withNotice(locale, flash, `${ownSection(core, locale, user, own, offered)}${sharedSection(core, locale, user, shared)}${offered && own.length ? catalogLink(locale) : ''}`)}`, opts);
 }
 
 /** Everything about publishing: the apps the viewer deploys, the MCP connector and the API tokens. */

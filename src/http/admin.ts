@@ -226,7 +226,7 @@ function groupsSection(core: Core, locale: Locale, admin: User, msg?: Msg): stri
     `<div class="cell-user"><span class="tile tile-xs" aria-hidden="true">${icon('users', 'i-sm')}</span><div><a href="/admin/groups/${encodeURIComponent(g.id)}"><strong title="${esc(g.name)}">${esc(g.name)}</strong></a></div></div>`,
     `<span class="num">${g.memberCount}</span>`,
   ]);
-  const body = `${groups.length ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.groups.members')], rows) : emptyState(t(locale, 'admin.groups.none'), 'users')}
+  const body = `${groups.length ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.groups.members')], rows) : emptyState(t(locale, 'admin.groups.none'), 'users', { detail: t(locale, 'admin.groups.none.detail') })}
 <div class="subsection">${form('/admin/groups', csrf, field('group-name', t(locale, 'admin.groups.newName'), `<input id="group-name" name="name" required maxlength="${MAX_NAME}" autocomplete="off">`),
     `${icon('plus')}${esc(t(locale, 'admin.groups.create'))}`, 'secondary', 'form-row')}</div>`;
   return shell(core, locale, admin, 'groups', t(locale, 'admin.section.groups'), body, msg);

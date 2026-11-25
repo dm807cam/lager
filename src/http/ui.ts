@@ -80,7 +80,12 @@ export const copyField = (locale: Locale, value: string, style: ButtonStyle = 's
 export const callout = (locale: Locale, title: string, secret: string, warning: string): string =>
   `<div class="callout" role="status"><strong>${icon('check')}${esc(title)}</strong>${copyField(locale, secret, 'primary')}<p class="warn">${icon('alert', 'i-sm')}${esc(warning)}</p></div>`;
 
-export const emptyState = (text: string, name: IconName = 'grid'): string => `<div class="empty">${icon(name)}<p>${esc(text)}</p></div>`;
+/**
+ * An empty list: what is missing, and optionally one more sentence (`detail`, plain text) on what the list is for or when it
+ * fills up, and the next step (`action`, trusted markup: links styled as buttons).
+ */
+export const emptyState = (text: string, name: IconName = 'grid', opts: { detail?: string; action?: string } = {}): string =>
+  `<div class="empty">${icon(name)}<p>${esc(text)}</p>${opts.detail ? `<p class="empty-detail">${esc(opts.detail)}</p>` : ''}${opts.action ? `<div class="empty-actions">${opts.action}</div>` : ''}</div>`;
 
 /** A titled section of a page with an optional count next to the heading; `body` is trusted markup. */
 export function section(id: string, title: string, body: string, opts: { count?: number } = {}): string {
