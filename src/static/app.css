@@ -352,6 +352,20 @@ select {
   font-size: 0.93rem; color: var(--ink);
 }
 .notice .i { margin-top: 2px; }
+.notice { flex-wrap: wrap; }
+.notice > span { flex: 1 1 14rem; min-width: 0; }
+/* The Undo button of a notice sits at its end, or below the text where the line is too short. */
+.notice-undo { flex: none; margin: -6px 0 -6px auto; }
+
+/* The question before a change that cannot be taken back (static/app.js). */
+.confirm-dialog {
+  width: min(440px, calc(100vw - 32px)); padding: var(--s5); border: 1px solid var(--line); border-radius: 20px;
+  background: var(--surface); color: var(--ink); box-shadow: var(--shadow);
+}
+.confirm-dialog::backdrop { background: rgb(11 13 24 / .5); }
+.confirm-dialog h2 { margin-bottom: var(--s3); font-size: 1.2rem; }
+.confirm-dialog p { margin-bottom: var(--s5); color: var(--ink-2); }
+.confirm-dialog .btn-row { justify-content: flex-end; }
 .notice-success { background: var(--success-soft); border-color: var(--success-line); }
 .notice-success .i { color: var(--success); }
 .notice-danger { background: var(--danger-soft); border-color: var(--danger-line); }
@@ -648,7 +662,7 @@ td.actions .btn-row { justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
 
 /* Windows high contrast and other forced colours: give shapes that relied on fills a border or a system colour. */
 @media (forced-colors: active) {
-  .card, .app-card, .hero, .panel-navy, .callout, .notice, .menu-panel, .empty, .auth-card { border: 1px solid CanvasText; }
+  .card, .app-card, .hero, .panel-navy, .callout, .notice, .menu-panel, .empty, .auth-card, .confirm-dialog { border: 1px solid CanvasText; }
   .btn, button, summary.btn { border: 1px solid ButtonText; }
   .badge { border: 1px solid CanvasText; }
   .primary a[aria-current="page"], .pills a[aria-current="page"] { border: 2px solid Highlight; color: Highlight; forced-color-adjust: none; background: Canvas; }

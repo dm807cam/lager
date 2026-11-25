@@ -27,7 +27,7 @@ async function submit(sc: Showcase, cookie: string, userId: string, path: string
 function noticeOf(doc: Document): { text: string; before: string | null; role: string | null } | null {
   const n = doc.getElementById('notice');
   if (!n) return null;
-  return { text: n.textContent!.trim(), before: n.nextElementSibling?.id || null, role: n.getAttribute('role') };
+  return { text: n.querySelector(':scope > span')!.textContent!.trim(), before: n.nextElementSibling?.id || null, role: n.getAttribute('role') };
 }
 
 describe('after a form', () => {
@@ -59,7 +59,7 @@ describe('after a form', () => {
     const notes = core.apps.getInstanceBySlug('notes')!.id;
     core.data.set(notes, 'items/one', { text: 'milk' }, null);
     const snapshot = core.data.snapshot(notes, 'before-import')!;
-    const restored = await submit(s, cookie, admin, `${base}/restore`, { snapshot: snapshot.id });
+    const restored = await submit(s, cookie, admin, `${base}/restore`, { snapshot: snapshot.id, confirmed: '1' });
     expect(noticeOf(restored.doc)).toMatchObject({ text: t('en', 'notice.ok.restored', { label: 'before-import' }), before: 'data' });
 
     const off = await submit(s, cookie, admin, `${base}/auto-update`, { on: '0' });
@@ -103,7 +103,7 @@ describe('after a form', () => {
     expect(noticeOf(own.doc)).toMatchObject({ text: t('en', 'notice.ok.instanceCreated', { slug: 'uwe-tasks' }), before: 'mine' });
 
     const token = s.h.core.tokens.list(admin)[0];
-    const revoked = await submit(s, cookie, admin, `/ui/tokens/${token.id}/revoke`);
+    const revoked = await submit(s, cookie, admin, `/ui/tokens/${token.id}/revoke`, { confirmed: '1' });
     expect(noticeOf(revoked.doc)).toMatchObject({ text: t('en', 'notice.ok.tokenRevoked', { name: 'laptop' }), before: 'tokens' });
   });
 
@@ -112,12 +112,12 @@ describe('after a form', () => {
     const cookie = `${await s.h.login()}; lager_lang=de`;
     const admin = s.h.adminId;
     s.h.core.users.setLocale(admin, 'de');
-    const notice = (doc: Document): string => doc.querySelector('main .notice-success')!.textContent!.trim();
+    const notice = (doc: Document): string => doc.querySelector('main .notice-success > span')!.textContent!.trim();
     expect(notice((await submit(s, cookie, admin, '/admin/settings', { registration: 'open', maxInstances: '20' })).doc)).toBe(t('de', 'notice.ok.saved'));
     expect(notice((await submit(s, cookie, admin, `/admin/users/${s.ids.uwe}/role`, { role: 'publisher' })).doc))
       .toBe(t('de', 'notice.ok.role', { name: 'Uwe', role: t('de', 'role.publisher') }));
     expect(notice((await submit(s, cookie, admin, `/admin/users/${s.ids.uwe}/disabled`, { disabled: '1' })).doc)).toBe(t('de', 'notice.ok.userDisabled', { name: 'Uwe' }));
-    expect(notice((await submit(s, cookie, admin, `/admin/groups/${s.ids.group}/delete`)).doc)).toBe(t('de', 'notice.ok.deleted', { name: 'Team' }));
+    expect(notice((await submit(s, cookie, admin, `/admin/groups/${s.ids.group}/delete`, { confirmed: '1' })).doc)).toBe(t('de', 'notice.ok.deleted', { name: 'Team' }));
     expect(notice((await submit(s, cookie, admin, '/admin/instances/old-notes/disabled', { disabled: '0' })).doc)).toBe(t('de', 'notice.ok.instanceEnabled', { slug: 'old-notes' }));
   });
 });

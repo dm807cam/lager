@@ -188,7 +188,7 @@ describe('home page', () => {
     expect(after.text).toContain('laptop');
     expect(after.text).not.toContain(token!);
     const info = h.core.tokens.list(h.adminId)[0];
-    const revoke = await post(h, cookie, `/ui/tokens/${info.id}/revoke`, { csrf: csrfFor(h) });
+    const revoke = await post(h, cookie, `/ui/tokens/${info.id}/revoke`, { csrf: csrfFor(h), confirmed: '1' });
     expect(revoke.status).toBe(302);
     expect(revoke.headers.location.split('?')[0]).toBe('/publish');
     expect(h.core.tokens.list(h.adminId)).toHaveLength(0);

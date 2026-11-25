@@ -78,7 +78,13 @@ const FLASH_ANCHOR = /^[a-z][a-z0-9-]{0,40}$/;
  * key's placeholders (names, addresses, versions); they are plain text and escaped where shown. `anchor` is the id of the section
  * that changed: the notice is shown right above it, and the redirect scrolls there.
  */
-export interface Flash { ok?: MessageKey; error?: MessageKey; params?: Record<string, string>; anchor?: string }
+export interface Flash { ok?: MessageKey; error?: MessageKey; params?: Record<string, string>; anchor?: string; undo?: Undo }
+/** A form that takes a change back: the route it posts to (a path of this platform) and the fields it sends besides the CSRF token. */
+export interface Undo { action: string; fields: Record<string, string> }
+/** Undo forms post only to the platform's own form routes. */
+const UNDO_ACTION = /^\/(?:ui|admin)(?:\/[A-Za-z0-9%_-]{1,100}){1,6}$/;
+/** An encoded dot: a browser resolves `%2e%2e` as `..` in a form action, so no Undo path may hold one. */
+const ENCODED_DOT = /%2e/i;
 
 /**
  * Short-lived `flash` query value carrying the key of a notice, its values and its place to the page a POST redirects to. It is
@@ -89,7 +95,7 @@ export const flashToken = (core: Core, user: User, flash: Flash): string =>
   sealToken({
     uid: user.id, k: 'flash', e: flash.error !== undefined ? 1 : 0, m: flash.error ?? flash.ok ?? '',
     ...(flash.params ? { p: Object.fromEntries(Object.entries(flash.params).slice(0, MAX_FLASH_PARAMS).map(([k, v]) => [k, clipParam(v)])) } : {}),
-    ...(flash.anchor ? { a: flash.anchor } : {}),
+    ...(flash.anchor ? { a: flash.anchor } : {}), ...(flash.undo ? { u: flash.undo } : {}),
   }, core.config.secret, FLASH_TTL_SECONDS);
 
 /** A value cut to what a notice shows, with an ellipsis where it was cut. */
@@ -105,10 +111,13 @@ function flashParams(value: unknown): Record<string, string> | undefined {
 
 /** The notice of a valid flash value issued to this user; anything else, including a value that is not a catalog key, yields nothing. */
 export function readFlash(core: Core, user: User, value: unknown): Flash {
-  const t = openToken<{ uid?: unknown; k?: unknown; e?: unknown; m?: unknown; p?: unknown; a?: unknown }>(typeof value === 'string' ? value : undefined, core.config.secret);
+  const t = openToken<{ uid?: unknown; k?: unknown; e?: unknown; m?: unknown; p?: unknown; a?: unknown; u?: unknown }>(typeof value === 'string' ? value : undefined, core.config.secret);
   if (t === null || t.k !== 'flash' || t.uid !== user.id || !isMessageKey(t.m)) return {};
   const params = flashParams(t.p);
-  const extra = { ...(params ? { params } : {}), ...(typeof t.a === 'string' && FLASH_ANCHOR.test(t.a) ? { anchor: t.a } : {}) };
+  const u = t.u as { action?: unknown; fields?: unknown } | null | undefined;
+  const undoFields = u && typeof u === 'object' ? flashParams(u.fields) : undefined;
+  const undo = u && typeof u.action === 'string' && UNDO_ACTION.test(u.action) && !ENCODED_DOT.test(u.action) && undoFields ? { action: u.action, fields: undoFields } : undefined;
+  const extra = { ...(params ? { params } : {}), ...(typeof t.a === 'string' && FLASH_ANCHOR.test(t.a) ? { anchor: t.a } : {}), ...(undo ? { undo } : {}) };
   return t.e === 1 ? { error: t.m, ...extra } : { ok: t.m, ...extra };
 }
 

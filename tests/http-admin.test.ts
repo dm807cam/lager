@@ -177,7 +177,7 @@ describe('administration area', () => {
     const open = s.hh.core.accounts.listInvites().filter((i) => !i.used);
     expect(open).toHaveLength(1);
     expect(list.text).toContain(en('common.revoke'));
-    const rev = await s.post(`/admin/invites/${open[0].id}/revoke`, admin, {});
+    const rev = await s.post(`/admin/invites/${open[0].id}/revoke`, admin, { confirmed: '1' });
     expect(rev.status).toBe(302);
     expect(s.hh.core.accounts.listInvites().filter((i) => !i.used)).toHaveLength(0);
     expect((await s.post('/admin/invites', admin, { email: 'nope', role: 'user' })).status).toBe(400);
@@ -200,7 +200,7 @@ describe('administration area', () => {
     expect(unknown.text).toContain(en('notice.noAccount'));
     await s.post(`/admin/groups/${group.id}/members/${user.id}/remove`, admin, {});
     expect(s.hh.core.groups.members(group.id)).toHaveLength(0);
-    expect((await s.post(`/admin/groups/${group.id}/delete`, admin, {})).headers.location.split('?')[0]).toBe('/admin/groups');
+    expect((await s.post(`/admin/groups/${group.id}/delete`, admin, { confirmed: '1' })).headers.location.split('?')[0]).toBe('/admin/groups');
     expect(s.hh.core.groups.list()).toHaveLength(0);
     expect((await s.get(`/admin/groups/${group.id}`, admin)).status).toBe(404);
   });

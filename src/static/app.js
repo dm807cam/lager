@@ -72,6 +72,63 @@
     });
   });
 
+  // Questions before changes that cannot be taken back. The form carries the question; the dialog asks it, and only a yes sends the
+  // form, with confirmed=1. Cancel has the focus, so Enter or Escape keep everything as it is. Without this script, or in a browser
+  // without <dialog>, the server asks on a page of its own: the change never happens on one click either way.
+  document.querySelectorAll('form[data-confirm]').forEach(function (form) {
+    form.addEventListener('submit', function (e) {
+      // Asked every time: a yes from before (a page from the back/forward cache, a send that failed) does not count again.
+      if (typeof HTMLDialogElement === 'undefined') return;
+      e.preventDefault();
+      var trigger = e.submitter || document.activeElement;
+      var dialog = document.createElement('dialog');
+      dialog.className = 'confirm-dialog';
+      dialog.setAttribute('aria-labelledby', 'confirm-title');
+      dialog.setAttribute('aria-describedby', 'confirm-text');
+      var title = document.createElement('h2');
+      title.id = 'confirm-title';
+      title.textContent = form.getAttribute('data-confirm');
+      var text = document.createElement('p');
+      text.id = 'confirm-text';
+      text.textContent = form.getAttribute('data-confirm-text') || '';
+      var row = document.createElement('div');
+      row.className = 'btn-row';
+      var cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'btn btn-secondary';
+      cancel.textContent = form.getAttribute('data-confirm-cancel') || 'Cancel';
+      var ok = document.createElement('button');
+      ok.type = 'button';
+      ok.className = 'btn btn-danger';
+      ok.textContent = form.getAttribute('data-confirm-ok') || 'OK';
+      row.appendChild(cancel);
+      row.appendChild(ok);
+      dialog.appendChild(title);
+      dialog.appendChild(text);
+      dialog.appendChild(row);
+      document.body.appendChild(dialog);
+      var answered = false;
+      cancel.addEventListener('click', function () { dialog.close(); });
+      // Closing in any way (Cancel, Escape) gives the focus back to the button that asked.
+      dialog.addEventListener('close', function () {
+        dialog.remove();
+        if (!answered && trigger && trigger.focus) trigger.focus();
+      });
+      ok.addEventListener('click', function () {
+        answered = true;
+        var input = form.querySelector('input[name="confirmed"]') || document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'confirmed';
+        input.value = '1';
+        form.appendChild(input);
+        dialog.close();
+        form.submit();
+      });
+      dialog.showModal();
+      cancel.focus();
+    });
+  });
+
   // Confirm by typing: the danger button stays disabled until the name matches (a Cancel button next to it stays usable). The server checks it again.
   document.querySelectorAll('input[data-confirm]').forEach(function (input) {
     var form = input.form;

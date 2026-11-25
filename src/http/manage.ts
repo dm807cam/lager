@@ -15,11 +15,11 @@ import { sendVersionDownload, streamExport, versionParam } from './api.js';
 import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { declaredModel, downloadableVersion, setAppModel } from '../mcp/tools.js';
 import {
-  dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, formErrorPage, hiddenField, levelLabel, levelOptions, missingPage, optionList, type Option, page,
+  confirmAttrs, confirmed, questionPage, dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, formErrorPage, hiddenField, levelLabel, levelOptions, missingPage, optionList, type Option, page, type Question,
   sizeText, visibilityLabel, visibilityOptions, withNotice,
 } from './pages.js';
 import { appTile, avatar, badge, btn, named, card, copyField, dataTable, emptyState, icon, linkButton, meter, notice, personCell, signedIn, visibilityIcon } from './ui.js';
-import { csrfToken, csrfValid, flashUrl, readFlash, type Flash } from './session.js';
+import { csrfToken, csrfValid, flashUrl, readFlash, type Flash, type Undo } from './session.js';
 
 const GRANT_LEVELS = ['view', 'interact', 'admin'] as const;
 const USERS_LEVELS = ['view', 'interact'] as const;
@@ -54,7 +54,9 @@ const NOTICES: Record<string, MessageKey> = {
 };
 
 /** What a form did: the notice for the next page, the values it names, the section it is shown above, and another page to go to. */
-interface Done { ok: MessageKey; params?: Record<string, string>; anchor?: string; to?: string }
+interface Done { ok: MessageKey; params?: Record<string, string>; anchor?: string; to?: string; undo?: Undo }
+/** A form that needs a yes first: the question, asked on a page of its own when the form came without the answer. */
+interface Ask { ask: Question }
 
 /** What a change of visibility says: who can open the instance now. */
 const VISIBILITY_DONE: Record<Visibility, MessageKey> = { private: 'notice.ok.private', users: 'notice.ok.users', public: 'notice.ok.public' };
@@ -68,7 +70,7 @@ class Notice extends Error {
 function shell(core: Core, locale: Locale, user: User, title: string, body: string, flash: Flash, returnPath: string, section: 'apps' | 'publish' = 'apps'): string {
   const back = section === 'publish' && (user.role === 'admin' || user.role === 'publisher')
     ? backTo('/publish', t(locale, 'nav.publish')) : backTo('/', t(locale, 'common.backToOverview'));
-  return page(locale, title, `${back}${withNotice(locale, flash, body)}`, signedIn(core, user, section, returnPath));
+  return page(locale, title, `${back}${withNotice(locale, flash, body, csrfToken(core, user))}`, signedIn(core, user, section, returnPath));
 }
 
 const backTo = (href: string, label: string): string => `<a class="back" href="${esc(href)}">${icon('chevron', 'i-sm')}${esc(label)}</a>`;
@@ -177,7 +179,7 @@ ${copyField(locale, `${url}/_ingest/${e.name}`)}
 <p class="hint">${who}</p><p class="hint">${esc(t(locale, 'instance.ingest.into', { collection: e.collection }))}</p>${token}
 <p class="hint">${esc(t(locale, 'instance.ingest.counts', { accepted: counts.accepted, refused: counts.refused, limited: counts.limited, date: since }))}</p>
 <div class="btn-row">${form(`${base}/ingest/switch`, csrf, name + hiddenField('on', off ? '1' : '0'), esc(t(locale, off ? 'instance.ingest.turnOn' : 'instance.ingest.turnOff')), 'secondary', '', true)}
-${e.auth === 'token' ? form(`${base}/ingest/token`, csrf, name, esc(t(locale, 'instance.ingest.rotate')), 'quiet', '', true) : ''}</div>${managed}</div>`;
+${e.auth === 'token' ? form(`${base}/ingest/token`, csrf, name, esc(t(locale, 'instance.ingest.rotate')), 'quiet', '', true, confirmAttrs(locale, rotateQuestion(locale, e.name))) : ''}</div>${managed}</div>`;
   }).join('');
   const used = core.data.ingestUsage(inst.id);
   return card(title, `<p class="hint">${esc(t(locale, 'instance.ingest.intro'))}</p>${items}
@@ -222,6 +224,12 @@ function embedCard(core: Core, locale: Locale, inst: Instance, base: string, csr
 <div class="subsection">${add}<p class="hint gap-top">${esc(t(locale, 'instance.embed.hint'))}</p></div>`, '', 'embed');
 }
 
+/** The questions before restoring a snapshot and before replacing an endpoint's token: neither can be taken back. */
+const restoreQuestion = (locale: Locale, slug: string, label: string): Question =>
+  ({ title: t(locale, 'confirm.restore.title', { label }), text: t(locale, 'confirm.restore.text', { slug }), submit: t(locale, 'instance.snapshots.restore') });
+const rotateQuestion = (locale: Locale, name: string): Question =>
+  ({ title: t(locale, 'confirm.ingestToken.title', { name }), text: t(locale, 'confirm.ingestToken.text'), submit: t(locale, 'instance.ingest.rotate') });
+
 /** Destructive actions at the bottom of the main column: each confirmed by typing the name. */
 function dangerZone(locale: Locale, title: string, text: string, action: string, csrf: string, name: string, submit: string): string {
   return `<section class="card card-danger"><h2>${icon('alert')}${esc(t(locale, 'common.dangerZone'))}</h2><div class="danger-row"><h3>${esc(title)}</h3><p>${esc(text)}</p>
@@ -253,7 +261,8 @@ ${notice('warning', t(locale, 'instance.disabledNotice'))}<div class="main-col">
   const snapshots = core.data.listSnapshots(inst.id);
   const mayRestore = core.access.canRestoreInstance(inst, user);
   const snapRows = snapshots.map((s) => [`<span class="mono">${esc(s.label)}</span>`, dateText(locale, s.createdAt), sizeText(locale, s.sizeBytes),
-    mayRestore ? form(`${base}/restore`, csrf, hiddenField('snapshot', s.id), esc(t(locale, 'instance.snapshots.restore')), 'secondary', '', true) : '']);
+    mayRestore ? form(`${base}/restore`, csrf, hiddenField('snapshot', s.id), esc(t(locale, 'instance.snapshots.restore')), 'secondary', '', true,
+      confirmAttrs(locale, restoreQuestion(locale, inst.slug, s.label))) : '']);
   const level = inst.visibility === 'users'
     ? field('users-level', t(locale, 'instance.usersLevel'), `<select id="users-level" name="users_level">${optionList(levelOptions(locale, USERS_LEVELS), inst.usersLevel)}</select>`) : '';
   const quota = core.quotas.of(inst.id);
@@ -398,14 +407,19 @@ export const manageExtension: PlatformExtension = (router, core) => {
    * shows above the section that changed, and may name another page to go to. Domain errors become a notice on `back`,
    * forbidden and unknown targets error pages.
    */
-  const action = (back: (req: Request, user: User) => string, run: (req: Request, user: User) => Done): RequestHandler[] => [
+  const action = (back: (req: Request, user: User) => string, run: (req: Request, user: User) => Done | Ask): RequestHandler[] => [
     noStore, auth, formBody,
     (req, res) => {
       const user = userOf(res);
       if (!csrfValid(core, user, field(req, 'csrf', 2000))) { send(res, 403, formErrorPage(localeOf(res), 'error.sessionExpired', undefined, shellOf(res))); return; }
       try {
         const done = run(req, user);
-        toPage(res, user, done.to ?? back(req, user), { ok: done.ok, params: done.params, anchor: done.anchor });
+        if ('ask' in done) {
+          // The form came without the answer: ask on a page of its own, which sends the same fields again with it.
+          send(res, 200, questionPage(localeOf(res), done.ask, req, csrfToken(core, user), back(req, user), shellOf(res)));
+          return;
+        }
+        toPage(res, user, done.to ?? back(req, user), { ok: done.ok, params: done.params, anchor: done.anchor, undo: done.undo });
       } catch (e) {
         if (e instanceof Notice) { toPage(res, user, back(req, user), { error: e.key }); return; }
         if (!(e instanceof LagerError)) throw e;
@@ -493,7 +507,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
     // A restore also rolls back what the app's rules keep from a manager (other people's private areas, owner-only paths).
     if (!core.access.canRestoreInstance(inst, user)) throw new LagerError('forbidden', 'Only the owner may do this.');
     const id = field(req, 'snapshot');
-    const label = core.data.listSnapshots(inst.id).find((s) => s.id === id)?.label ?? id;
+    const snap = core.data.listSnapshots(inst.id).find((s) => s.id === id);
+    const label = snap?.label ?? id;
+    // A snapshot that does not exist is refused as before, without a question first.
+    if (snap && !confirmed(req.body)) return { ask: restoreQuestion(localeOf(req.res!), inst.slug, label) };
     withSnapshotBudget(core, inst.id, () => core.data.restore(inst.id, id));
     return { ok: 'notice.ok.restored', params: { label }, anchor: 'data' };
   }));
@@ -519,9 +536,13 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const inst = managed(user, param(req, 'slug'));
     const type = field(req, 'type') as 'user' | 'group';
     const id = field(req, 'id');
-    const name = core.access.listGrants(inst.id).find((g) => g.principalType === type && g.principalId === id)?.principalLabel ?? id;
+    const grant = core.access.listGrants(inst.id).find((g) => g.principalType === type && g.principalId === id);
     core.access.removeGrant(inst, type, id, user);
-    return { ok: 'notice.ok.unshared', params: { name }, anchor: 'sharing' };
+    const undo: Undo | undefined = grant && {
+      action: `/ui/instances/${encodeURIComponent(inst.slug)}/grants`,
+      fields: grant.principalType === 'user' ? { email: grant.principalLabel, level: grant.level } : { group: grant.principalId, level: grant.level },
+    };
+    return { ok: 'notice.ok.unshared', params: { name: grant?.principalLabel ?? id }, anchor: 'sharing', undo };
   }));
 
   router.post('/ui/instances/:slug/domains', ...action(instBack, (req, user) => {
@@ -532,8 +553,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
 
   router.post('/ui/instances/:slug/domains/remove', ...action(instBack, (req, user) => {
     const host = field(req, 'host', 300);
-    core.domains.remove(managed(user, param(req, 'slug')), host, user, true);
-    return { ok: 'notice.ok.removed', params: { name: host }, anchor: 'domains' };
+    const inst = managed(user, param(req, 'slug'));
+    // Undo only for what this press removed: on a stale page it would bring back what someone else took away, or never existed.
+    const removed = core.domains.remove(inst, host, user, true);
+    return { ok: 'notice.ok.removed', params: { name: host }, anchor: 'domains', undo: removed ? { action: `/ui/instances/${encodeURIComponent(inst.slug)}/domains`, fields: { host } } : undefined };
   }));
 
   /** The instance, if `user` manages it and its active version declares the endpoint the form names. */
@@ -554,6 +577,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
 
   router.post('/ui/instances/:slug/ingest/token', ...action(instBack, (req, user) => {
     const { inst, name } = managedEndpoint(req, user);
+    if (!confirmed(req.body)) return { ask: rotateQuestion(localeOf(req.res!), name) };
     core.ingest.rotateToken(inst.id, name);
     return { ok: 'notice.ok.ingestToken', params: { name }, anchor: 'ingest' };
   }));
@@ -569,8 +593,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
   router.post('/ui/instances/:slug/ingest/origins/remove', ...action(instBack, (req, user) => {
     const { inst, name, endpoint } = managedEndpoint(req, user);
     const origin = field(req, 'origin', 300);
-    core.ingest.setOrigins(inst.id, endpoint, core.ingest.instanceOrigins(inst.id, name).filter((o) => o !== origin));
-    return { ok: 'notice.ok.removed', params: { name: origin }, anchor: 'ingest' };
+    const before = core.ingest.instanceOrigins(inst.id, name);
+    core.ingest.setOrigins(inst.id, endpoint, before.filter((o) => o !== origin));
+    const undo = before.includes(origin) ? { action: `/ui/instances/${encodeURIComponent(inst.slug)}/ingest/origins`, fields: { name, origin } } : undefined;
+    return { ok: 'notice.ok.removed', params: { name: origin }, anchor: 'ingest', undo };
   }));
 
   /** The instance, if `user` manages it and its active version declares `embed`. */
@@ -591,8 +617,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
   router.post('/ui/instances/:slug/embed/remove', ...action(instBack, (req, user) => {
     const inst = embedInstance(req, user);
     const origin = field(req, 'origin', 300);
-    core.embed.setOrigins(inst.id, core.embed.origins(inst.id).filter((o) => o !== origin));
-    return { ok: 'notice.ok.removed', params: { name: origin }, anchor: 'embed' };
+    const before = core.embed.origins(inst.id);
+    core.embed.setOrigins(inst.id, before.filter((o) => o !== origin));
+    const undo = before.includes(origin) ? { action: `/ui/instances/${encodeURIComponent(inst.slug)}/embed`, fields: { origin } } : undefined;
+    return { ok: 'notice.ok.removed', params: { name: origin }, anchor: 'embed', undo };
   }));
 
   router.post('/ui/instances/:slug/delete', ...action(instBack, (req, user) => {
@@ -646,7 +674,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const who = core.apps.listCollaborators(app.id).find((c) => c.id === field(req, 'id'));
     if (!who) throw new Notice('notice.missing');
     core.apps.removeCollaborator(app.id, who.id, user.id);
-    return { ok: 'notice.ok.collaboratorRemoved', params: { name: who.name || who.email }, anchor: 'collaborators' };
+    return {
+      ok: 'notice.ok.collaboratorRemoved', params: { name: who.name || who.email }, anchor: 'collaborators',
+      undo: { action: `/ui/apps/${encodeURIComponent(app.slug)}/collaborators`, fields: { email: who.email } },
+    };
   }));
 
   router.post('/ui/apps/:slug/self-instances', ...action(appBack, (req, user) => {

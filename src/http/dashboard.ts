@@ -9,7 +9,7 @@ import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { localeOf } from './locale.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { MAX_NAME } from '../platform/tokens.js';
-import { dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, visibilityLabel, withNotice } from './pages.js';
+import { confirmAttrs, confirmed, questionPage, dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, type Question, visibilityLabel, withNotice } from './pages.js';
 import { aiBadge, appCard, badge, btn, named, callout, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash } from './session.js';
 
@@ -113,12 +113,16 @@ function connectPanel(locale: Locale, connector: string): string {
 <div class="panel-grid"><div><p class="label">${esc(t(locale, 'dash.connect.text'))}</p>${copyField(locale, connector, 'primary')}</div>${steps(locale, null)}</div></section>`;
 }
 
+/** Revoking cannot be taken back: a new token has a new value. */
+const revokeQuestion = (locale: Locale, name: string): Question =>
+  ({ title: t(locale, 'confirm.tokenRevoke.title', { name }), text: t(locale, 'confirm.tokenRevoke.text'), submit: t(locale, 'common.revoke') });
+
 function tokenSection(core: Core, locale: Locale, user: User, csrf: string): string {
   const tokens = core.tokens.list(user.id);
   const rows = tokens.map((tk) => [
     `<strong>${esc(tk.name)}</strong>`, dateText(locale, tk.createdAt),
     tk.lastUsedAt ? dateText(locale, tk.lastUsedAt) : `<span class="muted">${esc(t(locale, 'common.never'))}</span>`,
-    form(`/ui/tokens/${encodeURIComponent(tk.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), 'danger', '', true),
+    form(`/ui/tokens/${encodeURIComponent(tk.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), 'danger', '', true, confirmAttrs(locale, revokeQuestion(locale, tk.name))),
   ]);
   const list = tokens.length
     ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'common.created'), t(locale, 'dash.tokens.lastUsed'), ''], rows)
@@ -217,6 +221,11 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
 
   router.post('/ui/tokens/:id/revoke', ...action((req, res, user) => {
     const name = core.tokens.list(user.id).find((tk) => tk.id === req.params.id)?.name ?? '';
+    if (!confirmed(req.body)) {
+      if (!name) throw new LagerError('not_found', 'Token not found.');
+      res.type('html').send(questionPage(localeOf(res), revokeQuestion(localeOf(res), name), req, csrfToken(core, user), '/publish', shellOf(res)));
+      return;
+    }
     if (!core.tokens.revoke(user.id, req.params.id as string)) throw new LagerError('not_found', 'Token not found.');
     res.redirect(flashUrl(core, user, '/publish', { ok: 'notice.ok.tokenRevoked', params: { name }, anchor: 'tokens' }));
   }));

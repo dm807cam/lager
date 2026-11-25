@@ -84,7 +84,7 @@ describe('instance page: data from outside', () => {
   it('replacing the token ends the old one and shows the new one', async () => {
     const { inst, m, mc } = await setup();
     const before = h.core.ingest.token(inst.id, 'weight');
-    expect((await post(mc, m, 'token', { name: 'weight' })).status).toBe(302);
+    expect((await post(mc, m, 'token', { name: 'weight', confirmed: '1' })).status).toBe(302);
     const after = h.core.ingest.token(inst.id, 'weight');
     expect(after).not.toBe(before);
     const shown = (await page(mc)).text;

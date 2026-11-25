@@ -221,7 +221,7 @@ describe('administration page for mail', () => {
     expect(bad.text).toContain(en('admin.mail.invalid'));
     expect(s.hh.core.mailSettings.get()?.host).toBe('evil.example.net');
 
-    const removed = await s.post('/admin/mail/delete', cookie, {});
+    const removed = await s.post('/admin/mail/delete', cookie, { confirmed: '1' });
     expect(removed.text).toContain(en('admin.mail.removed'));
     expect(s.hh.core.mailer.enabled).toBe(false);
   });
@@ -268,7 +268,7 @@ describe('administration page for mail', () => {
     expect(s.hh.core.mailSettings.get()).toBeNull();
     // A server saved before LAGER_SMTP_URL was set stays until the variable goes; removing it here is refused as well.
     s.hh.core.mailSettings.save(BASE);
-    const removed = await s.post('/admin/mail/delete', cookie, {});
+    const removed = await s.post('/admin/mail/delete', cookie, { confirmed: '1' });
     expect(removed.status).toBe(409);
     expect(removed.text).toContain(en('admin.mail.env'));
     expect(s.hh.core.mailSettings.get()).not.toBeNull();

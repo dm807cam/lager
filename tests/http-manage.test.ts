@@ -90,7 +90,7 @@ describe('instance page', () => {
     expect(refused.status).toBe(403);
     expect(h.core.data.get(inst().id, `data/users/${p.id}/prefs`)!.data).toEqual({ v: 'new' });
     expect(h.core.data.listSnapshots(inst().id).some((s) => s.label === 'pre-restore')).toBe(false);
-    expect((await post(pc, p, '/ui/instances/notes/restore', { snapshot: snap.id })).status).toBe(302);
+    expect((await post(pc, p, '/ui/instances/notes/restore', { snapshot: snap.id, confirmed: '1' })).status).toBe(302);
     expect(h.core.data.get(inst().id, `data/users/${p.id}/prefs`)!.data).toEqual({ v: 'old' });
   });
 
@@ -104,7 +104,7 @@ describe('instance page', () => {
     expect(inst().visibility).toBe('public');
     h.core.data.set(inst().id, 'notes/n1', { text: 'x' }, p.id);
     const snap = h.core.data.snapshot(inst().id, 'keep-me')!;
-    const res = await post(pc, p, '/ui/instances/notes/restore', { snapshot: snap.id });
+    const res = await post(pc, p, '/ui/instances/notes/restore', { snapshot: snap.id, confirmed: '1' });
     expect(res.status).toBe(302);
     expect(h.core.data.listSnapshots(inst().id).some((s) => s.label === 'pre-restore')).toBe(true);
   });

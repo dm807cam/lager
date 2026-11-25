@@ -125,15 +125,15 @@ describe('/admin/ai', () => {
     const env = await setup();
     const p = env.core.ai.createProvider({ name: 'Local', type: 'ollama' });
     env.core.ai.createGroup({ name: 'Grandparents', modelId: entry(env.core.ai, p.id, 'llama3.2'), hourlyLimit: 5 });
-    const res = await env.post(`/admin/ai/providers/${p.id}/delete`);
+    const res = await env.post(`/admin/ai/providers/${p.id}/delete`, { confirmed: '1' });
     expect(res.status).toBe(409);
     expect(res.text).toContain('llama3.2');
     expect(env.core.ai.getProvider(p.id)).not.toBeNull();
-    const model = await env.post('/admin/ai/models/llama3.2/delete');
+    const model = await env.post('/admin/ai/models/llama3.2/delete', { confirmed: '1' });
     expect(model.status).toBe(409);
     expect(model.text).toContain('Grandparents');
     entry(env.core.ai, p.id, 'spare');
-    expect((await env.post('/admin/ai/models/spare/delete')).status).toBe(302);
+    expect((await env.post('/admin/ai/models/spare/delete', { confirmed: '1' })).status).toBe(302);
     expect(env.core.ai.getModel('spare')).toBeNull();
   });
 
@@ -142,7 +142,7 @@ describe('/admin/ai', () => {
     const g = env.core.ai.createGroup({ name: 'Fam', modelId: null, hourlyLimit: 5 });
     const u = env.core.users.create({ email: 'a@x.y', name: 'A', password: 'pw-12345678', role: 'user' });
     env.core.ai.assign(u.id, g.id);
-    expect((await env.post(`/admin/ai/groups/${g.id}/delete`)).status).toBe(302);
+    expect((await env.post(`/admin/ai/groups/${g.id}/delete`, { confirmed: '1' })).status).toBe(302);
     expect(env.core.ai.groupIdOf(u.id)).toBe(DEFAULT_GROUP);
   });
 
