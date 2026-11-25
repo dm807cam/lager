@@ -53,6 +53,8 @@ describe('QR encoder', () => {
     expect(el.getAttribute('aria-label')).toBe('Code "for" <you>');
     // Version 1: 21 modules and four on each side.
     expect(el.getAttribute('viewBox')).toBe('0 0 29 29');
+    // Drawn at four pixels per module, so every module is the same size on a 1x screen.
+    expect([el.getAttribute('width'), el.getAttribute('height')]).toEqual(['116', '116']);
     expect(el.querySelector('rect')!.getAttribute('fill')).toBe('#fff');
     expect(el.querySelector('path')!.getAttribute('fill')).toBe('#000');
     expect(el.querySelector('path')!.getAttribute('d')!.startsWith('M4 4h1v1h-1z')).toBe(true);

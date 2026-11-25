@@ -118,7 +118,8 @@ const catalogLink = (locale: Locale): string =>
 
 /** "Yours" without an app: where one comes from, with a button for each way there is (the catalog first, then publishing). */
 function noOwnApps(locale: Locale, publisher: boolean, offered: boolean): string {
-  const detail: MessageKey = offered ? (publisher ? 'home.empty.catalogPublish' : 'home.empty.catalog') : (publisher ? 'home.empty.publish' : 'home.empty.user');
+  // Without a catalog and without Publish, "Yours" is only shown next to apps shared with the viewer (else the start page is).
+  const detail: MessageKey = offered ? (publisher ? 'home.empty.catalogPublish' : 'home.empty.catalog') : (publisher ? 'home.empty.publish' : 'home.empty.sharedOnly');
   const action = [
     offered ? linkButton('/catalog', `${icon('compass')}${esc(t(locale, 'home.browseCatalog'))}`, 'primary', true) : '',
     publisher ? linkButton('/publish', `${icon('upload')}${esc(t(locale, 'nav.publish'))}`, offered ? 'secondary' : 'primary', true) : '',

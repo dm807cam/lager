@@ -332,6 +332,10 @@ describe('the catalog page, denied', () => {
     const res = await request(s.h.app).get('/catalog').set('Host', s.h.host).set('Cookie', cookie);
     expect([res.status, res.headers.location]).toEqual([302, '/login?return=%2Fcatalog']);
     expect(res.text).not.toContain('Tasks');
+    // The session itself is gone: enabled again, the same cookie still leads to sign-in.
+    s.h.core.users.setDisabled(s.ids.uwe, false);
+    const again = await request(s.h.app).get('/catalog').set('Host', s.h.host).set('Cookie', cookie);
+    expect([again.status, again.headers.location]).toEqual([302, '/login?return=%2Fcatalog']);
   });
 
   it('is not served on an instance host', async () => {

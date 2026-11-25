@@ -304,6 +304,8 @@ export function qrSvg(text: string, label: string): string {
   let path = '';
   qr.modules.forEach((row, y) => row.forEach((dark, x) => { if (dark) path += `M${x + quiet} ${y + quiet}h1v1h-1z`; }));
   const name = label.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  return `<svg class="qr" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${side} ${side}" role="img" aria-label="${name}" shape-rendering="crispEdges">`
+  // Four screen pixels per module: every module the same size at 1x, where a phone reads it off a monitor (a 61-module code: 244px).
+  const px = side * 4;
+  return `<svg class="qr" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${side} ${side}" width="${px}" height="${px}" role="img" aria-label="${name}" shape-rendering="crispEdges">`
     + `<rect width="${side}" height="${side}" fill="#fff"/><path d="${path}" fill="#000"/></svg>`;
 }
