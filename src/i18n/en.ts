@@ -199,6 +199,7 @@ export const en = {
   'notice.ok.saved': "Your changes were saved.",
   'notice.ok.activated': "Version {version} is active. The data from before the change is saved as a snapshot.",
   'notice.ok.autoUpdateOn': "Updates are on: the next deploy moves this instance to the new version.",
+  'notice.ok.autoUpdateMoved': "Updates are on. This instance moved to version {version}; the data from before is saved as a snapshot.",
   'notice.ok.autoUpdateOff': "Updates are off: this instance stays on version {version} until you activate another one.",
   'notice.ok.badgeOn': "The “Made with Lager” badge is shown to the people you share this app with.",
   'notice.ok.badgeOff': "The “Made with Lager” badge is hidden.",

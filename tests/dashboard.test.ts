@@ -4,7 +4,7 @@ import request from 'supertest';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { manageExtension } from '../src/http/manage.js';
 import { esc } from '../src/http/pages.js';
-import { signToken } from '../src/http/tokens.js';
+import { sealToken, signToken } from '../src/http/tokens.js';
 import { t, type MessageKey } from '../src/i18n/index.js';
 import type { User } from '../src/platform/users.js';
 import { makeHarness, type Harness } from './support/http.js';
@@ -207,16 +207,16 @@ describe('home page', () => {
   it('a flash message shows once signed and is ignored when forged', async () => {
     const h = setup();
     const cookie = await h.login();
-    const good = signToken({ uid: h.adminId, k: 'flash', e: 1, m: 'notice.noAccount' }, h.core.config.secret, 60);
+    const good = sealToken({ uid: h.adminId, k: 'flash', e: 1, m: 'notice.noAccount' }, h.core.config.secret, 60);
     const ok = await request(h.app).get('/').query({ flash: good }).set('Host', h.host).set('Cookie', cookie);
     expect(ok.text).toContain(en('notice.noAccount'));
     const forged = await request(h.app).get('/').query({ flash: '<b>x</b>.AAAA' }).set('Host', h.host).set('Cookie', cookie);
     expect(forged.status).toBe(200);
     expect(forged.text).not.toContain('<b>x</b>');
-    const other = signToken({ uid: 'someone-else', k: 'flash', e: 1, m: 'notice.noAccount' }, h.core.config.secret, 60);
+    const other = sealToken({ uid: 'someone-else', k: 'flash', e: 1, m: 'notice.noAccount' }, h.core.config.secret, 60);
     const foreign = await request(h.app).get('/').query({ flash: other }).set('Host', h.host).set('Cookie', cookie);
     expect(foreign.text).not.toContain(en('notice.noAccount'));
-    const plain = signToken({ uid: h.adminId, k: 'flash', e: 1, m: 'Free text that is not a catalog key' }, h.core.config.secret, 60);
+    const plain = sealToken({ uid: h.adminId, k: 'flash', e: 1, m: 'Free text that is not a catalog key' }, h.core.config.secret, 60);
     expect((await request(h.app).get('/').query({ flash: plain }).set('Host', h.host).set('Cookie', cookie)).text).not.toContain('Free text');
   });
 

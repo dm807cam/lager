@@ -46,3 +46,34 @@ export function verifyToken<T>(token: string | undefined, secret: string): T | n
     return null;
   }
 }
+
+/** The AES-256 key of sealed tokens, derived from the secret so that it never doubles as an HMAC key. */
+const sealKey = (secret: string): Buffer => crypto.createHmac('sha256', secret).update('lager sealed token v1').digest();
+
+/**
+ * Like `signToken`, but the payload is also unreadable: AES-256-GCM, `<base64url iv | tag | ciphertext>`. For values that end up
+ * in a URL (browser history, proxy logs) and carry what only their recipient should read, such as the names in a notice.
+ */
+export function sealToken(payload: Record<string, unknown>, secret: string, ttlSeconds: number): string {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', sealKey(secret), iv);
+  const body = Buffer.concat([cipher.update(JSON.stringify({ ...payload, exp: Math.floor(Date.now() / 1000) + ttlSeconds }), 'utf8'), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64url');
+}
+
+/** Returns the payload of a sealed token, or null when it was not sealed with this secret, was changed, expired or is malformed. */
+export function openToken<T>(token: string | undefined, secret: string): T | null {
+  if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{40,}$/.test(token)) return null;
+  const raw = Buffer.from(token, 'base64url');
+  try {
+    const decipher = crypto.createDecipheriv('aes-256-gcm', sealKey(secret), raw.subarray(0, 12));
+    decipher.setAuthTag(raw.subarray(12, 28));
+    const payload = JSON.parse(Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8')) as unknown;
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
+    const exp = (payload as { exp?: unknown }).exp;
+    if (typeof exp !== 'number' || exp <= Math.floor(Date.now() / 1000)) return null;
+    return payload as T;
+  } catch {
+    return null;
+  }
+}

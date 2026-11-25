@@ -201,6 +201,7 @@ export const fr: Record<MessageKey, string> = {
   'notice.ok.saved': "Vos modifications ont été enregistrées.",
   'notice.ok.activated': "La version {version} est active. Les données d’avant le changement sont gardées dans un instantané.",
   'notice.ok.autoUpdateOn': "Les mises à jour sont activées : le prochain déploiement fait passer cette instance à la nouvelle version.",
+  'notice.ok.autoUpdateMoved': "Les mises à jour sont activées. Cette instance est passée à la version {version} ; les données d’avant sont enregistrées dans un instantané.",
   'notice.ok.autoUpdateOff': "Les mises à jour sont désactivées : cette instance reste sur la version {version} jusqu’à ce que vous en activiez une autre.",
   'notice.ok.badgeOn': "La mention « Créé avec Lager » est affichée aux personnes avec qui vous partagez cette app.",
   'notice.ok.badgeOff': "La mention « Créé avec Lager » est masquée.",

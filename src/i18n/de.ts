@@ -201,6 +201,7 @@ export const de: Record<MessageKey, string> = {
   'notice.ok.saved': "Deine Änderungen wurden gespeichert.",
   'notice.ok.activated': "Version {version} ist aktiv. Die Daten von vor dem Wechsel sind als Schnappschuss gesichert.",
   'notice.ok.autoUpdateOn': "Updates sind an: Die nächste Bereitstellung bringt diese Instanz auf die neue Version.",
+  'notice.ok.autoUpdateMoved': "Updates sind an. Diese Instanz ist auf Version {version} gewechselt; die Daten von vorher sind als Schnappschuss gesichert.",
   'notice.ok.autoUpdateOff': "Updates sind aus: Diese Instanz bleibt auf Version {version}, bis du eine andere aktivierst.",
   'notice.ok.badgeOn': "Der Hinweis „Gebaut mit Lager“ wird den Leuten gezeigt, mit denen du diese App teilst.",
   'notice.ok.badgeOff': "Der Hinweis „Gebaut mit Lager“ ist ausgeblendet.",

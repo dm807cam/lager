@@ -3,7 +3,7 @@ import type { Core } from '../core.js';
 import { isMessageKey, type MessageKey } from '../i18n/index.js';
 import type { User } from '../platform/users.js';
 import { clearPlantedSession, deviceCookieName, readCookie, sessionCookieName, sessionCookiePlanted, setCookie, THIRTY_DAYS_SECONDS } from './cookies.js';
-import { signToken, verifyToken } from './tokens.js';
+import { openToken, sealToken, signToken, verifyToken } from './tokens.js';
 
 /** True while `ep` is the account's current session epoch and the account is usable. Tokens without a numeric `ep` never match. */
 export function epochValid(user: User | null, ep: unknown): user is User {
@@ -80,12 +80,20 @@ const FLASH_ANCHOR = /^[a-z][a-z0-9-]{0,40}$/;
  */
 export interface Flash { ok?: MessageKey; error?: MessageKey; params?: Record<string, string>; anchor?: string }
 
-/** Signed, short-lived `flash` query value carrying the key of a notice, its values and its place to the page a POST redirects to. */
+/**
+ * Short-lived `flash` query value carrying the key of a notice, its values and its place to the page a POST redirects to. It is
+ * sealed, not only signed: the values name people (an address something was shared with), and URLs end up in browser history
+ * and in the access logs of reverse proxies. A value longer than a notice may show is cut, so the notice keeps its other values.
+ */
 export const flashToken = (core: Core, user: User, flash: Flash): string =>
-  signToken({
+  sealToken({
     uid: user.id, k: 'flash', e: flash.error !== undefined ? 1 : 0, m: flash.error ?? flash.ok ?? '',
-    ...(flash.params ? { p: flash.params } : {}), ...(flash.anchor ? { a: flash.anchor } : {}),
+    ...(flash.params ? { p: Object.fromEntries(Object.entries(flash.params).slice(0, MAX_FLASH_PARAMS).map(([k, v]) => [k, clipParam(v)])) } : {}),
+    ...(flash.anchor ? { a: flash.anchor } : {}),
   }, core.config.secret, FLASH_TTL_SECONDS);
+
+/** A value cut to what a notice shows, with an ellipsis where it was cut. */
+const clipParam = (value: string): string => (value.length > MAX_FLASH_PARAM ? `${value.slice(0, MAX_FLASH_PARAM - 1)}…` : value);
 
 /** The values of a flash as plain strings, or nothing when they are not what `flashToken` writes. */
 function flashParams(value: unknown): Record<string, string> | undefined {
@@ -97,13 +105,13 @@ function flashParams(value: unknown): Record<string, string> | undefined {
 
 /** The notice of a valid flash value issued to this user; anything else, including a value that is not a catalog key, yields nothing. */
 export function readFlash(core: Core, user: User, value: unknown): Flash {
-  const t = verifyToken<{ uid?: unknown; k?: unknown; e?: unknown; m?: unknown; p?: unknown; a?: unknown }>(typeof value === 'string' ? value : undefined, core.config.secret);
+  const t = openToken<{ uid?: unknown; k?: unknown; e?: unknown; m?: unknown; p?: unknown; a?: unknown }>(typeof value === 'string' ? value : undefined, core.config.secret);
   if (t === null || t.k !== 'flash' || t.uid !== user.id || !isMessageKey(t.m)) return {};
   const params = flashParams(t.p);
   const extra = { ...(params ? { params } : {}), ...(typeof t.a === 'string' && FLASH_ANCHOR.test(t.a) ? { anchor: t.a } : {}) };
   return t.e === 1 ? { error: t.m, ...extra } : { ok: t.m, ...extra };
 }
 
-/** Where a POST sends the browser to show `flash` on `path`: the signed value in the query, the changed section as the fragment. */
+/** Where a POST sends the browser to show `flash` on `path`: the sealed value in the query, the changed section as the fragment. */
 export const flashUrl = (core: Core, user: User, path: string, flash: Flash): string =>
   `${path}?flash=${encodeURIComponent(flashToken(core, user, flash))}${flash.anchor && FLASH_ANCHOR.test(flash.anchor) ? '#notice' : ''}`;

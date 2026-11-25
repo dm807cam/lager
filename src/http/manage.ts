@@ -463,7 +463,11 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const inst = managed(user, param(req, 'slug'));
     // Switching it on can move the instance to the latest version, which takes a snapshot like a manual activation.
     const now = on ? withSnapshotBudget(core, inst.id, () => core.apps.setAutoUpdate(inst.id, on, user.id)) : core.apps.setAutoUpdate(inst.id, on, user.id);
-    return { ok: on ? 'notice.ok.autoUpdateOn' : 'notice.ok.autoUpdateOff', params: { version: String(now.activeVersion) }, anchor: 'details' };
+    if (!on) return { ok: 'notice.ok.autoUpdateOff', anchor: 'details' };
+    // An instance that was behind moved to the latest version right away: the notice says so, not "the next deploy".
+    return now.activeVersion !== inst.activeVersion
+      ? { ok: 'notice.ok.autoUpdateMoved', params: { version: String(now.activeVersion) }, anchor: 'details' }
+      : { ok: 'notice.ok.autoUpdateOn', anchor: 'details' };
   }));
 
   router.post('/ui/instances/:slug/badge', ...action(instBack, (req, user) => {
@@ -637,10 +641,12 @@ export const manageExtension: PlatformExtension = (router, core) => {
   }));
 
   router.post('/ui/apps/:slug/collaborators/remove', ...action(appBack, (req, user) => {
-    const id = field(req, 'id');
-    const who = core.users.get(id);
-    core.apps.removeCollaborator(ownedApp(user, param(req, 'slug')).id, id, user.id);
-    return { ok: 'notice.ok.collaboratorRemoved', params: { name: who ? who.name || who.email : id }, anchor: 'collaborators' };
+    const app = ownedApp(user, param(req, 'slug'));
+    // Only someone who works on the app is named: any other account id must not be turned into a name here.
+    const who = core.apps.listCollaborators(app.id).find((c) => c.id === field(req, 'id'));
+    if (!who) throw new Notice('notice.missing');
+    core.apps.removeCollaborator(app.id, who.id, user.id);
+    return { ok: 'notice.ok.collaboratorRemoved', params: { name: who.name || who.email }, anchor: 'collaborators' };
   }));
 
   router.post('/ui/apps/:slug/self-instances', ...action(appBack, (req, user) => {

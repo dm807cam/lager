@@ -3,7 +3,7 @@ import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { csrfToken, flashToken, readFlash } from '../src/http/session.js';
 import { withNotice } from '../src/http/pages.js';
-import { signToken } from '../src/http/tokens.js';
+import { sealToken, signToken } from '../src/http/tokens.js';
 import { t } from '../src/i18n/index.js';
 import { PASSWORD, showcase, type Showcase } from './support/pages.js';
 
@@ -43,6 +43,8 @@ describe('after a form', () => {
     expect(noticeOf(visible.doc)).toEqual({ text: t('en', 'notice.ok.public', { slug: 'notes' }), before: 'details', role: 'status' });
 
     const shared = await submit(s, cookie, admin, `${base}/grants`, { email: 'pia@x.y', level: 'interact' });
+    // The address is in the notice, not in the address bar.
+    expect(decodeURIComponent(shared.location)).not.toContain('pia');
     expect(noticeOf(shared.doc)).toEqual({ text: t('en', 'notice.ok.shared', { name: 'pia@x.y', level: t('en', 'level.interact') }), before: 'sharing', role: 'status' });
     const removed = await submit(s, cookie, admin, `${base}/grants/remove`, { type: 'user', id: s.ids.pia });
     expect(noticeOf(removed.doc)!.text).toBe(t('en', 'notice.ok.unshared', { name: 'pia@x.y' }));
@@ -61,7 +63,13 @@ describe('after a form', () => {
     expect(noticeOf(restored.doc)).toMatchObject({ text: t('en', 'notice.ok.restored', { label: 'before-import' }), before: 'data' });
 
     const off = await submit(s, cookie, admin, `${base}/auto-update`, { on: '0' });
-    expect(noticeOf(off.doc)!.text).toBe(t('en', 'notice.ok.autoUpdateOff', { version: '1' }));
+    expect(noticeOf(off.doc)!.text).toBe(t('en', 'notice.ok.autoUpdateOff'));
+    // Version 1 is active and 2 the latest: switching updates on moves the instance there at once, and the notice says so.
+    const moved = await submit(s, cookie, admin, `${base}/auto-update`, { on: '1' });
+    expect(noticeOf(moved.doc)!.text).toBe(t('en', 'notice.ok.autoUpdateMoved', { version: '2' }));
+    await submit(s, cookie, admin, `${base}/auto-update`, { on: '0' });
+    const on = await submit(s, cookie, admin, `${base}/auto-update`, { on: '1' });
+    expect(noticeOf(on.doc)!.text).toBe(t('en', 'notice.ok.autoUpdateOn'));
     const badge = await submit(s, cookie, admin, `${base}/badge`, { on: '0' });
     expect(noticeOf(badge.doc)!.text).toBe(t('en', 'notice.ok.badgeOff'));
 
@@ -80,6 +88,10 @@ describe('after a form', () => {
     const admin = s.h.adminId;
     const collab = await submit(s, cookie, admin, '/ui/apps/notes/collaborators/remove', { id: s.ids.pia });
     expect(noticeOf(collab.doc)).toMatchObject({ text: t('en', 'notice.ok.collaboratorRemoved', { name: 'Pia Publisher' }), before: 'collaborators' });
+    // The id of someone who does not work on the app is not turned into a name.
+    const stranger = await submit(s, cookie, admin, '/ui/apps/notes/collaborators/remove', { id: s.ids.uwe });
+    expect(noticeOf(stranger.doc)!.text).toBe(t('en', 'notice.missing'));
+    expect(stranger.doc.body.textContent).not.toContain('Uwe');
     const created = await submit(s, cookie, admin, '/ui/apps/notes/instances', { slug: 'notes-two' });
     expect(noticeOf(created.doc)).toMatchObject({ text: t('en', 'notice.ok.instanceCreated', { slug: 'notes-two' }), before: 'instances' });
 
@@ -116,13 +128,21 @@ describe('the flash value', () => {
     const uwe = core.users.get(s.ids.uwe)!;
     const token = flashToken(core, admin, { ok: 'notice.ok.shared', params: { name: 'a@b.c', level: 'Viewer' }, anchor: 'sharing' });
     expect(readFlash(core, admin, token)).toEqual({ ok: 'notice.ok.shared', params: { name: 'a@b.c', level: 'Viewer' }, anchor: 'sharing' });
-    // Issued to someone else, or not signed by this server: nothing.
+    // The values cannot be read from the address: it ends up in browser history and in the logs of reverse proxies.
+    expect(Buffer.from(token, 'base64url').toString('latin1')).not.toContain('a@b.c');
+    expect(token).not.toContain('a@b.c');
+    // Issued to someone else, sealed with another secret, or only signed: nothing.
     expect(readFlash(core, uwe, token)).toEqual({});
-    expect(readFlash(core, admin, signToken({ uid: admin.id, k: 'flash', e: 0, m: 'notice.ok.saved' }, 'x'.repeat(40), 60))).toEqual({});
+    expect(readFlash(core, admin, sealToken({ uid: admin.id, k: 'flash', e: 0, m: 'notice.ok.saved' }, 'x'.repeat(40), 60))).toEqual({});
+    expect(readFlash(core, admin, signToken({ uid: admin.id, k: 'flash', e: 0, m: 'notice.ok.saved' }, core.config.secret, 60))).toEqual({});
     // Values that are not plain short strings, and places that are not plain words, are dropped; the message stays.
-    const sign = (extra: Record<string, unknown>): string => signToken({ uid: admin.id, k: 'flash', e: 0, m: 'notice.ok.saved', ...extra }, core.config.secret, 60);
+    const sign = (extra: Record<string, unknown>): string => sealToken({ uid: admin.id, k: 'flash', e: 0, m: 'notice.ok.saved', ...extra }, core.config.secret, 60);
     expect(readFlash(core, admin, sign({ p: { name: { nested: 1 } }, a: '"><script>' }))).toEqual({ ok: 'notice.ok.saved' });
     expect(readFlash(core, admin, sign({ p: { name: 'x'.repeat(301) } }))).toEqual({ ok: 'notice.ok.saved' });
+    // A value too long for a notice is cut where it is written, so the notice keeps its other values.
+    const long = readFlash(core, admin, flashToken(core, admin, { ok: 'notice.ok.shared', params: { name: 'n'.repeat(500), level: 'Viewer' } }));
+    expect(long.params!.level).toBe('Viewer');
+    expect(long.params!.name).toBe(`${'n'.repeat(299)}…`);
   });
 
   it('values are text: markup in a name is shown, not run', () => {
