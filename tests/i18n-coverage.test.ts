@@ -5,7 +5,7 @@ import request from 'supertest';
 import { adminExtension } from '../src/http/admin.js';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { manageExtension } from '../src/http/manage.js';
-import { badCodePage, disabledPage, esc, forbiddenPage, noticeHtml, notFoundPage } from '../src/http/pages.js';
+import { badCodePage, disabledPage, esc, noAccessPage, noticeHtml, notFoundPage } from '../src/http/pages.js';
 import { en } from '../src/i18n/en.js';
 import { de } from '../src/i18n/de.js';
 import { es } from '../src/i18n/es.js';
@@ -370,7 +370,7 @@ describe('error pages, notices and mail in every locale', () => {
   it('the error pages render the catalog text of each locale', () => {
     const pages: Array<[(l: Locale) => string, MessageKey, MessageKey]> = [
       [(l) => notFoundPage(l), 'error.notFound.title', 'error.notFound.text'],
-      [(l) => forbiddenPage(l), 'error.forbidden.title', 'error.forbidden.text'],
+      [(l) => noAccessPage(l, 'e@x.y', ''), 'error.forbidden.title', 'error.forbidden.title'],
       [(l) => disabledPage(l), 'error.disabled.title', 'error.disabled.text'],
       [(l) => badCodePage(l), 'error.badCode.title', 'error.badCode.text'],
     ];

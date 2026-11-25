@@ -6,7 +6,7 @@ import { addressKey } from './client-address.js';
 import { clearCookie, NONCE_RE, sessionCookieName, warnIfPlainHttp } from './cookies.js';
 import { csrfToken, csrfValid, issueSession, knownDevice, markDevice, sessionUser } from './session.js';
 import { isLocale, t } from '../i18n/index.js';
-import { authCard, badCodePage, disabledPage, esc, forbiddenPage, hiddenField, loginPage, notFoundPage, page, staleFormPage } from './pages.js';
+import { authCard, badCodePage, disabledPage, esc, hiddenField, loginPage, noAccessPage, notFoundPage, page, staleFormPage } from './pages.js';
 import { btn, icon, signedIn } from './ui.js';
 import { LANG_COOKIE, ONE_YEAR_SECONDS, requestLocale } from './locale.js';
 import { LagerError } from '../errors.js';
@@ -441,7 +441,9 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
     // Ending the epoch signs the account out everywhere: every platform session, instance cookie and pending code.
     core.users.bumpEpoch(user.id);
     clearCookie(res, config, sessionCookieName(config));
-    res.redirect('/login');
+    // "Use another account" on an app's No access page: the sign-in that follows goes back to that app.
+    const back = safeReturnPath((req.body as Record<string, unknown> | undefined)?.return);
+    res.redirect(back === '/' ? '/login' : `/login?return=${encodeURIComponent(back)}`);
   });
 
   /**
@@ -488,7 +490,14 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
       return;
     }
     if (core.access.levelFor(instance, user) === 'none') {
-      res.status(403).type('html').send(forbiddenPage(locale));
+      // The way back here after signing in with another account: the same sign-in, as a GET (an answer's POST has no query).
+      const again = new URLSearchParams({ slug: instance.slug });
+      if (customHost) again.set('host', customHost);
+      if (typeof params.n === 'string' && NONCE_RE.test(params.n)) again.set('n', params.n);
+      again.set('return', safeReturnPath(params.return));
+      const actions = `<form method="post" action="/logout">${hiddenField('csrf', csrfToken(core, user))}${hiddenField('return', `/auth/instance?${again}`)}
+<button type="submit" class="${btn('primary')}">${esc(t(locale, 'noAccess.switch'))}</button></form><a class="${btn('secondary')}" href="/">${esc(t(locale, 'home.title'))}</a>`;
+      res.status(403).type('html').send(noAccessPage(locale, user.email, actions, signedIn(core, user, null, '/')));
       return;
     }
     // The instance put a nonce into its own cookie before sending the browser here; the code carries it back, so it is only good in that browser.

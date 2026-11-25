@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { LOCALES, t } from '../src/i18n/index.js';
 import { esc } from '../src/http/pages.js';
+import { csrfToken } from '../src/http/session.js';
 import { makeHarness, NONCE, NONCE_COOKIE, type Harness } from './support/http.js';
 
 let h: Harness | undefined;
@@ -265,5 +266,67 @@ describe('the answer to the sign-in question, sent from an out-of-date page', ()
     expect((res.headers['set-cookie'] as unknown as string[] | undefined ?? []).some((c) => c.includes('lager_inst'))).toBe(false);
     expect(/<a class="[^"]*btn[^"]*" href="([^"]+)">/.exec(res.text.slice(res.text.indexOf('<main')))![1]).toBe('/');
     expect(s.confirmations()).toEqual([]);
+  });
+});
+
+describe('an app the signed-in account may not open', () => {
+  it('names the account, says what to ask for, and offers another account and the home page', async () => {
+    const s = setup({ visibility: 'private' });
+    const cookie = await s.h.login('v@x.y', PW);
+    const res = await s.ask(cookie, { return: '/today' });
+    expect(res.status).toBe(403);
+    const text = esc(t('en', 'noAccess.text', { email: '%' })).split('%');
+    expect(res.text).toContain(`${text[0]}<strong>v@x.y</strong>${text[1]}`);
+    // The owner is not named: the visitor has no right to know who it is.
+    expect(res.text).not.toContain('admin@x.y');
+    expect(res.text).toContain(`href="/">${t('en', 'home.title')}</a>`);
+    const form = /<form method="post" action="\/logout">((?:(?!<\/form>)[\s\S])*?name="return"[\s\S]*?)<\/form>/.exec(res.text)![1];
+    expect(form).toContain(t('en', 'noAccess.switch'));
+    const back = /name="return" value="([^"]+)"/.exec(form)![1].replace(/&amp;/g, '&');
+    expect(back).toBe(`/auth/instance?slug=workout&n=${NONCE}&return=%2Ftoday`);
+  });
+
+  it('"Use another account" signs out and, after signing in with an account that has access, ends on the app', async () => {
+    const s = setup({ visibility: 'private' });
+    const cookie = await s.h.login('v@x.y', PW);
+    const page = (await s.ask(cookie)).text;
+    const fields = Object.fromEntries([...(/<form method="post" action="\/logout">((?:(?!<\/form>)[\s\S])*?name="return"[\s\S]*?)<\/form>/.exec(page)![1]).matchAll(/name="([^"]+)" value="([^"]*)"/g)].map((m) => [m[1], m[2].replace(/&amp;/g, '&')]));
+    const out = await request(s.h.app).post('/logout').set('Host', s.h.host).set('Cookie', cookie).type('form').send(fields);
+    expect(out.status).toBe(302);
+    const login = new URL(out.headers.location, 'http://x');
+    expect(login.pathname).toBe('/login');
+    const ret = login.searchParams.get('return')!;
+    expect(ret.startsWith('/auth/instance?slug=workout')).toBe(true);
+    // The old session is over.
+    expect((await s.ask(cookie)).status).toBe(302);
+    // The owner signs in with the same return: the sign-in goes on to the app.
+    const signedIn = await request(s.h.app).post('/login').set('Host', s.h.host).type('form').send({ email: 'admin@x.y', password: 'admin-password-1', return: ret });
+    expect(signedIn.headers.location).toBe(ret);
+    const owner = signedIn.headers['set-cookie'] as unknown as string[];
+    const onward = await request(s.h.app).get(ret).set('Host', s.h.host).set('Cookie', owner.map((c) => c.split(';')[0]).join('; '));
+    expect(onward.headers.location).toMatch(/^http:\/\/workout\.apps\.localhost:8080\/__lager\/callback\?code=/);
+  });
+
+  it('on the app’s own address, after the share was taken back, it names the account and leads to the platform', async () => {
+    const s = setup({ visibility: 'users' });
+    const inst = await s.h.enter('workout', await s.h.login('v@x.y', PW));
+    s.h.core.apps.setVisibility(s.inst.id, 'private', s.h.adminId);
+    const res = await request(s.h.app).get('/').set('Host', W).set('Cookie', inst);
+    expect(res.status).toBe(403);
+    expect(res.text).toContain('<strong>v@x.y</strong>');
+    expect(res.text).toContain(`href="http://lager.localhost:8080/auth/instance?slug=workout">${t('en', 'noAccess.switch')}</a>`);
+    expect(res.text).toContain(`href="http://lager.localhost:8080/">${t('en', 'home.title')}</a>`);
+    // No script on an app's host.
+    expect(res.text).not.toContain('<script src=');
+  });
+
+  it('a sign-out without a way back, or with one off the platform, ends at the plain sign-in', async () => {
+    const s = setup();
+    for (const ret of ['', '//evil.example/x', 'https://evil.example']) {
+      const cookie = await s.h.login('v@x.y', PW);
+      const csrf = csrfToken(s.h.core, s.h.core.users.get(s.visitor.id)!);
+      const out = await request(s.h.app).post('/logout').set('Host', s.h.host).set('Cookie', cookie).type('form').send({ csrf, return: ret });
+      expect(out.headers.location, ret).toBe('/login');
+    }
   });
 });

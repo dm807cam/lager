@@ -186,8 +186,16 @@ ${opts.resendEmail !== undefined ? resendForm(locale, opts.resendEmail) : ''}</d
 /** On the platform host the page offers a way back; on instance hosts the brand link leads to the platform. */
 export const notFoundPage = (locale: Locale, opts: PageOpts = {}): string =>
   messagePage(locale, t(locale, 'error.notFound.title'), t(locale, 'error.notFound.text'), opts.origin ? '' : backLink(locale), opts);
-export const forbiddenPage = (locale: Locale, opts: PageOpts = {}): string =>
-  messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'error.forbidden.text'), '', opts, 'danger');
+/**
+ * An app the signed-in account may not open. It names the account, since the wrong one is a common cause (a work and a private
+ * address, a child's account on the family tablet), says what to ask for without naming the owner, whom the visitor has no
+ * right to know, and offers the way out: `actions` is trusted markup (another account, the home page).
+ */
+export function noAccessPage(locale: Locale, email: string, actions: string, opts: PageOpts = {}): string {
+  const text = esc(t(locale, 'noAccess.text', { email: '%EMAIL%' })).replace('%EMAIL%', `<strong>${esc(email)}</strong>`);
+  return page(locale, t(locale, 'error.forbidden.title'), messageCard(`<div class="auth-icon is-danger">${icon('alert')}</div><h1>${esc(t(locale, 'error.forbidden.title'))}</h1>
+<p>${text}</p><div class="btn-row gap-top">${actions}</div>`, opts), opts);
+}
 export const disabledPage = (locale: Locale, opts: PageOpts = {}): string =>
   messagePage(locale, t(locale, 'error.disabled.title'), t(locale, 'error.disabled.text'), '', opts);
 export const badCodePage = (locale: Locale, opts: PageOpts = {}): string =>
