@@ -19,10 +19,18 @@ function coarse(): string {
 describe('touch targets', () => {
   it('on touch screens the controls the audit measured below 44 px get 44 px', () => {
     const rules = coarse();
-    for (const selector of ['.pills a', '.brand', 'td > a:only-child', '.cell-user a:only-child', '.hero .url', '.notice > a', '.btn-sm']) {
+    for (const selector of ['.pills a', '.brand', 'td > a:only-child', '.cell-user a:only-child', '.hero a.url', '.notice > a', '.btn-sm']) {
       const rule = new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\>]/g, '\\$&')}[^{]*\\{[^}]*min-height: 44px`);
       expect(rules, selector).toMatch(rule);
     }
+  });
+
+  it('a link that fills a table cell stays within its column, and only a linked address grows', () => {
+    const rules = coarse();
+    // Without a width limit an inline-flex link takes its text's full width: a long group name would lose its "…" and leave the cell.
+    expect(rules).toMatch(/\.cell-user a:only-child \{[^}]*display: inline-flex;[^}]*max-width: 100%;/);
+    // The address is text, not a target, on a disabled instance and on the app page.
+    expect(rules).not.toMatch(/\.hero \.url\b/);
   });
 
   it('the section pills keep 44 px although their base rule comes later in the file', () => {

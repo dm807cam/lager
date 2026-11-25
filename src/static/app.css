@@ -311,10 +311,11 @@ details.menu > summary::-webkit-details-marker { display: none; }
   .menu-trigger.avatar-trigger { padding: 4px; }
   .back, .site-footer a, .auth-links a { display: inline-flex; align-items: center; min-height: 44px; }
   .brand { min-height: 44px; }
-  /* A link that is all of a table cell (an instance, a group) gets the cell's height to be tapped, not just its line of text. */
-  td > a:only-child, .cell-user a:only-child { display: inline-flex; align-items: center; min-height: 44px; }
-  /* The instance address under its name, and the link of a notice (the next setup step). */
-  .hero .url, .notice > a { display: inline-flex; align-items: center; min-height: 44px; }
+  /* A link that is all of a table cell (an instance, a group) gets the cell's height to be tapped, not just its line of text. It stays
+     within its column (max-width): a long name inside it is cut with "…", not pushed out of the cell. */
+  td > a:only-child, .cell-user a:only-child { display: inline-flex; align-items: center; min-height: 44px; max-width: 100%; }
+  /* The instance address under its name when it is a link (a disabled instance and an app show it as text), and the link of a notice. */
+  .hero a.url, .notice > a { display: inline-flex; align-items: center; min-height: 44px; }
 }
 .btn-row { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
 
