@@ -200,7 +200,7 @@ describe('registration and verification', () => {
     const refusedChange = await s.post('/account/password', { current: long2, password: tooLong, csrf }, { cookie });
     expect(refusedChange.status).toBe(400);
     expect(refusedChange.text).toContain(message);
-    expect((await s.post('/account/password', { current: long2, password: long, csrf }, { cookie })).status).toBe(200);
+    expect((await s.post('/account/password', { current: long2, password: long, csrf }, { cookie })).status).toBe(302);
     expect((await s.post('/login', { email: 'ann@example.org', password: long })).status).toBe(302);
   });
 
@@ -517,8 +517,17 @@ describe('account page and sessions', () => {
     const csrf = csrfToken(h!.core, user);
     expect((await s.post('/account/name', { name: 'Anna' }, { cookie })).status).toBe(403);
     const renamed = await s.post('/account/name', { name: 'Anna', csrf }, { cookie });
-    expect(renamed.status).toBe(200);
+    // Saved: back to the account page with a notice, so a reload sends nothing again.
+    expect(renamed.status).toBe(302);
+    expect(renamed.headers.location).toMatch(/^\/account\?flash=/);
+    expect((await s.get(renamed.headers.location, cookie)).text).toContain(t('en', 'account.name.saved'));
     expect(h!.core.users.get(user.id)!.name).toBe('Anna');
+    // The form's own address, opened again, leads to the account page instead of a dead end.
+    for (const path of ['/account/name', '/account/password', '/account/two-factor/setup']) {
+      const again = await s.get(path, cookie);
+      expect(again.status, path).toBe(302);
+      expect(again.headers.location, path).toBe('/account');
+    }
 
     const wrong = await s.post('/account/password', { current: 'not it at all', password: 'a brand new password', csrf }, { cookie });
     expect(wrong.text).toContain(t('en', 'account.password.wrong'));
@@ -527,11 +536,11 @@ describe('account page and sessions', () => {
     expect(short.text).toContain(t('en', 'auth.password.short', { min: 10 }));
 
     const ok = await s.post('/account/password', { current: PASSWORD, password: 'a brand new password', csrf }, { cookie });
-    expect(ok.status).toBe(200);
-    expect(ok.text).toContain(t('en', 'account.password.changed'));
+    expect(ok.status).toBe(302);
     const fresh = cookieOf(ok)!;
     expect(fresh).toBeTruthy();
     expect(fresh).not.toBe(cookie);
+    expect((await s.get(ok.headers.location, fresh)).text).toContain(t('en', 'account.password.changed'));
     expect((await s.get('/account', fresh)).status).toBe(200);
     expect((await s.post('/login', { email: 'ann@example.org', password: 'a brand new password' })).status).toBe(302);
   });

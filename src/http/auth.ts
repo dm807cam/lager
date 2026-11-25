@@ -10,10 +10,10 @@ import { addressKey } from './client-address.js';
 import { requestLocale } from './locale.js';
 import { loginLimiter } from './platform.js';
 import { sameOriginGuard } from './origin.js';
-import { authCard, esc, field, messagePage, page, resendForm, sessionExpiredPage } from './pages.js';
+import { authCard, esc, field, messagePage, noticeText, page, resendForm, sessionExpiredPage } from './pages.js';
 import { avatar, btn, icon, notice as noticeBox, signedIn } from './ui.js';
 import { RateLimiter } from './ratelimit.js';
-import { csrfToken, csrfValid, issueSession, markDevice } from './session.js';
+import { csrfToken, csrfValid, flashUrl, issueSession, markDevice, readFlash } from './session.js';
 import { codeRefusal, recoveryCodesPage, setupPage, setupToken, setupTokenValid, twoFactorCard } from './two-factor.js';
 
 const HOUR_MS = 3600_000;
@@ -335,13 +335,24 @@ export const authExtension: PlatformExtension = (router, core) => {
 
   router.get('/account', hardened, auth, (req, res) => {
     const user = userOf(res);
-    html(res, 200, accountPage(core, requestLocale(core, req, user), user));
+    const locale = requestLocale(core, req, user);
+    const flash = readFlash(core, user, req.query.flash);
+    html(res, 200, accountPage(core, locale, user, {
+      ...(flash.ok ? { ok: noticeText(locale, flash.ok, flash.params) } : {}), ...(flash.error ? { error: noticeText(locale, flash.error, flash.params) } : {}),
+    }));
   });
+  /** After a change that shows nothing secret: back to the account page, which says what happened, so a reload sends nothing again. */
+  const toAccount = (res: Response, user: User, ok: MessageKey): void => { res.redirect(flashUrl(core, user, '/account', { ok })); };
+
+  // The forms of the account page answer some posts with a page at their own address (a refusal, a new key, recovery codes).
+  // Opening that address again leads to the account page instead of a dead end; nothing is sent again.
+  router.get('/account/*rest', (_req, res) => { res.redirect('/account'); });
+  router.get('/verify/resend', (_req, res) => { res.redirect('/login'); });
 
   router.post('/account/name', ...accountAction((req, res, user, locale) => {
     try {
-      const updated = core.users.setName(user.id, field(req, 'name'));
-      html(res, 200, accountPage(core, locale, updated, { ok: t(locale, 'account.name.saved') }));
+      core.users.setName(user.id, field(req, 'name'));
+      toAccount(res, user, 'account.name.saved');
     } catch (e) {
       if (!(e instanceof LagerError)) throw e;
       html(res, 400, accountPage(core, locale, user, { error: t(locale, 'validation.name', { max: MAX_NAME_LENGTH }) }));
@@ -354,10 +365,9 @@ export const authExtension: PlatformExtension = (router, core) => {
       html(res, 400, accountPage(core, locale, user, { error: t(locale, 'validation.generic') }));
       return;
     }
-    const updated = core.users.setLocale(user.id, chosen === '' ? null : (chosen as Locale));
-    // The page answers in the language just chosen; "browser default" falls back to what the request itself asks for.
-    const now = requestLocale(core, req, updated);
-    html(res, 200, accountPage(core, now, updated, { ok: t(now, 'account.locale.saved') }));
+    core.users.setLocale(user.id, chosen === '' ? null : (chosen as Locale));
+    // The account page then answers in the language just chosen; "browser default" falls back to what the browser asks for.
+    toAccount(res, user, 'account.locale.saved');
   }));
 
   router.post('/account/password', ...accountAction(async (req, res, user, locale) => {
@@ -382,7 +392,7 @@ export const authExtension: PlatformExtension = (router, core) => {
     const fresh = core.users.get(user.id)!;
     issueSession(core, res, fresh);
     markDevice(core, res, fresh);
-    html(res, 200, accountPage(core, locale, fresh, { ok: t(locale, 'account.password.changed') }));
+    toAccount(res, fresh, 'account.password.changed');
   }));
 
   // --- two-step sign-in ---
@@ -481,6 +491,6 @@ export const authExtension: PlatformExtension = (router, core) => {
     if (!(await passwordConfirmed(req, res, user, locale)) || !codeConfirmed(req, res, user, locale)) return;
     core.twoFactor.disable(user.id);
     core.accounts.noticeTwoFactor(user, 'disabled', locale);
-    html(res, 200, accountPage(core, locale, user, { ok: t(locale, 'account.twoFactor.disabled') }));
+    toAccount(res, user, 'account.twoFactor.disabled');
   }));
 };

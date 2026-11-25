@@ -24,6 +24,7 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 
 ### Fixed
 
+- **Reloading after a form:** saving the name, language or password on the account page, turning off two-step sign-in, saving or testing the mail server, testing an AI provider, turning off someone's second step and deleting an account now redirect to their page with a notice, so a reload no longer asks to send the form again (and sends no second test mail). Forms that must show a one-time secret (a new token, an invitation or reset link, recovery codes) still answer in place, and the address of every form, opened again from the address bar or a bookmark, leads to the page the form is on instead of "Not found" (#77).
 - **Forgot password without mail:** on a server that sends no mail, "Forgot your password?" no longer answers "Email sent". It says that the server sends no email and to ask its administrator for a link to set a new password, and offers no form. The same goes for sending a confirmation link again, for an unconfirmed account that signs in, and for a confirmation link that no longer works (#74).
 
 ### Security

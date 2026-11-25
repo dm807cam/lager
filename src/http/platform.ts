@@ -426,6 +426,8 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
 
   twoFactorLoginRoutes(router, core);
 
+  // Signing out is a form; a GET of its address (a typed URL, a reload) signs nobody out and leads home.
+  router.get('/logout', (_req, res) => { res.redirect('/'); });
   router.post('/logout', express.urlencoded({ extended: false, limit: '10kb' }), (req, res) => {
     const user = sessionUser(core, req);
     const csrf = (req.body as Record<string, unknown> | undefined)?.csrf;

@@ -453,8 +453,8 @@ describe('the account page', () => {
     expect(noPassword.status).toBe(400);
     expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(true);
     const off = await s.post('/account/two-factor/disable', { csrf: s.csrf(), current: USER.password, code: codeFor(secret, 1) }, { cookie });
-    expect(off.status).toBe(200);
-    expect(off.text).toContain(t('en', 'account.twoFactor.disabled'));
+    expect(off.status).toBe(302);
+    expect((await s.get(off.headers.location, cookie)).text).toContain(t('en', 'account.twoFactor.disabled'));
     expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(false);
     await new Promise((r) => setImmediate(r));
     expect(s.mailer.sent.map((m) => m.subject)).toContain(t('en', 'mail.twoFactor.disabled.subject'));
@@ -516,8 +516,9 @@ describe('administrators', () => {
     const { token: apiToken } = s.core.tokens.create(s.user.id, 'script');
     const res = await s.post(`/admin/users/${s.user.id}/two-factor/reset`, { csrf: s.csrf(h!.adminId), current: ADMIN.password }, { cookie: admin });
     expect(s.core.tokens.verify(apiToken)).toBeNull();
-    expect(res.status).toBe(200);
-    expect(res.text).toContain(t('en', 'admin.users.twoFactorResetDone', { email: USER.email }));
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(new RegExp(`^/admin/users/${s.user.id}\\?flash=`));
+    expect((await s.get(res.headers.location, admin)).text).toContain(t('en', 'admin.users.twoFactorResetDone', { email: USER.email }));
     expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(false);
     expect((await s.get('/account', annSession)).status).toBe(302);
     await new Promise((r) => setImmediate(r));
@@ -558,7 +559,7 @@ describe('administrators', () => {
     expect(noCode.text).toContain(t('en', 'twoFactor.wrong'));
     expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(true);
     const ok = await s.post(`/admin/users/${s.user.id}/two-factor/reset`, { csrf: s.csrf(h!.adminId), current: ADMIN.password, code: codeFor(adminSecret, 1) }, { cookie: admin });
-    expect(ok.status).toBe(200);
+    expect(ok.status).toBe(302);
     expect(s.core.twoFactor.isEnabled(s.user.id)).toBe(false);
   });
 });

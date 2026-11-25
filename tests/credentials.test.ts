@@ -36,7 +36,7 @@ describe('credentials do not survive password changes', () => {
     const cookie = await h!.login('ann@example.org', PASSWORD);
     const res = await request(h!.app).post('/account/password').set('Host', h!.host).set('Cookie', cookie).type('form')
       .send({ current: PASSWORD, password: NEW_PASSWORD, csrf: csrfToken(f.core, f.user) });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(302);
     expect(f.alive.access()).toBe(false);
     expect(f.alive.refresh()).toBe(false);
     expect(f.alive.code()).toBe(false);

@@ -386,9 +386,11 @@ describe('deleting an account', () => {
     try {
       res = await w.post(`/admin/users/${w.pia.id}/delete`, { owned: 'delete', confirm: 'pia@x.y' });
     } finally { console.error = original; }
-    expect(res.status).toBe(200);
-    expect(res.headers['content-type']).toMatch(/html/);
-    const doc = new JSDOM(res.text).window.document;
+    // The answer is a redirect to the list, which says what happened.
+    expect(res.status).toBe(302);
+    const page = await w.get(res.headers.location as string);
+    expect(page.headers['content-type']).toMatch(/html/);
+    const doc = new JSDOM(page.text).window.document;
     expect(doc.querySelector('[role="alert"]')!.textContent).toBe(t('en', 'admin.users.delete.cleanupFailed', { email: 'pia@x.y' }));
     expect(res.text).not.toContain(en('admin.users.delete.done', { email: 'pia@x.y' }));
     expect(doc.querySelector('table')).not.toBeNull();
@@ -406,7 +408,7 @@ describe('deleting an account', () => {
     const limiter = loginLimiter(w.core);
     for (let i = 0; i < 30 && !limiter.accountPaused('pia@x.y'); i++) limiter.begin(`10.0.${i}.1`, 'pia@x.y', false);
     expect(limiter.accountPaused('pia@x.y')).toBe(true);
-    expect((await w.post(`/admin/users/${w.pia.id}/delete`, { owned: 'transfer', transfer_to: 'admin@x.y', confirm: 'pia@x.y' })).status).toBe(200);
+    expect((await w.post(`/admin/users/${w.pia.id}/delete`, { owned: 'transfer', transfer_to: 'admin@x.y', confirm: 'pia@x.y' })).status).toBe(302);
     expect(limiter.accountPaused('pia@x.y')).toBe(false);
   });
 
@@ -426,9 +428,10 @@ describe('deleting an account', () => {
     const w = await world();
     const before = trashNames(w.core);
     const res = await w.post(`/admin/users/${w.pia.id}/delete`, { owned: 'transfer', transfer_to: 'Admin@X.y', confirm: 'pia@x.y' });
-    expect(res.status).toBe(200);
-    expect(res.text).toContain(en('admin.users.delete.done', { email: 'pia@x.y' }));
-    expect(res.text).not.toContain(`/admin/users/${w.pia.id}/`);
+    expect(res.status).toBe(302);
+    const page = await w.get(res.headers.location as string);
+    expect(page.text).toContain(en('admin.users.delete.done', { email: 'pia@x.y' }));
+    expect(page.text).not.toContain(`/admin/users/${w.pia.id}`);
 
     expect(w.core.users.get(w.pia.id)).toBeNull();
     expect(w.core.users.getByEmail('pia@x.y')).toBeNull();
@@ -466,8 +469,8 @@ describe('deleting an account', () => {
     const ids = Object.fromEntries(['board', 'board-two', 'notes-pia'].map((slug) => [slug, w.core.apps.getInstanceBySlug(slug)!.id]));
     const boardApp = w.core.apps.getApp('board')!.id;
     const res = await w.post(`/admin/users/${w.pia.id}/delete`, { owned: 'delete', transfer_to: 'admin@x.y', confirm: 'pia@x.y' });
-    expect(res.status).toBe(200);
-    expect(res.text).toContain(en('admin.users.delete.done', { email: 'pia@x.y' }));
+    expect(res.status).toBe(302);
+    expect((await w.get(res.headers.location as string)).text).toContain(en('admin.users.delete.done', { email: 'pia@x.y' }));
 
     expect(w.core.users.get(w.pia.id)).toBeNull();
     expect(references(w.core, w.pia.id)).toEqual([]);
@@ -562,7 +565,7 @@ describe('deleting an account', () => {
       expect(w.core.users.get(w.admin.id)).not.toBeNull();
       // With the other administrator gone, the one left can neither be deactivated nor, therefore, deleted.
       w.core.users.setDisabled(w.boss.id, true);
-      expect((await w.post(`/admin/users/${w.boss.id}/delete`, { owned: 'transfer', transfer_to: 'admin@x.y', confirm: 'boss@x.y' })).status).toBe(200);
+      expect((await w.post(`/admin/users/${w.boss.id}/delete`, { owned: 'transfer', transfer_to: 'admin@x.y', confirm: 'boss@x.y' })).status).toBe(302);
       expect((await w.post(`/admin/users/${w.admin.id}/disabled`, { disabled: '1' })).status).toBe(403);
       expect(w.core.users.list().filter((u) => u.role === 'admin' && !u.disabled).map((u) => u.email)).toEqual(['admin@x.y']);
     });
@@ -608,7 +611,7 @@ describe('deleting an account', () => {
       // Uwe owns one instance and no app: a plain user can take that over.
       w.core.users.setDisabled(w.uwe.id, true);
       const plain = w.core.users.create({ email: 'plain@x.y', name: 'Plain', password: PASSWORD, role: 'user' });
-      expect((await w.post(`/admin/users/${w.uwe.id}/delete`, { owned: 'transfer', transfer_to: 'plain@x.y', confirm: 'uwe@x.y' })).status).toBe(200);
+      expect((await w.post(`/admin/users/${w.uwe.id}/delete`, { owned: 'transfer', transfer_to: 'plain@x.y', confirm: 'uwe@x.y' })).status).toBe(302);
       expect(w.core.apps.getInstanceBySlug('notes-uwe')!.ownerId).toBe(plain.id);
     });
 
@@ -627,7 +630,7 @@ describe('deleting an account', () => {
       expect(trashNames(w.core)).toEqual(trash);
       expect(w.core.data.get(w.core.apps.getInstanceBySlug('board')!.id, 'cards/a')).not.toBeNull();
       // Handing the app over works, and Uwe keeps his instance.
-      expect((await w.post(`/admin/users/${w.pia.id}/delete`, ok)).status).toBe(200);
+      expect((await w.post(`/admin/users/${w.pia.id}/delete`, ok)).status).toBe(302);
       expect(w.core.apps.getInstanceBySlug('board-uwe')!.ownerId).toBe(w.uwe.id);
     });
 

@@ -696,4 +696,13 @@ export const manageExtension: PlatformExtension = (router, core) => {
     core.apps.deleteApp(app.id, user.id);
     return { ok: 'notice.ok.appDeleted', params: { name: app.title }, to: '/' };
   }));
+
+  // Opening the address of a form (a reload of a page it answered with, a bookmark) leads to the page the form is on.
+  router.get('/ui/*rest', (req, res, next) => {
+    const [kind, slug] = req.path.split('/').filter(Boolean).slice(1);
+    if (kind === 'instances' && slug) res.redirect(`/instances/${slug}`);
+    else if (kind === 'apps' && slug) res.redirect(`/apps/${slug}`);
+    else if (kind === 'tokens') res.redirect('/publish');
+    else next();
+  });
 };
