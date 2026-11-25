@@ -364,7 +364,7 @@ function appPage(core: Core, locale: Locale, user: User, app: App, flash: Flash)
 <section class="card" id="versions"><h2>${esc(t(locale, 'app.versions'))}</h2>${versionsList(core, locale, user, app, null, csrf)}</section>
 <section class="card" id="instances"><h2>${esc(t(locale, 'app.instances'))}</h2>${rows.length ? dataTable(locale, [t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'app.saved'), ''], rows) : emptyState(t(locale, 'app.noInstances'))}
 <div class="subsection"><h3>${esc(t(locale, 'app.newInstance'))}</h3>${form(`${base}/instances`, csrf,
-    `${slugField(locale, 'new-slug', t(locale, 'common.name'), core.apps.suggestSlug(app, user) ?? '', instanceUrl(core.config, '__slug__'))}${ownerField}`,
+    `${slugField(locale, 'new-slug', t(locale, 'common.name'), core.apps.suggestSlug(app, ownerField ? null : user.id) ?? '', instanceUrl(core.config, '__slug__'))}${ownerField}`,
     `${icon('plus')}${esc(t(locale, 'app.newInstance'))}`, 'primary', 'form-row')}</div></section>
 ${collaborators}${del}</div><aside class="side-col" aria-label="${esc(t(locale, 'instance.details'))}">${details}</aside></div>`, flash, `/apps/${encodeURIComponent(app.slug)}`, 'publish');
 }

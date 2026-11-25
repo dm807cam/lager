@@ -174,8 +174,11 @@ export class Apps {
     this.reservedSlugs.add(slug);
   }
 
-  /** Whether `ownerId` could create an instance named `slug` right now: well-formed, not reserved, not taken, not kept for someone else. */
-  slugFreeFor(slug: string, ownerId: string): boolean {
+  /**
+   * Whether `ownerId` could create an instance named `slug` right now: well-formed, not reserved, not taken, not kept for
+   * someone else. With `ownerId` null (the owner is not known yet), a name kept for anyone counts as taken.
+   */
+  slugFreeFor(slug: string, ownerId: string | null): boolean {
     try { this.assertSlugFree(slug); } catch { return false; }
     if (this.db.prepare('SELECT 1 FROM instances WHERE slug = ?').get(slug)) return false;
     const retired = this.db.prepare('SELECT owner_id FROM retired_slugs WHERE slug = ?').get(slug) as { owner_id: string } | undefined;
@@ -183,16 +186,16 @@ export class Apps {
   }
 
   /**
-   * A free name for a new instance of `app` owned by `owner`: the app's name and the first part of the owner's name
-   * (`notes-jonas`), with a number when that is taken. Null in the unlikely case nothing short is free.
+   * A free name for a new instance of `app` owned by `ownerId` (null when the owner is not known yet): the app's name, then
+   * with a number (`notes-2`, `notes-3`, …). Nothing about the person goes in, since the name becomes the host name that every
+   * visitor and the app itself see. Null in the unlikely case nothing short is free. Up to two queries per name tried; the
+   * home page asks once per app in the catalog.
    */
-  suggestSlug(app: App, owner: { id: string; name: string; email: string }): string | null {
-    const part = (owner.name.trim().split(/\s+/)[0] || owner.email.split('@')[0]).normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    const base = `${app.slug}${part ? `-${part}` : ''}`.slice(0, MAX_SLUG_LENGTH - 3).replace(/-+$/, '');
+  suggestSlug(app: App, ownerId: string | null): string | null {
+    const base = app.slug.slice(0, MAX_SLUG_LENGTH - 3).replace(/-+$/, '');
     for (let n = 1; n < 100; n++) {
       const candidate = n === 1 ? base : `${base}-${n}`;
-      if (this.slugFreeFor(candidate, owner.id)) return candidate;
+      if (this.slugFreeFor(candidate, ownerId)) return candidate;
     }
     return null;
   }

@@ -83,7 +83,7 @@ function catalogSection(core: Core, locale: Locale, user: User, csrf: string, ca
     const id = `new-${esc(a.slug)}`;
     // A free name is filled in: getting a copy takes one press.
     const create = form(`/ui/apps/${encodeURIComponent(a.slug)}/instances`, csrf,
-      `<input type="hidden" name="from" value="home">${slugField(locale, id, t(locale, 'home.copyName'), core.apps.suggestSlug(a, user) ?? '', instanceUrl(core.config, '__slug__'))}`,
+      `<input type="hidden" name="from" value="home">${slugField(locale, id, t(locale, 'home.copyName'), core.apps.suggestSlug(a, user.id) ?? '', instanceUrl(core.config, '__slug__'))}`,
       esc(t(locale, 'dash.createOwn')), 'primary', '', true);
     // Someone who already has a copy of this app learns so before making another one.
     const copies = own.filter((i) => i.appId === a.id).length;

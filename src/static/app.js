@@ -49,7 +49,10 @@
     var out = document.querySelector('[data-address-for="' + input.id + '"]');
     var template = input.getAttribute('data-address-template');
     if (!out || !template) return;
-    input.addEventListener('input', function () { out.textContent = template.replace('__slug__', input.value.trim() || '…'); });
+    // Also once at the start: a refused name comes back in the field, while the address was rendered from the suggestion.
+    var update = function () { out.textContent = template.replace('__slug__', input.value.trim() || '…'); };
+    update();
+    input.addEventListener('input', update);
   });
   document.querySelectorAll('details.getown').forEach(function (panel) {
     panel.addEventListener('toggle', function () {
