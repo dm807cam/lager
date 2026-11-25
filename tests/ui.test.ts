@@ -695,11 +695,14 @@ describe('a form being sent', () => {
     win.HTMLFormElement.prototype.submit = function (this: HTMLFormElement) { sent.push(this.id); };
     win.HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute('open', ''); };
     win.HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.removeAttribute('open'); this.dispatchEvent(new win.Event('close')); };
+    // Timers the script sets, run by hand.
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    (win as unknown as { setTimeout: (fn: () => void, ms: number) => number }).setTimeout = (fn, ms) => timers.push({ fn, ms });
     win.eval(SCRIPT);
     /** Sends `form` as the browser would; returns whether the browser goes on to send it. */
     const submit = (form: HTMLFormElement, submitter?: HTMLElement): boolean =>
       form.dispatchEvent(new win.SubmitEvent('submit', { cancelable: true, bubbles: true, submitter: submitter ?? null }));
-    return { win, doc: win.document, sent, submit };
+    return { win, doc: win.document, sent, submit, timers };
   }
 
   it('marks the pressed button busy, sends once, and is back to normal when the page is shown again', () => {
@@ -729,7 +732,33 @@ describe('a form being sent', () => {
     doc.querySelector<HTMLButtonElement>('dialog .btn-danger')!.click();
     expect(sent).toEqual(['del']);
     expect(doc.getElementById('go')!.getAttribute('aria-busy')).toBe('true');
+    // A second press while the yes is on its way asks nothing and sends nothing.
     expect(submit(form, doc.getElementById('go')!)).toBe(false);
+    expect(doc.querySelector('dialog[open]')).toBeNull();
+    expect(sent).toEqual(['del']);
+  });
+
+  it('a form with two buttons, sent through its question, cannot be sent again by the other one', () => {
+    const { doc, sent, submit } = page(`<form id="f" data-confirm="Restore?" data-confirm-ok="Restore">
+      <button type="submit" name="act" value="restore" id="restore">Restore</button><button type="submit" name="act" value="other" id="other">Other</button></form>`);
+    const form = doc.getElementById('f') as HTMLFormElement;
+    submit(form, doc.getElementById('restore')!);
+    doc.querySelector<HTMLButtonElement>('dialog .btn-danger')!.click();
+    expect(doc.getElementById('restore')!.getAttribute('aria-busy')).toBe('true');
+    expect(submit(form, doc.getElementById('other')!)).toBe(false);
+    expect(doc.querySelector('dialog[open]')).toBeNull();
+    expect(sent).toEqual(['f']);
+  });
+
+  it('a load that was stopped leaves the form busy for 30 seconds, then it can be sent again', () => {
+    const { doc, submit, timers } = page(`<form id="f"><button type="submit" id="save">Save</button></form>`);
+    const form = doc.getElementById('f') as HTMLFormElement;
+    expect(submit(form, doc.getElementById('save')!)).toBe(true);
+    expect(submit(form, doc.getElementById('save')!)).toBe(false);
+    expect(timers.map((x) => x.ms)).toEqual([30000]);
+    timers[0].fn();
+    expect(doc.getElementById('save')!.hasAttribute('aria-busy')).toBe(false);
+    expect(submit(form, doc.getElementById('save')!)).toBe(true);
   });
 
   it('the busy button shows a spinner instead of its icon, and a still ellipsis without motion', () => {

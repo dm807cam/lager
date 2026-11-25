@@ -133,20 +133,25 @@
 
   // Sending: the pressed button says the form is on its way, and pressing again sends nothing. The button is not disabled, so its own
   // name and value still go with the form; coming back to this page (back button, page cache) shows it as it was.
+  // A load the person stopped (Esc, the stop button) shows no new page: after 30 s the form can be sent again.
+  var idle = function (form) {
+    form.removeAttribute('data-busy');
+    form.querySelectorAll('[aria-busy="true"]').forEach(function (b) { b.removeAttribute('aria-busy'); });
+  };
   var busy = function (form, button) {
     form.setAttribute('data-busy', '');
-    if (button && button.setAttribute) button.setAttribute('aria-busy', 'true');
+    if (button) button.setAttribute('aria-busy', 'true');
+    setTimeout(function () { idle(form); }, 30000);
   };
+  // Capture: a busy form stops here, before its own listeners (a question below would ask again and send a second time).
   window.addEventListener('submit', function (e) {
-    var form = e.target;
-    if (form.hasAttribute('data-busy')) { e.preventDefault(); return; }
+    if (e.target.hasAttribute('data-busy')) { e.preventDefault(); e.stopImmediatePropagation(); }
+  }, true);
+  window.addEventListener('submit', function (e) {
     // A form that asks first (below) is sent once the answer is yes.
-    if (!e.defaultPrevented) busy(form, e.submitter || form.querySelector('[type="submit"]'));
+    if (!e.defaultPrevented) busy(e.target, e.submitter || e.target.querySelector('[type="submit"]'));
   });
-  window.addEventListener('pageshow', function () {
-    document.querySelectorAll('form[data-busy]').forEach(function (f) { f.removeAttribute('data-busy'); });
-    document.querySelectorAll('[aria-busy="true"]').forEach(function (b) { b.removeAttribute('aria-busy'); });
-  });
+  window.addEventListener('pageshow', function () { document.querySelectorAll('form[data-busy]').forEach(idle); });
 
   // Questions before changes that cannot be taken back. The form carries the question; the dialog asks it, and only a yes sends the
   // form, with confirmed=1. Cancel has the focus, so Enter or Escape keep everything as it is. Without this script, or in a browser
@@ -156,7 +161,7 @@
       // Asked every time: a yes from before (a page from the back/forward cache, a send that failed) does not count again.
       if (typeof HTMLDialogElement === 'undefined') return;
       e.preventDefault();
-      var trigger = e.submitter || document.activeElement;
+      var trigger = e.submitter || form.querySelector('[type="submit"]');
       var dialog = document.createElement('dialog');
       dialog.className = 'confirm-dialog';
       dialog.setAttribute('aria-labelledby', 'confirm-title');
