@@ -252,3 +252,18 @@ describe('the question before the first sign-in to an instance', () => {
     }
   });
 });
+
+describe('the answer to the sign-in question, sent from an out-of-date page', () => {
+  it('changes nothing, issues no code and leads home, not to the app the form names', async () => {
+    const s = setup();
+    const cookie = await s.h.login('v@x.y', PW);
+    const fields = s.fieldsOf((await s.ask(cookie)).text);
+    const res = await s.answer(cookie, { ...fields, csrf: 'stale', decision: 'continue' });
+    expect(res.status).toBe(403);
+    expect(res.headers.location).toBeUndefined();
+    expect(res.text).not.toContain('code=');
+    expect((res.headers['set-cookie'] as unknown as string[] | undefined ?? []).some((c) => c.includes('lager_inst'))).toBe(false);
+    expect(/<a class="[^"]*btn[^"]*" href="([^"]+)">/.exec(res.text.slice(res.text.indexOf('<main')))![1]).toBe('/');
+    expect(s.confirmations()).toEqual([]);
+  });
+});

@@ -41,7 +41,10 @@ describe('the address of a form, opened again', () => {
   it('maps only to pages under /admin, never to another site', () => {
     expect(formPageOf('/admin/users/%5C%5Cevil.example/role')).toBe('/admin/users/%5C%5Cevil.example');
     expect(formPageOf('/admin//evil.example/x')).toBeNull();
-    expect(formPageOf('/admin/settings')).toBeNull();
+    // A form at a section's own address belongs to that section's page; an unknown section to none.
+    expect(formPageOf('/admin/settings')).toBe('/admin/settings');
+    expect(formPageOf('/admin/groups')).toBe('/admin/groups');
+    expect(formPageOf('/admin/nothing')).toBeNull();
     expect(formPageOf('/other/users/x/role')).toBeNull();
   });
 });
@@ -86,5 +89,17 @@ describe('a form after it is sent', () => {
       expect(next.text).not.toContain('pia@x.y');
       expect(cookie ? next.status : next.headers.location?.startsWith('/login')).toBe(cookie ? 403 : true);
     }
+  });
+});
+
+describe('signing out with a session that is over', () => {
+  it('takes the dead cookie away on the way to the sign-in', async () => {
+    s = await showcase();
+    const cookie = await s.h.login();
+    s.h.core.users.bumpEpoch(s.h.adminId);
+    const res = await request(s.h.app).post('/logout').set('Host', s.h.host).set('Cookie', cookie).type('form').send({ csrf: 'x' });
+    expect(res.headers.location).toBe('/login');
+    const set = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+    expect(set.some((c) => /^lager_session=;/.test(c) && /Expires=Thu, 01 Jan 1970/.test(c))).toBe(true);
   });
 });

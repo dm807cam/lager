@@ -263,6 +263,12 @@ describe('shell', () => {
       // The language switcher returns to that page too.
       expect(doc.querySelector('.lang-menu a')!.getAttribute('href'), path).toBe(`/lang/en?return=${encodeURIComponent(back)}`);
     }
+    // Nothing was changed by any of them.
+    const { core } = s.h;
+    expect(core.apps.getInstanceBySlug('notes')).not.toBeNull();
+    expect(core.apps.listCollaborators(core.apps.getApp('notes')!.id).map((u) => u.id)).toEqual([s.ids.pia]);
+    expect(core.users.get(s.ids.uwe)!.role).toBe('user');
+    expect(core.groups.list().map((g) => g.name)).toEqual(['Team']);
     // The session survived: the stale sign-out signed nobody out.
     expect((await request(s.h.app).get('/').set('Host', s.h.host).set('Cookie', cookie)).status).toBe(200);
   });

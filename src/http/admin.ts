@@ -499,7 +499,9 @@ function domainsPage(core: Core, locale: Locale, admin: User, inst: Instance, ms
 /** The page a form under /admin belongs to, for a GET of the form's own address; null for addresses that are no form's. */
 export function formPageOf(path: string): string | null {
   const seg = path.split('/').filter(Boolean);
-  if (seg[0] !== 'admin' || seg.length < 3) return null;
+  if (seg[0] !== 'admin' || seg.length < 2) return null;
+  // A form at a section's own address (adding a group, an invitation, saving the settings) belongs to that section's page.
+  if (seg.length === 2) return ['users', 'groups', 'invites', 'mail', 'ai', 'apps', 'settings'].includes(seg[1]) ? `/admin/${seg[1]}` : null;
   const [, section, id] = seg;
   if (section === 'users' || section === 'groups') return `/admin/${section}/${id}`;
   if (section === 'ai' && seg.length >= 4 && ['providers', 'models', 'groups'].includes(id)) return `/admin/ai/${id}/${seg[3]}`;
@@ -546,9 +548,8 @@ export const adminExtension: PlatformExtension = (router, core) => {
     async (req, res, next) => {
       const user = adminOf(res);
       if (!csrfValid(core, user, field(req, 'csrf', 2000))) {
-        // Back to the page the form is on: the form's own address where that is a page, else the page it belongs to.
-        const seg = req.path.split('/').filter(Boolean);
-        send(res, 403, staleFormPage(localeOf(res), formPageOf(req.path) ?? (seg.length === 2 ? req.path : '/admin'), shellFor(core, req, user)));
+        // Back to the page the form is on: the same mapping as the GET of a form's address.
+        send(res, 403, staleFormPage(localeOf(res), formPageOf(req.path) ?? '/admin', shellFor(core, req, user)));
         return;
       }
       try {
