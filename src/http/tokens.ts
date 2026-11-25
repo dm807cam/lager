@@ -56,7 +56,7 @@ const sealKey = (secret: string): Buffer => crypto.createHmac('sha256', secret).
  */
 export function sealToken(payload: Record<string, unknown>, secret: string, ttlSeconds: number): string {
   const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', sealKey(secret), iv);
+  const cipher = crypto.createCipheriv('aes-256-gcm', sealKey(secret), iv, { authTagLength: 16 });
   const body = Buffer.concat([cipher.update(JSON.stringify({ ...payload, exp: Math.floor(Date.now() / 1000) + ttlSeconds }), 'utf8'), cipher.final()]);
   return Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64url');
 }
@@ -66,7 +66,7 @@ export function openToken<T>(token: string | undefined, secret: string): T | nul
   if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{40,}$/.test(token)) return null;
   const raw = Buffer.from(token, 'base64url');
   try {
-    const decipher = crypto.createDecipheriv('aes-256-gcm', sealKey(secret), raw.subarray(0, 12));
+    const decipher = crypto.createDecipheriv('aes-256-gcm', sealKey(secret), raw.subarray(0, 12), { authTagLength: 16 });
     decipher.setAuthTag(raw.subarray(12, 28));
     const payload = JSON.parse(Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8')) as unknown;
     if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;

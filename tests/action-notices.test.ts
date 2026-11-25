@@ -63,7 +63,9 @@ describe('after a form', () => {
     expect(noticeOf(restored.doc)).toMatchObject({ text: t('en', 'notice.ok.restored', { label: 'before-import' }), before: 'data' });
 
     const off = await submit(s, cookie, admin, `${base}/auto-update`, { on: '0' });
-    expect(noticeOf(off.doc)!.text).toBe(t('en', 'notice.ok.autoUpdateOff'));
+    expect(noticeOf(off.doc)!.text).toBe(t('en', 'notice.ok.autoUpdateOff', { version: '1' }));
+    // Every placeholder is filled: the version is in the text itself.
+    expect(noticeOf(off.doc)!.text).toMatch(/version 1\b/);
     // Version 1 is active and 2 the latest: switching updates on moves the instance there at once, and the notice says so.
     const moved = await submit(s, cookie, admin, `${base}/auto-update`, { on: '1' });
     expect(noticeOf(moved.doc)!.text).toBe(t('en', 'notice.ok.autoUpdateMoved', { version: '2' }));

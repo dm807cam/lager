@@ -463,7 +463,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const inst = managed(user, param(req, 'slug'));
     // Switching it on can move the instance to the latest version, which takes a snapshot like a manual activation.
     const now = on ? withSnapshotBudget(core, inst.id, () => core.apps.setAutoUpdate(inst.id, on, user.id)) : core.apps.setAutoUpdate(inst.id, on, user.id);
-    if (!on) return { ok: 'notice.ok.autoUpdateOff', anchor: 'details' };
+    if (!on) return { ok: 'notice.ok.autoUpdateOff', params: { version: String(now.activeVersion) }, anchor: 'details' };
     // An instance that was behind moved to the latest version right away: the notice says so, not "the next deploy".
     return now.activeVersion !== inst.activeVersion
       ? { ok: 'notice.ok.autoUpdateMoved', params: { version: String(now.activeVersion) }, anchor: 'details' }
