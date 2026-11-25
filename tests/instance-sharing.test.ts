@@ -202,3 +202,22 @@ describe('sharing with an address that has no account', () => {
     expect(doc.getElementById('grant-email-error')!.textContent).toBe(t('en', 'notice.noAccount.open'));
   });
 });
+
+describe('app cards', () => {
+  it('link the whole card through the title, once, and leave Manage its own target', async () => {
+    s = await showcase();
+    const doc = dom((await request(s.h.app).get('/').set('Host', s.h.host).set('Cookie', await s.h.login())).text);
+    const card = [...doc.querySelectorAll('#mine .app-card')].find((c) => c.querySelector('.slug')!.textContent === 'notes')!;
+    const link = card.querySelector('h3 a.card-link')!;
+    expect(link.getAttribute('href')).toBe('http://notes.apps.localhost:8080');
+    expect(link.getAttribute('aria-label')).toBe(t('en', 'card.open', { title: 'Notes' }));
+    // The visible Open button repeats the link but is neither tabbed to nor read out a second time.
+    const open = card.querySelector('.card-actions a[href="http://notes.apps.localhost:8080"]')!;
+    expect([open.getAttribute('tabindex'), open.getAttribute('aria-hidden')]).toEqual(['-1', 'true']);
+    const reachable = [...card.querySelectorAll('a, button, summary')].filter((e) => e.getAttribute('tabindex') !== '-1').map((e) => e.getAttribute('href'));
+    expect(reachable).toEqual(['http://notes.apps.localhost:8080', '/instances/notes']);
+    // A disabled instance and an app one can only get a copy of are not links.
+    expect([...doc.querySelectorAll('#mine .app-card')].find((c) => c.querySelector('.slug')!.textContent === 'old-notes')!.querySelector('.card-link')).toBeNull();
+    for (const c of doc.querySelectorAll('#catalog .app-card')) if (c.querySelector('details.getown')) expect(c.querySelector('.card-link')).toBeNull();
+  });
+});

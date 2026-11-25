@@ -150,8 +150,17 @@ export function appTile(app: App | null, title: string, size: '' | 'lg' | 'sm' |
   return `<span class="tile${size ? ` tile-${size}` : ''}" aria-hidden="true"><span>${letter}</span>${img}</span>`;
 }
 
-/** The parts of an app card; markup fields are trusted. `corner` sits in the top right corner (the AI badge). */
-export interface AppCardParts { app: App | null; title: string; slug: string; description?: string; badges: string[]; actions: string; label?: string; corner?: string }
+/**
+ * The parts of an app card; markup fields are trusted. `corner` sits in the top right corner (the AI badge). With `href` the title
+ * is a link that covers the whole card, as on a home screen; the actions stay clickable above it.
+ */
+export interface AppCardParts { app: App | null; title: string; slug: string; description?: string; badges: string[]; actions: string; label?: string; corner?: string; href?: string; linkLabel?: string }
+
+/**
+ * Attributes of a button that only repeats the card's own link: it stays as the visible "Open", but keyboard and screen reader
+ * reach the destination once, through the title.
+ */
+export const repeatsCardLink = ' tabindex="-1" aria-hidden="true"';
 
 /** The small badge in the corner of the card of an app that may ask a language model (it declares `complete`). */
 export const aiBadge = (label: string, hint: string): string =>
@@ -159,7 +168,8 @@ export const aiBadge = (label: string, hint: string): string =>
 
 export function appCard(p: AppCardParts): string {
   const desc = p.description?.trim() ? `<p class="app-desc">${esc(p.description)}</p>` : '';
-  return `<article class="app-card${p.corner ? ' has-corner' : ''}"${p.label ? ` aria-label="${esc(p.label)}"` : ''}><div class="app-card-head">${appTile(p.app, p.title)}<div><h3 class="app-title">${esc(p.title)}</h3><span class="slug">${esc(p.slug)}</span></div>${p.corner ?? ''}</div>
+  const title = p.href ? `<a class="card-link" href="${esc(p.href)}"${p.linkLabel ? ` aria-label="${esc(p.linkLabel)}"` : ''}>${esc(p.title)}</a>` : esc(p.title);
+  return `<article class="app-card${p.corner ? ' has-corner' : ''}${p.href ? ' is-linked' : ''}"${p.label ? ` aria-label="${esc(p.label)}"` : ''}><div class="app-card-head">${appTile(p.app, p.title)}<div><h3 class="app-title">${title}</h3><span class="slug">${esc(p.slug)}</span></div>${p.corner ?? ''}</div>
 ${desc}${p.badges.length ? `<div class="badges">${p.badges.join('')}</div>` : ''}<div class="card-actions">${p.actions}</div></article>`;
 }
 
