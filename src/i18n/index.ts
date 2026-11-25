@@ -67,6 +67,19 @@ export function formatDate(locale: Locale, iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : f.format(date);
 }
 
+const dayFormatters = new Map<Locale, Intl.DateTimeFormat>();
+
+/** The day alone in UTC, written the way `locale` writes it: for lists where the time of day is noise. */
+export function formatDay(locale: Locale, iso: string): string {
+  let f = dayFormatters.get(locale);
+  if (!f) {
+    f = new Intl.DateTimeFormat(locale, { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' });
+    dayFormatters.set(locale, f);
+  }
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : f.format(date);
+}
+
 const sizeFormatters = new Map<Locale, Intl.NumberFormat>();
 
 /** Size labels per language: French writes the binary prefixes as Kio, Mio and Gio and bytes as "o". */

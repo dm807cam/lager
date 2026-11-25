@@ -80,10 +80,11 @@ describe('administration area', () => {
     const { user } = await s.makeUser('nina@x.y');
     const res = await s.post(`/admin/users/${user.id}/role`, admin, { role: 'publisher' });
     expect(res.status).toBe(302);
-    expect(res.headers.location).toBe('/admin/users');
+    expect(res.headers.location).toBe(`/admin/users/${user.id}`);
     expect(s.hh.core.users.get(user.id)!.role).toBe('publisher');
-    const page = await s.get('/admin/users', admin);
+    const page = await s.get(`/admin/users/${user.id}`, admin);
     expect(page.text).toMatch(/<option value="publisher" selected>/);
+    expect((await s.get('/admin/users/nope', admin)).status).toBe(404);
     const bad = await s.post(`/admin/users/${user.id}/role`, admin, { role: 'god' });
     expect(bad.status).toBe(400);
     expect(s.hh.core.users.get(user.id)!.role).toBe('publisher');

@@ -502,7 +502,7 @@ describe('administrators', () => {
     const { pending } = await s.password();
     const annSession = cookieOf(await s.post('/login/two-factor', { code: codeFor(secret) }, { cookie: pending }), s.names.session)!;
     const admin = await h!.login(ADMIN.email, ADMIN.password);
-    const list = await s.get('/admin/users', admin);
+    const list = await s.get(`/admin/users/${s.user.id}`, admin);
     expect(list.text).toContain(`href="/admin/users/${s.user.id}/two-factor/reset"`);
     const page = await s.get(`/admin/users/${s.user.id}/two-factor/reset`, admin);
     expect(page.status).toBe(200);

@@ -400,98 +400,14 @@
   ],
   "admin users": [
     {
-      "action": "/admin/users/{user:admin@x.y}/ai-group",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "group"
-      ]
-    },
-    {
-      "action": "/admin/users/{user:admin@x.y}/disabled",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "disabled"
-      ]
-    },
-    {
-      "action": "/admin/users/{user:admin@x.y}/reset-link",
+      "action": "/logout",
       "method": "post",
       "fields": [
         "csrf"
       ]
-    },
-    {
-      "action": "/admin/users/{user:admin@x.y}/role",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "role"
-      ]
-    },
-    {
-      "action": "/admin/users/{user:nova@x.y}/ai-group",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "group"
-      ]
-    },
-    {
-      "action": "/admin/users/{user:nova@x.y}/disabled",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "disabled"
-      ]
-    },
-    {
-      "action": "/admin/users/{user:nova@x.y}/reset-link",
-      "method": "post",
-      "fields": [
-        "csrf"
-      ]
-    },
-    {
-      "action": "/admin/users/{user:nova@x.y}/role",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "role"
-      ]
-    },
-    {
-      "action": "/admin/users/{user:pia@x.y}/ai-group",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "group"
-      ]
-    },
-    {
-      "action": "/admin/users/{user:pia@x.y}/disabled",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "disabled"
-      ]
-    },
-    {
-      "action": "/admin/users/{user:pia@x.y}/reset-link",
-      "method": "post",
-      "fields": [
-        "csrf"
-      ]
-    },
-    {
-      "action": "/admin/users/{user:pia@x.y}/role",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "role"
-      ]
-    },
+    }
+  ],
+  "admin user": [
     {
       "action": "/admin/users/{user:uwe@x.y}/ai-group",
       "method": "post",
