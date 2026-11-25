@@ -172,6 +172,7 @@ export const en = {
   'notice.noAccount': 'No account with this email address.',
   'notice.noAccount.admin': "No account with this address yet. Invite the person under Administration › Invitations, then share again.",
   'notice.noAccount.ask': "No account with this address yet. Ask an administrator of this server to invite the person, then share again.",
+  'notice.noAccount.open': "No account with this address yet. Ask the person to create an account on this server, then share again.",
   'notice.grantBoth': "Enter an email address or choose a group, not both.",
   'notice.confirmName': 'Enter the name to confirm.',
   'notice.originInvalid': 'Write the website as https://blog.example.com: scheme and host, without a path.',

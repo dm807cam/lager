@@ -174,6 +174,7 @@ export const de: Record<MessageKey, string> = {
   'notice.noAccount': 'Kein Konto mit dieser E-Mail-Adresse.',
   'notice.noAccount.admin': "Mit dieser Adresse gibt es noch kein Konto. Lade die Person unter Administration › Einladungen ein und teile dann noch einmal.",
   'notice.noAccount.ask': "Mit dieser Adresse gibt es noch kein Konto. Bitte einen Administrator dieses Servers, die Person einzuladen, und teile dann noch einmal.",
+  'notice.noAccount.open': "Mit dieser Adresse gibt es noch kein Konto. Bitte die Person, sich auf diesem Server ein Konto anzulegen, und teile dann noch einmal.",
   'notice.grantBoth': "Gib eine E-Mail-Adresse ein oder wähle eine Gruppe, nicht beides.",
   'notice.confirmName': 'Gib zur Bestätigung den Namen ein.',
   'notice.originInvalid': 'Schreibe die Website als https://blog.example.com: Schema und Host, ohne Pfad.',

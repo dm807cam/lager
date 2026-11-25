@@ -581,8 +581,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
     let name: string;
     if (email !== '' && group !== '') throw new Notice('notice.grantBoth');
     if (email !== '') {
-      // Nobody without an account can be shared with; what to do next depends on who may invite.
-      const account = accountByEmail(email, user.role === 'admin' ? 'notice.noAccount.admin' : 'notice.noAccount.ask');
+      // Nobody without an account can be shared with; what to do next depends on whether anyone may register, and who may invite.
+      const next: MessageKey = core.settings.registration === 'open' ? 'notice.noAccount.open'
+        : user.role === 'admin' ? 'notice.noAccount.admin' : 'notice.noAccount.ask';
+      const account = accountByEmail(email, next);
       core.access.setGrant(inst, 'user', account.id, level, user);
       name = account.email;
     } else if (group !== '') {
@@ -591,6 +593,8 @@ export const manageExtension: PlatformExtension = (router, core) => {
     } else throw new Notice('notice.grantTarget');
     // The address to send to the people just added comes with the notice.
     return { ok: 'notice.ok.shared', params: { name, level: levelLabel(localeOf(req.res!), level) }, anchor: 'sharing', copy: instanceUrl(core.config, inst.slug) };
+  // Refusals go to the address field, the field they are about; "pick one" is no field's. A post naming both a person and a
+  // group (only a hand-made one can) is shown there too: a refusal from the group branch would need its own mapping.
   }, (req, error) => (error === 'notice.grantTarget' ? undefined : at('grant-email', 'email')(req, error))));
 
   router.post('/ui/instances/:slug/grants/remove', ...action(instBack, (req, user) => {

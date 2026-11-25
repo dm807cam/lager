@@ -147,6 +147,17 @@ describe('the flash value', () => {
     expect(long.params!.name).toBe(`${'n'.repeat(299)}…`);
   });
 
+  it('a link to copy comes back only as a plain http(s) address', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const admin = core.users.get(s.h.adminId)!;
+    const copyOf = (copy: string): string | undefined => readFlash(core, admin, flashToken(core, admin, { ok: 'notice.ok.shared', copy })).copy;
+    expect(copyOf('http://notes.apps.localhost:8080')).toBe('http://notes.apps.localhost:8080');
+    for (const bad of ['javascript:alert(1)', 'https://a"b', 'https://a b', 'https://a<b', `https://${'a'.repeat(300)}`, 'data:text/html,x', '//evil.example']) {
+      expect(copyOf(bad), bad).toBeUndefined();
+    }
+  });
+
   it('values are text: markup in a name is shown, not run', () => {
     const html = withNotice('en', { ok: 'notice.ok.added', params: { name: '<img src=x onerror=alert(1)>' }, anchor: 'sharing' }, '<p>a</p><section id="sharing">b</section>');
     const doc = dom(html);
