@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 3
     steps:
       - name: PR prüfen
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           MIN_ACCOUNT_AGE_DAYS: '30'
           MAX_PRS_PER_AUTHOR_24H: '2'
