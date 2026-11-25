@@ -40,7 +40,7 @@ export interface PageOpts {
   csrf?: string;
   /** The navigation item this page belongs to. */
   current?: NavItem | null;
-  /** Whether the viewer has a catalog on the home page to jump to. */
+  /** Whether the server offers the viewer anything in the catalog: the navigation lists it then. */
   catalog?: boolean;
   /**
    * Origin of the platform host, for pages served on instance hosts: the stylesheet and icons are loaded from there by
@@ -76,7 +76,7 @@ function footer(locale: Locale, returnPath: string | null): string {
  */
 const NAV: Array<{ id: NavItem; href: string; key: MessageKey; tab: MessageKey; icon: IconName }> = [
   { id: 'apps', href: '/', key: 'nav.apps', tab: 'nav.tab.apps', icon: 'grid' },
-  { id: 'catalog', href: '/#catalog', key: 'dash.catalog', tab: 'dash.catalog', icon: 'compass' },
+  { id: 'catalog', href: '/catalog', key: 'dash.catalog', tab: 'dash.catalog', icon: 'compass' },
   { id: 'publish', href: '/publish', key: 'nav.publish', tab: 'nav.tab.publish', icon: 'upload' },
   { id: 'admin', href: '/admin', key: 'nav.admin', tab: 'nav.tab.admin', icon: 'shield' },
 ];

@@ -155,7 +155,9 @@ describe('the home page of someone who does not publish', () => {
     const owner = core.users.get(s.h.adminId)!;
     expect(badges).toEqual([t('en', 'badge.shared', { level: t('en', 'level.interact') }), owner.name]);
     // The catalog says how many copies of an app the viewer already has.
-    const tasks = [...main.querySelectorAll('#catalog .app-card')].find((c) => c.querySelector('details.getown') && c.textContent!.includes('tasks'))!;
+    const catalog = dom((await request(s.h.app).get('/catalog').set('Host', s.h.host).set('Cookie', cookie)).text).querySelector('main')!;
+    expect(catalog.textContent!.toLowerCase()).not.toContain('instance');
+    const tasks = [...catalog.querySelectorAll('#catalog .app-card')].find((c) => c.querySelector('details.getown') && c.textContent!.includes('tasks'))!;
     expect(tasks.textContent).toContain(t('en', 'dash.copies.one'));
   });
 
@@ -219,7 +221,9 @@ describe('app cards', () => {
     expect(reachable).toEqual(['http://notes.apps.localhost:8080', '/instances/notes']);
     // A disabled instance and an app one can only get a copy of are not links.
     expect([...doc.querySelectorAll('#mine .app-card')].find((c) => c.querySelector('.slug')!.textContent === 'old-notes')!.querySelector('.card-link')).toBeNull();
-    for (const c of doc.querySelectorAll('#catalog .app-card')) if (c.querySelector('details.getown')) expect(c.querySelector('.card-link')).toBeNull();
+    const catalog = dom((await request(s.h.app).get('/catalog').set('Host', s.h.host).set('Cookie', await s.h.login())).text);
+    expect(catalog.querySelectorAll('#catalog .app-card').length).toBeGreaterThan(0);
+    for (const c of catalog.querySelectorAll('#catalog .app-card')) if (c.querySelector('details.getown')) expect(c.querySelector('.card-link')).toBeNull();
   });
 
   /** The card link of the card for `slug` in `section`, and the targets the keyboard reaches on that card, in order. */
@@ -251,7 +255,7 @@ describe('app cards', () => {
     const { core } = s.h;
     // Tasks is open to everyone signed in; Cleo has no grant, so it is in her catalog.
     core.users.create({ email: 'cleo@x.y', name: 'Cleo', password: 'password-123', role: 'user' });
-    expect(linkOf(await page('/', 'cleo@x.y'), 'catalog', 'tasks')).toEqual({
+    expect(linkOf(await page('/catalog', 'cleo@x.y'), 'catalog', 'tasks')).toEqual({
       href: 'http://tasks.apps.localhost:8080', label: t('en', 'card.open', { title: 'Tasks' }),
       repeated: [['http://tasks.apps.localhost:8080', 'true']], reachable: ['http://tasks.apps.localhost:8080'],
     });
@@ -266,5 +270,47 @@ describe('app cards', () => {
     expect(css).toContain('.app-card.is-linked:hover { transform: translateY(-2px);');
     // The overrides must be at least as specific as the rule that lifts.
     for (const query of ['@media (max-width: 520px)', '@media (prefers-reduced-motion: reduce)']) expect(block(query)).toContain('.app-card.is-linked:hover { transform: none; }');
+  });
+});
+
+describe('the catalog page', () => {
+  const get = async (path: string, email: string): Promise<Document> =>
+    dom((await request(s!.h.app).get(path).set('Host', s!.h.host).set('Cookie', await s!.h.login(email, 'password-123'))).text);
+
+  it('lists what can be opened and what can be copied under headings of their own', async () => {
+    s = await showcase();
+    s.h.core.users.create({ email: 'cleo@x.y', name: 'Cleo', password: 'password-123', role: 'user' });
+    const doc = await get('/catalog', 'cleo@x.y');
+    expect(doc.querySelector('h1')!.textContent).toBe(t('en', 'dash.catalog'));
+    expect([...doc.querySelectorAll('#catalog section')].map((sec) => [sec.id, sec.querySelector('h2')!.textContent])).toEqual([
+      ['catalog-open', t('en', 'catalog.instances')], ['catalog-copy', t('en', 'catalog.apps')],
+    ]);
+    expect(doc.querySelector('nav.primary a[aria-current="page"]')!.getAttribute('href')).toBe('/catalog');
+  });
+
+  it('is the main way on from a home page without an own copy, and a quieter link once there is one', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const prominent = (await get('/', 'uwe@x.y')).querySelector('main a[href="/catalog"]')!;
+    expect(prominent.parentElement!.className).toBe('empty-cta');
+    expect(prominent.classList.contains('btn-primary')).toBe(true);
+    expect(prominent.textContent).toContain(t('en', 'home.catalogLink'));
+    core.apps.createInstance({ appId: core.apps.getApp('tasks')!.id, slug: 'uwe-tasks', ownerId: s.ids.uwe });
+    const quiet = (await get('/', 'uwe@x.y')).querySelector('main a[href="/catalog"]')!;
+    expect(quiet.parentElement!.className).toBe('section-more');
+    expect(quiet.classList.contains('btn-primary')).toBe(false);
+  });
+
+  it('says when it offers nothing, and is then not in the navigation', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const pia = s.ids.pia;
+    core.apps.setSelfInstances(core.apps.getApp('tasks')!.id, 'off', pia);
+    core.apps.setVisibility(core.apps.getInstanceBySlug('tasks')!.id, 'private', pia);
+    core.users.create({ email: 'cleo@x.y', name: 'Cleo', password: 'password-123', role: 'user' });
+    const doc = await get('/catalog', 'cleo@x.y');
+    expect(doc.querySelector('main .empty')!.textContent).toContain(t('en', 'catalog.none'));
+    expect(doc.querySelector('nav.primary a[href="/catalog"]')).toBeNull();
+    expect((await get('/', 'cleo@x.y')).querySelector('main a[href="/catalog"]')).toBeNull();
   });
 });

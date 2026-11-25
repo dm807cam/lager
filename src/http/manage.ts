@@ -709,10 +709,13 @@ export const manageExtension: PlatformExtension = (router, core) => {
 
   const appBack = (req: Request): string => `/apps/${encodeURIComponent(param(req, 'slug'))}`;
 
+  /** The catalog's "Get your own copy" forms; "home" is what they sent while the catalog was part of the home page. */
+  const fromCatalog = (req: Request): boolean => ['catalog', 'home'].includes(field(req, 'from'));
   router.post('/ui/apps/:slug/instances', ...action(
     (req, user) => {
       const app = core.apps.getApp(param(req, 'slug'));
-      return field(req, 'from') !== 'home' && app && core.access.canReadApp(app, user) ? appBack(req) : '/';
+      if (fromCatalog(req)) return '/catalog';
+      return app && core.access.canReadApp(app, user) ? appBack(req) : '/';
     },
     (req, user) => {
       const app = appOf(param(req, 'slug'));
@@ -721,16 +724,16 @@ export const manageExtension: PlatformExtension = (router, core) => {
       // Only people who deploy this app may create instances for others; for everyone else the field is ignored.
       const owner = email !== '' && core.access.canDeploy(app, user) ? accountByEmail(email) : user;
       const created = core.apps.createInstance({ appId: app.id, slug: field(req, 'slug', 100).trim(), ownerId: owner.id, createdBy: user.id });
-      // From the home page the new instance shows among one's own; from the app page in its list of instances.
-      // On the home page it is "your copy"; the word instance belongs to the app page.
-      return field(req, 'from') === 'home'
-        ? { ok: 'notice.ok.copyCreated', params: { slug: created.slug }, anchor: 'mine' }
+      // From the catalog the new copy shows among one's own on the home page; from the app page in its list of instances.
+      // In the catalog it is "your copy"; the word instance belongs to the app page.
+      return fromCatalog(req)
+        ? { ok: 'notice.ok.copyCreated', params: { slug: created.slug }, anchor: 'mine', to: '/' }
         : { ok: 'notice.ok.instanceCreated', params: { slug: created.slug }, anchor: 'instances' };
     },
-    // On the home page each app's name field is its own; an unknown owner is the owner field's problem, anything else the name's.
+    // In the catalog each app's name field is its own; an unknown owner is the owner field's problem, a name that cannot be used the name's.
     (req, error) => {
       if (error !== 'notice.noAccount' && !NAME_ERRORS.has(error)) return undefined;
-      if (field(req, 'from') === 'home') return at(`new-${param(req, 'slug')}`, 'slug')(req, error);
+      if (fromCatalog(req)) return at(`new-${param(req, 'slug')}`, 'slug')(req, error);
       const values = { 'new-slug': bodyText(req, 'slug'), 'owner-email': bodyText(req, 'owner_email') };
       return { field: error === 'notice.noAccount' ? 'owner-email' : 'new-slug', values };
     },

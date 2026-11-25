@@ -32,7 +32,7 @@ describe('naming a new instance', () => {
     const { core } = s.h;
     core.apps.slugFreeFor = () => false;
     expect(core.apps.suggestSlug(core.apps.getApp('tasks')!, s.ids.uwe)).toBeNull();
-    const doc = new JSDOM((await request(s.h.app).get('/').set('Host', s.h.host).set('Cookie', await s.h.login('uwe@x.y', PASSWORD))).text).window.document;
+    const doc = new JSDOM((await request(s.h.app).get('/catalog').set('Host', s.h.host).set('Cookie', await s.h.login('uwe@x.y', PASSWORD))).text).window.document;
     const input = doc.querySelector<HTMLInputElement>('details.getown input[name="slug"]')!;
     expect(input.hasAttribute('value')).toBe(false);
     expect(doc.querySelector(`[data-address-for="${input.id}"]`)!.textContent).toBe('http://….apps.localhost:8080');
@@ -53,7 +53,7 @@ describe('naming a new instance', () => {
   it('fills the suggestion in, explains the name and shows the address it becomes', async () => {
     s = await showcase();
     const cookie = await s.h.login('uwe@x.y', PASSWORD);
-    const doc = new JSDOM((await request(s.h.app).get('/').set('Host', s.h.host).set('Cookie', cookie)).text).window.document;
+    const doc = new JSDOM((await request(s.h.app).get('/catalog').set('Host', s.h.host).set('Cookie', cookie)).text).window.document;
     const input = doc.querySelector<HTMLInputElement>('details.getown input[name="slug"]')!;
     expect(input.getAttribute('value')).toBe('tasks-2');
     expect(input.getAttribute('pattern')).toBe('[a-z0-9]([a-z0-9\\-]*[a-z0-9])?');
@@ -63,7 +63,7 @@ describe('naming a new instance', () => {
     expect(doc.querySelector('label[for="new-tasks"]')!.textContent).toBe(t('en', 'home.copyName'));
     // One press gets the copy.
     const res = await request(s.h.app).post('/ui/apps/tasks/instances').set('Host', s.h.host).set('Cookie', cookie).type('form')
-      .send({ csrf: csrfToken(s.h.core, s.h.core.users.get(s.ids.uwe)!), from: 'home', slug: input.getAttribute('value')! });
+      .send({ csrf: csrfToken(s.h.core, s.h.core.users.get(s.ids.uwe)!), from: 'catalog', slug: input.getAttribute('value')! });
     expect(res.status).toBe(302);
     expect(s.h.core.apps.getInstanceBySlug('tasks-2')!.ownerId).toBe(s.ids.uwe);
   });

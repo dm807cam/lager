@@ -69,9 +69,9 @@ function sharedSection(core: Core, locale: Locale, user: User, shared: Instance[
   return section('shared', t(locale, 'dash.shared'), `<div class="grid">${cards}</div>`, { count: shared.length });
 }
 
-function catalogSection(core: Core, locale: Locale, user: User, csrf: string, catalog: ReturnType<Core['access']['catalog']>, own: Instance[]): string {
+/** The catalog's cards: instances the viewer may open, and apps of which they may get their own copy. */
+function catalogCards(core: Core, locale: Locale, user: User, csrf: string, catalog: ReturnType<Core['access']['catalog']>, own: Instance[]): { instCards: string[]; appCards: string[] } {
   const { instances, apps } = catalog;
-  if (!instances.length && !apps.length) return '';
   const instCards = instances.map((i) => {
     const app = core.apps.getApp(i.appId);
     return appCard({
@@ -85,7 +85,7 @@ function catalogSection(core: Core, locale: Locale, user: User, csrf: string, ca
     const id = `new-${esc(a.slug)}`;
     // A free name is filled in: getting a copy takes one press.
     const create = form(`/ui/apps/${encodeURIComponent(a.slug)}/instances`, csrf,
-      `<input type="hidden" name="from" value="home">${slugField(locale, id, t(locale, 'home.copyName'), core.apps.suggestSlug(a, user.id) ?? '', instanceUrl(core.config, '__slug__'))}`,
+      `<input type="hidden" name="from" value="catalog">${slugField(locale, id, t(locale, 'home.copyName'), core.apps.suggestSlug(a, user.id) ?? '', instanceUrl(core.config, '__slug__'))}`,
       esc(t(locale, 'dash.createOwn')), 'primary', '', true);
     // Someone who already has a copy of this app learns so before making another one.
     const copies = own.filter((i) => i.appId === a.id).length;
@@ -97,8 +97,24 @@ function catalogSection(core: Core, locale: Locale, user: User, csrf: string, ca
       actions: `<details class="getown"><summary class="${btn('secondary', true)} btn-block">${icon('plus')}${esc(t(locale, 'dash.getOwn'))}</summary>${create}</details>`,
     });
   });
-  return section('catalog', t(locale, 'dash.catalog'), `<div class="grid">${[...instCards, ...appCards].join('')}</div>`);
+  return { instCards, appCards };
 }
+
+/** What the server offers the viewer, on a page of its own: the navigation's Catalog item. */
+function catalogPage(core: Core, locale: Locale, user: User, flash: Flash = {}): string {
+  const { instCards, appCards } = catalogCards(core, locale, user, csrfToken(core, user), core.access.catalog(user), core.apps.listInstancesOwnedBy(user.id));
+  // Two kinds of entries, under headings of their own: the cards' titles are third-level headings.
+  const part = (id: string, title: MessageKey, cards: string[]): string => cards.length ? section(id, t(locale, title), `<div class="grid">${cards.join('')}</div>`) : '';
+  const body = instCards.length || appCards.length
+    ? `<div id="catalog">${part('catalog-open', 'catalog.instances', instCards)}${part('catalog-copy', 'catalog.apps', appCards)}</div>`
+    : emptyState(t(locale, 'catalog.none'), 'compass');
+  return page(locale, t(locale, 'dash.catalog'), `<div class="page-head"><h1 class="display">${esc(t(locale, 'dash.catalog'))}</h1><p class="lede">${esc(t(locale, 'catalog.lede'))}</p></div>
+${withNotice(locale, flash, body)}`, signedIn(core, user, 'catalog', '/catalog'));
+}
+
+/** The way from the home page to the catalog; the main call to action while the viewer has no app of their own. */
+const catalogLink = (locale: Locale, prominent: boolean): string =>
+  `<div class="${prominent ? 'empty-cta' : 'section-more'}">${linkButton('/catalog', `${icon('compass')}${esc(t(locale, 'home.catalogLink'))}`, prominent ? 'primary' : 'secondary')}</div>`;
 
 function appsSection(core: Core, locale: Locale, apps: App[]): string {
   const cards = apps.map((a) => {
@@ -149,13 +165,13 @@ function tokenSection(core: Core, locale: Locale, user: User, csrf: string): str
 }
 
 function homePage(core: Core, locale: Locale, user: User, flash: Flash = {}): string {
-  const csrf = csrfToken(core, user);
   const publisher = deploys(user);
   const own = core.apps.listInstancesOwnedBy(user.id);
   const shared = core.access.sharedWith(user);
   const catalog = core.access.catalog(user);
   const opts = signedIn(core, user, 'apps', '/');
-  if (!own.length && !shared.length && !catalog.instances.length && !catalog.apps.length) {
+  const offered = catalog.instances.length + catalog.apps.length > 0;
+  if (!own.length && !shared.length && !offered) {
     const next = publisher
       ? `${steps(locale, new URL('/mcp', core.config.publicUrl).href, 'steps-cards')}<div class="empty-cta">${linkButton('/publish', `${icon('upload')}${esc(t(locale, 'nav.publish'))}`, 'primary')}</div>`
       : `<p class="hint-line">${esc(t(locale, 'dash.noInstances'))} ${esc(t(locale, 'home.empty.user'))}</p>`;
@@ -167,7 +183,7 @@ function homePage(core: Core, locale: Locale, user: User, flash: Flash = {}): st
     shared.length ? t(locale, plural(shared.length, 'home.summary.shared.one', 'home.summary.shared.other'), { count: shared.length }) : '',
   ].filter(Boolean);
   return page(locale, 'Lager', `<div class="page-head"><h1 class="display">${esc(t(locale, 'home.title'))}</h1>${parts.length ? `<p class="lede">${esc(parts.join(' · '))}</p>` : ''}</div>
-${withNotice(locale, flash, `${ownSection(core, locale, user, own)}${sharedSection(core, locale, user, shared)}${catalogSection(core, locale, user, csrf, catalog, own)}`)}`, opts);
+${withNotice(locale, flash, `${ownSection(core, locale, user, own)}${offered && !own.length ? catalogLink(locale, true) : ''}${sharedSection(core, locale, user, shared)}${offered && own.length ? catalogLink(locale, false) : ''}`)}`, opts);
 }
 
 /** Everything about publishing: the apps the viewer deploys, the MCP connector and the API tokens. */
@@ -179,7 +195,7 @@ ${created}${withNotice(locale, flash, `${appsSection(core, locale, core.access.a
   signedIn(core, user, 'publish', '/publish'));
 }
 
-/** Home page (own and shared instances, catalog), the publish page (apps, connector, API tokens) and the API-token forms. */
+/** Home page (own and shared instances), the catalog, the publish page (apps, connector, API tokens) and the API-token forms. */
 export const dashboardExtension: PlatformExtension = (router, core) => {
   const auth = requireUser(core);
   const noStore: RequestHandler = (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); };
@@ -218,6 +234,11 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
   router.get('/', noStore, auth, (req, res) => {
     const user = userOf(res);
     res.type('html').send(homePage(core, localeOf(res), user, readFlash(core, user, req.query.flash)));
+  });
+
+  router.get('/catalog', noStore, auth, (req, res) => {
+    const user = userOf(res);
+    res.type('html').send(catalogPage(core, localeOf(res), user, readFlash(core, user, req.query.flash)));
   });
 
   // Only those who deploy have anything to publish; everyone else goes home.

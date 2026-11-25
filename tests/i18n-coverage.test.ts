@@ -225,7 +225,8 @@ const bodyOf = (html: string): string => html.replace(/<script id="theme-init"[^
 
 describe('signed-in pages in every locale', () => {
   const SENTINELS: Record<string, MessageKey[]> = {
-    home: ['dash.ownInstances', 'dash.createOwn', 'home.title', 'nav.main', 'nav.skip', 'theme.label', 'nav.publish', 'dash.getOwn'],
+    home: ['dash.ownInstances', 'home.title', 'home.catalogLink', 'nav.main', 'nav.skip', 'theme.label', 'nav.publish'],
+    catalog: ['catalog.lede', 'dash.createOwn', 'dash.getOwn', 'home.copyName'],
     publish: ['dash.tokens.create', 'dash.latestVersion', 'dash.connect', 'publish.lede', 'common.copy', 'common.copied', 'nav.publish'],
     instance: ['instance.delete.title', 'instance.grants.title', 'instance.snapshots.title', 'instance.visibility.who', 'instance.autoUpdate.label', 'common.dangerZone', 'instance.storage', 'instance.settings', 'instance.grants.people'],
     app: ['app.collaborators', 'app.self.title', 'app.delete.title', 'app.newInstance', 'app.collaboratorEmail'],
@@ -239,7 +240,7 @@ describe('signed-in pages in every locale', () => {
     account: ['account.password.title', 'account.locale.label', 'nav.signOut'],
   };
   const PAGES: Array<[string, string]> = [
-    ['home', '/'], ['publish', '/publish'], ['instance', '/instances/notes'], ['app', '/apps/notes'], ['users', '/admin/users'], ['user', '/admin/users/USER'], ['invites', '/admin/invites'],
+    ['home', '/'], ['catalog', '/catalog'], ['publish', '/publish'], ['instance', '/instances/notes'], ['app', '/apps/notes'], ['users', '/admin/users'], ['user', '/admin/users/USER'], ['invites', '/admin/invites'],
     ['groups', '/admin/groups'], ['group', '/admin/groups/GROUP'], ['settings', '/admin/settings'], ['adminApps', '/admin/apps'], ['account', '/account'],
   ];
 

@@ -249,6 +249,7 @@ details.menu > summary::-webkit-details-marker { display: none; }
   .app-card .ai-badge { grid-column: 3; grid-row: 1; justify-self: end; }
 }
 .empty-cta { margin-top: var(--s5); display: flex; justify-content: center; }
+.section-more { margin-top: var(--s5); }
 
 /* App icon tile: the initial shows when the image cannot load. */
 .tile {

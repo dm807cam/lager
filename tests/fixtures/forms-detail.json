@@ -11,31 +11,6 @@
           "maxlength": null
         }
       ]
-    },
-    {
-      "action": "/ui/apps/tasks/instances",
-      "method": "post",
-      "fields": [
-        {
-          "name": "csrf",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "from",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null,
-          "value": "home"
-        },
-        {
-          "name": "slug",
-          "type": "text",
-          "required": true,
-          "maxlength": "63"
-        }
-      ]
     }
   ],
   "home (publisher)": [
@@ -48,31 +23,6 @@
           "type": "hidden",
           "required": false,
           "maxlength": null
-        }
-      ]
-    },
-    {
-      "action": "/ui/apps/tasks/instances",
-      "method": "post",
-      "fields": [
-        {
-          "name": "csrf",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "from",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null,
-          "value": "home"
-        },
-        {
-          "name": "slug",
-          "type": "text",
-          "required": true,
-          "maxlength": "63"
         }
       ]
     }
@@ -89,6 +39,20 @@
           "maxlength": null
         }
       ]
+    }
+  ],
+  "catalog (administrator)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
     },
     {
       "action": "/ui/apps/tasks/instances",
@@ -105,7 +69,85 @@
           "type": "hidden",
           "required": false,
           "maxlength": null,
-          "value": "home"
+          "value": "catalog"
+        },
+        {
+          "name": "slug",
+          "type": "text",
+          "required": true,
+          "maxlength": "63"
+        }
+      ]
+    }
+  ],
+  "catalog (publisher)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/apps/tasks/instances",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "from",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "catalog"
+        },
+        {
+          "name": "slug",
+          "type": "text",
+          "required": true,
+          "maxlength": "63"
+        }
+      ]
+    }
+  ],
+  "catalog (user)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/apps/tasks/instances",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "from",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "catalog"
         },
         {
           "name": "slug",

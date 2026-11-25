@@ -6,18 +6,27 @@
       "fields": [
         "csrf"
       ]
-    },
-    {
-      "action": "/ui/apps/tasks/instances",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "from",
-        "slug"
-      ]
     }
   ],
   "home (publisher)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        "csrf"
+      ]
+    }
+  ],
+  "home (user)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        "csrf"
+      ]
+    }
+  ],
+  "catalog (administrator)": [
     {
       "action": "/logout",
       "method": "post",
@@ -35,7 +44,25 @@
       ]
     }
   ],
-  "home (user)": [
+  "catalog (publisher)": [
+    {
+      "action": "/logout",
+      "method": "post",
+      "fields": [
+        "csrf"
+      ]
+    },
+    {
+      "action": "/ui/apps/tasks/instances",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "from",
+        "slug"
+      ]
+    }
+  ],
+  "catalog (user)": [
     {
       "action": "/logout",
       "method": "post",
