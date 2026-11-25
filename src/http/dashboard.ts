@@ -34,13 +34,18 @@ function usesAi(core: Core, appId: string, version: number | undefined): boolean
 const aiCorner = (core: Core, locale: Locale, appId: string, version: number | undefined): string | undefined =>
   usesAi(core, appId, version) ? aiBadge(t(locale, 'card.ai'), t(locale, 'card.ai.hint')) : undefined;
 
+/**
+ * An instance as a card. Who may open it and its version are the business of those who manage it, who can change them; to everybody
+ * else a "Private" badge on an app shared with them would only be wrong, so they see how it reaches them instead (`extra.badges`).
+ */
 function instanceCard(core: Core, locale: Locale, i: Instance, extra: { badges?: string[]; manage: boolean }): string {
   const app = core.apps.getApp(i.appId);
   const title = app?.title ?? i.slug;
-  const state = i.disabled ? badge(t(locale, 'common.disabled'), { tone: 'danger', icon: 'alert' }) : badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) });
+  const state = i.disabled ? [badge(t(locale, 'common.disabled'), { tone: 'danger', icon: 'alert' })]
+    : extra.manage ? [badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) }), badge(`v${i.activeVersion}`)] : [];
   return appCard({
     app, title, slug: i.slug, description: app?.description, corner: aiCorner(core, locale, i.appId, i.activeVersion),
-    badges: [state, badge(`v${i.activeVersion}`), ...(extra.badges ?? [])],
+    badges: [...state, ...(extra.badges ?? [])],
     actions: instanceActions(core, locale, i, title, extra.manage),
   });
 }
@@ -55,13 +60,15 @@ function ownSection(core: Core, locale: Locale, user: User, own: Instance[]): st
 function sharedSection(core: Core, locale: Locale, user: User, shared: Instance[]): string {
   if (!shared.length) return '';
   const cards = shared.map((i) => instanceCard(core, locale, i, {
-    badges: [badge(t(locale, 'badge.shared', { level: levelLabel(locale, core.access.levelFor(i, user)) }), { icon: 'share', tone: 'accent' })],
+    // Whose it is, as on the catalog's cards: two copies of the same app from different people look alike otherwise.
+    badges: [badge(t(locale, 'badge.shared', { level: levelLabel(locale, core.access.levelFor(i, user)) }), { icon: 'share', tone: 'accent' }),
+      badge(core.users.get(i.ownerId)?.name || core.users.get(i.ownerId)?.email || '–', { icon: 'user' })],
     manage: core.access.canManageInstance(i, user),
   })).join('');
   return section('shared', t(locale, 'dash.shared'), `<div class="grid">${cards}</div>`, { count: shared.length });
 }
 
-function catalogSection(core: Core, locale: Locale, csrf: string, catalog: ReturnType<Core['access']['catalog']>): string {
+function catalogSection(core: Core, locale: Locale, csrf: string, catalog: ReturnType<Core['access']['catalog']>, own: Instance[]): string {
   const { instances, apps } = catalog;
   if (!instances.length && !apps.length) return '';
   const instCards = instances.map((i) => {
@@ -75,10 +82,13 @@ function catalogSection(core: Core, locale: Locale, csrf: string, catalog: Retur
   const appCards = apps.map((a) => {
     const id = `new-${esc(a.slug)}`;
     const create = form(`/ui/apps/${encodeURIComponent(a.slug)}/instances`, csrf,
-      `<input type="hidden" name="from" value="home">${field(id, t(locale, 'instance.slugLabel'), `<input id="${id}" name="slug" required maxlength="${MAX_SLUG_LENGTH}" autocomplete="off" spellcheck="false">`)}`,
+      `<input type="hidden" name="from" value="home">${field(id, t(locale, 'home.copyName'), `<input id="${id}" name="slug" required maxlength="${MAX_SLUG_LENGTH}" autocomplete="off" spellcheck="false">`)}`,
       esc(t(locale, 'dash.createOwn')), 'primary', '', true);
+    // Someone who already has a copy of this app learns so before making another one.
+    const copies = own.filter((i) => i.appId === a.id).length;
     return appCard({
-      app: a, title: a.title, slug: a.slug, description: a.description, badges: [],
+      app: a, title: a.title, slug: a.slug, description: a.description,
+      badges: copies ? [badge(t(locale, copies === 1 ? 'dash.copies.one' : 'dash.copies.other', { count: copies }), { icon: 'check' })] : [],
       corner: aiCorner(core, locale, a.id, core.apps.latestDeployedVersion(a.id)?.number),
       // withFieldError (pages.ts) finds this panel by `<details class="getown"` to open it again at a refused name: keep it so.
       actions: `<details class="getown"><summary class="${btn('secondary', true)} btn-block">${icon('plus')}${esc(t(locale, 'dash.getOwn'))}</summary>${create}</details>`,
@@ -153,7 +163,7 @@ function homePage(core: Core, locale: Locale, user: User, flash: Flash = {}): st
     shared.length ? t(locale, plural(shared.length, 'home.summary.shared.one', 'home.summary.shared.other'), { count: shared.length }) : '',
   ].filter(Boolean);
   return page(locale, 'Lager', `<div class="page-head"><h1 class="display">${esc(t(locale, 'home.title'))}</h1>${parts.length ? `<p class="lede">${esc(parts.join(' · '))}</p>` : ''}</div>
-${withNotice(locale, flash, `${ownSection(core, locale, user, own)}${sharedSection(core, locale, user, shared)}${catalogSection(core, locale, csrf, catalog)}`)}`, opts);
+${withNotice(locale, flash, `${ownSection(core, locale, user, own)}${sharedSection(core, locale, user, shared)}${catalogSection(core, locale, csrf, catalog, own)}`)}`, opts);
 }
 
 /** Everything about publishing: the apps the viewer deploys, the MCP connector and the API tokens. */

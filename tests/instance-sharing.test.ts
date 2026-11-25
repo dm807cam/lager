@@ -137,3 +137,24 @@ describe('sharing', () => {
     expect(doc.querySelector('#sharing select[name="group"]')).toBeNull();
   });
 });
+
+describe('the home page of someone who does not publish', () => {
+  it('speaks of apps and copies, says whose a shared app is, and shows no badges only a manager can act on', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const cookie = await s.h.login('uwe@x.y', 'password-123');
+    core.apps.createInstance({ appId: core.apps.getApp('tasks')!.id, slug: 'uwe-tasks', ownerId: s.ids.uwe });
+    const html = (await request(s.h.app).get('/').set('Host', s.h.host).set('Cookie', cookie)).text;
+    const main = dom(html).querySelector('main')!;
+    expect(main.textContent!.toLowerCase()).not.toContain('instance');
+    const shared = main.querySelector('#shared')!;
+    const card = [...shared.querySelectorAll('.app-card')].find((c) => c.textContent!.includes('notes'))!;
+    const badges = [...card.querySelectorAll('.badge-text')].map((b) => b.textContent);
+    // Uwe reaches it as a viewer himself and as a contributor through his group: the higher level counts.
+    const owner = core.users.get(s.h.adminId)!;
+    expect(badges).toEqual([t('en', 'badge.shared', { level: t('en', 'level.interact') }), owner.name || owner.email]);
+    // The catalog says how many copies of an app the viewer already has.
+    const tasks = [...main.querySelectorAll('#catalog .app-card')].find((c) => c.querySelector('details.getown') && c.textContent!.includes('tasks'))!;
+    expect(tasks.textContent).toContain(t('en', 'dash.copies.one'));
+  });
+});

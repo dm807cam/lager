@@ -100,7 +100,7 @@ describe('after a form', () => {
     // A user who gets their own instance from the catalog sees it named above their own instances.
     const uwe = await s.h.login('uwe@x.y', PASSWORD);
     const own = await submit(s, uwe, s.ids.uwe, '/ui/apps/tasks/instances', { slug: 'uwe-tasks', from: 'home' });
-    expect(noticeOf(own.doc)).toMatchObject({ text: t('en', 'notice.ok.instanceCreated', { slug: 'uwe-tasks' }), before: 'mine' });
+    expect(noticeOf(own.doc)).toMatchObject({ text: t('en', 'notice.ok.copyCreated', { slug: 'uwe-tasks' }), before: 'mine' });
 
     const token = s.h.core.tokens.list(admin)[0];
     const revoked = await submit(s, cookie, admin, `/ui/tokens/${token.id}/revoke`, { confirmed: '1' });
@@ -145,6 +145,17 @@ describe('the flash value', () => {
     const long = readFlash(core, admin, flashToken(core, admin, { ok: 'notice.ok.shared', params: { name: 'n'.repeat(500), level: 'Viewer' } }));
     expect(long.params!.level).toBe('Viewer');
     expect(long.params!.name).toBe(`${'n'.repeat(299)}…`);
+  });
+
+  it('a link to copy comes back only as a plain http(s) address', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const admin = core.users.get(s.h.adminId)!;
+    const copyOf = (copy: string): string | undefined => readFlash(core, admin, flashToken(core, admin, { ok: 'notice.ok.shared', copy })).copy;
+    expect(copyOf('http://notes.apps.localhost:8080')).toBe('http://notes.apps.localhost:8080');
+    for (const bad of ['javascript:alert(1)', 'https://a"b', 'https://a b', 'https://a<b', `https://${'a'.repeat(300)}`, 'data:text/html,x', '//evil.example']) {
+      expect(copyOf(bad), bad).toBeUndefined();
+    }
   });
 
   it('values are text: markup in a name is shown, not run', () => {

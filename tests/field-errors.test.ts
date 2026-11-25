@@ -47,9 +47,13 @@ describe('a refused form', () => {
     const cookie = await s.h.login();
     const admin = s.h.adminId;
 
+    // Anyone may register on this server: the person can make an account themselves.
+    const open = await refused(s, cookie, admin, '/ui/instances/notes/grants', { email: 'nobody@x.y', level: 'view' });
+    expect(open.location).toMatch(/#grant-email$/);
+    expect(at(open.doc, 'grant-email')).toEqual(expected('notice.noAccount.open', 'grant-email', 'nobody@x.y'));
+    // With invitations only, an administrator can invite the person, and is told where.
+    s.h.core.settings.setRegistration('invite');
     const share = await refused(s, cookie, admin, '/ui/instances/notes/grants', { email: 'nobody@x.y', level: 'view' });
-    expect(share.location).toMatch(/#grant-email$/);
-    // An administrator can invite the person, and is told where.
     expect(at(share.doc, 'grant-email')).toEqual(expected('notice.noAccount.admin', 'grant-email', 'nobody@x.y'));
 
     const domain = await refused(s, cookie, admin, '/ui/instances/notes/domains', { host: 'not a host' });
