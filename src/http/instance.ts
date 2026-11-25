@@ -257,8 +257,11 @@ export function createInstanceRouter(core: Core): express.Router {
 
   router.get('/__lager/session', (req, res) => {
     const ctx = ctxOf(res);
-    // Only a browser that is not signed in here can start a sign-in, so only it gets a nonce.
-    const url = signInAddress(core, ctx.instance, res.locals.customHost as string | undefined, ctx.user ? undefined : signInNonce(core, req, res));
+    // A browser that may need to sign in gets a nonce: one not signed in here (also on a public app, where it can open the app at
+    // level view), and one signed in here that has lost its access. The code that comes back after a sign-in, with this account or
+    // another one, is only taken in the browser that holds it.
+    const mayNeedSignIn = !ctx.user || ctx.viewer.level === 'none';
+    const url = signInAddress(core, ctx.instance, res.locals.customHost as string | undefined, mayNeedSignIn ? signInNonce(core, req, res) : undefined);
     if (ctx.viewer.level === 'none') {
       sendError(res, new LagerError('unauthenticated', 'Sign in required.'), { loginUrl: url });
       return;
