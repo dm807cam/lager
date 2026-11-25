@@ -1616,6 +1616,24 @@
       ]
     },
     {
+      "action": "/account/two-factor/setup",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "current",
+          "type": "password",
+          "required": true,
+          "maxlength": null
+        }
+      ]
+    },
+    {
       "action": "/logout",
       "method": "post",
       "fields": [

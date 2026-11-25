@@ -354,6 +354,11 @@ select {
 .callout { margin-bottom: var(--s5); padding: var(--s4) var(--s5) var(--s5); border: 1px solid var(--accent-line); border-radius: var(--r-card); background: var(--accent-soft); }
 .callout > strong { display: flex; align-items: center; gap: 8px; margin-bottom: var(--s3); font-weight: 650; }
 .callout .warn { display: flex; align-items: center; gap: 6px; margin-top: var(--s3); color: var(--warning); font-size: 0.86rem; font-weight: 600; }
+.recovery-codes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2) var(--s4); margin: var(--s4) 0; padding: 0; list-style: none; }
+.recovery-codes code { font-size: 1rem; letter-spacing: 0.04em; }
+.steps { padding-left: 1.4em; }
+.steps > li + li { margin-top: var(--s4); }
+.card details > summary { cursor: pointer; color: var(--ink-2); font-weight: 600; }
 .copyfield { display: flex; gap: var(--s2); align-items: stretch; min-width: 0; }
 .copyfield code {
   flex: 1; min-width: 0; display: flex; align-items: center; min-height: 44px; padding: 8px 12px; border: 1px solid var(--control-line); border-radius: var(--r-ctl);

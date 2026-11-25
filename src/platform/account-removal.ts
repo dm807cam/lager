@@ -55,6 +55,8 @@ export class AccountRemoval {
       run('DELETE FROM oauth_codes WHERE user_id = ?', user.id);
       run('DELETE FROM account_tokens WHERE user_id = ? OR created_by = ?', user.id, user.id);
       run('DELETE FROM group_members WHERE user_id = ?', user.id);
+      run('DELETE FROM user_recovery_codes WHERE user_id = ?', user.id);
+      run('DELETE FROM user_two_factor WHERE user_id = ?', user.id);
       run("DELETE FROM grants WHERE principal_type = 'user' AND principal_id = ?", user.id);
       run('UPDATE grants SET created_by = NULL WHERE created_by = ?', user.id);
       run('UPDATE instance_domains SET created_by = NULL WHERE created_by = ?', user.id);
