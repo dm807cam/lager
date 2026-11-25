@@ -272,3 +272,45 @@ describe('app cards', () => {
     for (const query of ['@media (max-width: 520px)', '@media (prefers-reduced-motion: reduce)']) expect(block(query)).toContain('.app-card.is-linked:hover { transform: none; }');
   });
 });
+
+describe('the catalog page', () => {
+  const get = async (path: string, email: string): Promise<Document> =>
+    dom((await request(s!.h.app).get(path).set('Host', s!.h.host).set('Cookie', await s!.h.login(email, 'password-123'))).text);
+
+  it('lists what can be opened and what can be copied under headings of their own', async () => {
+    s = await showcase();
+    s.h.core.users.create({ email: 'cleo@x.y', name: 'Cleo', password: 'password-123', role: 'user' });
+    const doc = await get('/catalog', 'cleo@x.y');
+    expect(doc.querySelector('h1')!.textContent).toBe(t('en', 'dash.catalog'));
+    expect([...doc.querySelectorAll('#catalog section')].map((sec) => [sec.id, sec.querySelector('h2')!.textContent])).toEqual([
+      ['catalog-open', t('en', 'catalog.instances')], ['catalog-copy', t('en', 'catalog.apps')],
+    ]);
+    expect(doc.querySelector('nav.primary a[aria-current="page"]')!.getAttribute('href')).toBe('/catalog');
+  });
+
+  it('is the main way on from a home page without an own copy, and a quieter link once there is one', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const prominent = (await get('/', 'uwe@x.y')).querySelector('main a[href="/catalog"]')!;
+    expect(prominent.parentElement!.className).toBe('empty-cta');
+    expect(prominent.classList.contains('btn-primary')).toBe(true);
+    expect(prominent.textContent).toContain(t('en', 'home.catalogLink'));
+    core.apps.createInstance({ appId: core.apps.getApp('tasks')!.id, slug: 'uwe-tasks', ownerId: s.ids.uwe });
+    const quiet = (await get('/', 'uwe@x.y')).querySelector('main a[href="/catalog"]')!;
+    expect(quiet.parentElement!.className).toBe('section-more');
+    expect(quiet.classList.contains('btn-primary')).toBe(false);
+  });
+
+  it('says when it offers nothing, and is then not in the navigation', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const pia = s.ids.pia;
+    core.apps.setSelfInstances(core.apps.getApp('tasks')!.id, 'off', pia);
+    core.apps.setVisibility(core.apps.getInstanceBySlug('tasks')!.id, 'private', pia);
+    core.users.create({ email: 'cleo@x.y', name: 'Cleo', password: 'password-123', role: 'user' });
+    const doc = await get('/catalog', 'cleo@x.y');
+    expect(doc.querySelector('main .empty')!.textContent).toContain(t('en', 'catalog.none'));
+    expect(doc.querySelector('nav.primary a[href="/catalog"]')).toBeNull();
+    expect((await get('/', 'cleo@x.y')).querySelector('main a[href="/catalog"]')).toBeNull();
+  });
+});
