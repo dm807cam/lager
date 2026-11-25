@@ -24,7 +24,8 @@ We follow the format [described by Michael Nygard](https://cognitect.com/blog/20
 | [0016](0016-confirm-before-instance-sign-in.md) | A visitor confirms before an instance learns who they are | Proposed |
 | [0017](0017-append-only-ingest.md) | Data from outside comes in through append-only endpoints with a quota of their own | Proposed |
 | [0018](0018-embedding-on-other-websites.md) | Websites outside Lager may frame an instance its managers name them for | Proposed |
-| [0019](0019-offline-first-runtime.md) | The runtime makes every app work offline and syncs when the server is back | Proposed |
+| [0019](0019-two-step-sign-in.md) | Two-step sign-in with TOTP and recovery codes, gated before the session | Proposed |
+| [0020](0020-offline-first-runtime.md) | The runtime makes every app work offline and syncs when the server is back | Proposed |
 
 ## Writing a new record
 

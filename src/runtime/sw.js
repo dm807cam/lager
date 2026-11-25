@@ -1,5 +1,5 @@
 /* Lager service worker: keeps the page of this instance, its session and the scripts it loads, so the app opens without a
-   connection (see docs/adr/0019-offline-first-runtime.md). The runtime registers it with scope "/" on every instance whose
+   connection (see docs/adr/0020-offline-first-runtime.md). The runtime registers it with scope "/" on every instance whose
    active version does not turn offline off. Plain ES2020, no dependencies.
 
    What it answers:

@@ -1,4 +1,4 @@
-# 0019. The runtime makes every app work offline and syncs when the server is back
+# 0020. The runtime makes every app work offline and syncs when the server is back
 
 - Status: Proposed
 - Date: 2026-11-24

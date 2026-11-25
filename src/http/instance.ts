@@ -68,7 +68,7 @@ function activeCapabilities(core: Core, instance: Instance): Capabilities {
   return core.apps.getVersion(instance.appId, instance.activeVersion)?.capabilities ?? {};
 }
 
-/** The app may be opened without a connection unless its active version declares `{"db": {"offline": false}}` (ADR 0019). */
+/** The app may be opened without a connection unless its active version declares `{"db": {"offline": false}}` (ADR 0020). */
 export function offlineAllowed(caps: Capabilities): boolean {
   return caps.db?.offline !== false;
 }

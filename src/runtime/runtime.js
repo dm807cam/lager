@@ -1448,7 +1448,7 @@
   }
 
   /**
-   * Registers the service worker that lets the app open without a connection (ADR 0019), or, when the active version turned
+   * Registers the service worker that lets the app open without a connection (ADR 0020), or, when the active version turned
    * offline off, removes it together with what it kept. Only the top-level page of a secure origin does either: inside a frame
    * on another website the instance only ever sees a guest, and nothing is kept for it.
    */

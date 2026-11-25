@@ -65,4 +65,5 @@ The [installation guide](docs/installation.md) describes a safe setup. In short:
 - Set `LAGER_TRUST_PROXY` to match your proxy setup.
 - Use a separate domain for the apps (`LAGER_APPS_DOMAIN`). If you run a public server, consider adding it to the [Public Suffix List](https://publicsuffix.org/), so that browsers treat every app subdomain as its own site.
 - Give the administrator role, and the right to add custom domains, only to people you trust.
+- Turn on [two-step sign-in](docs/users-and-sharing.md#two-step-sign-in) for every administrator account, and keep `LAGER_SECRET` or `secret.key`: the second factors are encrypted with it.
 - Keep Lager up to date, and back up the data directory and `secret.key`.

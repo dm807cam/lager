@@ -239,6 +239,28 @@ export const MIGRATIONS: string[] = [
     origins TEXT NOT NULL
   );
   `,
+  `
+  -- Two-step sign-in. \`secret_enc\` is the TOTP secret, encrypted with a key derived from the server secret and bound to the
+  -- account; \`confirmed_at\` is NULL while a setup waits for its first code. \`last_step\` is the newest time step a code was
+  -- accepted for (each is good once). The other columns count wrong codes and pause the second step (see \`TwoFactor\`).
+  CREATE TABLE user_two_factor (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    secret_enc TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    confirmed_at TEXT,
+    last_step INTEGER NOT NULL DEFAULT 0,
+    failures INTEGER NOT NULL DEFAULT 0,
+    lock_level INTEGER NOT NULL DEFAULT 0,
+    locked_until INTEGER NOT NULL DEFAULT 0,
+    last_failure_at INTEGER NOT NULL DEFAULT 0
+  );
+  -- Single-use recovery codes, as a keyed hash only.
+  CREATE TABLE user_recovery_codes (
+    code_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE INDEX user_recovery_codes_user ON user_recovery_codes(user_id);
+  `,
 ];
 
 export function openPlatformDb(dataDir: string): DatabaseSync {

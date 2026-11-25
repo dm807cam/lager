@@ -23,6 +23,17 @@ const MAIL_KEYS: Record<Kind, { subject: MessageKey; intro: MessageKey; validity
   reset: { subject: 'mail.reset.subject', intro: 'mail.reset.intro', validity: 'mail.validity.reset' },
   invite: { subject: 'mail.invite.subject', intro: 'mail.invite.intro', validity: 'mail.validity.invite' },
 };
+
+/** Why an account's owner hears about its two-step sign-in. */
+export type TwoFactorNotice = 'enabled' | 'disabled' | 'reset' | 'recovery' | 'renewed' | 'locked';
+const TWO_FACTOR_MAIL_KEYS: Record<TwoFactorNotice, { subject: MessageKey; text: MessageKey }> = {
+  enabled: { subject: 'mail.twoFactor.enabled.subject', text: 'mail.twoFactor.enabled.text' },
+  disabled: { subject: 'mail.twoFactor.disabled.subject', text: 'mail.twoFactor.disabled.text' },
+  reset: { subject: 'mail.twoFactor.reset.subject', text: 'mail.twoFactor.reset.text' },
+  recovery: { subject: 'mail.twoFactor.recovery.subject', text: 'mail.twoFactor.recovery.text' },
+  renewed: { subject: 'mail.twoFactor.renewed.subject', text: 'mail.twoFactor.renewed.text' },
+  locked: { subject: 'mail.twoFactor.locked.subject', text: 'mail.twoFactor.locked.text' },
+};
 /**
  * Verification, reset and "already registered" mails the whole server sends per hour: anyone can cause them, and they leave from the
  * operator's mail account. Invitations are an administrator's own act and do not count.
@@ -209,6 +220,18 @@ export class Accounts {
     const { origin } = this.config.publicUrl;
     const text = `${t(lang, 'mail.exists.intro')}\n\n${origin}/login\n\n${t(lang, 'mail.exists.reset')}\n\n${origin}/forgot\n\n${t(lang, 'mail.exists.ignore')}\n`;
     this.background(this.send(user.email, t(lang, 'mail.exists.subject'), text, 'account'));
+  }
+
+  /**
+   * Tells the owner of an account about a change to its two-step sign-in, or about a sign-in that got past the password but not
+   * the code. Never held back by a mail budget: each of these needs the account's password, a session or an administrator, so
+   * nobody can send them in bulk, and they are how the owner learns that their password is known to someone else.
+   */
+  noticeTwoFactor(user: User, kind: TwoFactorNotice, requestLocale?: Locale, recoveryLeft = 0): void {
+    const lang = user.locale ?? requestLocale ?? this.config.defaultLocale;
+    const keys = TWO_FACTOR_MAIL_KEYS[kind];
+    const text = `${t(lang, keys.text, { count: recoveryLeft })}\n\n${t(lang, 'mail.twoFactor.notYou')}\n\n${this.config.publicUrl.origin}/forgot\n`;
+    this.background(this.send(user.email, t(lang, keys.subject), text, null));
   }
 
   /** True while the token is an unused, unexpired verification link; consumes nothing. */
