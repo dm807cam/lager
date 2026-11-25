@@ -192,7 +192,7 @@ export const notFoundPage = (locale: Locale, opts: PageOpts = {}): string =>
  * right to know, and offers the way out: `actions` is trusted markup (another account, the home page).
  */
 export function noAccessPage(locale: Locale, email: string, actions: string, opts: PageOpts = {}): string {
-  const text = esc(t(locale, 'noAccess.text', { email: '%EMAIL%' })).replace('%EMAIL%', `<strong>${esc(email)}</strong>`);
+  const text = esc(t(locale, 'noAccess.text', { email: '%EMAIL%' })).replace('%EMAIL%', () => `<strong>${esc(email)}</strong>`);
   return page(locale, t(locale, 'error.forbidden.title'), messageCard(`<div class="auth-icon is-danger">${icon('alert')}</div><h1>${esc(t(locale, 'error.forbidden.title'))}</h1>
 <p>${text}</p><div class="btn-row gap-top">${actions}</div>`, opts), opts);
 }

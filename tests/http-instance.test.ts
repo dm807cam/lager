@@ -122,11 +122,14 @@ describe('instance host', () => {
     expect(again.headers['set-cookie']).toBeUndefined();
   });
 
-  it('level none with a user is 403', async () => {
+  it('level none with a user goes to the platform, which says so there, and the session refuses', async () => {
     const { h, inst } = setup();
     const u = h.core.users.create({ email: 'u@x.y', name: 'U', password: 'pw', role: 'user' });
     const cookie = 'lager_inst=' + signToken({ uid: u.id, iid: inst.id, k: 'inst', ep: 0 }, 'test-secret', 60);
-    expect((await request(h.app).get('/').set('Host', W).set('Cookie', cookie)).status).toBe(403);
+    const page = await request(h.app).get('/').set('Host', W).set('Cookie', cookie);
+    expect(page.status).toBe(302);
+    expect(page.headers.location).toMatch(/^http:\/\/lager\.localhost:8080\/auth\/instance\?slug=workout&/);
+    expect(page.text).not.toContain('u@x.y');
     expect((await request(h.app).get('/__lager/session').set('Host', W).set('Cookie', cookie)).status).toBe(401);
   });
 
@@ -667,7 +670,7 @@ describe('instance host', () => {
     const { h, inst } = setup();
     const e = h.core.users.create({ email: 'e@x.y', name: 'E', password: 'pw', role: 'user' });
     const cookie = 'lager_inst=' + signToken({ uid: e.id, iid: inst.id, k: 'inst', ep: 0 }, 'test-secret', 60);
-    expect((await request(h.app).get('/').set('Host', W).set('Cookie', cookie)).status).toBe(403);
+    expect((await request(h.app).get('/').set('Host', W).set('Cookie', cookie)).status).toBe(302);
     h.core.access.setGrant(inst, 'user', e.id, 'view', h.core.users.get(h.adminId)!);
     const platform = await h.login('e@x.y', 'pw');
     const entered = await h.enter('workout', platform);

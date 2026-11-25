@@ -26,8 +26,7 @@ import { RateLimiter } from './ratelimit.js';
 import { StreamLimiter } from './stream-limit.js';
 import { requestLocale } from './locale.js';
 import { t as tr } from '../i18n/index.js';
-import { btn } from './ui.js';
-import { badCodePage, disabledPage, esc, instanceHostPage, noAccessPage, notFoundPage } from './pages.js';
+import { badCodePage, disabledPage, instanceHostPage, notFoundPage } from './pages.js';
 import { epochValid } from './session.js';
 import { iconToken, signToken, verifyToken } from './tokens.js';
 
@@ -182,17 +181,10 @@ export function createInstanceRouter(core: Core): express.Router {
   router.get(['/', '/index.html'], (req, res) => {
     const ctx = ctxOf(res);
     if (ctx.viewer.level === 'none') {
-      if (ctx.user) {
-        // Signed in here, but no longer allowed in (a share that was taken back). The ways out are on the platform: its sign-in for
-        // this instance offers another account, and the home page lists the apps this account has.
-        const locale = requestLocale(core, req, ctx.user);
-        const platform = config.publicUrl.origin;
-        const actions = `<a class="${btn('primary')}" href="${esc(`${platform}/auth/instance?slug=${encodeURIComponent(ctx.instance.slug)}`)}">${esc(tr(locale, 'noAccess.switch'))}</a>`
-          + `<a class="${btn('secondary')}" href="${esc(`${platform}/`)}">${esc(tr(locale, 'home.title'))}</a>`;
-        res.status(403).type('html').send(noAccessPage(locale, ctx.user.email, actions, NO_SWITCHER));
-      } else {
-        res.redirect(loginUrl(core, ctx.instance, res.locals.customHost as string | undefined, signInNonce(core, req, res)));
-      }
+      // Not signed in, or signed in here but no longer allowed in (a share that was taken back): to the platform's sign-in for this
+      // instance. It says there, on its own origin, which account has no access and offers another one; a page on this origin
+      // would hand the account's address to the app, which may not have been given it (ADR 0016).
+      res.redirect(loginUrl(core, ctx.instance, res.locals.customHost as string | undefined, signInNonce(core, req, res)));
       return;
     }
     const app = core.apps.getApp(ctx.instance.appId);

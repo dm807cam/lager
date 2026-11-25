@@ -307,17 +307,70 @@ describe('an app the signed-in account may not open', () => {
     expect(onward.headers.location).toMatch(/^http:\/\/workout\.apps\.localhost:8080\/__lager\/callback\?code=/);
   });
 
-  it('on the app’s own address, after the share was taken back, it names the account and leads to the platform', async () => {
-    const s = setup({ visibility: 'users' });
+  /**
+   * From the app's own address with a cookie for an account that lost its access, through "Use another account", to the app
+   * signed in as the owner. Returns what each step answered.
+   */
+  async function switchOnAppHost(s: ReturnType<typeof setup>, host: string) {
     const inst = await s.h.enter('workout', await s.h.login('v@x.y', PW));
     s.h.core.apps.setVisibility(s.inst.id, 'private', s.h.adminId);
-    const res = await request(s.h.app).get('/').set('Host', W).set('Cookie', inst);
-    expect(res.status).toBe(403);
-    expect(res.text).toContain('<strong>v@x.y</strong>');
-    expect(res.text).toContain(`href="http://lager.localhost:8080/auth/instance?slug=workout">${t('en', 'noAccess.switch')}</a>`);
-    expect(res.text).toContain(`href="http://lager.localhost:8080/">${t('en', 'home.title')}</a>`);
-    // No script on an app's host.
-    expect(res.text).not.toContain('<script src=');
+    const cookieOf = (res: request.Response, name: string): string =>
+      (res.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith(`${name}=`))!.split(';')[0];
+    // The app's host sends the visitor to the platform, with this browser's sign-in nonce and the host it came from.
+    const onApp = await request(s.h.app).get('/').set('Host', host).set('Cookie', inst);
+    const nonce = cookieOf(onApp, 'lager_nonce');
+    const toPlatform = new URL(onApp.headers.location);
+    // The platform names the account on its own origin and offers another one.
+    const visitor = await s.h.login('v@x.y', PW);
+    const noAccess = await request(s.h.app).get(toPlatform.pathname + toPlatform.search).set('Host', s.h.host).set('Cookie', visitor);
+    const logout = /<form method="post" action="\/logout">((?:(?!<\/form>)[\s\S])*?name="return"[\s\S]*?)<\/form>/.exec(noAccess.text)![1];
+    const fields = Object.fromEntries([...logout.matchAll(/name="([^"]+)" value="([^"]*)"/g)].map((m) => [m[1], m[2].replace(/&amp;/g, '&')]));
+    const out = await request(s.h.app).post('/logout').set('Host', s.h.host).set('Cookie', visitor).type('form').send(fields);
+    const ret = new URL(out.headers.location, 'http://x').searchParams.get('return')!;
+    const owner = await request(s.h.app).post('/login').set('Host', s.h.host).type('form').send({ email: 'admin@x.y', password: 'admin-password-1', return: ret });
+    const ownerCookie = (owner.headers['set-cookie'] as unknown as string[]).map((c) => c.split(';')[0]).join('; ');
+    const code = new URL((await request(s.h.app).get(ret).set('Host', s.h.host).set('Cookie', ownerCookie)).headers.location);
+    const callback = await request(s.h.app).get(code.pathname + code.search).set('Host', code.host).set('Cookie', nonce);
+    return { onApp, toPlatform, noAccess, code, callback };
+  }
+
+  it('on the app’s own address, after the share was taken back, it sends the visitor to the platform and shows the app no address', async () => {
+    const s = setup({ visibility: 'users' });
+    const { onApp, toPlatform, noAccess } = await switchOnAppHost(s, W);
+    // The app (no email scope here) never gets the address: the page that names the account is the platform's.
+    expect(onApp.status).toBe(302);
+    expect(onApp.text).not.toContain('v@x.y');
+    expect(`${toPlatform.origin}${toPlatform.pathname}`).toBe('http://lager.localhost:8080/auth/instance');
+    expect(toPlatform.searchParams.get('slug')).toBe('workout');
+    expect(toPlatform.searchParams.get('n')).toMatch(/^[A-Za-z0-9_-]{22,}$/);
+    expect(noAccess.status).toBe(403);
+    expect(noAccess.text).toContain('<strong>v@x.y</strong>');
+  });
+
+  it('"Use another account" from the app’s own address ends on the app, signed in', async () => {
+    const s = setup({ visibility: 'users' });
+    const { code, callback } = await switchOnAppHost(s, W);
+    expect(code.host).toBe('workout.apps.localhost:8080');
+    expect(callback.status).toBe(302);
+    expect((callback.headers['set-cookie'] as unknown as string[]).some((c) => c.startsWith('lager_inst='))).toBe(true);
+  });
+
+  it('the same from a custom domain comes back to that domain', async () => {
+    const s = setup({ visibility: 'users' });
+    s.h.core.domains.add(s.inst, 'workout.example.org', s.h.core.users.get(s.h.adminId)!, true);
+    const { toPlatform, code, callback } = await switchOnAppHost(s, 'workout.example.org');
+    expect(toPlatform.searchParams.get('host')).toBe('workout.example.org');
+    expect(code.host).toBe('workout.example.org:8080');
+    expect(callback.status).toBe(302);
+    expect((callback.headers['set-cookie'] as unknown as string[]).some((c) => c.startsWith('lager_inst='))).toBe(true);
+  });
+
+  it('a sign-out sent from an out-of-date page signs nobody out and follows no way back', async () => {
+    const s = setup();
+    const cookie = await s.h.login('v@x.y', PW);
+    const out = await request(s.h.app).post('/logout').set('Host', s.h.host).set('Cookie', cookie).type('form').send({ csrf: 'stale', return: '/auth/instance?slug=workout' });
+    expect(out.headers.location ?? '').not.toContain('auth/instance');
+    expect((await s.ask(cookie)).status).toBe(200);
   });
 
   it('a sign-out without a way back, or with one off the platform, ends at the plain sign-in', async () => {

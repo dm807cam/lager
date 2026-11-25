@@ -70,7 +70,7 @@ describe('offline: what the server marks for keeping', () => {
     const u = h.core.users.create({ email: 'u@x.y', name: 'U', password: 'pw', role: 'user' });
     const stranger = 'lager_inst=' + signToken({ uid: u.id, iid: inst.id, k: 'inst', ep: 0 }, 'test-secret', 60);
     const refused = await request(h.app).get('/').set('Host', W).set('Cookie', stranger);
-    expect(refused.status).toBe(403);
+    expect(refused.status).toBe(302);
     expect(refused.headers['x-lager-offline']).toBeUndefined();
 
     const owner = await h.enter('workout', await h.login());
