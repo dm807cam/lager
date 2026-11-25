@@ -3,7 +3,7 @@ import type { Request, RequestHandler, Response } from 'express';
 import { instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
-import { formatDay, formatSize, t, type Locale, type MessageKey } from '../i18n/index.js';
+import { formatDate, formatDay, formatSize, t, type Locale, type MessageKey } from '../i18n/index.js';
 import { localeOf, requestLocale } from './locale.js';
 import { MAX_NAME } from '../platform/groups.js';
 import { MAX_QUOTA_MB } from '../platform/quotas.js';
@@ -101,7 +101,7 @@ function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): strin
     esc(roleLabel(locale, u.role)),
     esc(groupName.get(core.ai.groupIdOf(u.id)) ?? t(locale, 'admin.ai.everyoneElse')),
     `<div class="badges">${userBadges(core, locale, u)}</div>`,
-    `<time class="num nowrap" datetime="${esc(u.createdAt)}" title="${dateText(locale, u.createdAt)}">${esc(formatDay(locale, u.createdAt))}</time>`,
+    `<time class="num nowrap" datetime="${esc(u.createdAt)}" data-local="day" title="${esc(formatDate(locale, u.createdAt, true))}">${esc(formatDay(locale, u.createdAt))}</time>`,
     linkButton(userPath(u.id), `${icon('settings')}${esc(t(locale, 'common.manage'))}`, 'quiet', true, named(t(locale, 'card.manage', { title: u.email }))),
   ]);
   return shell(core, locale, admin, 'users', t(locale, 'admin.section.users'),
@@ -497,17 +497,20 @@ function domainsPage(core: Core, locale: Locale, admin: User, inst: Instance, ms
 }
 
 /** The page a form under /admin belongs to, for a GET of the form's own address; null for addresses that are no form's. */
+/** The sections of the administration that have a page of their own at /admin/<section>. */
+const ADMIN_SECTIONS: ReadonlySet<string> = new Set(['users', 'groups', 'invites', 'mail', 'ai', 'apps', 'settings']);
+
 export function formPageOf(path: string): string | null {
   const seg = path.split('/').filter(Boolean);
   if (seg[0] !== 'admin' || seg.length < 2) return null;
   // A form at a section's own address (adding a group, an invitation, saving the settings) belongs to that section's page.
-  if (seg.length === 2) return ['users', 'groups', 'invites', 'mail', 'ai', 'apps', 'settings'].includes(seg[1]) ? `/admin/${seg[1]}` : null;
+  if (seg.length === 2) return ADMIN_SECTIONS.has(seg[1]) ? `/admin/${seg[1]}` : null;
   const [, section, id] = seg;
   if (section === 'users' || section === 'groups') return `/admin/${section}/${id}`;
   if (section === 'ai' && seg.length >= 4 && ['providers', 'models', 'groups'].includes(id)) return `/admin/ai/${id}/${seg[3]}`;
   if (section === 'instances' && seg[3] === 'domains') return `/admin/instances/${id}/domains`;
   if (section === 'instances') return '/admin/apps';
-  if (['invites', 'mail', 'ai', 'apps', 'settings'].includes(section)) return `/admin/${section}`;
+  if (ADMIN_SECTIONS.has(section)) return `/admin/${section}`;
   return null;
 }
 

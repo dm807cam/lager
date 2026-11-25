@@ -175,7 +175,7 @@ function ingestCard(core: Core, locale: Locale, inst: Instance, base: string, cs
   const title = t(locale, 'instance.ingest.title');
   if (!core.ingest.enabled) return card(title, `<p class="hint">${esc(t(locale, 'instance.ingest.serverOff'))}</p>`, '', 'ingest');
   const url = instanceUrl(core.config, inst.slug);
-  const since = formatDate(locale, core.ingest.since);
+  const since = formatDate(locale, core.ingest.since, true);
   const items = endpoints.map((e) => {
     const off = core.ingest.isOff(inst.id, e.name);
     const counts = core.ingest.countsOf(inst.id, e.name);

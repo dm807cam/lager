@@ -45,6 +45,11 @@ describe('the address of a form, opened again', () => {
     expect(formPageOf('/admin/settings')).toBe('/admin/settings');
     expect(formPageOf('/admin/groups')).toBe('/admin/groups');
     expect(formPageOf('/admin/nothing')).toBeNull();
+    expect(formPageOf('/admin/invites')).toBe('/admin/invites');
+    expect(formPageOf('/admin/mail')).toBe('/admin/mail');
+    expect(formPageOf('/admin/users/')).toBe('/admin/users');
+    // Only known sections, spelt as the router spells them, are named back.
+    expect(formPageOf('/admin/USERS')).toBeNull();
     expect(formPageOf('/other/users/x/role')).toBeNull();
   });
 });
@@ -101,5 +106,20 @@ describe('signing out with a session that is over', () => {
     expect(res.headers.location).toBe('/login');
     const set = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
     expect(set.some((c) => /^lager_session=;/.test(c) && /Expires=Thu, 01 Jan 1970/.test(c))).toBe(true);
+  });
+});
+
+describe('a stale form at a section’s own address', () => {
+  it('changes nothing and leads back to that section', async () => {
+    s = await showcase();
+    const cookie = await s.h.login();
+    const invites = s.h.core.accounts.listInvites().length;
+    for (const [path, body] of [['/admin/invites', { role: 'user' }], ['/admin/groups', { name: 'Fresh' }]] as const) {
+      const res = await request(s.h.app).post(path).set('Host', s.h.host).set('Cookie', cookie).type('form').send({ csrf: 'stale', ...body });
+      expect(res.status, path).toBe(403);
+      expect(res.text, path).toContain(`href="${path}"`);
+    }
+    expect(s.h.core.accounts.listInvites()).toHaveLength(invites);
+    expect(s.h.core.groups.list().map((g) => g.name)).toEqual(['Team']);
   });
 });

@@ -54,14 +54,18 @@ export function negotiateLocale(acceptLanguage: string | undefined, fallback: Lo
   return ranked[0]?.locale ?? fallback;
 }
 
-const formatters = new Map<Locale, Intl.DateTimeFormat>();
+const formatters = new Map<string, Intl.DateTimeFormat>();
 
-/** Date and time to the minute in UTC, written the way `locale` writes it. */
-export function formatDate(locale: Locale, iso: string): string {
-  let f = formatters.get(locale);
+/**
+ * Date and time to the minute in UTC, written the way `locale` writes it; with `zone`, followed by the zone's name ("UTC"), for text
+ * that a reader could take for their own time.
+ */
+export function formatDate(locale: Locale, iso: string, zone = false): string {
+  const key = `${locale}:${zone ? 'z' : ''}`;
+  let f = formatters.get(key);
   if (!f) {
-    f = new Intl.DateTimeFormat(locale, { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-    formatters.set(locale, f);
+    f = new Intl.DateTimeFormat(locale, { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', ...(zone ? { timeZoneName: 'short' } : {}) });
+    formatters.set(key, f);
   }
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : f.format(date);

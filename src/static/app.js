@@ -29,6 +29,21 @@
     });
   });
 
+  // Dates: the server writes them in UTC and says so; here they become the viewer's own time, in the page's language.
+  var DATE_FORMATS = {
+    datetime: { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' },
+    day: { year: 'numeric', month: 'short', day: 'numeric' }
+  };
+  document.querySelectorAll('time[datetime][data-local]').forEach(function (el) {
+    var date = new Date(el.getAttribute('datetime'));
+    var format = DATE_FORMATS[el.getAttribute('data-local')];
+    if (!format || isNaN(date.getTime())) return;
+    try {
+      el.textContent = new Intl.DateTimeFormat(root.lang || undefined, format).format(date);
+      if (el.hasAttribute('title')) el.title = new Intl.DateTimeFormat(root.lang || undefined, DATE_FORMATS.datetime).format(date);
+    } catch (e) { /* the UTC text stays */ }
+  });
+
   // Copy buttons: the text to copy and the confirmation label come from data attributes rendered by the server.
   document.querySelectorAll('[data-copy]').forEach(function (btn) {
     if (!navigator.clipboard) return;
