@@ -77,11 +77,15 @@ describe.each(Object.entries(SOURCES))('%s', (_file, css) => {
     if (_name === 'light') expect(ratio(rgb(theme['accent-text']), navy)).toBeLessThan(3);
   });
 
-  it('switches the focus ring back to the bright orange on each dark surface it has', () => {
-    if (css.includes('.install {')) {
-      expect(css).toMatch(/\.cmd :focus-visible, \.install :focus-visible \{ outline-color: var\(--accent\); \}/);
-      expect(css).toMatch(/\.install li::before \{[^}]*color: var\(--accent\);/);
-    }
-    if (css.includes('.cta {')) expect(css).toMatch(/\.cta :focus-visible \{ outline-color: var\(--accent\); \}/);
+  it('switches the focus ring back to the bright orange on every dark surface that can hold a focusable element', () => {
+    // Every rule that paints a navy or code background. Those that never hold anything focusable are named here; a code block in a
+    // post draws its ring outside itself, on the page background.
+    const NOTHING_FOCUSABLE = new Set(['ol.steps li::before', '.msg.me', '.prose pre']);
+    const dark = [...css.matchAll(/^\s*([^{}\n]+?)\s*\{[^}]*background:[^;}]*var\(--(?:navy|code-bg)\)/gm)].map((m) => m[1].trim());
+    expect(dark.length).toBeGreaterThan(0);
+    const switched = [...css.matchAll(/^\s*([^{}\n]+?)\s*\{ outline-color: var\(--accent\); \}/gm)]
+      .flatMap((m) => m[1].split(',').map((sel) => sel.trim().replace(/ :focus-visible$/, '')));
+    expect(dark.filter((sel) => !NOTHING_FOCUSABLE.has(sel) && !switched.includes(sel))).toEqual([]);
+    if (css.includes('.install {')) expect(css).toMatch(/\.install li::before \{[^}]*color: var\(--accent\);/);
   });
 });
