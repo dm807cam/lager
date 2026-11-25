@@ -80,6 +80,7 @@ function catalogSection(core: Core, locale: Locale, csrf: string, catalog: Retur
     return appCard({
       app: a, title: a.title, slug: a.slug, description: a.description, badges: [],
       corner: aiCorner(core, locale, a.id, core.apps.latestDeployedVersion(a.id)?.number),
+      // withFieldError (pages.ts) finds this panel by `<details class="getown"` to open it again at a refused name: keep it so.
       actions: `<details class="getown"><summary class="${btn('secondary', true)} btn-block">${icon('plus')}${esc(t(locale, 'dash.getOwn'))}</summary>${create}</details>`,
     });
   });

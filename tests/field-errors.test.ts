@@ -2,7 +2,8 @@ import { JSDOM } from 'jsdom';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
 import { withFieldError } from '../src/http/pages.js';
-import { csrfToken } from '../src/http/session.js';
+import { csrfToken, readFlash } from '../src/http/session.js';
+import { sealToken } from '../src/http/tokens.js';
 import { t, type MessageKey } from '../src/i18n/index.js';
 import { PASSWORD, showcase, type Showcase } from './support/pages.js';
 
@@ -100,5 +101,58 @@ describe('a refused form', () => {
     expect(doc.getElementById('e')!.getAttribute('value')).toBe('<b>"x"</b>');
     expect(doc.querySelectorAll('b')).toHaveLength(0);
     expect(withFieldError(html, 'missing', 'Wrong')).toBeNull();
+  });
+});
+
+describe('only what belongs to a field goes to it', () => {
+  it('a control id that is not a plain id is refused, never written into the page', () => {
+    const html = '<form><input id="ab" name="a"><input id="cd" name="c"></form>';
+    expect(withFieldError(html, 'a"b', 'Wrong')).toBeNull();
+    expect(withFieldError(html, 'ab"><script>', 'Wrong')).toBeNull();
+    // A value under an id that is not plain is left out; the others are filled in.
+    const out = withFieldError(html, 'ab', 'Wrong', { 'c"d': 'x', ab: 'typed' })!;
+    expect(out).toContain('value="typed"');
+    expect(out).not.toContain('value="x"');
+  });
+
+  it('the message describes the field together with its hint', () => {
+    const html = '<div class="field"><label for="n">Name</label><input id="n" name="n"><p class="hint" id="n-hint">Lower case.</p></div>';
+    const doc = new JSDOM(withFieldError(html, 'n', 'Wrong')!).window.document;
+    expect(doc.getElementById('n')!.getAttribute('aria-describedby')).toBe('n-error n-hint');
+  });
+
+  it('an app id from the address that is not plain never lands in the page unescaped', async () => {
+    s = await showcase();
+    const cookie = await s.h.login();
+    const res = await request(s.h.app).post(`/admin/apps/${encodeURIComponent('x"><b>bold</b>')}/quota`).set('Host', s.h.host).set('Cookie', cookie).type('form')
+      .send({ csrf: csrfToken(s.h.core, s.h.core.users.get(s.h.adminId)!), quota: 'lots' });
+    expect(res.text).not.toContain('<b>bold</b>');
+    expect(res.text).not.toContain('x"><b>');
+  });
+
+  it('a refusal that is about no field (a limit) is a notice at the top, and the name is not marked', async () => {
+    s = await showcase();
+    s.h.core.settings.setMaxInstancesPerUser(1);
+    const cookie = await s.h.login('uwe@x.y', PASSWORD);
+    s.h.core.apps.createInstance({ appId: s.h.core.apps.getApp('tasks')!.id, slug: 'uwe-one', ownerId: s.ids.uwe });
+    const { doc, location } = await refused(s, cookie, s.ids.uwe, '/ui/apps/tasks/instances', { slug: 'uwe-two', from: 'home' });
+    expect(location).not.toMatch(/#new-/);
+    expect(doc.querySelector('[aria-invalid="true"]')).toBeNull();
+    expect(doc.getElementById('notice')!.textContent).toContain(t('en', 'notice.instanceLimit', { max: 1 }));
+  });
+});
+
+describe('the field in a flash value', () => {
+  it('is kept only when it is a plain id and the value was issued to the viewer', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const admin = core.users.get(s.h.adminId)!;
+    const seal = (extra: Record<string, unknown>, uid = admin.id): string => sealToken({ uid, k: 'flash', e: 1, m: 'notice.slugInvalid', ...extra }, core.config.secret, 60);
+    expect(readFlash(core, admin, seal({ f: 'new-slug', v: { 'new-slug': 'Bad' } }))).toMatchObject({ field: 'new-slug', values: { 'new-slug': 'Bad' } });
+    // Not a plain id, or too many values: the message stays, as a notice at the top, and nothing is filled in.
+    expect(readFlash(core, admin, seal({ f: 'Bad Id!' })).field).toBeUndefined();
+    expect(readFlash(core, admin, seal({ f: 'a', v: { a: '1', b: '2', c: '3', d: '4', e: '5' } })).values).toBeUndefined();
+    // Issued to someone else: nothing at all.
+    expect(readFlash(core, core.users.get(s.ids.uwe)!, seal({ f: 'new-slug', v: { 'new-slug': 'Bad' } }))).toEqual({});
   });
 });

@@ -96,7 +96,7 @@ export const flashToken = (core: Core, user: User, flash: Flash): string =>
     uid: user.id, k: 'flash', e: flash.error !== undefined ? 1 : 0, m: flash.error ?? flash.ok ?? '',
     ...(flash.params ? { p: Object.fromEntries(Object.entries(flash.params).slice(0, MAX_FLASH_PARAMS).map(([k, v]) => [k, clipParam(v)])) } : {}),
     ...(flash.anchor ? { a: flash.anchor } : {}), ...(flash.undo ? { u: flash.undo } : {}),
-    ...(flash.field ? { f: flash.field } : {}), ...(flash.values ? { v: flash.values } : {}),
+    ...(flash.field ? { f: flash.field } : {}), ...(flash.values ? { v: Object.fromEntries(Object.entries(flash.values).slice(0, MAX_FLASH_PARAMS).map(([k, v]) => [k, v.slice(0, MAX_FLASH_PARAM)])) } : {}),
   }, core.config.secret, FLASH_TTL_SECONDS);
 
 /** A value cut to what a notice shows, with an ellipsis where it was cut. */

@@ -299,7 +299,7 @@ export function questionPage(locale: Locale, q: Question, req: { body?: unknown;
 
 /** A labelled control in a form; `control` is trusted markup, `hint` plain text. */
 export const field = (id: string, label: string, control: string, hint = ''): string =>
-  `<div class="field"><label for="${esc(id)}">${esc(label)}</label>${control}${hint ? `<p class="hint">${esc(hint)}</p>` : ''}</div>`;
+  `<div class="field"><label for="${esc(id)}">${esc(label)}</label>${control}${hint ? `<p class="hint" id="${esc(id)}-hint">${esc(hint)}</p>` : ''}</div>`;
 
 /**
  * `html` with an error message at the control whose id is `id`: the message between the label and the control (so a button next to
@@ -307,23 +307,32 @@ export const field = (id: string, label: string, control: string, hint = ''): st
  * values a refused form sent come back in the text fields they came from (`values` maps control ids to text; never a password).
  * A closed "get your own" panel around the control opens. Null when the page has no such control.
  */
+/** A control id that may be written into markup without escaping. */
+const CONTROL_ID = /^[A-Za-z][A-Za-z0-9_-]{0,100}$/;
+
 export function withFieldError(html: string, id: string, message: string, values: Record<string, string> = {}): string | null {
+  // Ids are written into the markup as they are: anything but a plain id (it may come from a request) is refused, not cleaned.
+  if (!CONTROL_ID.test(id)) return null;
   const tagAt = (controlId: string): { start: number; end: number } | null => {
-    const at = html.search(new RegExp(`<(input|select|textarea)\\b[^>]*\\sid="${controlId.replace(/[^A-Za-z0-9_-]/g, '')}"`));
+    const at = html.search(new RegExp(`<(input|select|textarea)\\b[^>]*\\sid="${controlId}"`));
     return at < 0 ? null : { start: at, end: html.indexOf('>', at) };
   };
   if (!tagAt(id)) return null;
   for (const [controlId, value] of Object.entries(values)) {
+    if (!CONTROL_ID.test(controlId)) continue;
     const tag = tagAt(controlId);
     if (!tag || !html.startsWith('<input', tag.start) || /type="password"/.test(html.slice(tag.start, tag.end))) continue;
     const open = html.slice(tag.start, tag.end).replace(/\svalue="[^"]*"/, '') + ` value="${esc(value)}"`;
     html = html.slice(0, tag.start) + open + html.slice(tag.end);
   }
   const tag = tagAt(id)!;
-  const open = html.slice(tag.start, tag.end).replace(/\s(aria-invalid|aria-describedby|autofocus)(="[^"]*")?/g, '') + ` aria-invalid="true" aria-describedby="${id}-error" autofocus`;
+  // The message first, then what described the control before (its hint), so a screen reader reads both.
+  const before = /\saria-describedby="([^"]*)"/.exec(html.slice(tag.start, tag.end))?.[1] ?? (html.includes(`id="${id}-hint"`) ? `${id}-hint` : '');
+  const open = html.slice(tag.start, tag.end).replace(/\s(aria-invalid|aria-describedby|autofocus)(="[^"]*")?/g, '')
+    + ` aria-invalid="true" aria-describedby="${`${id}-error ${before}`.trim()}" autofocus`;
   const error = `<p class="field-error" id="${id}-error">${icon('alert', 'i-sm')}<span>${esc(message)}</span></p>`;
   html = html.slice(0, tag.start) + error + open + html.slice(tag.end);
-  // The control may sit in a panel that starts closed.
+  // The control may sit in a panel that starts closed: the "Get your own" panels of the home page, written exactly so in dashboard.ts.
   const panel = html.lastIndexOf('<details class="getown"', tag.start);
   if (panel >= 0 && html.indexOf('</details>', panel) > tag.start) html = `${html.slice(0, panel)}<details open class="getown"${html.slice(panel + '<details class="getown"'.length)}`;
   return html;

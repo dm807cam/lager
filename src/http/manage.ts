@@ -57,13 +57,15 @@ const NOTICES: Record<string, MessageKey> = {
  * Where a refused form's message goes: the id of the control it is about, and what was typed into the form's text fields (by
  * control id), so the page comes back with the message at the field and the input still there.
  */
-type FieldOf = (req: Request, error: MessageKey) => { field: string; values: Record<string, string> };
+type FieldOf = (req: Request, error: MessageKey) => { field: string; values: Record<string, string> } | undefined;
 const bodyText = (req: Request, name: string): string => {
   const v = (req.body as Record<string, unknown> | undefined)?.[name];
   return typeof v === 'string' ? v.slice(0, 300) : '';
 };
 /** The message of a one-field form: at control `id`, with what was typed into body field `name`. */
 const at = (id: string, name: string): FieldOf => (req) => ({ field: id, values: { [id]: bodyText(req, name) } });
+/** Refusals that are about what was typed into the name of a new instance; any other (a limit, the owner) is no field's. */
+const NAME_ERRORS: ReadonlySet<MessageKey> = new Set(['notice.slugInvalid', 'notice.slugTaken', 'notice.slugRetired', 'validation.generic']);
 
 /** What a form did: the notice for the next page, the values it names, the section it is shown above, and another page to go to. */
 interface Done { ok: MessageKey; params?: Record<string, string>; anchor?: string; to?: string; undo?: Undo }
@@ -545,7 +547,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
       name = core.groups.get(group)?.name ?? group;
     } else throw new Notice('notice.grantTarget');
     return { ok: 'notice.ok.shared', params: { name, level: levelLabel(localeOf(req.res!), level) }, anchor: 'sharing' };
-  }, at('grant-email', 'email')));
+  }, (req, error) => (error === 'notice.grantTarget' ? undefined : at('grant-email', 'email')(req, error))));
 
   router.post('/ui/instances/:slug/grants/remove', ...action(instBack, (req, user) => {
     const inst = managed(user, param(req, 'slug'));
@@ -603,7 +605,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const origin = field(req, 'origin', 300).trim().replace(/\/$/, '');
     core.ingest.setOrigins(inst.id, endpoint, [...core.ingest.instanceOrigins(inst.id, name), origin]);
     return { ok: 'notice.ok.added', params: { name: origin }, anchor: 'ingest' };
-  }, (req) => at(`origin-${bodyText(req, 'name')}`, 'origin')(req, 'validation.generic')));
+  }, (req, error) => at(`origin-${bodyText(req, 'name')}`, 'origin')(req, error)));
 
   router.post('/ui/instances/:slug/ingest/origins/remove', ...action(instBack, (req, user) => {
     const { inst, name, endpoint } = managedEndpoint(req, user);
@@ -676,6 +678,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     },
     // On the home page each app's name field is its own; an unknown owner is the owner field's problem, anything else the name's.
     (req, error) => {
+      if (error !== 'notice.noAccount' && !NAME_ERRORS.has(error)) return undefined;
       if (field(req, 'from') === 'home') return at(`new-${param(req, 'slug')}`, 'slug')(req, error);
       const values = { 'new-slug': bodyText(req, 'slug'), 'owner-email': bodyText(req, 'owner_email') };
       return { field: error === 'notice.noAccount' ? 'owner-email' : 'new-slug', values };
