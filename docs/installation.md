@@ -136,11 +136,11 @@ Lager is configured through environment variables only. The template is `.env.ex
 | `LAGER_PORT` | Port of the server, 1 to 65535 (`0` lets the system pick a free port; the start line names it) | `8080` |
 | `LAGER_HOST` | Address the server binds to. Without Docker, set `127.0.0.1` when the reverse proxy runs on the same machine, so nobody reaches Lager around the proxy. Leave it empty in the container | every interface |
 | `LAGER_ACCESS_LOG` | `true` writes one line per request to the log (time, client address, method, host and path without the query string, status, duration) | `false` |
-| `LAGER_SECRET` | Key for sessions and for encrypting stored AI provider keys; otherwise generated and stored in `secret.key`. If set, use at least 32 random characters (for example `openssl rand -hex 32`): a first start with a shorter one is refused, and an existing installation only logs a warning at startup. Changing the secret signs everyone out and makes stored AI provider keys unreadable, so they have to be entered again | generated |
+| `LAGER_SECRET` | Key for sessions and for encrypting stored AI provider keys and the mail server password; otherwise generated and stored in `secret.key`. If set, use at least 32 random characters (for example `openssl rand -hex 32`): a first start with a shorter one is refused, and an existing installation only logs a warning at startup. Changing the secret signs everyone out and makes stored AI provider keys and the mail password unreadable, so they have to be entered again | generated |
 | `LAGER_SNAPSHOT_KEEP` | Data snapshots kept per instance, 1 or more (`0` is read as 1, with a warning) | `20` |
 | `LAGER_TRASH_DAYS` | Days that deleted instances and apps stay in the trash (`0` = never clean up) | `30` |
 | `LAGER_DEFAULT_LOCALE` | Language of pages and mails when neither the account, the `lager_lang` cookie nor the browser's `Accept-Language` names a supported one: `en`, `de`, `fr`, `es` | `en` |
-| `LAGER_SMTP_URL` | SMTP access for outgoing mail, for example `smtps://user:password@smtp.example.com:465`; without a value no mail is sent. The scheme must be `smtp` or `smtps`, and special characters in the user name and password must be percent-encoded. A mail server that does not answer within 10 seconds counts as unreachable | none |
+| `LAGER_SMTP_URL` | SMTP access for outgoing mail, for example `smtps://user:password@smtp.example.com:465`; without a value Lager uses the mail server set in the administration area, if any (see [Mail](#mail)). If set, it takes precedence over the administration area. The scheme must be `smtp` or `smtps`, and special characters in the user name and password must be percent-encoded. A mail server that does not answer within 10 seconds counts as unreachable | none |
 | `LAGER_MAIL_FROM` | Sender of the mails | `Lager <no-reply@<host of LAGER_PUBLIC_URL>>` |
 | `LAGER_INSTANCE_QUOTA_MB` | Size of an instance's data in MiB, integer from 1. Administrators can set other storage per app or per group (see [Limits](limits.md#storage-per-group-and-per-app)) | `50` |
 | `LAGER_INGEST_QUOTA_MB` | MiB an instance may hold of data that came from outside (ingest endpoints of apps, and visitors a rule lets add documents), counted apart from `LAGER_INSTANCE_QUOTA_MB` and on top of it. `0` switches receiving data from outside off for every instance (see [Receiving data from outside](building-apps.md#receiving-data-from-outside)) | `10` |
@@ -152,7 +152,16 @@ The installer adds one setting of its own to `.env`, [`LAGER_BIND`](#answering-a
 
 ## Mail
 
-Lager sends mail for verifying email addresses, resetting passwords and invitations with an address. You set two variables for this:
+Lager sends mail for verifying email addresses, resetting passwords and invitations with an address. There are two ways to set up the mail server.
+
+### In the administration area
+
+An administrator opens **Administration → Mail** and enters the SMTP server of the mail provider: host name, encryption (TLS, usually port 465; STARTTLS, usually port 587; or none required, for a mail server in your own network), port, user name, password and optionally the sender. The password is stored encrypted with a key derived from `LAGER_SECRET`, and the page never shows it again; leave the field empty to keep it. It goes only to the server it was entered for: when the host, port, encryption or user name changes, the saved password is removed and has to be entered again. With encryption "none required" the password goes out unencrypted whenever the mail server offers no STARTTLS, so use it only inside your own network. **Send a test mail** sends a short mail to your own address and, if it fails, shows the error code and the mail server's SMTP reply. Changes apply to the next mail, without a restart. **Remove mail server** turns mail off again.
+
+When you save a mail server while registration is still at its default ("invitation only" without mail), Lager stores that mode, so registration does not open by itself at the next restart. Choose "Open" under Settings when you want it.
+
+### With environment variables
+
 
 ```sh
 LAGER_SMTP_URL=smtps://lager%40example.com:secret@smtp.example.com:465
@@ -161,7 +170,11 @@ LAGER_MAIL_FROM="Lager <lager@example.com>"
 
 Keep the quotes around `LAGER_MAIL_FROM`: without them, loading `.env` in a shell (`set -a; . ./.env`) reads `<` as a redirect. Docker Compose accepts the quotes as well. Special characters in the user name and password of the URL must be percent-encoded (`@` becomes `%40`). If `LAGER_MAIL_FROM` is missing, the sender is `Lager <no-reply@<host of LAGER_PUBLIC_URL>>`. If sending fails, Lager writes the error to the log and shows users no error message.
 
-Without `LAGER_SMTP_URL` Lager runs completely, just without mail:
+`LAGER_SMTP_URL` takes precedence over a mail server saved in the administration area; the Mail page then only says so and offers the test mail. `LAGER_MAIL_FROM` is also the sender for a server from the administration area that names none.
+
+### Without mail
+
+Without a mail server Lager runs completely, just without mail:
 
 - Email addresses are not verified; new accounts are usable at once. For this reason registration defaults to "invitation only".
 - Invitations work: the link is shown once to the administrator in the administration area, who passes it on. An account created through it is usable at once.

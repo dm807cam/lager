@@ -18,9 +18,9 @@ How an account comes into being depends on the registration mode, which an admin
 - **Invitation only:** Registering works only through an invitation link.
 - **Closed:** Nobody can register; invitation links do not work either.
 
-The default depends on mail: if `LAGER_SMTP_URL` is set, registration is open, otherwise invitation only. Once an administrator has saved a mode, that choice applies.
+The default depends on mail: if a mail server is set up at startup (`LAGER_SMTP_URL` or Administration → Mail), registration is open, otherwise invitation only. Saving a mail server in the administration area stores the mode in effect, so it does not change by itself. Once an administrator has saved a mode, that choice applies.
 
-An administrator creates invitations in the administration area (Invitations), with a role and optionally an email address that the link is bound to. The link is valid for 7 days and works once. An invitation with an address was sent to that mailbox, so whoever creates the account through it is signed in immediately. An invitation without an address proves no mailbox: the new account gets the role, and confirms its email address like any other registration before it can sign in. Without mail (no `LAGER_SMTP_URL`) nothing is confirmed, and both kinds sign in immediately.
+An administrator creates invitations in the administration area (Invitations), with a role and optionally an email address that the link is bound to. The link is valid for 7 days and works once. An invitation with an address was sent to that mailbox, so whoever creates the account through it is signed in immediately. An invitation without an address proves no mailbox: the new account gets the role, and confirms its email address like any other registration before it can sign in. Without mail (no mail server set up) nothing is confirmed, and both kinds sign in immediately.
 
 To confirm an email address, the new account opens the link from the mail and enters the password chosen at registration. Whoever forgot it uses "Forgot your password?": setting a new password through the reset link confirms the address as well. The link alone confirms nothing, so nobody can register someone else's address and have its owner confirm it for them.
 

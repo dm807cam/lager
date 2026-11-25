@@ -15,7 +15,7 @@ export type RuleLevel = 'view' | 'interact' | 'admin' | 'owner' | 'self';
 /** `write: "anyone"` lets every visitor who can open the instance append new documents, guests included; it is not a read level. */
 export interface DbRule { path: string; read?: RuleLevel; write?: RuleLevel | 'anyone' }
 export interface Capabilities {
-  db?: { rules?: DbRule[] }; user?: { scopes?: string[] }; assets?: { upload?: 'interact' }; room?: { topics?: Record<string, 'interact'> };
+  db?: { rules?: DbRule[]; offline?: boolean }; user?: { scopes?: string[] }; assets?: { upload?: 'interact' }; room?: { topics?: Record<string, 'interact'> };
   /** `model` names a catalog model; without it every viewer gets the default model of their AI group. */
   complete?: { model?: string };
   /** Endpoints that take data from outside; read with `ingestEndpoints`, which checks every field. */

@@ -494,6 +494,8 @@ export function checkCapabilities(value: unknown): Capabilities | undefined {
   for (const [name, decl] of Object.entries(caps)) if (!isObject(decl)) bad(`${name} must be an object.`);
   if (caps.db !== undefined) {
     if (!isObject(caps.db)) bad('db must be an object.');
+    const offline = (caps.db as Record<string, unknown>).offline;
+    if (offline !== undefined && typeof offline !== 'boolean') bad('db.offline must be true or false.');
     const rules = (caps.db as Record<string, unknown>).rules;
     if (rules !== undefined) {
       if (!Array.isArray(rules)) bad('db.rules must be an array.');

@@ -32,6 +32,9 @@ import { iconToken, signToken, verifyToken } from './tokens.js';
 
 const RUNTIME_FILE = new URL('../runtime/runtime.js', import.meta.url);
 const BADGE_FILE = new URL('../runtime/badge.js', import.meta.url);
+const SW_FILE = new URL('../runtime/sw.js', import.meta.url);
+/** Marks a page or session answer the service worker may keep for use without a connection (see `offlineAllowed`). */
+export const OFFLINE_HEADER = 'X-Lager-Offline';
 /** Where the "Made with Lager" badge points: the project, not this server. */
 export const PROJECT_URL = 'https://github.com/dm807cam/lager';
 const MAX_PROFILE_IDS = 100;
@@ -63,6 +66,11 @@ function instanceUser(core: Core, req: Request, instance: Instance): User | null
 
 function activeCapabilities(core: Core, instance: Instance): Capabilities {
   return core.apps.getVersion(instance.appId, instance.activeVersion)?.capabilities ?? {};
+}
+
+/** The app may be opened without a connection unless its active version declares `{"db": {"offline": false}}` (ADR 0020). */
+export function offlineAllowed(caps: Capabilities): boolean {
+  return caps.db?.offline !== false;
 }
 
 /** `customHost` is the custom domain the visitor came in on; the platform sends the code back to exactly that host. */
@@ -114,6 +122,8 @@ export function createInstanceRouter(core: Core): express.Router {
   const runtimeEtag = `"${crypto.createHash('sha256').update(runtime).digest('base64url').slice(0, 27)}"`;
   const badgeScript = fs.readFileSync(BADGE_FILE);
   const badgeEtag = `"${crypto.createHash('sha256').update(badgeScript).digest('base64url').slice(0, 27)}"`;
+  const swScript = fs.readFileSync(SW_FILE);
+  const swEtag = `"${crypto.createHash('sha256').update(swScript).digest('base64url').slice(0, 27)}"`;
 
   const ctxOf = (res: Response): Ctx => res.locals.ctx as Ctx;
   const hasScope = (ctx: Ctx, scope: string): boolean => Array.isArray(ctx.caps.user?.scopes) && ctx.caps.user.scopes.includes(scope);
@@ -205,7 +215,9 @@ export function createInstanceRouter(core: Core): express.Router {
       // Chrome, Firefox and Safari (since 2019) ignore X-Frame-Options when the policy has frame-ancestors, so it stays: a
       // browser that knows only X-Frame-Options keeps the old protection instead of none.
       'X-Frame-Options': 'SAMEORIGIN',
-    }).send(html);
+    });
+    if (offlineAllowed(ctx.caps)) res.set(OFFLINE_HEADER, '1');
+    res.send(html);
   });
 
   router.get('/__lager/runtime.js', (req, res) => {
@@ -226,6 +238,21 @@ export function createInstanceRouter(core: Core): express.Router {
     res.send(badgeScript);
   });
 
+  // The service worker lives under /__lager/ with the other scripts but controls the whole host, which the header allows.
+  // It holds nothing of the instance: what it keeps is decided by the mark on each answer (OFFLINE_HEADER).
+  router.get('/__lager/sw.js', (req, res) => {
+    // The worker's referrer policy comes from this answer: as on the page, other hosts learn nothing about the instance.
+    res.set({
+      'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache', ETag: swEtag, 'Service-Worker-Allowed': '/',
+      'Referrer-Policy': 'same-origin',
+    });
+    if (req.headers['if-none-match'] === swEtag) {
+      res.status(304).end();
+      return;
+    }
+    res.send(swScript);
+  });
+
   router.get('/__lager/session', (req, res) => {
     const ctx = ctxOf(res);
     // Only a browser that is not signed in here can start a sign-in, so only it gets a nonce.
@@ -235,7 +262,9 @@ export function createInstanceRouter(core: Core): express.Router {
       return;
     }
     const level = ctx.viewer.level;
-    res.set('Cache-Control', 'no-store').json({
+    res.set('Cache-Control', 'no-store');
+    if (offlineAllowed(ctx.caps)) res.set(OFFLINE_HEADER, '1');
+    res.json({
       viewer: {
         id: ctx.user?.id ?? null,
         name: ctx.user?.name ?? '',
