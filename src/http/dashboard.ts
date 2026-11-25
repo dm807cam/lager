@@ -62,7 +62,7 @@ function sharedSection(core: Core, locale: Locale, user: User, shared: Instance[
   const cards = shared.map((i) => instanceCard(core, locale, i, {
     // Whose it is, as on the catalog's cards: two copies of the same app from different people look alike otherwise.
     badges: [badge(t(locale, 'badge.shared', { level: levelLabel(locale, core.access.levelFor(i, user)) }), { icon: 'share', tone: 'accent' }),
-      badge(core.users.get(i.ownerId)?.name || core.users.get(i.ownerId)?.email || '–', { icon: 'user' })],
+      badge(core.users.get(i.ownerId)?.name || '–', { icon: 'user' })],
     manage: core.access.canManageInstance(i, user),
   })).join('');
   return section('shared', t(locale, 'dash.shared'), `<div class="grid">${cards}</div>`, { count: shared.length });

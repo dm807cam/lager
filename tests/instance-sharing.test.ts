@@ -152,9 +152,53 @@ describe('the home page of someone who does not publish', () => {
     const badges = [...card.querySelectorAll('.badge-text')].map((b) => b.textContent);
     // Uwe reaches it as a viewer himself and as a contributor through his group: the higher level counts.
     const owner = core.users.get(s.h.adminId)!;
-    expect(badges).toEqual([t('en', 'badge.shared', { level: t('en', 'level.interact') }), owner.name || owner.email]);
+    expect(badges).toEqual([t('en', 'badge.shared', { level: t('en', 'level.interact') }), owner.name]);
     // The catalog says how many copies of an app the viewer already has.
     const tasks = [...main.querySelectorAll('#catalog .app-card')].find((c) => c.querySelector('details.getown') && c.textContent!.includes('tasks'))!;
     expect(tasks.textContent).toContain(t('en', 'dash.copies.one'));
+  });
+
+  const cardOn = async (sc: Showcase, cookie: string, section: string, slug: string): Promise<string[]> => {
+    const main = dom((await request(sc.h.app).get('/').set('Host', sc.h.host).set('Cookie', cookie)).text).querySelector('main')!;
+    const card = [...main.querySelectorAll(`#${section} .app-card`)].find((c) => c.querySelector(`a[href="/instances/${slug}"]`) || c.textContent!.includes(slug))!;
+    return [...card.querySelectorAll('.badge-text')].map((b) => b.textContent!);
+  };
+
+  it('shows visibility and version on a shared card to someone who may manage it, and only "Disabled" on a disabled own one', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const tasks = core.apps.getInstanceBySlug('tasks')!;
+    core.access.setGrant(tasks, 'user', s.ids.uwe, 'admin', core.users.get(s.ids.pia)!);
+    const cookie = await s.h.login('uwe@x.y', 'password-123');
+    expect(await cardOn(s, cookie, 'shared', 'tasks')).toEqual([
+      t('en', 'visibility.users'), `v${tasks.activeVersion}`,
+      t('en', 'badge.shared', { level: t('en', 'level.admin') }), 'Pia Publisher',
+    ]);
+    const own = core.apps.createInstance({ appId: core.apps.getApp('tasks')!.id, slug: 'uwe-tasks', ownerId: s.ids.uwe });
+    core.apps.setInstanceDisabled(own.id, true);
+    expect(await cardOn(s, cookie, 'mine', 'uwe-tasks')).toEqual([t('en', 'common.disabled')]);
+  });
+
+  it('shows "–" for an owner without a name, never the address', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    (core.users as unknown as { db: { prepare(sql: string): { run(...a: unknown[]): unknown } } }).db.prepare("UPDATE users SET name = '' WHERE id = ?").run(s.h.adminId);
+    const cookie = await s.h.login('uwe@x.y', 'password-123');
+    const badges = await cardOn(s, cookie, 'shared', 'notes');
+    expect(badges.at(-1)).toBe('–');
+    expect(badges.join(' ')).not.toContain(core.users.get(s.h.adminId)!.email);
+  });
+});
+
+describe('sharing with an address that has no account', () => {
+  it('tells a publisher on a server with open registration that the person can sign up themselves', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const cookie = await s.h.login('pia@x.y', 'password-123');
+    const csrf = csrfToken(core, core.users.get(s.ids.pia)!);
+    const res = await request(s.h.app).post('/ui/instances/tasks/grants').set('Host', s.h.host).set('Cookie', cookie).type('form').send({ csrf, email: 'nobody@x.y', level: 'view' });
+    expect(res.status).toBe(302);
+    const doc = dom((await request(s.h.app).get(res.headers.location.split('#')[0]).set('Host', s.h.host).set('Cookie', cookie)).text);
+    expect(doc.getElementById('grant-email-error')!.textContent).toBe(t('en', 'notice.noAccount.open'));
   });
 });
