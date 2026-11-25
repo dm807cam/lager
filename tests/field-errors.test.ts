@@ -76,10 +76,13 @@ describe('a refused form', () => {
     expect(at(token.doc, 'token-name').message).toBe(t('en', 'dash.tokens.nameInvalid', { max: 100 }));
   });
 
-  it('on the home page the closed "get your own" panel opens again at the name', async () => {
+  it('in the catalog the closed "get your own" panel opens again at the name', async () => {
     s = await showcase();
     const cookie = await s.h.login('uwe@x.y', PASSWORD);
-    const { doc } = await refused(s, cookie, s.ids.uwe, '/ui/apps/tasks/instances', { slug: 'Bad Name', from: 'home' });
+    const { doc, location } = await refused(s, cookie, s.ids.uwe, '/ui/apps/tasks/instances', { slug: 'Bad Name', from: 'catalog' });
+    expect(location).toMatch(/^\/catalog\?flash=[^#]+#new-tasks$/);
+    // A form sent from a home page loaded before the catalog had its own page comes back to the catalog too.
+    expect((await refused(s, cookie, s.ids.uwe, '/ui/apps/tasks/instances', { slug: 'Bad Name', from: 'home' })).location).toMatch(/^\/catalog\?/);
     expect(at(doc, 'new-tasks')).toEqual(expected('notice.slugInvalid', 'new-tasks', 'Bad Name', { max: 63 }));
     expect(doc.getElementById('new-tasks')!.closest('details')!.hasAttribute('open')).toBe(true);
     // The other apps' panels stay closed.

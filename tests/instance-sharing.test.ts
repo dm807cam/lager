@@ -155,7 +155,9 @@ describe('the home page of someone who does not publish', () => {
     const owner = core.users.get(s.h.adminId)!;
     expect(badges).toEqual([t('en', 'badge.shared', { level: t('en', 'level.interact') }), owner.name]);
     // The catalog says how many copies of an app the viewer already has.
-    const tasks = [...main.querySelectorAll('#catalog .app-card')].find((c) => c.querySelector('details.getown') && c.textContent!.includes('tasks'))!;
+    const catalog = dom((await request(s.h.app).get('/catalog').set('Host', s.h.host).set('Cookie', cookie)).text).querySelector('main')!;
+    expect(catalog.textContent!.toLowerCase()).not.toContain('instance');
+    const tasks = [...catalog.querySelectorAll('#catalog .app-card')].find((c) => c.querySelector('details.getown') && c.textContent!.includes('tasks'))!;
     expect(tasks.textContent).toContain(t('en', 'dash.copies.one'));
   });
 
@@ -219,7 +221,9 @@ describe('app cards', () => {
     expect(reachable).toEqual(['http://notes.apps.localhost:8080', '/instances/notes']);
     // A disabled instance and an app one can only get a copy of are not links.
     expect([...doc.querySelectorAll('#mine .app-card')].find((c) => c.querySelector('.slug')!.textContent === 'old-notes')!.querySelector('.card-link')).toBeNull();
-    for (const c of doc.querySelectorAll('#catalog .app-card')) if (c.querySelector('details.getown')) expect(c.querySelector('.card-link')).toBeNull();
+    const catalog = dom((await request(s.h.app).get('/catalog').set('Host', s.h.host).set('Cookie', await s.h.login())).text);
+    expect(catalog.querySelectorAll('#catalog .app-card').length).toBeGreaterThan(0);
+    for (const c of catalog.querySelectorAll('#catalog .app-card')) if (c.querySelector('details.getown')) expect(c.querySelector('.card-link')).toBeNull();
   });
 
   /** The card link of the card for `slug` in `section`, and the targets the keyboard reaches on that card, in order. */
@@ -251,7 +255,7 @@ describe('app cards', () => {
     const { core } = s.h;
     // Tasks is open to everyone signed in; Cleo has no grant, so it is in her catalog.
     core.users.create({ email: 'cleo@x.y', name: 'Cleo', password: 'password-123', role: 'user' });
-    expect(linkOf(await page('/', 'cleo@x.y'), 'catalog', 'tasks')).toEqual({
+    expect(linkOf(await page('/catalog', 'cleo@x.y'), 'catalog', 'tasks')).toEqual({
       href: 'http://tasks.apps.localhost:8080', label: t('en', 'card.open', { title: 'Tasks' }),
       repeated: [['http://tasks.apps.localhost:8080', 'true']], reachable: ['http://tasks.apps.localhost:8080'],
     });

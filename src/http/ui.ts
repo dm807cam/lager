@@ -177,7 +177,7 @@ ${desc}${p.badges.length ? `<div class="badges">${p.badges.join('')}</div>` : ''
 
 export type NavItem = 'apps' | 'catalog' | 'publish' | 'admin';
 
-/** Shell options of a signed-in page: the account menu, the navigation and whether the viewer has a catalog to jump to. */
+/** Shell options of a signed-in page: the account menu, the navigation and whether the catalog offers the viewer anything. */
 export function signedIn(core: Core, user: User, current: NavItem | null, returnPath: string): PageOpts {
   const { instances, apps } = core.access.catalog(user);
   return {

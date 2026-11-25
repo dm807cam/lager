@@ -279,13 +279,15 @@ describe('shell', () => {
     const nav = async (who: PageVisit['as'], path: string): Promise<Element | null> =>
       dom((await visit(s!, { name: path, path, as: who }, cookieOf)).text).querySelector('nav.primary');
     const home = await nav('admin', '/');
-    expect([...home!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/', '/#catalog', '/publish', '/admin']);
+    expect([...home!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/', '/catalog', '/publish', '/admin']);
     expect(home!.querySelector('[aria-current="page"]')!.getAttribute('href')).toBe('/');
     expect((await nav('admin', '/admin/users'))!.querySelector('[aria-current="page"]')!.getAttribute('href')).toBe('/admin');
+    // Every item is a page of its own that marks itself as current, the catalog included.
+    expect((await nav('admin', '/catalog'))!.querySelector('[aria-current="page"]')!.getAttribute('href')).toBe('/catalog');
     const user = await nav('uwe', '/');
-    expect([...user!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/', '/#catalog']);
+    expect([...user!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/', '/catalog']);
     const publisher = await nav('pia', '/publish');
-    expect([...publisher!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/', '/#catalog', '/publish']);
+    expect([...publisher!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/', '/catalog', '/publish']);
     expect(publisher!.querySelector('[aria-current="page"]')!.getAttribute('href')).toBe('/publish');
     expect(publisher!.querySelector('a[href="/publish"] .nav-full')!.textContent).toBe(t('en', 'nav.publish'));
   });
@@ -296,7 +298,7 @@ describe('shell', () => {
     for (const locale of LOCALES) {
       const html = (await request(s.h.app).get('/').set('Host', s.h.host).set('Cookie', `${cookie}; lager_lang=${locale}`)).text;
       const links = [...dom(html).querySelectorAll('nav.primary a')];
-      const expected: Array<[string, MessageKey, MessageKey]> = [['/', 'nav.apps', 'nav.tab.apps'], ['/#catalog', 'dash.catalog', 'dash.catalog'], ['/publish', 'nav.publish', 'nav.tab.publish'], ['/admin', 'nav.admin', 'nav.tab.admin']];
+      const expected: Array<[string, MessageKey, MessageKey]> = [['/', 'nav.apps', 'nav.tab.apps'], ['/catalog', 'dash.catalog', 'dash.catalog'], ['/publish', 'nav.publish', 'nav.tab.publish'], ['/admin', 'nav.admin', 'nav.tab.admin']];
       expect(links.map((a) => [a.getAttribute('href'), a.querySelector('.nav-full')!.textContent, a.querySelector('.nav-short')!.textContent])).toEqual(
         expected.map(([href, full, tab]) => [href, t(locale, full), t(locale, tab)]));
       // No name of its own and no hidden text: a link's accessible name is whichever label is displayed (WCAG 2.5.3, Label in Name).
@@ -392,7 +394,8 @@ describe('home', () => {
     expect([...old.querySelectorAll('.badge')].map((b) => b.textContent)).toContain(t('en', 'common.disabled'));
     expect(old.querySelector('a[href^="http://old-notes."]')).toBeNull();
     // A card without a description has no empty placeholder.
-    const tasks = doc.querySelector('#catalog .app-card')!;
+    const catalog = dom((await visit(s, { name: 'catalog', path: '/catalog', as: 'admin' }, cookies(s))).text);
+    const tasks = catalog.querySelector('#catalog .app-card')!;
     expect(tasks.querySelector('.app-desc')).toBeNull();
     const shared = doc.querySelector('#shared .app-card')!;
     expect([...shared.querySelectorAll('.badge')].map((b) => b.textContent)).toContain(t('en', 'badge.shared', { level: t('en', 'level.interact') }));
@@ -427,7 +430,7 @@ describe('home', () => {
     // On phones Manage shows only its icon; its text stays for assistive technology.
     expect(card.querySelector('a[href="/instances/notes"] .btn-label')!.textContent).toBe(t('en', 'common.manage'));
     // Self-service apps in the catalog reveal the create form in place.
-    const doc = dom((await visit(s, { name: 'home', path: '/', as: 'uwe' }, cookieOf)).text);
+    const doc = dom((await visit(s, { name: 'catalog', path: '/catalog', as: 'uwe' }, cookieOf)).text);
     const own = [...doc.querySelectorAll('#catalog details.getown')];
     expect(own).toHaveLength(1);
     expect(own[0].querySelector('summary')!.textContent).toContain(t('en', 'dash.getOwn'));
@@ -663,6 +666,7 @@ describe('behaviour of the forms', () => {
   // The forms of each account (role, ai-group, disabled, reset-link) moved from the users list to the account's own page (#73).
   // The auto-update and badge forms of the instance page became one settings form (#83); their old routes still work.
   // The share form of the instance page became one for a person and one for a group (#84), to the same route.
+  // The catalog moved from the home page to a page of its own (#89), and its copy forms with it; they send from=catalog.
   it('forms post the same fields to the same routes as before', async () => {
     s = await showcase();
     const expected = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')) as Record<string, unknown>;

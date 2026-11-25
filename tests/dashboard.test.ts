@@ -141,7 +141,10 @@ describe('home page', () => {
     h.core.apps.deploy({ slug: 'todo', html: '<p>t</p>', title: 'Tasks', userId: p.id });
     const app = h.core.apps.getApp('todo')!;
     h.core.apps.setSelfInstances(app.id, 'users', p.id);
-    const res = await get(h, await loginAs(h, u));
+    const cookie = await loginAs(h, u);
+    // The home page links to the catalog; the catalog is a page of its own.
+    expect((await get(h, cookie)).text).toContain('href="/catalog"');
+    const res = await get(h, cookie, '/catalog');
     expect(res.text).toContain(en('dash.catalog'));
     expect(res.text).toContain('href="http://notes.apps.localhost:8080"');
     expect(res.text).toContain('Tasks');
