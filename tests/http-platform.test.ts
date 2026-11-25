@@ -49,8 +49,11 @@ describe('platform host', () => {
     const known = await attempt('  Admin@X.y ', secret);
     expect(known.status).toBe(401);
     // As typed (trimmed), escaped, with the cursor now in the password field.
-    expect(known.text).toContain('<input id="email" name="email" type="email" autocomplete="username" required value="Admin@X.y">');
-    expect(known.text).toContain('<input id="password" name="password" type="password" autocomplete="current-password" required autofocus>');
+    // Both fields are marked invalid and point at the message, which a screen reader then reads with the field.
+    const invalid = ' aria-invalid="true" aria-describedby="login-error"';
+    expect(known.text).toContain(`<input id="email" name="email" type="email" autocomplete="username" required value="Admin@X.y"${invalid}>`);
+    expect(known.text).toContain(`<input id="password" name="password" type="password" autocomplete="current-password" required autofocus${invalid}>`);
+    expect(known.text).toContain('<div id="login-error" class="notice notice-danger" role="alert">');
     expect(known.text).not.toContain(secret);
     expect(known.text).not.toMatch(/type="password"[^>]*value=/);
 
@@ -71,7 +74,7 @@ describe('platform host', () => {
     for (let i = 0; i < 12; i++) await attempt('admin@x.y', 'nope');
     const blocked = await attempt('admin@x.y', 'admin-password-1');
     expect(blocked.status).toBe(429);
-    expect(blocked.text).toContain('required value="admin@x.y">');
+    expect(blocked.text).toContain('required value="admin@x.y" aria-invalid="true" aria-describedby="login-error">');
   });
 
   it('the sign-in page offers "Create account" only while anyone may register', async () => {

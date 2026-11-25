@@ -164,13 +164,15 @@ export const resendForm = (locale: Locale, email = ''): string => `<form method=
  */
 export function loginPage(locale: Locale, returnPath: string, error?: string, opts: { registration?: 'open' | 'invite' | 'closed'; resendEmail?: string; notice?: string; email?: string } = {}): string {
   const typed = opts.email ?? '';
+  // A refused sign-in is about both fields: each says so to assistive technology and points at the message.
+  const invalid = error ? ' aria-invalid="true" aria-describedby="login-error"' : '';
   return page(locale, t(locale, 'login.title'), `<div class="auth-hero"><h1>${esc(t(locale, 'brand.tagline'))}</h1></div>
 <div class="auth-card"><h2>${esc(t(locale, 'login.title'))}</h2>
-${opts.notice ? notice('success', opts.notice) : ''}${error ? notice('danger', error) : ''}
+${opts.notice ? notice('success', opts.notice) : ''}${error ? notice('danger', error).replace('<div class="notice', '<div id="login-error" class="notice') : ''}
 <form method="post" action="/login" class="stack">
 <input type="hidden" name="return" value="${esc(returnPath)}">
-<div class="field"><label for="email">${esc(t(locale, 'common.email'))}</label><input id="email" name="email" type="email" autocomplete="username" required${typed ? ` value="${esc(typed)}"` : ' autofocus'}></div>
-<div class="field"><label for="password">${esc(t(locale, 'common.password'))}</label><input id="password" name="password" type="password" autocomplete="current-password" required${typed ? ' autofocus' : ''}></div>
+<div class="field"><label for="email">${esc(t(locale, 'common.email'))}</label><input id="email" name="email" type="email" autocomplete="username" required${typed ? ` value="${esc(typed)}"` : ' autofocus'}${invalid}></div>
+<div class="field"><label for="password">${esc(t(locale, 'common.password'))}</label><input id="password" name="password" type="password" autocomplete="current-password" required${typed ? ' autofocus' : ''}${invalid}></div>
 <button type="submit" class="${btn('primary')}">${esc(t(locale, 'login.submit'))}</button>
 </form>
 ${opts.resendEmail !== undefined ? resendForm(locale, opts.resendEmail) : ''}</div>
@@ -299,6 +301,34 @@ export function questionPage(locale: Locale, q: Question, req: { body?: unknown;
 export const field = (id: string, label: string, control: string, hint = ''): string =>
   `<div class="field"><label for="${esc(id)}">${esc(label)}</label>${control}${hint ? `<p class="hint">${esc(hint)}</p>` : ''}</div>`;
 
+/**
+ * `html` with an error message at the control whose id is `id`: the message between the label and the control (so a button next to
+ * the field stays level with it), the control marked invalid and described by the message, and focused when the page opens; the
+ * values a refused form sent come back in the text fields they came from (`values` maps control ids to text; never a password).
+ * A closed "get your own" panel around the control opens. Null when the page has no such control.
+ */
+export function withFieldError(html: string, id: string, message: string, values: Record<string, string> = {}): string | null {
+  const tagAt = (controlId: string): { start: number; end: number } | null => {
+    const at = html.search(new RegExp(`<(input|select|textarea)\\b[^>]*\\sid="${controlId.replace(/[^A-Za-z0-9_-]/g, '')}"`));
+    return at < 0 ? null : { start: at, end: html.indexOf('>', at) };
+  };
+  if (!tagAt(id)) return null;
+  for (const [controlId, value] of Object.entries(values)) {
+    const tag = tagAt(controlId);
+    if (!tag || !html.startsWith('<input', tag.start) || /type="password"/.test(html.slice(tag.start, tag.end))) continue;
+    const open = html.slice(tag.start, tag.end).replace(/\svalue="[^"]*"/, '') + ` value="${esc(value)}"`;
+    html = html.slice(0, tag.start) + open + html.slice(tag.end);
+  }
+  const tag = tagAt(id)!;
+  const open = html.slice(tag.start, tag.end).replace(/\s(aria-invalid|aria-describedby|autofocus)(="[^"]*")?/g, '') + ` aria-invalid="true" aria-describedby="${id}-error" autofocus`;
+  const error = `<p class="field-error" id="${id}-error">${icon('alert', 'i-sm')}<span>${esc(message)}</span></p>`;
+  html = html.slice(0, tag.start) + error + open + html.slice(tag.end);
+  // The control may sit in a panel that starts closed.
+  const panel = html.lastIndexOf('<details class="getown"', tag.start);
+  if (panel >= 0 && html.indexOf('</details>', panel) > tag.start) html = `${html.slice(0, panel)}<details open class="getown"${html.slice(panel + '<details class="getown"'.length)}`;
+  return html;
+}
+
 /** `<option>` list for a select; `options` are [value, label] pairs. */
 export const optionList = (options: ReadonlyArray<Option>, selected: string): string =>
   options.map(([v, label]) => `<option value="${esc(v)}"${v === selected ? ' selected' : ''}>${esc(label)}</option>`).join('');
@@ -312,7 +342,12 @@ export const noticeHtml = (locale: Locale, flash: { ok?: MessageKey; error?: Mes
  * and the word about it are on screen together after the redirect, else at the top. The notice carries the id the redirect's
  * fragment names (`#notice`).
  */
-export function withNotice(locale: Locale, flash: { ok?: MessageKey; error?: MessageKey; params?: Record<string, string>; anchor?: string; undo?: { action: string; fields: Record<string, string> } }, body: string, csrf = ''): string {
+export function withNotice(locale: Locale, flash: { ok?: MessageKey; error?: MessageKey; params?: Record<string, string>; anchor?: string; undo?: { action: string; fields: Record<string, string> }; field?: string; values?: Record<string, string> }, body: string, csrf = ''): string {
+  // An error about one field is shown at that field, with what was typed; the page needs no banner then.
+  if (flash.error && flash.field) {
+    const placed = withFieldError(body, flash.field, noticeText(locale, flash.error, flash.params), flash.values);
+    if (placed !== null) return placed;
+  }
   const undo = flash.ok && flash.undo && csrf ? undoForm(locale, flash.undo, csrf) : '';
   const html = (flash.ok ? notice('success', noticeText(locale, flash.ok, flash.params), undo) : '') + (flash.error ? notice('danger', noticeText(locale, flash.error, flash.params)) : '');
   return placeNotice(html.replace('<div class="notice', '<div id="notice" tabindex="-1" class="notice'), flash.anchor, body);
