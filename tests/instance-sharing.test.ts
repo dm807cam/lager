@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 import request from 'supertest';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -219,5 +220,51 @@ describe('app cards', () => {
     // A disabled instance and an app one can only get a copy of are not links.
     expect([...doc.querySelectorAll('#mine .app-card')].find((c) => c.querySelector('.slug')!.textContent === 'old-notes')!.querySelector('.card-link')).toBeNull();
     for (const c of doc.querySelectorAll('#catalog .app-card')) if (c.querySelector('details.getown')) expect(c.querySelector('.card-link')).toBeNull();
+  });
+
+  /** The card link of the card for `slug` in `section`, and the targets the keyboard reaches on that card, in order. */
+  const linkOf = (doc: Document, section: string, slug: string) => {
+    const card = [...doc.querySelectorAll(`#${section} .app-card`)].find((c) => c.querySelector('.slug')!.textContent === slug)!;
+    const link = card.querySelector('h3 a.card-link');
+    const repeated = [...card.querySelectorAll('.card-actions a[tabindex="-1"]')].map((a) => [a.getAttribute('href'), a.getAttribute('aria-hidden')]);
+    const reachable = [...card.querySelectorAll('a, button, summary')].filter((e) => e.getAttribute('tabindex') !== '-1').map((e) => e.getAttribute('href'));
+    return { href: link?.getAttribute('href'), label: link?.getAttribute('aria-label'), repeated, reachable };
+  };
+  const page = async (path: string, email: string): Promise<Document> =>
+    dom((await request(s!.h.app).get(path).set('Host', s!.h.host).set('Cookie', await s!.h.login(email, 'password-123'))).text);
+
+  it('link a shared card to the app, with Manage only for those who may manage it', async () => {
+    s = await showcase();
+    const tasks = 'http://tasks.apps.localhost:8080';
+    // Uwe has notes to view and use: the app is the card's one target.
+    expect(linkOf(await page('/', 'uwe@x.y'), 'shared', 'notes')).toEqual({
+      href: 'http://notes.apps.localhost:8080', label: t('en', 'card.open', { title: 'Notes' }),
+      repeated: [['http://notes.apps.localhost:8080', 'true']], reachable: ['http://notes.apps.localhost:8080'],
+    });
+    // As a manager of tasks, the app and then Manage.
+    s.h.core.access.setGrant(s.h.core.apps.getInstanceBySlug('tasks')!, 'user', s.ids.uwe, 'admin', s.h.core.users.get(s.ids.pia)!);
+    expect(linkOf(await page('/', 'uwe@x.y'), 'shared', 'tasks')).toMatchObject({ href: tasks, reachable: [tasks, '/instances/tasks'] });
+  });
+
+  it('link an instance in the catalog to it, and an app under Publish to its page', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    // Tasks is open to everyone signed in; Cleo has no grant, so it is in her catalog.
+    core.users.create({ email: 'cleo@x.y', name: 'Cleo', password: 'password-123', role: 'user' });
+    expect(linkOf(await page('/', 'cleo@x.y'), 'catalog', 'tasks')).toEqual({
+      href: 'http://tasks.apps.localhost:8080', label: t('en', 'card.open', { title: 'Tasks' }),
+      repeated: [['http://tasks.apps.localhost:8080', 'true']], reachable: ['http://tasks.apps.localhost:8080'],
+    });
+    expect(linkOf(await page('/publish', 'pia@x.y'), 'apps', 'tasks')).toEqual({
+      href: '/apps/tasks', label: t('en', 'card.manage', { title: 'Tasks' }), repeated: [['/apps/tasks', 'true']], reachable: ['/apps/tasks'],
+    });
+  });
+
+  it('do not lift on a phone or for those who asked for less motion, though linked cards lift elsewhere', () => {
+    const css = fs.readFileSync(new URL('../src/static/app.css', import.meta.url), 'utf8');
+    const block = (query: string): string => { const at = css.indexOf(query); return css.slice(at, css.indexOf('\n}', at)); };
+    expect(css).toContain('.app-card.is-linked:hover { transform: translateY(-2px);');
+    // The overrides must be at least as specific as the rule that lifts.
+    for (const query of ['@media (max-width: 520px)', '@media (prefers-reduced-motion: reduce)']) expect(block(query)).toContain('.app-card.is-linked:hover { transform: none; }');
   });
 });
