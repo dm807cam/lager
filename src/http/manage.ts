@@ -715,7 +715,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
 
   const appBack = (req: Request): string => `/apps/${encodeURIComponent(param(req, 'slug'))}`;
 
-  /** The catalog's "Get your own copy" forms; "home" is what they sent while the catalog was part of the home page. */
+  /**
+   * The catalog's "Get your own copy" forms. "home" is what they sent while the catalog was part of the home page (up to 0.2.0),
+   * kept for pages loaded before the update; it can go with the release after the next one.
+   */
   const fromCatalog = (req: Request): boolean => ['catalog', 'home'].includes(field(req, 'from'));
   router.post('/ui/apps/:slug/instances', ...action(
     (req, user) => {

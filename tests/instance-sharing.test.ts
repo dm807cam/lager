@@ -291,10 +291,11 @@ describe('the catalog page', () => {
   it('is the main way on from a home page without an own copy, and a quieter link once there is one', async () => {
     s = await showcase();
     const { core } = s.h;
+    // Without an own copy the way to the catalog is the main button of the empty "Yours".
     const prominent = (await get('/', 'uwe@x.y')).querySelector('main a[href="/catalog"]')!;
-    expect(prominent.parentElement!.className).toBe('empty-cta');
+    expect(prominent.closest('#mine .empty')).not.toBeNull();
     expect(prominent.classList.contains('btn-primary')).toBe(true);
-    expect(prominent.textContent).toContain(t('en', 'home.catalogLink'));
+    expect(prominent.textContent).toContain(t('en', 'home.browseCatalog'));
     core.apps.createInstance({ appId: core.apps.getApp('tasks')!.id, slug: 'uwe-tasks', ownerId: s.ids.uwe });
     const quiet = (await get('/', 'uwe@x.y')).querySelector('main a[href="/catalog"]')!;
     expect(quiet.parentElement!.className).toBe('section-more');
@@ -312,5 +313,41 @@ describe('the catalog page', () => {
     expect(doc.querySelector('main .empty')!.textContent).toContain(t('en', 'catalog.none'));
     expect(doc.querySelector('nav.primary a[href="/catalog"]')).toBeNull();
     expect((await get('/', 'cleo@x.y')).querySelector('main a[href="/catalog"]')).toBeNull();
+  });
+});
+
+describe('the catalog page, denied', () => {
+  it('sends someone signed out to sign in, and shows nothing of the catalog', async () => {
+    s = await showcase();
+    const res = await request(s.h.app).get('/catalog').set('Host', s.h.host);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/^\/login\?return=%2Fcatalog/);
+    expect(res.text).not.toContain(t('en', 'catalog.apps'));
+  });
+
+  it('ends the session of an account disabled while signed in, and shows nothing of the catalog', async () => {
+    s = await showcase();
+    const cookie = await s.h.login('uwe@x.y', 'password-123');
+    s.h.core.users.setDisabled(s.ids.uwe, true);
+    const res = await request(s.h.app).get('/catalog').set('Host', s.h.host).set('Cookie', cookie);
+    expect([res.status, res.headers.location]).toEqual([302, '/login?return=%2Fcatalog']);
+    expect(res.text).not.toContain('Tasks');
+  });
+
+  it('is not served on an instance host', async () => {
+    s = await showcase();
+    const res = await request(s.h.app).get('/catalog').set('Host', 'notes.apps.localhost:8080').set('Cookie', await s.h.login());
+    expect(res.status).toBe(404);
+    expect(res.text).not.toContain(t('en', 'catalog.lede'));
+  });
+
+  it('a stale copy form leads back to the catalog', async () => {
+    s = await showcase();
+    const cookie = await s.h.login('uwe@x.y', 'password-123');
+    const res = await request(s.h.app).post('/ui/apps/tasks/instances').set('Host', s.h.host).set('Cookie', cookie).type('form')
+      .send({ csrf: 'stale', from: 'catalog', slug: 'tasks-2' });
+    expect(res.status).toBe(403);
+    expect(dom(res.text).querySelector('main a.btn-primary')!.getAttribute('href')).toBe('/catalog');
+    expect(s.h.core.apps.getInstanceBySlug('tasks-2')).toBeNull();
   });
 });
