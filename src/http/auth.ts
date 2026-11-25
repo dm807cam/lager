@@ -59,6 +59,7 @@ ${field('password', t(locale, 'common.password'), `<input id="password" name="pa
 </form>`)}${toLogin(locale)}`, { ...(invite ? { switcher: false } : { returnPath: '/register' }) });
 }
 
+/** The form that asks for a reset mail. Used only while the server can send mail; otherwise `noMailPage` says whom to ask. */
 const forgotForm = (locale: Locale): string => page(locale, t(locale, 'auth.forgot.title'), `${authCard(`<h1>${esc(t(locale, 'auth.forgot.title'))}</h1>
 <form method="post" action="/forgot" class="stack">
 ${field('email', t(locale, 'common.email'), '<input id="email" name="email" type="email" autocomplete="email" required autofocus>')}
@@ -82,8 +83,6 @@ ${errorLine(error)}
 ${field('password', t(locale, 'common.password'), '<input id="password" name="password" type="password" autocomplete="current-password" required autofocus>', t(locale, 'auth.verify.hint'))}
 <button type="submit" class="${btn('primary')}">${esc(t(locale, 'auth.verify.submit'))}</button>
 </form>`)}<p class="auth-links"><a href="/forgot">${esc(t(locale, 'login.forgot'))}</a></p>`, { switcher: false });
-
-const invalidLinkPage = (locale: Locale): string => notice(locale, t(locale, 'auth.link.invalid.title'), t(locale, 'auth.link.invalid'), resendForm(locale));
 
 function accountPage(core: Core, locale: Locale, user: User, msg: { ok?: string; error?: string } = {}): string {
   const csrf = esc(csrfToken(core, user));
@@ -151,6 +150,16 @@ export const authExtension: PlatformExtension = (router, core) => {
     const locale = localeOf(req);
     html(res, 429, notice(locale, t(locale, 'error.tooMany.title'), t(locale, 'error.tooMany.text')));
   };
+
+  // Without mail the form to send another confirmation link would only promise a mail that never comes.
+  const invalidLinkPage = (locale: Locale): string =>
+    notice(locale, t(locale, 'auth.link.invalid.title'), t(locale, 'auth.link.invalid'), core.mailer.enabled ? resendForm(locale) : `<p class="hint gap-top">${esc(t(locale, 'auth.resend.noMail'))}</p>${toLogin(locale)}`);
+  /**
+   * What a page that would send mail says on a server that sends none: whom to ask instead. The same text for every address, so it
+   * tells nothing about which accounts exist.
+   */
+  const noMailPage = (locale: Locale, key: 'auth.forgot.noMail' | 'auth.resend.noMail'): string =>
+    notice(locale, t(locale, key === 'auth.forgot.noMail' ? 'auth.forgot.title' : 'auth.register.pageTitle'), t(locale, key), toLogin(locale));
 
   // --- registration ---
 
@@ -254,13 +263,17 @@ export const authExtension: PlatformExtension = (router, core) => {
   router.post('/verify/resend', ...publicForm, async (req, res) => {
     const locale = localeOf(req);
     if (!resendIp.hit(ipOf(req)) || core.accounts.mailBudgetSpent('account')) { tooMany(req, res); return; }
+    if (!core.mailer.enabled) { html(res, 200, noMailPage(locale, 'auth.resend.noMail')); return; }
     if (resendEmail.hit(emailKey(req))) await core.accounts.resendVerification(field(req, 'email', 254), locale);
     html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.resend.sent.text'), toLogin(locale)));
   });
 
   // --- password reset ---
 
-  router.get('/forgot', hardened, (req, res) => { html(res, 200, forgotForm(localeOf(req))); });
+  router.get('/forgot', hardened, (req, res) => {
+    const locale = localeOf(req);
+    html(res, 200, core.mailer.enabled ? forgotForm(locale) : noMailPage(locale, 'auth.forgot.noMail'));
+  });
 
   router.post('/forgot', ...publicForm, async (req, res) => {
     const locale = localeOf(req);
@@ -268,6 +281,7 @@ export const authExtension: PlatformExtension = (router, core) => {
     // hour's reset mails are spent: the mail is the owner's way back in, and whoever attacks the account may be draining the budget too.
     const paused = loginLimiter(core).accountPaused(emailKey(req));
     if (!forgotIp.hit(ipOf(req)) || (!paused && core.accounts.mailBudgetSpent('reset'))) { tooMany(req, res); return; }
+    if (!core.mailer.enabled) { html(res, 200, noMailPage(locale, 'auth.forgot.noMail')); return; }
     // Over the per-address budget the request is skipped without any visible difference.
     if (forgotEmail.hit(emailKey(req))) await core.accounts.requestPasswordReset(field(req, 'email', 254), locale, paused);
     html(res, 200, notice(locale, t(locale, 'auth.mailSent.title'), t(locale, 'auth.forgot.sent'), toLogin(locale)));

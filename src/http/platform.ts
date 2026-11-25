@@ -402,10 +402,12 @@ ${hiddenField('csrf', csrfToken(core, user))}${Object.entries(fields).map(([k, v
       const reason = result?.reason ?? 'invalid';
       // Unverified and disabled are only reported after a correct password, so they do not count as failures.
       if (result && result.reason !== 'invalid' && attempt !== 'paused') limiter.release(attempt, true);
-      const message = reason === 'unverified' ? t(locale, 'login.unverified')
+      // Without mail, a form to send another confirmation link would promise a mail that never comes: the text says whom to ask.
+      const mail = core.mailer.enabled;
+      const message = reason === 'unverified' ? t(locale, mail ? 'login.unverified' : 'login.unverified.noMail')
         : reason === 'disabled' ? t(locale, 'login.disabled') : t(locale, 'login.invalid');
       res.status(401).type('html').send(loginPage(locale, ret, message, {
-        registration: core.settings.registration, resendEmail: reason === 'unverified' ? account : undefined, email,
+        registration: core.settings.registration, resendEmail: reason === 'unverified' && mail ? account : undefined, email,
       }));
       return;
     }

@@ -37,6 +37,7 @@ export const en = {
   'login.tooMany': 'Too many failed attempts. Please wait a few minutes.',
   'login.busy': 'The server is busy right now. Please try again in a moment.',
   'login.unverified': 'Please confirm your email address first.',
+  'login.unverified.noMail': "Please confirm your email address first. This server does not send email right now: ask its administrator for a link to set your password, which confirms your address too.",
   'login.disabled': 'This account is disabled.',
   'login.invalid': 'Email or password is wrong.',
 
@@ -68,10 +69,12 @@ export const en = {
   'auth.verify.wrong': 'The password is wrong.',
   'auth.resend.button': 'Send confirmation email again',
   'auth.resend.sent.text': 'If the address is registered with us and not yet confirmed, we sent a new email.',
+  'auth.resend.noMail': "This server does not send email, so it cannot send you a new confirmation link. Ask the administrator of this server for a link to set your password: it confirms your address too.",
 
   'auth.forgot.title': 'Forgot password',
   'auth.forgot.submit': 'Send reset link',
   'auth.forgot.sent': 'If the address is registered with us, we sent an email to reset the password.',
+  'auth.forgot.noMail': "This server does not send email, so it cannot send you a reset link. Ask the administrator of this server for a link to set a new password.",
   'auth.reset.title': 'New password',
   'auth.reset.label': 'New password',
   'auth.reset.submit': 'Save password',

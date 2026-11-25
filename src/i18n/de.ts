@@ -39,6 +39,7 @@ export const de: Record<MessageKey, string> = {
   'login.tooMany': 'Zu viele fehlgeschlagene Versuche. Bitte warte einige Minuten.',
   'login.busy': 'Der Server ist gerade ausgelastet. Bitte versuche es gleich noch einmal.',
   'login.unverified': 'Bitte bestätige zuerst deine E-Mail-Adresse.',
+  'login.unverified.noMail': "Bitte bestätige zuerst deine E-Mail-Adresse. Dieser Server verschickt gerade keine E-Mails: Bitte seinen Administrator um einen Link, mit dem du dein Passwort setzt. Er bestätigt auch deine Adresse.",
   'login.disabled': 'Dieses Konto ist deaktiviert.',
   'login.invalid': 'E-Mail oder Passwort ist falsch.',
 
@@ -70,10 +71,12 @@ export const de: Record<MessageKey, string> = {
   'auth.verify.wrong': 'Das Passwort ist falsch.',
   'auth.resend.button': 'Bestätigungs-E-Mail erneut senden',
   'auth.resend.sent.text': 'Falls die Adresse bei uns registriert und noch nicht bestätigt ist, haben wir eine neue E-Mail geschickt.',
+  'auth.resend.noMail': "Dieser Server verschickt keine E-Mails und kann dir deshalb keinen neuen Bestätigungslink senden. Bitte den Administrator dieses Servers um einen Link, mit dem du dein Passwort setzt: Er bestätigt auch deine Adresse.",
 
   'auth.forgot.title': 'Passwort vergessen',
   'auth.forgot.submit': 'Link zum Zurücksetzen senden',
   'auth.forgot.sent': 'Falls die Adresse bei uns registriert ist, haben wir eine E-Mail zum Zurücksetzen geschickt.',
+  'auth.forgot.noMail': "Dieser Server verschickt keine E-Mails und kann dir deshalb keinen Link zum Zurücksetzen senden. Bitte den Administrator dieses Servers um einen Link, mit dem du ein neues Passwort setzen kannst.",
   'auth.reset.title': 'Neues Passwort',
   'auth.reset.label': 'Neues Passwort',
   'auth.reset.submit': 'Passwort speichern',
