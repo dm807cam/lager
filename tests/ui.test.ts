@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { esc, notFoundPage } from '../src/http/pages.js';
 import { staticUrls } from '../src/http/static.js';
-import { t, type MessageKey } from '../src/i18n/index.js';
+import { LOCALES, t, type MessageKey } from '../src/i18n/index.js';
 import { makeHarness, type Harness } from './support/http.js';
 import { consentHtml, cookies, emptyHomes, formDetailsOf, formsOf, idNames, pageVisits, PASSWORD, showcase, visit, type PageVisit, type Showcase } from './support/pages.js';
 
@@ -293,7 +293,7 @@ describe('shell', () => {
   it('the phone tab bar uses the short labels, and each link is named by the label on screen at either width', async () => {
     s = await showcase();
     const cookie = await s.h.login();
-    for (const locale of ['en', 'de'] as const) {
+    for (const locale of LOCALES) {
       const html = (await request(s.h.app).get('/').set('Host', s.h.host).set('Cookie', `${cookie}; lager_lang=${locale}`)).text;
       const links = [...dom(html).querySelectorAll('nav.primary a')];
       const expected: Array<[string, MessageKey, MessageKey]> = [['/', 'nav.apps', 'nav.tab.apps'], ['/#catalog', 'dash.catalog', 'dash.catalog'], ['/publish', 'nav.publish', 'nav.tab.publish'], ['/admin', 'nav.admin', 'nav.tab.admin']];
@@ -309,7 +309,9 @@ describe('shell', () => {
     // Exactly one of the two labels is displayed at each width, so the name never holds both.
     const css = fs.readFileSync(path.join(STATIC, 'app.css'), 'utf8');
     expect(css).toContain('.primary a .nav-short { display: none; }');
-    const phone = css.slice(css.indexOf('@media (max-width: 720px) {'));
+    // Only the phone block itself: a matching rule in a later block (print, forced colours) must not count.
+    const start = css.indexOf('@media (max-width: 720px) {');
+    const phone = css.slice(start, css.indexOf('\n}\n', start));
     expect(phone).toContain('.primary a .nav-full { display: none; }');
     expect(phone).toContain('.primary a .nav-short { display: block; }');
   });
