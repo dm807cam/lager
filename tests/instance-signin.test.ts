@@ -365,6 +365,32 @@ describe('an app the signed-in account may not open', () => {
     expect((callback.headers['set-cookie'] as unknown as string[]).some((c) => c.startsWith('lager_inst='))).toBe(true);
   });
 
+  it('the session’s sign-in address for a visitor who lost access carries the nonce, so another account ends on the app', async () => {
+    const s = setup({ visibility: 'users' });
+    const inst = await s.h.enter('workout', await s.h.login('v@x.y', PW));
+    s.h.core.apps.setVisibility(s.inst.id, 'private', s.h.adminId);
+    const session = await request(s.h.app).get('/__lager/session').set('Host', W).set('Cookie', inst);
+    expect(session.status).toBe(401);
+    expect(JSON.stringify(session.body)).not.toContain('v@x.y');
+    const nonce = (session.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith('lager_nonce='))!.split(';')[0];
+    const loginUrl = new URL(session.body.error.loginUrl);
+    expect(loginUrl.searchParams.get('n')).toBe(nonce.split('=')[1]);
+    // Where an app sends the visitor: the platform's No access page, then another account, then back on the app.
+    const visitor = await s.h.login('v@x.y', PW);
+    const noAccess = await request(s.h.app).get(loginUrl.pathname + loginUrl.search).set('Host', s.h.host).set('Cookie', visitor);
+    expect(noAccess.status).toBe(403);
+    const logout = /<form method="post" action="\/logout">((?:(?!<\/form>)[\s\S])*?name="return"[\s\S]*?)<\/form>/.exec(noAccess.text)![1];
+    const fields = Object.fromEntries([...logout.matchAll(/name="([^"]+)" value="([^"]*)"/g)].map((m) => [m[1], m[2].replace(/&amp;/g, '&')]));
+    const out = await request(s.h.app).post('/logout').set('Host', s.h.host).set('Cookie', visitor).type('form').send(fields);
+    const ret = new URL(out.headers.location, 'http://x').searchParams.get('return')!;
+    const owner = await request(s.h.app).post('/login').set('Host', s.h.host).type('form').send({ email: 'admin@x.y', password: 'admin-password-1', return: ret });
+    const ownerCookie = (owner.headers['set-cookie'] as unknown as string[]).map((c) => c.split(';')[0]).join('; ');
+    const code = new URL((await request(s.h.app).get(ret).set('Host', s.h.host).set('Cookie', ownerCookie)).headers.location);
+    const callback = await request(s.h.app).get(code.pathname + code.search).set('Host', code.host).set('Cookie', nonce);
+    expect(callback.status).toBe(302);
+    expect((callback.headers['set-cookie'] as unknown as string[]).some((c) => c.startsWith('lager_inst='))).toBe(true);
+  });
+
   it('a sign-out sent from an out-of-date page signs nobody out and follows no way back', async () => {
     const s = setup();
     const cookie = await s.h.login('v@x.y', PW);
