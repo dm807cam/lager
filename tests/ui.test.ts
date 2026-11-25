@@ -48,8 +48,9 @@ describe('static assets', () => {
       expect((await request(h.app).get(wrong).set('Host', h.host)).status, wrong).toBe(404);
     }
     // Every page works without the script; it only adds conveniences (menus, copy, theme, the question before a change that cannot
-    // be taken back) and stays small.
-    expect(fs.statSync(path.join(STATIC, 'app.js')).size).toBeLessThan(10 * 1024);
+    // be taken back, show password, the busy state of a form being sent) and stays small: about 3.5 KB compressed, cached for good
+    // under its hashed address. The comments that explain it count too.
+    expect(fs.statSync(path.join(STATIC, 'app.js')).size).toBeLessThan(12 * 1024);
   });
 
   it('every page links the stylesheet and has no inline <style> block beyond the pre-paint theme snippet', async () => {
@@ -682,6 +683,90 @@ describe('behaviour of the forms', () => {
     const names = idNames(s);
     const actual = Object.fromEntries((await formPages(s)).map(([name, html]) => [name, formDetailsOf(html, names)]));
     expect(actual).toEqual(expected);
+  });
+});
+
+describe('a form being sent', () => {
+  const SCRIPT = fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8');
+  function page(body: string) {
+    const win = new JSDOM(`<!doctype html><body>${body}</body>`, { runScripts: 'outside-only' }).window;
+    // jsdom does not navigate: a stand-in that records what a yes in the dialog sends.
+    const sent: string[] = [];
+    win.HTMLFormElement.prototype.submit = function (this: HTMLFormElement) { sent.push(this.id); };
+    win.HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute('open', ''); };
+    win.HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.removeAttribute('open'); this.dispatchEvent(new win.Event('close')); };
+    // Timers the script sets, run by hand.
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    (win as unknown as { setTimeout: (fn: () => void, ms: number) => number }).setTimeout = (fn, ms) => timers.push({ fn, ms });
+    win.eval(SCRIPT);
+    /** Sends `form` as the browser would; returns whether the browser goes on to send it. */
+    const submit = (form: HTMLFormElement, submitter?: HTMLElement): boolean =>
+      form.dispatchEvent(new win.SubmitEvent('submit', { cancelable: true, bubbles: true, submitter: submitter ?? null }));
+    return { win, doc: win.document, sent, submit, timers };
+  }
+
+  it('marks the pressed button busy, sends once, and is back to normal when the page is shown again', () => {
+    const { win, doc, submit } = page(`<form id="f"><input name="a"><button type="submit" name="go" value="test" id="test">Test</button>
+      <button type="submit" name="go" value="save" id="save"><svg class="i"></svg>Save</button></form>`);
+    const form = doc.getElementById('f') as HTMLFormElement;
+    const save = doc.getElementById('save')!;
+    expect(submit(form, save)).toBe(true);
+    expect(save.getAttribute('aria-busy')).toBe('true');
+    expect(doc.getElementById('test')!.hasAttribute('aria-busy')).toBe(false);
+    // Not disabled: the pressed button's own name and value still go with the form.
+    expect((save as HTMLButtonElement).disabled).toBe(false);
+    // A second press while the first is on its way sends nothing.
+    expect(submit(form, save)).toBe(false);
+    expect(submit(form, doc.getElementById('test')!)).toBe(false);
+    // Back to the page (back button, page cache): a normal button that sends again.
+    win.dispatchEvent(new win.Event('pageshow'));
+    expect(save.hasAttribute('aria-busy')).toBe(false);
+    expect(submit(form, save)).toBe(true);
+  });
+
+  it('a form that asks first is busy only once the answer is yes', () => {
+    const { doc, sent, submit } = page(`<form id="del" data-confirm="Delete?" data-confirm-ok="Delete"><button type="submit" id="go">Delete</button></form>`);
+    const form = doc.getElementById('del') as HTMLFormElement;
+    expect(submit(form, doc.getElementById('go')!)).toBe(false);
+    expect(doc.getElementById('go')!.hasAttribute('aria-busy')).toBe(false);
+    doc.querySelector<HTMLButtonElement>('dialog .btn-danger')!.click();
+    expect(sent).toEqual(['del']);
+    expect(doc.getElementById('go')!.getAttribute('aria-busy')).toBe('true');
+    // A second press while the yes is on its way asks nothing and sends nothing.
+    expect(submit(form, doc.getElementById('go')!)).toBe(false);
+    expect(doc.querySelector('dialog[open]')).toBeNull();
+    expect(sent).toEqual(['del']);
+  });
+
+  it('a form with two buttons, sent through its question, cannot be sent again by the other one', () => {
+    const { doc, sent, submit } = page(`<form id="f" data-confirm="Restore?" data-confirm-ok="Restore">
+      <button type="submit" name="act" value="restore" id="restore">Restore</button><button type="submit" name="act" value="other" id="other">Other</button></form>`);
+    const form = doc.getElementById('f') as HTMLFormElement;
+    submit(form, doc.getElementById('restore')!);
+    doc.querySelector<HTMLButtonElement>('dialog .btn-danger')!.click();
+    expect(doc.getElementById('restore')!.getAttribute('aria-busy')).toBe('true');
+    expect(submit(form, doc.getElementById('other')!)).toBe(false);
+    expect(doc.querySelector('dialog[open]')).toBeNull();
+    expect(sent).toEqual(['f']);
+  });
+
+  it('a load that was stopped leaves the form busy for 30 seconds, then it can be sent again', () => {
+    const { doc, submit, timers } = page(`<form id="f"><button type="submit" id="save">Save</button></form>`);
+    const form = doc.getElementById('f') as HTMLFormElement;
+    expect(submit(form, doc.getElementById('save')!)).toBe(true);
+    expect(submit(form, doc.getElementById('save')!)).toBe(false);
+    expect(timers.map((x) => x.ms)).toEqual([30000]);
+    timers[0].fn();
+    expect(doc.getElementById('save')!.hasAttribute('aria-busy')).toBe(false);
+    expect(submit(form, doc.getElementById('save')!)).toBe(true);
+  });
+
+  it('the busy button shows a spinner instead of its icon, and a still ellipsis without motion', () => {
+    const css = fs.readFileSync(path.join(STATIC, 'app.css'), 'utf8');
+    expect(css).toMatch(/button\[aria-busy="true"\] > \.i \{ display: none; \}/);
+    expect(css).toMatch(/button\[aria-busy="true"\]::before \{[^}]*animation: spin/);
+    const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(reduced).toMatch(/button\[aria-busy="true"\]::before \{ content: "…";/);
   });
 });
 

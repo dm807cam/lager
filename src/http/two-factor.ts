@@ -3,7 +3,7 @@ import express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
 import type { Core } from '../core.js';
 import { t, type Locale } from '../i18n/index.js';
-import { qrSvg } from '../platform/qr.js';
+import { fitsQr, qrSvg } from '../platform/qr.js';
 import { MAX_CODE_INPUT, otpauthUri, RECOVERY_CODE_COUNT, SETUP_TTL_MS, TOTP_DIGITS, type CodeCheck } from '../platform/two-factor.js';
 import type { User } from '../platform/users.js';
 import { addressKey } from './client-address.js';
@@ -191,9 +191,7 @@ export function setupTokenValid(core: Core, user: User, value: unknown): boolean
 const grouped = (secret: string): string => secret.match(/.{1,4}/g)!.join(' ');
 
 /** The address as a QR code; none for an address too long for one (the button and the key below still work). */
-function scanCode(uri: string, label: string): string {
-  try { return qrSvg(uri, label); } catch (e) { if (e instanceof RangeError) return ''; throw e; }
-}
+const scanCode = (uri: string, label: string): string => (fitsQr(uri) ? qrSvg(uri, label) : '');
 
 /** The secret of a new setup and the field for the first code from it. Never cached; the secret is not in force before that code. */
 export function setupPage(core: Core, locale: Locale, user: User, csrf: string, token: string, secret: string, error?: string): string {

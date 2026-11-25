@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { describe, expect, it } from 'vitest';
-import { encodeQr, finderPenalty, qrSvg } from '../src/platform/qr.js';
+import { encodeQr, finderPenalty, fitsQr, qrSvg } from '../src/platform/qr.js';
 
 /**
  * Reference symbols made with the Python `qrcode` package (8.2) at level M in byte mode, with the mask given: versions 1 to 26,
@@ -59,6 +59,8 @@ describe('QR encoder', () => {
 
   it('refuses text longer than version 40 holds', () => {
     expect(encodeQr('a'.repeat(2331)).version).toBe(40);
+    // The check the setup page makes first, in bytes: a multi-byte character counts for its UTF-8 length.
+    expect([fitsQr('a'.repeat(2331)), fitsQr('a'.repeat(2332)), fitsQr(`${'a'.repeat(2329)}é`), fitsQr(`${'a'.repeat(2330)}é`)]).toEqual([true, false, true, false]);
     expect(() => encodeQr('a'.repeat(2332))).toThrow(RangeError);
   });
 
