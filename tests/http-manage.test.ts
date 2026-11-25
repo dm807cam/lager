@@ -65,7 +65,7 @@ describe('instance page', () => {
     h.core.data.set(inst().id, 'notes/n1', { text: 'x' }, p.id);
     h.core.data.snapshot(inst().id, 'manual-one');
     const res = await page(pc, '/instances/notes');
-    for (const text of [en('instance.version'), en('common.activate'), en('instance.visibility.title'), en('instance.grants.title'), en('instance.snapshots.title'), 'manual-one', en('instance.snapshots.restore'), en('instance.delete.title'), 'name="confirm"']) {
+    for (const text of [en('instance.version'), en('common.activate'), en('instance.visibility.who'), en('instance.grants.title'), en('instance.snapshots.title'), 'manual-one', en('instance.snapshots.restore'), en('instance.delete.title'), 'name="confirm"']) {
       expect(res.text).toContain(text);
     }
     h.core.access.setGrant(inst(), 'user', u.id, 'admin', p);
@@ -414,17 +414,20 @@ describe('self-publishing and versions', () => {
     const { p, u, pc, uc } = await setup();
     const before = await page(pc, '/instances/notes');
     expect(before.text).toContain(en('instance.autoUpdate.label'));
-    const autoUpdateForm = (html: string): string => /<form[^>]*action="\/ui\/instances\/notes\/auto-update"[\s\S]*?<\/form>/.exec(html)![0];
-    expect(autoUpdateForm(before.text)).toMatch(/name="on"[^>]*value="1"[^>]*checked|checked[^>]*name="on"/);
-    const off = await post(pc, p, '/ui/instances/notes/auto-update', { on: '0' });
+    const autoUpdateForm = (html: string): string => /<form[^>]*action="\/ui\/instances\/notes\/settings"[\s\S]*?<\/form>/.exec(html)![0];
+    expect(autoUpdateForm(before.text)).toMatch(/name="auto_update"[^>]*value="1"[^>]*checked|checked[^>]*name="auto_update"/);
+    const off = await post(pc, p, '/ui/instances/notes/settings', { auto_update: '0' });
     expect(off.status).toBe(302);
+    expect((await page(pc, off.headers.location.split('#')[0])).text).toContain(esc(t('en', 'notice.ok.autoUpdateOff', { version: '2' })));
     expect(off.headers.location.split('?')[0]).toBe('/instances/notes');
     expect(inst().autoUpdate).toBe(false);
     h.core.apps.deploy({ slug: 'notes', html: '<p>3</p>', userId: p.id });
     expect(inst().activeVersion).toBe(2);
-    expect(autoUpdateForm((await page(pc, '/instances/notes')).text)).not.toMatch(/name="on"[^>]*checked/);
-    await post(pc, p, '/ui/instances/notes/auto-update', { on: '1' });
+    expect(autoUpdateForm((await page(pc, '/instances/notes')).text)).not.toMatch(/name="auto_update"[^>]*checked/);
+    const moved = await post(pc, p, '/ui/instances/notes/settings', { auto_update: ['0', '1'] as unknown as string });
     expect(inst().autoUpdate).toBe(true);
+    // The instance was behind and moved to version 3 at once: the notice says so.
+    expect((await page(pc, moved.headers.location.split('#')[0])).text).toContain(esc(t('en', 'notice.ok.autoUpdateMoved', { version: '3' })));
     // switching it on moves the instance to the latest deployed version at once, with the usual snapshot
     await post(pc, p, '/ui/instances/notes/auto-update', { on: '0' });
     h.core.data.set(inst().id, 'n/a', { x: 1 }, p.id);

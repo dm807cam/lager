@@ -110,6 +110,7 @@ function versionsList(core: Core, locale: Locale, user: User, app: App, base: st
     return saver !== null && core.access.canManageInstance(saver, user);
   };
   if (!shown.length) return emptyState(t(locale, 'notice.versionMissing'));
+  const latest = core.apps.latestDeployedVersion(app.id)?.number;
   const items = [...shown].reverse().map((v) => {
     const isActive = v.number === active;
     const note = v.instanceId !== null ? badge(t(locale, 'instance.savedBySelf'), { icon: 'user' }) : '';
@@ -117,15 +118,24 @@ function versionsList(core: Core, locale: Locale, user: User, app: App, base: st
       ? linkButton(`/apps/${encodeURIComponent(app.slug)}/versions/${v.number}/html`, `${icon('download')}${esc(t(locale, 'instance.downloadHtml'))}`, 'quiet', true) : '';
     const activate = base === null || isActive ? '' : form(`${base}/activate`, csrf, hiddenField('version', String(v.number)), esc(t(locale, 'common.activate')), 'secondary', '', true);
     return `<li data-version="${v.number}"${isActive ? ' class="is-active"' : ''}><span class="dot" aria-hidden="true"></span>
-<div class="tl-body"><div class="tl-title"><strong>v${v.number}</strong>${isActive ? badge(t(locale, 'common.active'), { tone: 'success', dot: true }) : ''}${note}</div>
+<div class="tl-body"><div class="tl-title"><strong>v${v.number}</strong>${isActive ? badge(t(locale, 'common.active'), { tone: 'success', dot: true }) : ''}${v.number === latest && v.instanceId === null ? badge(t(locale, 'instance.latest')) : ''}${note}</div>
 <span class="tl-meta">${dateText(locale, v.createdAt)} · ${sizeText(locale, v.sizeBytes)}</span>${v.instanceId === null && v.note ? `<span class="tl-note">${esc(v.note)}</span>` : ''}</div>
 <div class="tl-actions">${download}${activate}</div></li>`;
   }).join('');
   return `<ol class="timeline">${items}</ol>`;
 }
 
+/**
+ * Who may open the instance, in one place: first who may open it at all (private, everyone signed in, public) and at which level,
+ * then the people and groups it is shared with.
+ */
 function grantsCard(core: Core, locale: Locale, inst: Instance, base: string, csrf: string): string {
   const grantLevels = levelOptions(locale, GRANT_LEVELS);
+  const level = inst.visibility === 'users'
+    ? field('users-level', t(locale, 'instance.usersLevel'), `<select id="users-level" name="users_level">${optionList(levelOptions(locale, USERS_LEVELS), inst.usersLevel)}</select>`) : '';
+  const visibility = form(`${base}/visibility`, csrf,
+    `${field('visibility', t(locale, 'instance.visibility.who'), `<select id="visibility" name="visibility">${optionList(visibilityOptions(locale), inst.visibility)}</select>`)}${level}`,
+    esc(t(locale, 'common.save')), 'secondary', 'form-row');
   const rows = core.access.listGrants(inst.id).map((g) => {
     const who = g.principalType === 'user' ? hiddenField('email', g.principalLabel) : hiddenField('group', g.principalId);
     const face = g.principalType === 'user' ? avatar({ id: g.principalId, name: '', email: g.principalLabel }, 'sm') : `<span class="tile tile-xs" aria-hidden="true">${icon('users', 'i-sm')}</span>`;
@@ -145,7 +155,7 @@ function grantsCard(core: Core, locale: Locale, inst: Instance, base: string, cs
 ${field('grant-group', t(locale, 'instance.grants.orGroup'), `<select id="grant-group" name="group"><option value="">–</option>${groups}</select>`)}
 ${field('grant-level', t(locale, 'common.level'), `<select id="grant-level" name="level">${optionList(grantLevels, 'view')}</select>`)}`,
   `${icon('share')}${esc(t(locale, 'instance.grants.add'))}`, 'primary', 'form-row');
-  return card(t(locale, 'instance.grants.title'), `${list}<div class="subsection">${add}</div>`, '', 'sharing');
+  return card(t(locale, 'instance.grants.title'), `${visibility}<div class="subsection"><h3>${esc(t(locale, 'instance.grants.people'))}</h3>${list}<div class="gap-top">${add}</div></div>`, '', 'sharing');
 }
 
 /** Only shown to those who may attach domains. Lager cannot check who owns a DNS name, so the page says so. `base` is the add route. */
@@ -278,8 +288,6 @@ ${notice('warning', t(locale, 'instance.disabledNotice'))}<div class="main-col">
   const snapRows = snapshots.map((s) => [`<span class="mono">${esc(s.label)}</span>`, dateText(locale, s.createdAt), sizeText(locale, s.sizeBytes),
     mayRestore ? form(`${base}/restore`, csrf, hiddenField('snapshot', s.id), esc(t(locale, 'instance.snapshots.restore')), 'secondary', '', true,
       confirmAttrs(locale, restoreQuestion(locale, inst.slug, s.label))) : '']);
-  const level = inst.visibility === 'users'
-    ? field('users-level', t(locale, 'instance.usersLevel'), `<select id="users-level" name="users_level">${optionList(levelOptions(locale, USERS_LEVELS), inst.usersLevel)}</select>`) : '';
   const quota = core.quotas.of(inst.id);
   const used = storageUsed(core, inst);
   const storage = quota > 0
@@ -289,18 +297,18 @@ ${notice('warning', t(locale, 'instance.disabledNotice'))}<div class="main-col">
   const snapshotStorage = snapshotBytes > 0 ? `<p class="hint">${esc(t(locale, 'instance.storage.snapshots', { size: formatSize(locale, snapshotBytes) }))}</p>` : '';
   const details = `<section class="card" id="details"><h2>${esc(t(locale, 'instance.details'))}</h2><dl class="facts">
 ${fact(t(locale, 'common.owner'), person(core.users.get(inst.ownerId)))}
-${fact(t(locale, 'instance.visibility.title'), form(`${base}/visibility`, csrf,
-    `${field('visibility', t(locale, 'instance.visibility.who'), `<select id="visibility" name="visibility">${optionList(visibilityOptions(locale), inst.visibility)}</select>`)}${level}`,
+${fact(t(locale, 'instance.settings'), form(`${base}/settings`, csrf,
+    // Both switches in one form with one Save: changing two and pressing one button keeps both.
+    `${hiddenField('auto_update', '0')}<label class="check"><input type="checkbox" class="switch" name="auto_update" value="1"${inst.autoUpdate ? ' checked' : ''}><span><strong>${esc(t(locale, 'instance.autoUpdate.label'))}</strong><span class="hint">${esc(t(locale, 'instance.autoUpdate.hint'))}</span></span></label>
+${core.settings.madeWithBadge ? `${hiddenField('badge', '0')}<label class="check"><input type="checkbox" class="switch" name="badge" value="1"${inst.showBadge ? ' checked' : ''}><span><strong>${esc(t(locale, 'instance.badge.label'))}</strong><span class="hint">${esc(t(locale, 'instance.badge.hint'))}</span></span></label>` : ''}`,
     esc(t(locale, 'common.save')), 'secondary', 'stack', true))}
-${fact(t(locale, 'instance.autoUpdate.title'), form(`${base}/auto-update`, csrf,
-    `${hiddenField('on', '0')}<label class="check"><input type="checkbox" class="switch" name="on" value="1"${inst.autoUpdate ? ' checked' : ''}><span><strong>${esc(t(locale, 'instance.autoUpdate.label'))}</strong><span class="hint">${esc(t(locale, 'instance.autoUpdate.hint'))}</span></span></label>`,
-    esc(t(locale, 'common.save')), 'secondary', 'stack', true))}
-${core.settings.madeWithBadge ? fact(t(locale, 'instance.badge.title'), form(`${base}/badge`, csrf,
-    `${hiddenField('on', '0')}<label class="check"><input type="checkbox" class="switch" name="on" value="1"${inst.showBadge ? ' checked' : ''}><span><strong>${esc(t(locale, 'instance.badge.label'))}</strong><span class="hint">${esc(t(locale, 'instance.badge.hint'))}</span></span></label>`,
-    esc(t(locale, 'common.save')), 'secondary', 'stack', true)) : ''}
 ${fact(t(locale, 'instance.storage'), `${storage}${snapshotStorage}`)}</dl></section>`;
+  // A rolled-back instance with updates on goes forward again with the next deploy: the page says so where the versions are.
+  const latest = core.apps.latestDeployedVersion(app.id)?.number ?? 0;
+  const behind = inst.autoUpdate && latest > inst.activeVersion
+    ? notice('warning', t(locale, 'instance.behind', { latest, active: inst.activeVersion })) : '';
   const versions = `<section class="card" id="versions"><div class="card-title"><h2>${esc(t(locale, 'instance.version'))}</h2>${badge(t(locale, 'instance.activeVersion', { number: inst.activeVersion }), { tone: 'success', dot: true })}</div>
-${versionsList(core, locale, user, app, base, csrf, inst.activeVersion, inst.id)}</section>`;
+${behind}${versionsList(core, locale, user, app, base, csrf, inst.activeVersion, inst.id)}</section>`;
   const data = `<section class="card" id="data"><h2>${esc(t(locale, 'instance.data.title'))}</h2>
 <div class="btn-row"><a class="${btn('secondary', true)}" href="/instances/${encodeURIComponent(inst.slug)}/export">${icon('download')}${esc(t(locale, 'instance.data.export'))}</a></div>
 <p class="hint gap-top">${esc(t(locale, 'instance.data.hint', { slug: inst.slug }))}</p>
@@ -502,6 +510,33 @@ export const manageExtension: PlatformExtension = (router, core) => {
       : { ok: 'notice.ok.autoUpdateOn', anchor: 'details' };
   }));
 
+  // Updates and the badge in one form: each is changed only where its value differs, and the notice names what changed.
+  router.post('/ui/instances/:slug/settings', ...action(instBack, (req, user) => {
+    const body = (req.body as Record<string, unknown> | undefined) ?? {};
+    // Each switch sends a hidden "0" and, when on, a "1" as well.
+    const on = (name: string): boolean => (Array.isArray(body[name]) ? (body[name] as unknown[]).includes('1') : body[name] === '1');
+    const inst = managed(user, param(req, 'slug'));
+    // A switch the form did not send is left as it is, the same for both.
+    const auto = on('auto_update');
+    const autoChanged = body.auto_update !== undefined && auto !== inst.autoUpdate;
+    const badgeChanged = core.settings.madeWithBadge && body.badge !== undefined && on('badge') !== inst.showBadge;
+    // The badge first: switching updates on can be refused (the snapshot budget, a version with other data rules), and the
+    // badge change sent with it is kept all the same; the refusal is the notice then.
+    if (badgeChanged) core.apps.setShowBadge(inst.id, on('badge'), user.id);
+    let now = inst;
+    if (autoChanged) {
+      // Switching it on can move the instance to the latest version, which takes a snapshot like a manual activation.
+      now = auto ? withSnapshotBudget(core, inst.id, () => core.apps.setAutoUpdate(inst.id, true, user.id)) : core.apps.setAutoUpdate(inst.id, false, user.id);
+    }
+    // Moving to another version is the change that matters most, also when the badge changed with it.
+    if (now.activeVersion !== inst.activeVersion) return { ok: 'notice.ok.autoUpdateMoved', params: { version: String(now.activeVersion) }, anchor: 'details' };
+    if (autoChanged && !badgeChanged) {
+      return auto ? { ok: 'notice.ok.autoUpdateOn', anchor: 'details' } : { ok: 'notice.ok.autoUpdateOff', params: { version: String(now.activeVersion) }, anchor: 'details' };
+    }
+    if (badgeChanged && !autoChanged) return { ok: on('badge') ? 'notice.ok.badgeOn' : 'notice.ok.badgeOff', anchor: 'details' };
+    return { ok: 'notice.ok.saved', anchor: 'details' };
+  }));
+
   router.post('/ui/instances/:slug/badge', ...action(instBack, (req, user) => {
     // The form sends a hidden "0" and, when ticked, a "1" as well.
     const raw = (req.body as Record<string, unknown> | undefined)?.on;
@@ -517,7 +552,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
     if (usersLevel !== '' && !(USERS_LEVELS as readonly string[]).includes(usersLevel)) throw new LagerError('invalid_argument', 'Invalid level.');
     const now = core.apps.setVisibility(inst.id, field(req, 'visibility') as Visibility, user.id);
     if (usersLevel !== '') core.apps.setUsersLevel(inst.id, usersLevel as UsersLevel, user.id);
-    return { ok: VISIBILITY_DONE[now.visibility], params: { slug: inst.slug }, anchor: 'details' };
+    return { ok: VISIBILITY_DONE[now.visibility], params: { slug: inst.slug }, anchor: 'sharing' };
   }));
 
   router.post('/ui/instances/:slug/restore', ...action(instBack, (req, user) => {

@@ -1,0 +1,113 @@
+import { JSDOM } from 'jsdom';
+import request from 'supertest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { csrfToken } from '../src/http/session.js';
+import { t } from '../src/i18n/index.js';
+import { showcase, type Showcase } from './support/pages.js';
+
+let s: Showcase | undefined;
+afterEach(() => { s?.h.core.close(); s = undefined; });
+
+const dom = (html: string): Document => new JSDOM(html).window.document;
+
+describe('the instance page', () => {
+  it('puts who may open the instance at the top of Sharing, before the people and groups', async () => {
+    s = await showcase();
+    const doc = dom((await request(s.h.app).get('/instances/notes').set('Host', s.h.host).set('Cookie', await s.h.login())).text);
+    const sharing = doc.getElementById('sharing')!;
+    const first = sharing.querySelector('form')!;
+    expect(first.getAttribute('action')).toBe('/ui/instances/notes/visibility');
+    expect(sharing.querySelector('h3')!.textContent).toBe(t('en', 'instance.grants.people'));
+    // On a phone the Sharing card is the second card, right after the versions.
+    expect([...doc.querySelectorAll('.main-col > section.card')].map((c) => c.id).slice(0, 2)).toEqual(['versions', 'sharing']);
+  });
+
+  it('the settings form refuses everyone who may not manage the instance, and changes nothing for them', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const flags = (slug = 'notes') => { const i = core.apps.getInstanceBySlug(slug)!; return [i.autoUpdate, i.showBadge]; };
+    const before = flags();
+    const tasksBefore = flags('tasks');
+    const post = (cookie: string, slug: string, csrf: string) =>
+      request(s!.h.app).post(`/ui/instances/${slug}/settings`).set('Host', s!.h.host).set('Cookie', cookie).type('form').send({ csrf, auto_update: '0', badge: '0' });
+    // Uwe may only view notes, and only use tasks.
+    const uwe = await s.h.login('uwe@x.y', 'password-123');
+    const uweCsrf = csrfToken(core, core.users.get(s.ids.uwe)!);
+    expect((await post(uwe, 'notes', uweCsrf)).status).toBe(403);
+    expect((await post(uwe, 'tasks', uweCsrf)).status).toBe(403);
+    // Not signed in: to the sign-in page.
+    const anonymous = await post('', 'notes', 'x');
+    expect(anonymous.status).toBe(302);
+    expect(anonymous.headers.location).toMatch(/^\/login/);
+    // The owner, with a token from somewhere else.
+    expect((await post(await s.h.login(), 'notes', 'stale')).status).toBe(403);
+    expect(flags()).toEqual(before);
+    expect(flags('tasks')).toEqual(tasksBefore);
+  });
+
+  it('a switch the form does not send stays as it is', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const cookie = await s.h.login();
+    const csrf = csrfToken(core, core.users.get(s.h.adminId)!);
+    await request(s.h.app).post('/ui/instances/notes/settings').set('Host', s.h.host).set('Cookie', cookie).type('form').send({ csrf, badge: '0' });
+    expect([core.apps.getInstanceBySlug('notes')!.autoUpdate, core.apps.getInstanceBySlug('notes')!.showBadge]).toEqual([true, false]);
+  });
+
+  it('a manager refused updates for a version with other data rules keeps the badge change, and hears why', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const admin = core.users.get(s.h.adminId)!;
+    const notes = () => core.apps.getInstanceBySlug('notes')!;
+    // The owner switches updates off; a new version without the endpoints arrives; Pia manages notes but does not own it.
+    core.apps.setAutoUpdate(notes().id, false, admin.id);
+    core.apps.deploy({ slug: 'notes', html: '<p>3</p>', userId: admin.id });
+    core.access.setGrant(notes(), 'user', s.ids.pia, 'admin', admin);
+    const pia = await s.h.login('pia@x.y', 'password-123');
+    const res = await request(s.h.app).post('/ui/instances/notes/settings').set('Host', s.h.host).set('Cookie', pia).type('form')
+      .send({ csrf: csrfToken(core, core.users.get(s.ids.pia)!), auto_update: ['0', '1'], badge: '0' });
+    expect(res.status).toBe(302);
+    expect([notes().autoUpdate, notes().showBadge, notes().activeVersion]).toEqual([false, false, 2]);
+    const page = dom((await request(s.h.app).get(res.headers.location.split('#')[0]).set('Host', s.h.host).set('Cookie', pia)).text);
+    expect(page.querySelector('.notice-danger')!.textContent).toContain(t('en', 'notice.rulesDiffer'));
+  });
+
+  it('keeps both switches with one Save, and names what changed', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const cookie = await s.h.login();
+    const csrf = csrfToken(core, core.users.get(s.h.adminId)!);
+    const send = async (body: Record<string, string | string[]>): Promise<string> => {
+      const res = await request(s!.h.app).post('/ui/instances/notes/settings').set('Host', s!.h.host).set('Cookie', cookie).type('form').send({ csrf, ...body });
+      expect(res.status).toBe(302);
+      const page = dom((await request(s!.h.app).get(res.headers.location.split('#')[0]).set('Host', s!.h.host).set('Cookie', cookie)).text);
+      return page.querySelector('#notice > span')!.textContent!;
+    };
+    const notes = () => core.apps.getInstanceBySlug('notes')!;
+    expect([notes().autoUpdate, notes().showBadge]).toEqual([true, true]);
+    // Both changed with one press: both are kept.
+    expect(await send({ auto_update: '0', badge: '0' })).toBe(t('en', 'notice.ok.saved'));
+    expect([notes().autoUpdate, notes().showBadge]).toEqual([false, false]);
+    expect(await send({ auto_update: '0', badge: ['0', '1'] })).toBe(t('en', 'notice.ok.badgeOn'));
+    expect(await send({ auto_update: ['0', '1'], badge: ['0', '1'] })).toBe(t('en', 'notice.ok.autoUpdateOn', { version: String(notes().activeVersion) }));
+    expect([notes().autoUpdate, notes().showBadge]).toEqual([true, true]);
+  });
+
+  it('marks the newest version and says when the next deploy moves a rolled-back instance forward', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const cookie = await s.h.login();
+    const html = async (): Promise<Document> => dom((await request(s!.h.app).get('/instances/notes').set('Host', s!.h.host).set('Cookie', cookie)).text);
+    let doc = await html();
+    expect(doc.querySelector('li[data-version="2"] .tl-title')!.textContent).toContain(t('en', 'instance.latest'));
+    expect(doc.querySelector('li[data-version="1"] .tl-title')!.textContent).not.toContain(t('en', 'instance.latest'));
+    expect(doc.querySelector('#versions .notice-warning')).toBeNull();
+    // Back to version 1 with updates still on.
+    core.apps.activate(core.apps.getInstanceBySlug('notes')!.id, 1, s.h.adminId);
+    doc = await html();
+    expect(doc.querySelector('#versions .notice-warning')!.textContent).toContain(t('en', 'instance.behind', { latest: 2, active: 1 }));
+    // With updates off it stays on version 1, and there is nothing to warn about.
+    core.apps.setAutoUpdate(core.apps.getInstanceBySlug('notes')!.id, false, s.h.adminId);
+    expect((await html()).querySelector('#versions .notice-warning')).toBeNull();
+  });
+});

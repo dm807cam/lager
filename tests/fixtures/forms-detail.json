@@ -225,56 +225,6 @@
       ]
     },
     {
-      "action": "/ui/instances/notes/auto-update",
-      "method": "post",
-      "fields": [
-        {
-          "name": "csrf",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "on",
-          "type": "checkbox",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "on",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null,
-          "value": "0"
-        }
-      ]
-    },
-    {
-      "action": "/ui/instances/notes/badge",
-      "method": "post",
-      "fields": [
-        {
-          "name": "csrf",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "on",
-          "type": "checkbox",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "on",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null,
-          "value": "0"
-        }
-      ]
-    },
-    {
       "action": "/ui/instances/notes/delete",
       "method": "post",
       "fields": [
@@ -533,6 +483,44 @@
       ]
     },
     {
+      "action": "/ui/instances/notes/settings",
+      "method": "post",
+      "fields": [
+        {
+          "name": "auto_update",
+          "type": "checkbox",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "auto_update",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        },
+        {
+          "name": "badge",
+          "type": "checkbox",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "badge",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        },
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
       "action": "/ui/instances/notes/visibility",
       "method": "post",
       "fields": [
@@ -593,56 +581,6 @@
           "type": "hidden",
           "required": false,
           "maxlength": null
-        }
-      ]
-    },
-    {
-      "action": "/ui/instances/tasks/auto-update",
-      "method": "post",
-      "fields": [
-        {
-          "name": "csrf",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "on",
-          "type": "checkbox",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "on",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null,
-          "value": "0"
-        }
-      ]
-    },
-    {
-      "action": "/ui/instances/tasks/badge",
-      "method": "post",
-      "fields": [
-        {
-          "name": "csrf",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "on",
-          "type": "checkbox",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "on",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null,
-          "value": "0"
         }
       ]
     },
@@ -760,6 +698,44 @@
           "required": false,
           "maxlength": null,
           "value": "user"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/tasks/settings",
+      "method": "post",
+      "fields": [
+        {
+          "name": "auto_update",
+          "type": "checkbox",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "auto_update",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        },
+        {
+          "name": "badge",
+          "type": "checkbox",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "badge",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        },
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
         }
       ]
     },
@@ -1748,56 +1724,6 @@
       ]
     },
     {
-      "action": "/ui/instances/notes/auto-update",
-      "method": "post",
-      "fields": [
-        {
-          "name": "csrf",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "on",
-          "type": "checkbox",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "on",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null,
-          "value": "0"
-        }
-      ]
-    },
-    {
-      "action": "/ui/instances/notes/badge",
-      "method": "post",
-      "fields": [
-        {
-          "name": "csrf",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "on",
-          "type": "checkbox",
-          "required": false,
-          "maxlength": null
-        },
-        {
-          "name": "on",
-          "type": "hidden",
-          "required": false,
-          "maxlength": null,
-          "value": "0"
-        }
-      ]
-    },
-    {
       "action": "/ui/instances/notes/domains",
       "method": "post",
       "fields": [
@@ -2085,6 +2011,44 @@
           "required": false,
           "maxlength": null,
           "value": "clips"
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/settings",
+      "method": "post",
+      "fields": [
+        {
+          "name": "auto_update",
+          "type": "checkbox",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "auto_update",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        },
+        {
+          "name": "badge",
+          "type": "checkbox",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "badge",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null,
+          "value": "0"
+        },
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
         }
       ]
     },
