@@ -190,6 +190,11 @@ export function setupTokenValid(core: Core, user: User, value: unknown): boolean
 /** Groups of four, as authenticator apps accept them typed in. */
 const grouped = (secret: string): string => secret.match(/.{1,4}/g)!.join(' ');
 
+/** The address as a QR code; none for an address too long for one (the button and the key below still work). */
+function scanCode(uri: string, label: string): string {
+  try { return qrSvg(uri, label); } catch (e) { if (e instanceof RangeError) return ''; throw e; }
+}
+
 /** The secret of a new setup and the field for the first code from it. Never cached; the secret is not in force before that code. */
 export function setupPage(core: Core, locale: Locale, user: User, csrf: string, token: string, secret: string, error?: string): string {
   const title = t(locale, 'account.twoFactor.setup.title');
@@ -198,7 +203,7 @@ export function setupPage(core: Core, locale: Locale, user: User, csrf: string, 
 ${error ? notice('danger', error) : ''}
 <section class="card"><ol class="steps stack">
 <li><p>${esc(t(locale, 'account.twoFactor.setup.step1'))}</p>
-<div class="qr-setup">${qrSvg(uri, t(locale, 'account.twoFactor.setup.qr'))}<div class="stack">
+<div class="qr-setup">${scanCode(uri, t(locale, 'account.twoFactor.setup.qr'))}<div class="stack">
 <p><a class="${btn('secondary')}" href="${esc(uri)}">${icon('open')}${esc(t(locale, 'account.twoFactor.setup.open'))}</a></p>
 ${field('tf-key', t(locale, 'account.twoFactor.setup.key'), copyField(locale, grouped(secret)), t(locale, 'account.twoFactor.setup.keyHint'))}</div></div></li>
 <li><form method="post" action="/account/two-factor/confirm" class="stack">${hiddenField('csrf', csrf)}${hiddenField('setup', token)}

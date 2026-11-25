@@ -9,7 +9,7 @@ import { mcpExtension } from '../src/mcp/http.js';
 import { createCore } from '../src/core.js';
 import { dashboardExtension } from '../src/http/dashboard.js';
 import { csrfToken } from '../src/http/session.js';
-import { MAX_CODES_PER_SIGN_IN, MAX_SECOND_STEP_COOKIE_BYTES, setupToken } from '../src/http/two-factor.js';
+import { MAX_CODES_PER_SIGN_IN, MAX_SECOND_STEP_COOKIE_BYTES, setupPage, setupToken } from '../src/http/two-factor.js';
 import { t } from '../src/i18n/index.js';
 import { qrSvg } from '../src/platform/qr.js';
 import { MemoryMailer } from '../src/platform/mail.js';
@@ -355,6 +355,16 @@ describe('signing in with two-step sign-in on', () => {
 describe('the account page', () => {
   /** Signed in as Ann without two-step sign-in. */
   const signedIn = async (_s: ReturnType<typeof setup>): Promise<string> => h!.login(USER.email, USER.password);
+
+  it('an address too long for a QR code leaves the code out, and keeps the button and the key', () => {
+    const s = setup();
+    const secret = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+    // The label carries the account's address; over 2331 bytes no QR version holds the whole otpauth address.
+    const html = setupPage(s.core, 'en', { ...s.user, email: `${'a'.repeat(2400)}@example.com` }, 'csrf', 'token', secret);
+    expect(html).not.toContain('<svg class="qr"');
+    expect(html).toContain(t('en', 'account.twoFactor.setup.open'));
+    expect(html).toContain(secret.match(/.{1,4}/g)!.join(' '));
+  });
 
   it('setting up asks for the password, shows the key, and turns on only with a code from it', async () => {
     const s = setup();

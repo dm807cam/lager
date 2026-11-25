@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { describe, expect, it } from 'vitest';
-import { encodeQr, qrSvg } from '../src/platform/qr.js';
+import { encodeQr, finderPenalty, qrSvg } from '../src/platform/qr.js';
 
 /**
  * Reference symbols made with the Python `qrcode` package (8.2) at level M in byte mode, with the mask given: versions 1 to 26,
- * so they cover the version information (7 and up), the 16-bit length (10 and up) and blocks of two lengths.
+ * so they cover the version information (7 and up), the 16-bit length (10 and up) and blocks of two lengths, and all eight masks.
  */
 const VECTORS = JSON.parse(fs.readFileSync(new URL('./fixtures/qr-vectors.json', import.meta.url), 'utf8')) as Array<{ text: string; mask: number; version: number; rows: string[] }>;
 
@@ -39,6 +39,22 @@ describe('QR encoder', () => {
       for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
       expect(raw & 0x3ff).toBe(rem & 0x3ff);
     }
+  });
+
+  it('covers every mask pattern with a reference symbol', () => {
+    expect([...new Set(VECTORS.map((v) => v.mask))].sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it('counts a finder-like run at the edge against the light quiet zone, as the standard does', () => {
+    const line = (s: string): boolean[] => [...s].map((c) => c === '1');
+    // At the very start: the quiet zone is before it, four light modules after it.
+    expect(finderPenalty(line('10111010000110'))).toBe(80);
+    // At the very end, with light before it.
+    expect(finderPenalty(line('01100001011101'))).toBe(80);
+    // Inside, light on one side only.
+    expect(finderPenalty(line('11000010111011'))).toBe(40);
+    // Dark next to it on both sides.
+    expect(finderPenalty(line('110111011'))).toBe(0);
   });
 
   it('refuses text longer than version 40 holds', () => {

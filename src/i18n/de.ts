@@ -580,6 +580,8 @@ export const de: Record<MessageKey, string> = {
   'instance.snapshots.none.detail': "Lager legt vor jedem Versionswechsel und vor jeder Wiederherstellung einen an, sobald die Instanz Daten enthält, damit du zurückkannst.",
   'app.noCollaborators.detail': "Mitarbeiter veröffentlichen wie du neue Versionen dieser App. Du kannst Publisher und Administratoren über ihre E-Mail-Adresse hinzufügen.",
   'admin.groups.none.detail': "Eine Gruppe teilt eine Instanz mit mehreren Personen auf einmal und kann ihren Mitgliedern mehr oder weniger Speicher geben.",
+  'password.show': "Passwort anzeigen",
+  'password.hide': "Passwort verbergen",
   'home.copyName': "Name deiner Kopie",
   'notice.ok.copyCreated': "Deine Kopie {slug} ist bereit.",
   'dash.instanceCount.one': '{count} Instanz',

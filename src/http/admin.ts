@@ -324,7 +324,7 @@ ${settingRow('smtp-port', t(locale, 'admin.mail.port'), t(locale, 'admin.mail.po
 ${settingRow('smtp-user', t(locale, 'admin.mail.user'), t(locale, 'admin.mail.user.hint'),
     `<input id="smtp-user" name="user" maxlength="254" autocomplete="off" spellcheck="false" value="${esc(saved?.user ?? '')}">`)}
 ${settingRow('smtp-password', t(locale, 'admin.mail.password'), t(locale, 'admin.mail.password.hint'),
-    `<input id="smtp-password" name="password" type="password" maxlength="${MAX_SMTP_PASSWORD}" autocomplete="new-password" spellcheck="false">`,
+    `<input id="smtp-password" name="password" type="password" data-reveal="off" maxlength="${MAX_SMTP_PASSWORD}" autocomplete="new-password" spellcheck="false">`,
     saved?.passwordSaved && !saved.passwordUnreadable ? `<p class="hint">${esc(t(locale, 'admin.mail.passwordSaved'))}</p>` : '')}
 ${settingRow('smtp-from', t(locale, 'admin.mail.from'), t(locale, 'admin.mail.from.hint', { from }),
     `<input id="smtp-from" name="from" maxlength="200" autocomplete="off" spellcheck="false" placeholder="${esc(from)}" value="${esc(saved?.from ?? '')}">`)}
@@ -346,7 +346,7 @@ ${settingRow('ai-provider-name', t(locale, 'common.name'), t(locale, 'admin.ai.p
 ${settingRow('ai-provider', t(locale, 'admin.ai.provider'), t(locale, 'admin.ai.provider.hint'),
     `<select id="ai-provider" name="type">${optionList(types, p?.type ?? 'anthropic')}</select>`)}
 ${settingRow('ai-key', t(locale, 'admin.ai.key'), t(locale, 'admin.ai.key.hint'),
-    `<input id="ai-key" name="apiKey" type="password" maxlength="1000" autocomplete="off" spellcheck="false">`,
+    `<input id="ai-key" name="apiKey" type="password" data-reveal="off" maxlength="1000" autocomplete="off" spellcheck="false">`,
     p?.keyHint ? `<p class="hint">${esc(t(locale, 'admin.ai.keySaved', { hint: p.keyHint }))}</p>` : '')}
 ${settingRow('ai-base-url', t(locale, 'admin.ai.baseUrl'), t(locale, 'admin.ai.baseUrl.hint'),
     `<input id="ai-base-url" name="baseUrl" type="url" maxlength="500" autocomplete="off" spellcheck="false" placeholder="https://…/v1" value="${esc(p?.baseUrl ?? '')}">`)}
