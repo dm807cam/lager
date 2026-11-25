@@ -20,6 +20,7 @@ import { Groups } from './platform/groups.js';
 import { createMailer, MailSettings, SMTP_TIMEOUT_MS, type Mailer, type MailSource } from './platform/mail.js';
 import { Settings } from './platform/settings.js';
 import { ApiTokens } from './platform/tokens.js';
+import { TwoFactor } from './platform/two-factor.js';
 import { MIN_PASSWORD_LENGTH, Users } from './platform/users.js';
 
 export interface Core {
@@ -30,6 +31,8 @@ export interface Core {
   rooms: Rooms;
   /** Static API tokens (`lgr_…`). */
   tokens: ApiTokens;
+  /** Two-step sign-in: TOTP secrets, recovery codes and the count of wrong codes per account. */
+  twoFactor: TwoFactor;
   /** OAuth clients, codes and tokens for the MCP connector. */
   oauth: OAuthStore;
   /** Persisted instance-wide settings (registration mode, instance limit). */
@@ -161,7 +164,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   const privatePurge = new PrivatePurge((instanceId, userId) => data.purgePrivateArea(instanceId, userId), PRIVATE_PURGE_LIMIT);
   removal.onRemoved((userId) => { privatePurge.start(userId, apps.listAllInstances().map((instance) => instance.id)); });
   return {
-    config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, oauth, settings, mailer, mailSettings,
+    config, users, apps, data, assets, rooms: new Rooms(), hub, tokens, twoFactor: new TwoFactor(db, config.secret), oauth, settings, mailer, mailSettings,
     get mailSource(): MailSource { return config.smtpUrl ? 'env' : mailSettings.get() ? 'admin' : 'none'; },
     accounts, groups, domains, access,
     icons, ai, removal, privatePurge, deployLimiter: new RateLimiter(DEPLOYS_PER_HOUR, 3600_000), ingest,

@@ -18,6 +18,10 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 - **Docs:** the ChatGPT steps no longer ask for developer mode, which ChatGPT no longer needs for custom MCP servers, and say which plans may use connectors that write (Business, Enterprise and Edu; Pro reads only) and who may add one in a workspace.
 - **Dependencies:** nodemailer 10.6.1 (upstream bug fixes; Lager's emails do not change).
 
+### Security
+
+- **Two-step sign-in:** every account can turn on a second step on its account page. After the password, signing in asks for a 6-digit code from an authenticator app (TOTP, RFC 6238), or one of 10 single-use recovery codes. The right password alone gives no session, no device cookie and no way into OAuth or instances. Each code works once; wrong codes are counted per account in the database and pause the second step for 1 minute up to a day, which leaves about 5 guesses a day to someone who knows the password; the owner gets a mail when it is turned on or off, when a recovery code is used, when new recovery codes are created and when a pause starts. Turning it on signs out every other browser, disconnects AI assistants and revokes API tokens; only the browser that gave the password can see the new key and confirm it. Turning it off or creating new recovery codes needs the password and a code. Administrators can turn it off for another account (not their own) after confirming with their own password and code; that also signs the account out everywhere and revokes its API tokens. A password reset does not turn it off. The secret is encrypted with a key derived from the server secret and bound to the account; recovery codes are stored as a keyed hash. No new dependency. The platform database moves to schema version 6 (two new tables). See [Two-step sign-in](docs/users-and-sharing.md#two-step-sign-in) and [ADR 0019](docs/adr/0019-two-step-sign-in.md).
+
 ## [0.2.0] - 2026-11-20
 
 ### Added

@@ -8,6 +8,8 @@ export const instanceCookieName = (config: Config): string => (isHttps(config) ?
 export const nonceCookieName = (config: Config): string => (isHttps(config) ? '__Host-lager_nonce' : 'lager_nonce');
 /** Marks a browser that has signed in to an account before; see `LoginLimiter`. */
 export const deviceCookieName = (config: Config): string => (isHttps(config) ? '__Host-lager_device' : 'lager_device');
+/** The sign-in that waits for its second step: who gave the right password, for a few minutes. Signs nobody in by itself. */
+export const twoFactorCookieName = (config: Config): string => (isHttps(config) ? '__Host-lager_2fa' : 'lager_2fa');
 /** Shape of the sign-in nonce an instance hands to the platform. */
 export const NONCE_RE = /^[A-Za-z0-9_-]{22,64}$/;
 export const THIRTY_DAYS_SECONDS = 30 * 24 * 3600;
@@ -36,6 +38,11 @@ export function readCookie(req: Request, name: string): string | undefined {
 export function sessionCookiePlanted(req: Request, config: Config): boolean {
   if (isHttps(config)) return false;
   const name = sessionCookieName(config);
+  return (req.headers.cookie ?? '').split(';').filter((part) => part.slice(0, Math.max(part.indexOf('='), 0)).trim() === name).length > 1;
+}
+
+/** True when the request carries the cookie `name` more than once; see `sessionCookiePlanted`. */
+export function cookieRepeated(req: Request, name: string): boolean {
   return (req.headers.cookie ?? '').split(';').filter((part) => part.slice(0, Math.max(part.indexOf('='), 0)).trim() === name).length > 1;
 }
 

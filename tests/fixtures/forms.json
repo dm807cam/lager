@@ -718,6 +718,14 @@
       ]
     },
     {
+      "action": "/account/two-factor/setup",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "current"
+      ]
+    },
+    {
       "action": "/logout",
       "method": "post",
       "fields": [

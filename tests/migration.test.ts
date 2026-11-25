@@ -95,6 +95,31 @@ describe('platform database migrations', () => {
     }
   });
 
+  it('a version-5 database keeps its accounts and gains the tables of two-step sign-in, which go with the account', () => {
+    const dir = versionOne();
+    const old = new DatabaseSync(path.join(dir, 'platform.sqlite'));
+    old.exec('PRAGMA foreign_keys = ON');
+    for (const m of MIGRATIONS.slice(1, 5)) old.exec(m);
+    old.exec('PRAGMA user_version = 5');
+    old.close();
+    const db = openPlatformDb(dir);
+    try {
+      expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM user_two_factor').get()).toMatchObject({ n: 0 });
+      db.prepare('INSERT INTO user_two_factor (user_id, secret_enc, created_at) VALUES (?, ?, ?)').run('u1', 'v1:x:y:z', '2026-11-21T00:00:00.000Z');
+      db.prepare('INSERT INTO user_recovery_codes (code_hash, user_id) VALUES (?, ?)').run('h1', 'u1');
+      expect({ ...db.prepare('SELECT confirmed_at, last_step, failures, lock_level, locked_until FROM user_two_factor').get() })
+        .toEqual({ confirmed_at: null, last_step: 0, failures: 0, lock_level: 0, locked_until: 0 });
+      expect(() => db.prepare('INSERT INTO user_two_factor (user_id, secret_enc, created_at) VALUES (?, ?, ?)').run('no-such-user', 'v1:x:y:z', 'x')).toThrow();
+      // The account owns an app here, so its second factor is removed the way account removal removes it.
+      db.prepare('DELETE FROM user_recovery_codes WHERE user_id = ?').run('u1');
+      db.prepare('DELETE FROM user_two_factor WHERE user_id = ?').run('u1');
+      expect(db.prepare('SELECT COUNT(*) AS n FROM user_two_factor').get()).toMatchObject({ n: 0 });
+    } finally {
+      db.close();
+    }
+  });
+
   it('a fresh database and a migrated one have the same schema', () => {
     const schema = (db: DatabaseSync): string[] =>
       (db.prepare("SELECT name FROM pragma_table_list WHERE schema = 'main' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>)
@@ -107,6 +132,8 @@ describe('platform database migrations', () => {
     expect(schema(fresh)).toContain('ingest_endpoints.token_generation INTEGER');
     expect(schema(fresh)).toContain('ingest_endpoints.origins TEXT');
     expect(schema(fresh)).toContain('embed_origins.origins TEXT');
+    expect(schema(fresh)).toContain('user_two_factor.secret_enc TEXT');
+    expect(schema(fresh)).toContain('user_recovery_codes.code_hash TEXT');
     fresh.close();
     migrated.close();
   });
