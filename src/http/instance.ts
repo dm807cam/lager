@@ -73,8 +73,11 @@ export function offlineAllowed(caps: Capabilities): boolean {
   return caps.db?.offline !== false;
 }
 
-/** `customHost` is the custom domain the visitor came in on; the platform sends the code back to exactly that host. */
-function loginUrl(core: Core, instance: Instance, customHost?: string, nonce?: string): string {
+/**
+ * The platform's sign-in for `instance`, as an address to send the visitor to. `customHost` is the custom domain the visitor came in
+ * on; the platform sends the code back to exactly that host.
+ */
+function signInAddress(core: Core, instance: Instance, customHost?: string, nonce?: string): string {
   const host = customHost ? `&host=${encodeURIComponent(customHost)}` : '';
   const n = nonce ? `&n=${nonce}` : '';
   return `${core.config.publicUrl.origin}/auth/instance?slug=${encodeURIComponent(instance.slug)}${host}&return=%2F${n}`;
@@ -184,7 +187,7 @@ export function createInstanceRouter(core: Core): express.Router {
       // Not signed in, or signed in here but no longer allowed in (a share that was taken back): to the platform's sign-in for this
       // instance. It says there, on its own origin, which account has no access and offers another one; a page on this origin
       // would hand the account's address to the app, which may not have been given it (ADR 0016).
-      res.redirect(loginUrl(core, ctx.instance, res.locals.customHost as string | undefined, signInNonce(core, req, res)));
+      res.redirect(signInAddress(core, ctx.instance, res.locals.customHost as string | undefined, signInNonce(core, req, res)));
       return;
     }
     const app = core.apps.getApp(ctx.instance.appId);
@@ -255,7 +258,7 @@ export function createInstanceRouter(core: Core): express.Router {
   router.get('/__lager/session', (req, res) => {
     const ctx = ctxOf(res);
     // Only a browser that is not signed in here can start a sign-in, so only it gets a nonce.
-    const url = loginUrl(core, ctx.instance, res.locals.customHost as string | undefined, ctx.user ? undefined : signInNonce(core, req, res));
+    const url = signInAddress(core, ctx.instance, res.locals.customHost as string | undefined, ctx.user ? undefined : signInNonce(core, req, res));
     if (ctx.viewer.level === 'none') {
       sendError(res, new LagerError('unauthenticated', 'Sign in required.'), { loginUrl: url });
       return;
