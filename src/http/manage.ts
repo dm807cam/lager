@@ -516,15 +516,18 @@ export const manageExtension: PlatformExtension = (router, core) => {
     // Each switch sends a hidden "0" and, when on, a "1" as well.
     const on = (name: string): boolean => (Array.isArray(body[name]) ? (body[name] as unknown[]).includes('1') : body[name] === '1');
     const inst = managed(user, param(req, 'slug'));
+    // A switch the form did not send is left as it is, the same for both.
     const auto = on('auto_update');
-    const autoChanged = auto !== inst.autoUpdate;
+    const autoChanged = body.auto_update !== undefined && auto !== inst.autoUpdate;
+    const badgeChanged = core.settings.madeWithBadge && body.badge !== undefined && on('badge') !== inst.showBadge;
+    // The badge first: switching updates on can be refused (the snapshot budget, a version with other data rules), and the
+    // badge change sent with it is kept all the same; the refusal is the notice then.
+    if (badgeChanged) core.apps.setShowBadge(inst.id, on('badge'), user.id);
     let now = inst;
     if (autoChanged) {
       // Switching it on can move the instance to the latest version, which takes a snapshot like a manual activation.
       now = auto ? withSnapshotBudget(core, inst.id, () => core.apps.setAutoUpdate(inst.id, true, user.id)) : core.apps.setAutoUpdate(inst.id, false, user.id);
     }
-    const badgeChanged = core.settings.madeWithBadge && body.badge !== undefined && on('badge') !== inst.showBadge;
-    if (badgeChanged) core.apps.setShowBadge(inst.id, on('badge'), user.id);
     // Moving to another version is the change that matters most, also when the badge changed with it.
     if (now.activeVersion !== inst.activeVersion) return { ok: 'notice.ok.autoUpdateMoved', params: { version: String(now.activeVersion) }, anchor: 'details' };
     if (autoChanged && !badgeChanged) {

@@ -560,7 +560,7 @@ export const de: Record<MessageKey, string> = {
   'instance.settings': "Einstellungen",
   'instance.grants.people': "Personen und Gruppen",
   'instance.latest': "neueste",
-  'instance.behind': "v{latest} ist neuer als die aktive v{active}. Die nächste Bereitstellung bringt diese Instanz auf die neueste Version; um auf v{active} zu bleiben, schalte unter Details die automatischen Updates aus.",
+  'instance.behind': "v{latest} ist neuer als die aktive v{active}. Die nächste Bereitstellung einer neuen Version bringt diese Instanz auf diese Version; um auf v{active} zu bleiben, schalte unter Details die automatischen Updates aus.",
   'instance.storage': 'Speicher',
   'instance.storage.used': '{used} von {quota} belegt',
   'instance.storage.snapshots': 'Schnappschüsse: {size} (zählen nicht mit)',

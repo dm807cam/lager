@@ -22,6 +22,56 @@ describe('the instance page', () => {
     expect([...doc.querySelectorAll('.main-col > section.card')].map((c) => c.id).slice(0, 2)).toEqual(['versions', 'sharing']);
   });
 
+  it('the settings form refuses everyone who may not manage the instance, and changes nothing for them', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const flags = (slug = 'notes') => { const i = core.apps.getInstanceBySlug(slug)!; return [i.autoUpdate, i.showBadge]; };
+    const before = flags();
+    const tasksBefore = flags('tasks');
+    const post = (cookie: string, slug: string, csrf: string) =>
+      request(s!.h.app).post(`/ui/instances/${slug}/settings`).set('Host', s!.h.host).set('Cookie', cookie).type('form').send({ csrf, auto_update: '0', badge: '0' });
+    // Uwe may only view notes, and only use tasks.
+    const uwe = await s.h.login('uwe@x.y', 'password-123');
+    const uweCsrf = csrfToken(core, core.users.get(s.ids.uwe)!);
+    expect((await post(uwe, 'notes', uweCsrf)).status).toBe(403);
+    expect((await post(uwe, 'tasks', uweCsrf)).status).toBe(403);
+    // Not signed in: to the sign-in page.
+    const anonymous = await post('', 'notes', 'x');
+    expect(anonymous.status).toBe(302);
+    expect(anonymous.headers.location).toMatch(/^\/login/);
+    // The owner, with a token from somewhere else.
+    expect((await post(await s.h.login(), 'notes', 'stale')).status).toBe(403);
+    expect(flags()).toEqual(before);
+    expect(flags('tasks')).toEqual(tasksBefore);
+  });
+
+  it('a switch the form does not send stays as it is', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const cookie = await s.h.login();
+    const csrf = csrfToken(core, core.users.get(s.h.adminId)!);
+    await request(s.h.app).post('/ui/instances/notes/settings').set('Host', s.h.host).set('Cookie', cookie).type('form').send({ csrf, badge: '0' });
+    expect([core.apps.getInstanceBySlug('notes')!.autoUpdate, core.apps.getInstanceBySlug('notes')!.showBadge]).toEqual([true, false]);
+  });
+
+  it('a manager refused updates for a version with other data rules keeps the badge change, and hears why', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const admin = core.users.get(s.h.adminId)!;
+    const notes = () => core.apps.getInstanceBySlug('notes')!;
+    // The owner switches updates off; a new version without the endpoints arrives; Pia manages notes but does not own it.
+    core.apps.setAutoUpdate(notes().id, false, admin.id);
+    core.apps.deploy({ slug: 'notes', html: '<p>3</p>', userId: admin.id });
+    core.access.setGrant(notes(), 'user', s.ids.pia, 'admin', admin);
+    const pia = await s.h.login('pia@x.y', 'password-123');
+    const res = await request(s.h.app).post('/ui/instances/notes/settings').set('Host', s.h.host).set('Cookie', pia).type('form')
+      .send({ csrf: csrfToken(core, core.users.get(s.ids.pia)!), auto_update: ['0', '1'], badge: '0' });
+    expect(res.status).toBe(302);
+    expect([notes().autoUpdate, notes().showBadge, notes().activeVersion]).toEqual([false, false, 2]);
+    const page = dom((await request(s.h.app).get(res.headers.location.split('#')[0]).set('Host', s.h.host).set('Cookie', pia)).text);
+    expect(page.querySelector('.notice-danger')!.textContent).toContain(t('en', 'notice.rulesDiffer'));
+  });
+
   it('keeps both switches with one Save, and names what changed', async () => {
     s = await showcase();
     const { core } = s.h;

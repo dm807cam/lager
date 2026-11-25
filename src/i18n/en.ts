@@ -558,7 +558,7 @@ export const en = {
   'instance.settings': "Settings",
   'instance.grants.people': "People and groups",
   'instance.latest': "latest",
-  'instance.behind': "v{latest} is newer than the active v{active}. The next deploy moves this instance to the newest version; to stay on v{active}, switch off automatic updates under Details.",
+  'instance.behind': "v{latest} is newer than the active v{active}. The next deploy of a new version moves this instance to that version; to stay on v{active}, switch off automatic updates under Details.",
   'instance.storage': 'Storage',
   'instance.storage.used': '{used} of {quota} used',
   'instance.storage.snapshots': 'Snapshots: {size} (not counted)',

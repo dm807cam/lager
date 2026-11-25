@@ -560,7 +560,7 @@ export const fr: Record<MessageKey, string> = {
   'instance.settings': "Réglages",
   'instance.grants.people': "Personnes et groupes",
   'instance.latest': "la plus récente",
-  'instance.behind': "La v{latest} est plus récente que la v{active} active. Le prochain déploiement fera passer cette instance à la version la plus récente ; pour rester sur la v{active}, désactivez les mises à jour automatiques dans Détails.",
+  'instance.behind': "La v{latest} est plus récente que la v{active} active. Le prochain déploiement d’une nouvelle version fera passer cette instance à cette version ; pour rester sur la v{active}, désactivez les mises à jour automatiques dans Détails.",
   'instance.storage': 'Stockage',
   'instance.storage.used': '{used} utilisés sur {quota}',
   'instance.storage.snapshots': 'Instantanés : {size} (non comptés)',
