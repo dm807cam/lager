@@ -9,7 +9,7 @@ import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { localeOf } from './locale.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { MAX_NAME } from '../platform/tokens.js';
-import { confirmAttrs, confirmed, confirmPage, dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, type Question, visibilityLabel, withNotice } from './pages.js';
+import { confirmAttrs, confirmed, questionPage, dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, type Question, visibilityLabel, withNotice } from './pages.js';
 import { aiBadge, appCard, badge, btn, named, callout, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash } from './session.js';
 
@@ -223,7 +223,7 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
     const name = core.tokens.list(user.id).find((tk) => tk.id === req.params.id)?.name ?? '';
     if (!confirmed(req.body)) {
       if (!name) throw new LagerError('not_found', 'Token not found.');
-      res.type('html').send(confirmPage(localeOf(res), revokeQuestion(localeOf(res), name), { action: `/ui/tokens/${encodeURIComponent(req.params.id as string)}/revoke`, csrf: csrfToken(core, user), fields: {}, cancel: '/publish' }, shellOf(res)));
+      res.type('html').send(questionPage(localeOf(res), revokeQuestion(localeOf(res), name), req, csrfToken(core, user), '/publish', shellOf(res)));
       return;
     }
     if (!core.tokens.revoke(user.id, req.params.id as string)) throw new LagerError('not_found', 'Token not found.');

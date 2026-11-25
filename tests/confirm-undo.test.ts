@@ -35,12 +35,14 @@ describe('changes that cannot be taken back ask first', () => {
     core.ai.createModel({ id: 'small', providerId: provider.id, model: 'llama3.2' });
     const aiGroup = core.ai.createGroup({ name: 'Kids', modelId: null, hourlyLimit: 5 });
     const ingestBefore = core.ingest.token(notes.id, 'clips');
+    core.mailSettings.save({ host: 'smtp.example.com', port: 587, security: 'starttls', user: 'lager@example.com', password: 'p4ss word', from: '' });
 
     const cases: Array<[string, Record<string, string>, string, () => boolean]> = [
       ['/ui/instances/notes/restore', { snapshot: snap.id }, t('en', 'confirm.restore.title', { label: 'keep' }), () => !core.data.listSnapshots(notes.id).some((x) => x.label === 'pre-restore')],
       ['/ui/instances/notes/ingest/token', { name: 'clips' }, t('en', 'confirm.ingestToken.title', { name: 'clips' }), () => core.ingest.token(notes.id, 'clips') === ingestBefore],
       [`/ui/tokens/${token.id}/revoke`, {}, t('en', 'confirm.tokenRevoke.title', { name: 'laptop' }), () => core.tokens.list(s!.h.adminId).length === 1],
       [`/admin/groups/${s.ids.group}/delete`, {}, t('en', 'confirm.groupDelete.title', { name: 'Team' }), () => core.groups.get(s!.ids.group) !== null],
+      ['/admin/mail/delete', {}, t('en', 'confirm.mailRemove.title'), () => core.mailSettings.get() !== null],
       [`/admin/invites/${invite.id}/revoke`, {}, t('en', 'confirm.inviteRevoke.title'), () => core.accounts.listInvites().some((i) => i.id === invite.id && !i.used)],
       [`/admin/ai/models/small/delete`, {}, t('en', 'confirm.modelDelete.title', { name: 'small' }), () => core.ai.getModel('small') !== null],
       [`/admin/ai/providers/${provider.id}/delete`, {}, t('en', 'confirm.providerDelete.title', { name: 'Local' }), () => core.ai.getProvider(provider.id) !== null],
@@ -60,6 +62,10 @@ describe('changes that cannot be taken back ask first', () => {
       expect([first.tagName, second.tagName], path).toEqual(['A', 'BUTTON']);
       expect(second.className, path).toContain('btn-danger');
     }
+    // The group's question names what goes with it: Uwe is its member, and notes is shared with it.
+    const groupPage = dom((await c.get(`/admin/groups/${s.ids.group}`)).text);
+    expect(groupPage.querySelector('form[action$="/delete"]')!.getAttribute('data-confirm-text'))
+      .toBe(`It has 1 member and is shared on 1 instance. ${t('en', 'confirm.groupDelete.text')}`);
     // With the answer, each one happens.
     expect((await c.post(`/admin/groups/${s.ids.group}/delete`, { confirmed: '1' })).status).toBe(302);
     expect(core.groups.get(s.ids.group)).toBeNull();
@@ -108,6 +114,13 @@ describe('changes that cannot be taken back ask first', () => {
     dialog = ask();
     dialog.querySelector<HTMLButtonElement>('.btn-danger')!.click();
     expect(sent).toEqual(['confirmed=1']);
+    // The yes stays in the form; should the page come back (back/forward cache, a send that failed), the next press asks again,
+    // and a second yes sends the answer once.
+    form.removeAttribute('data-busy');
+    dialog = ask();
+    expect(dialog.hasAttribute('open')).toBe(true);
+    dialog.querySelector<HTMLButtonElement>('.btn-danger')!.click();
+    expect(sent).toEqual(['confirmed=1', 'confirmed=1']);
   });
 });
 
@@ -146,15 +159,38 @@ describe('changes that are easy to redo offer Undo', () => {
     expect(notes().disabled).toBe(false);
   });
 
+  it('a removal that changed nothing offers no Undo, which would bring back what someone else took away or never was', async () => {
+    s = await showcase();
+    const { core } = s.h;
+    const c = client(s, await s.h.login(), s.h.adminId);
+    const undoAfter = async (path: string, body: Record<string, string>): Promise<boolean> => {
+      const res = await c.post(path, body);
+      expect(res.status, path).toBe(302);
+      return dom((await c.get(res.headers.location.split('#')[0])).text).querySelector('form.notice-undo') !== null;
+    };
+    // Pia is no member of Team, and the instance has no such domain.
+    expect(await undoAfter(`/admin/groups/${s.ids.group}/members/${s.ids.pia}/remove`, {})).toBe(false);
+    expect(core.groups.members(s.ids.group).map((u) => u.id)).not.toContain(s.ids.pia);
+    expect(await undoAfter('/ui/instances/notes/domains/remove', { host: 'nowhere.example.com' })).toBe(false);
+    // Deactivating what is already off: no Undo that would switch it on against the first decision.
+    core.users.setDisabled(s.ids.uwe, true);
+    expect(await undoAfter(`/admin/users/${s.ids.uwe}/disabled`, { disabled: '1' })).toBe(false);
+    core.apps.setInstanceDisabled(core.apps.getInstanceBySlug('notes')!.id, true);
+    expect(await undoAfter('/admin/instances/notes/disabled', { disabled: '1' })).toBe(false);
+  });
+
   it('an Undo can only post to the platform’s own form routes', async () => {
     s = await showcase();
     const { core } = s.h;
     const admin = core.users.get(s.h.adminId)!;
     const sign = (u: unknown): string => sealToken({ uid: admin.id, k: 'flash', e: 0, m: 'notice.ok.saved', u }, core.config.secret, 60);
     expect(readFlash(core, admin, sign({ action: '/ui/instances/notes/grants', fields: { email: 'a@b.c' } })).undo).toEqual({ action: '/ui/instances/notes/grants', fields: { email: 'a@b.c' } });
-    for (const action of ['https://evil.example/x', '//evil.example/ui/x', '/login', '/ui/x"><script>', '/admin/../logout']) {
+    // Encoded dots too: a browser resolves %2e%2e in a form action as "..".
+    for (const action of ['https://evil.example/x', '//evil.example/ui/x', '/login', '/ui/x"><script>', '/admin/../logout', '/admin/%2e%2e/logout', '/ui/%2E%2E/x', '/ui/a/%2e']) {
       expect(readFlash(core, admin, sign({ action, fields: {} })).undo, action).toBeUndefined();
     }
     expect(readFlash(core, admin, sign({ action: '/ui/x', fields: { a: { b: 1 } } })).undo).toBeUndefined();
+    // Issued to one person, it is nothing for another.
+    expect(readFlash(core, core.users.get(s.ids.uwe)!, sign({ action: '/ui/instances/notes/grants', fields: { email: 'a@b.c' } }))).toEqual({});
   });
 });

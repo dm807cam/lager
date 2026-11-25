@@ -285,6 +285,16 @@ export function confirmPage(locale: Locale, q: Question, target: { action: strin
 <div class="btn-row"><a class="${btn('secondary')}" href="${esc(target.cancel)}">${esc(t(locale, 'signin.cancel'))}</a><button type="submit" class="${btn('danger')}">${esc(q.submit)}</button></div></form>`, opts), opts);
 }
 
+/**
+ * `confirmPage` for the form a request came from: it posts back to the same address with the same plain-text fields (never the
+ * old token or an earlier answer), so every route that asks replays its form the same way.
+ */
+export function questionPage(locale: Locale, q: Question, req: { body?: unknown; originalUrl: string }, csrf: string, cancel: string, opts: PageOpts): string {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const fields = Object.fromEntries(Object.entries(body).filter(([k, v]) => k !== 'csrf' && k !== 'confirmed' && typeof v === 'string')) as Record<string, string>;
+  return confirmPage(locale, q, { action: req.originalUrl.split('?')[0], csrf, fields, cancel }, opts);
+}
+
 /** A labelled control in a form; `control` is trusted markup, `hint` plain text. */
 export const field = (id: string, label: string, control: string, hint = ''): string =>
   `<div class="field"><label for="${esc(id)}">${esc(label)}</label>${control}${hint ? `<p class="hint">${esc(hint)}</p>` : ''}</div>`;

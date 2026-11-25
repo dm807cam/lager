@@ -83,6 +83,8 @@ export interface Flash { ok?: MessageKey; error?: MessageKey; params?: Record<st
 export interface Undo { action: string; fields: Record<string, string> }
 /** Undo forms post only to the platform's own form routes. */
 const UNDO_ACTION = /^\/(?:ui|admin)(?:\/[A-Za-z0-9%_-]{1,100}){1,6}$/;
+/** An encoded dot: a browser resolves `%2e%2e` as `..` in a form action, so no Undo path may hold one. */
+const ENCODED_DOT = /%2e/i;
 
 /**
  * Short-lived `flash` query value carrying the key of a notice, its values and its place to the page a POST redirects to. It is
@@ -114,7 +116,7 @@ export function readFlash(core: Core, user: User, value: unknown): Flash {
   const params = flashParams(t.p);
   const u = t.u as { action?: unknown; fields?: unknown } | null | undefined;
   const undoFields = u && typeof u === 'object' ? flashParams(u.fields) : undefined;
-  const undo = u && typeof u.action === 'string' && UNDO_ACTION.test(u.action) && undoFields ? { action: u.action, fields: undoFields } : undefined;
+  const undo = u && typeof u.action === 'string' && UNDO_ACTION.test(u.action) && !ENCODED_DOT.test(u.action) && undoFields ? { action: u.action, fields: undoFields } : undefined;
   const extra = { ...(params ? { params } : {}), ...(typeof t.a === 'string' && FLASH_ANCHOR.test(t.a) ? { anchor: t.a } : {}), ...(undo ? { undo } : {}) };
   return t.e === 1 ? { error: t.m, ...extra } : { ok: t.m, ...extra };
 }

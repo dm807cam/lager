@@ -77,7 +77,8 @@
   // without <dialog>, the server asks on a page of its own: the change never happens on one click either way.
   document.querySelectorAll('form[data-confirm]').forEach(function (form) {
     form.addEventListener('submit', function (e) {
-      if (form.querySelector('input[name="confirmed"]') || typeof HTMLDialogElement === 'undefined') return;
+      // Asked every time: a yes from before (a page from the back/forward cache, a send that failed) does not count again.
+      if (typeof HTMLDialogElement === 'undefined') return;
       e.preventDefault();
       var trigger = e.submitter || document.activeElement;
       var dialog = document.createElement('dialog');
@@ -115,7 +116,7 @@
       });
       ok.addEventListener('click', function () {
         answered = true;
-        var input = document.createElement('input');
+        var input = form.querySelector('input[name="confirmed"]') || document.createElement('input');
         input.type = 'hidden';
         input.name = 'confirmed';
         input.value = '1';

@@ -77,6 +77,11 @@ export class Groups {
     return r ? toGroup(r) : null;
   }
 
+  /** How many instances are shared with the group. */
+  sharesOf(id: string): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM grants WHERE principal_type = 'group' AND principal_id = ?").get(id) as { n: number }).n;
+  }
+
   members(id: string): User[] {
     const rows = this.db.prepare('SELECT user_id FROM group_members WHERE group_id = ?').all(id) as unknown as Array<{ user_id: string }>;
     return rows.map((r) => this.users.get(r.user_id)).filter((u): u is User => u !== null).sort((a, b) => a.name.localeCompare(b.name));

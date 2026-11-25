@@ -15,7 +15,7 @@ import { sendVersionDownload, streamExport, versionParam } from './api.js';
 import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { declaredModel, downloadableVersion, setAppModel } from '../mcp/tools.js';
 import {
-  confirmAttrs, confirmed, confirmPage, dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, formErrorPage, hiddenField, levelLabel, levelOptions, missingPage, optionList, type Option, page, type Question,
+  confirmAttrs, confirmed, questionPage, dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, formErrorPage, hiddenField, levelLabel, levelOptions, missingPage, optionList, type Option, page, type Question,
   sizeText, visibilityLabel, visibilityOptions, withNotice,
 } from './pages.js';
 import { appTile, avatar, badge, btn, named, card, copyField, dataTable, emptyState, icon, linkButton, meter, notice, personCell, signedIn, visibilityIcon } from './ui.js';
@@ -416,8 +416,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
         const done = run(req, user);
         if ('ask' in done) {
           // The form came without the answer: ask on a page of its own, which sends the same fields again with it.
-          const fields = Object.fromEntries(Object.entries(req.body as Record<string, unknown>).filter(([k, v]) => k !== 'csrf' && k !== 'confirmed' && typeof v === 'string')) as Record<string, string>;
-          send(res, 200, confirmPage(localeOf(res), done.ask, { action: req.originalUrl.split('?')[0], csrf: csrfToken(core, user), fields, cancel: back(req, user) }, shellOf(res)));
+          send(res, 200, questionPage(localeOf(res), done.ask, req, csrfToken(core, user), back(req, user), shellOf(res)));
           return;
         }
         toPage(res, user, done.to ?? back(req, user), { ok: done.ok, params: done.params, anchor: done.anchor, undo: done.undo });
@@ -555,8 +554,9 @@ export const manageExtension: PlatformExtension = (router, core) => {
   router.post('/ui/instances/:slug/domains/remove', ...action(instBack, (req, user) => {
     const host = field(req, 'host', 300);
     const inst = managed(user, param(req, 'slug'));
-    core.domains.remove(inst, host, user, true);
-    return { ok: 'notice.ok.removed', params: { name: host }, anchor: 'domains', undo: { action: `/ui/instances/${encodeURIComponent(inst.slug)}/domains`, fields: { host } } };
+    // Undo only for what this press removed: on a stale page it would bring back what someone else took away, or never existed.
+    const removed = core.domains.remove(inst, host, user, true);
+    return { ok: 'notice.ok.removed', params: { name: host }, anchor: 'domains', undo: removed ? { action: `/ui/instances/${encodeURIComponent(inst.slug)}/domains`, fields: { host } } : undefined };
   }));
 
   /** The instance, if `user` manages it and its active version declares the endpoint the form names. */
@@ -593,8 +593,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
   router.post('/ui/instances/:slug/ingest/origins/remove', ...action(instBack, (req, user) => {
     const { inst, name, endpoint } = managedEndpoint(req, user);
     const origin = field(req, 'origin', 300);
-    core.ingest.setOrigins(inst.id, endpoint, core.ingest.instanceOrigins(inst.id, name).filter((o) => o !== origin));
-    return { ok: 'notice.ok.removed', params: { name: origin }, anchor: 'ingest', undo: { action: `/ui/instances/${encodeURIComponent(inst.slug)}/ingest/origins`, fields: { name, origin } } };
+    const before = core.ingest.instanceOrigins(inst.id, name);
+    core.ingest.setOrigins(inst.id, endpoint, before.filter((o) => o !== origin));
+    const undo = before.includes(origin) ? { action: `/ui/instances/${encodeURIComponent(inst.slug)}/ingest/origins`, fields: { name, origin } } : undefined;
+    return { ok: 'notice.ok.removed', params: { name: origin }, anchor: 'ingest', undo };
   }));
 
   /** The instance, if `user` manages it and its active version declares `embed`. */
@@ -615,8 +617,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
   router.post('/ui/instances/:slug/embed/remove', ...action(instBack, (req, user) => {
     const inst = embedInstance(req, user);
     const origin = field(req, 'origin', 300);
-    core.embed.setOrigins(inst.id, core.embed.origins(inst.id).filter((o) => o !== origin));
-    return { ok: 'notice.ok.removed', params: { name: origin }, anchor: 'embed', undo: { action: `/ui/instances/${encodeURIComponent(inst.slug)}/embed`, fields: { origin } } };
+    const before = core.embed.origins(inst.id);
+    core.embed.setOrigins(inst.id, before.filter((o) => o !== origin));
+    const undo = before.includes(origin) ? { action: `/ui/instances/${encodeURIComponent(inst.slug)}/embed`, fields: { origin } } : undefined;
+    return { ok: 'notice.ok.removed', params: { name: origin }, anchor: 'embed', undo };
   }));
 
   router.post('/ui/instances/:slug/delete', ...action(instBack, (req, user) => {
