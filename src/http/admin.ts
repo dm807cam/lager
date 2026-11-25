@@ -17,7 +17,7 @@ import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { loginLimiter } from './platform.js';
 import { confirmAttrs, confirmed, questionPage, staleFormPage, withFieldError, noticeText, backLink, dateText, esc, field, forbiddenAdminPage, form, hiddenField, missingPage, optionList, page, sizeText, undoForm, visibilityLabel, type Option, type Question } from './pages.js';
 import { domainsBody, storageUsed } from './manage.js';
-import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
+import { appTile, avatar, badge, btn, callout, dataTable, emptyState, icon, namedAction, linkButton, named, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash, type Undo } from './session.js';
 import { RateLimiter } from './ratelimit.js';
 import { codeRefusal } from './two-factor.js';
@@ -119,15 +119,15 @@ function userPage(core: Core, locale: Locale, admin: User, userId: string, msg?:
   const base = userPath(u.id);
   const self = u.id === admin.id;
   const aiGroups: Option[] = [[DEFAULT_GROUP, t(locale, 'admin.ai.everyoneElse')], ...core.ai.listGroups().filter((g) => !g.isDefault).map((g): Option => [g.id, g.name])];
-  const save = `<button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button>`;
-  const inline = (action: string, control: string): string => `<form method="post" action="${esc(action)}" class="inline-form setting-form">${hiddenField('csrf', csrf)}${control}${save}</form>`;
+  const save = (what: string): string => `<button type="submit" class="${btn('secondary', true)}"${namedAction(locale, t(locale, 'common.save'), what)}>${esc(t(locale, 'common.save'))}</button>`;
+  const inline = (action: string, control: string, what: string): string => `<form method="post" action="${esc(action)}" class="inline-form setting-form">${hiddenField('csrf', csrf)}${control}${save(what)}</form>`;
   const twoFactorOn = core.twoFactor.isEnabled(u.id);
   // The name is the card's heading; next to the avatar go the address and the status.
   const head = `<div class="account-head gap-bottom">${avatar(u, 'lg')}<div><p class="lede">${esc(u.email)}</p><div class="badges gap-top">${userBadges(core, locale, u)}</div></div></div>
 ${self ? `<p class="hint gap-bottom">${esc(t(locale, 'admin.users.self'))} <a href="/account">${esc(t(locale, 'nav.account'))}</a></p>` : ''}`;
   const access = `<div>
-${settingRow('user-role', t(locale, 'admin.users.role'), t(locale, 'admin.users.role.hint'), inline(`${base}/role`, `<select id="user-role" name="role">${roleOptions(locale, u.role)}</select>`))}
-${settingRow('user-ai-group', t(locale, 'admin.users.aiGroup'), t(locale, 'admin.users.aiGroup.hint'), inline(`${base}/ai-group`, `<select id="user-ai-group" name="group">${optionList(aiGroups, core.ai.groupIdOf(u.id))}</select>`))}
+${settingRow('user-role', t(locale, 'admin.users.role'), t(locale, 'admin.users.role.hint'), inline(`${base}/role`, `<select id="user-role" name="role">${roleOptions(locale, u.role)}</select>`, t(locale, 'admin.users.role')))}
+${settingRow('user-ai-group', t(locale, 'admin.users.aiGroup'), t(locale, 'admin.users.aiGroup.hint'), inline(`${base}/ai-group`, `<select id="user-ai-group" name="group">${optionList(aiGroups, core.ai.groupIdOf(u.id))}</select>`, t(locale, 'admin.users.aiGroup')))}
 </div>`;
   const action = (label: string, hint: string, control: string): string =>
     `<div class="settings-row"><div><span class="label">${esc(label)}</span><p class="hint">${esc(hint)}</p></div><div>${control}</div></div>`;
@@ -205,7 +205,9 @@ function invitesSection(core: Core, locale: Locale, admin: User, msg?: Msg): str
   const rows = open.map((i) => [
     i.email ? esc(i.email) : `<span class="muted">${esc(t(locale, 'common.any'))}</span>`, badge(roleLabel(locale, i.role)),
     `<span class="num">${dateText(locale, i.createdAt)}</span>`, `<span class="num">${dateText(locale, i.expiresAt)}</span>`,
-    form(`/admin/invites/${encodeURIComponent(i.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), 'danger', '', true, confirmAttrs(locale, QUESTIONS.invite(locale))),
+    form(`/admin/invites/${encodeURIComponent(i.id)}/revoke`, csrf, '', esc(t(locale, 'common.revoke')), 'danger', '', true, confirmAttrs(locale, QUESTIONS.invite(locale)),
+      // An invitation without an address is told apart by its role and the day it expires.
+      namedAction(locale, t(locale, 'common.revoke'), `${i.email || t(locale, 'common.any')}, ${roleLabel(locale, i.role)}, ${formatDate(locale, i.expiresAt)}`)),
   ]);
   const create = form('/admin/invites', csrf,
     `${field('invite-email', t(locale, 'admin.invites.email'), '<input id="invite-email" name="email" type="email" maxlength="254" autocomplete="off">')}
@@ -240,7 +242,7 @@ function groupPage(core: Core, locale: Locale, admin: User, groupId: string, msg
   const members = core.groups.members(group.id);
   const rows = members.map((m) => [
     personCell(m),
-    form(`${base}/members/${encodeURIComponent(m.id)}/remove`, csrf, '', `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true),
+    form(`${base}/members/${encodeURIComponent(m.id)}/remove`, csrf, '', `${icon('trash')}${esc(t(locale, 'common.remove'))}`, 'quiet', '', true, '', namedAction(locale, t(locale, 'common.remove'), m.name || m.email)),
   ]);
   const body = `${form(`${base}/rename`, csrf, field('group-name', t(locale, 'common.name'), `<input id="group-name" name="name" required maxlength="${MAX_NAME}" value="${esc(group.name)}" autocomplete="off">`), esc(t(locale, 'common.rename')), 'secondary', 'form-row')}
 <div class="subsection"><h3>${esc(t(locale, 'admin.groups.members'))}</h3>
@@ -470,12 +472,13 @@ function appsSection(core: Core, locale: Locale, admin: User, msg?: Msg): string
       `<a class="mono" href="${esc(instanceUrl(core.config, i.slug))}">${esc(i.slug)}</a>`, esc(emailOf.get(i.ownerId) ?? '–'), `<span class="num">v${i.activeVersion}</span>`,
       badge(visibilityLabel(locale, i.visibility), { icon: visibilityIcon(i.visibility) }), `<span class="num">${storageText(core, locale, i.id, storageUsed(core, i))}</span>`,
       i.disabled ? badge(t(locale, 'common.disabled'), { tone: 'danger', dot: true }) : badge(t(locale, 'common.active'), { tone: 'success', dot: true }),
-      `<div class="btn-row">${form(`/admin/instances/${encodeURIComponent(i.slug)}/disabled`, csrf, hiddenField('disabled', i.disabled ? '0' : '1'), esc(t(locale, i.disabled ? 'common.activate' : 'common.deactivate')), 'quiet', '', true)}
-${linkButton(`/admin/instances/${encodeURIComponent(i.slug)}/domains`, `${icon('globe')}${esc(t(locale, 'admin.apps.domains'))}`, 'quiet', true)}</div>`,
+      `<div class="btn-row">${form(`/admin/instances/${encodeURIComponent(i.slug)}/disabled`, csrf, hiddenField('disabled', i.disabled ? '0' : '1'), esc(t(locale, i.disabled ? 'common.activate' : 'common.deactivate')), 'quiet', '', true, '',
+  namedAction(locale, t(locale, i.disabled ? 'common.activate' : 'common.deactivate'), i.slug))}
+${linkButton(`/admin/instances/${encodeURIComponent(i.slug)}/domains`, `${icon('globe')}${esc(t(locale, 'admin.apps.domains'))}`, 'quiet', true, namedAction(locale, t(locale, 'admin.apps.domains'), i.slug))}</div>`,
     ]);
     const quota = `<form method="post" action="/admin/apps/${encodeURIComponent(app.id)}/quota" class="inline-form quota-form gap-bottom">${hiddenField('csrf', csrf)}`
       + `<label for="quota-${esc(app.id)}">${esc(t(locale, 'admin.quota.label'))}</label>${quotaInput(core, `quota-${app.id}`, core.quotas.ofApp(app.id), t(locale, 'admin.apps.quotaOf', { app: app.title }))}`
-      + `<button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`;
+      + `<button type="submit" class="${btn('secondary', true)}"${namedAction(locale, t(locale, 'common.save'), t(locale, 'admin.apps.quotaOf', { app: app.title }))}>${esc(t(locale, 'common.save'))}</button></form>`;
     return `<section class="app-group subsection"><div class="app-group-head">${appTile(app, app.title, 'sm')}<div><h3>${esc(app.title)}</h3><span class="slug">${esc(app.slug)} · ${esc(emailOf.get(app.ownerId) ?? '–')}</span></div></div>
 ${quota}
 ${rows.length ? dataTable(locale, [t(locale, 'common.instance'), t(locale, 'common.owner'), t(locale, 'common.version'), t(locale, 'common.visibility'), t(locale, 'admin.apps.data'), t(locale, 'common.status'), ''], rows) : emptyState(t(locale, 'app.noInstances'))}</section>`;

@@ -489,7 +489,9 @@ describe('data export and version html links', () => {
     expect(owner.text).toContain('href="/apps/notes/versions/2/html"');
     const app = await page(pc, '/apps/notes');
     expect(app.text).toContain('href="/apps/notes/versions/1/html"');
-    expect(app.text).toContain('>HTML</a>');
+    // The link says what it does, and its name which version it downloads (#94).
+    expect(app.text).toContain(`>${en('instance.downloadHtml')}</a>`);
+    expect(app.text).toContain('aria-label="Download: v1 (HTML)"');
 
     // A manager who does not work on the app sees the export link but no links to its deployed versions.
     const admin = await page(uc, '/instances/notes');

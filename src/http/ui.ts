@@ -53,6 +53,13 @@ export const btn = (style: ButtonStyle = 'primary', small = false): string => `b
 /** ` aria-label="…"` for an action whose visible text needs the thing it acts on, e.g. "Open Notes". */
 export const named = (name: string): string => ` aria-label="${esc(name)}"`;
 
+/**
+ * The name of a button that repeats on a page, "Save: Role", "Remove: jonas@example.com": its visible word first (WCAG 2.5.3, the
+ * label is in the name and starts it, in every language), then what it acts on, so a list of buttons or a voice command can tell
+ * them apart (WCAG 2.4.6). `action` and `what` are plain text.
+ */
+export const namedAction = (locale: Locale, action: string, what: string): string => named(t(locale, 'common.actionOn', { action, what }));
+
 export const linkButton = (href: string, label: string, style: ButtonStyle = 'primary', small = false, extra = ''): string =>
   `<a class="${btn(style, small)}" href="${esc(href)}"${extra}>${label}</a>`;
 
@@ -71,12 +78,12 @@ export function notice(kind: 'success' | 'danger' | 'warning', text: string, ext
 }
 
 /** A copy button, hidden until the script can use the clipboard; without it the text next to it stays selectable. */
-export const copyButton = (locale: Locale, value: string, style: ButtonStyle = 'secondary', label = t(locale, 'common.copy'), small = true): string =>
-  `<button type="button" class="${btn(style, small)}" data-copy="${esc(value)}" data-copied="${esc(t(locale, 'common.copied'))}" hidden>${icon('copy')}<span data-label>${esc(label)}</span></button>`;
+export const copyButton = (locale: Locale, value: string, style: ButtonStyle = 'secondary', label = t(locale, 'common.copy'), small = true, extra = ''): string =>
+  `<button type="button" class="${btn(style, small)}" data-copy="${esc(value)}" data-copied="${esc(t(locale, 'common.copied'))}"${extra} hidden>${icon('copy')}<span data-label>${esc(label)}</span></button>`;
 
 /** A value to copy: selectable text with a copy button. */
-export const copyField = (locale: Locale, value: string, style: ButtonStyle = 'secondary'): string =>
-  `<div class="copyfield"><code>${esc(value)}</code>${copyButton(locale, value, style)}</div>`;
+export const copyField = (locale: Locale, value: string, style: ButtonStyle = 'secondary', what = ''): string =>
+  `<div class="copyfield"><code>${esc(value)}</code>${copyButton(locale, value, style, undefined, true, what ? namedAction(locale, t(locale, 'common.copy'), what) : '')}</div>`;
 
 /** A one-time secret (token, invitation or reset link): shown once, with what to do about it. */
 export const callout = (locale: Locale, title: string, secret: string, warning: string): string =>
