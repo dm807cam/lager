@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { assertSlug, assertSlugShape } from '../config.js';
+import { assertSlug, assertSlugShape, MAX_SLUG_LENGTH } from '../config.js';
 import { LagerError } from '../errors.js';
 import { checkApp } from './check.js';
 import { effectiveRules, ingestEndpoints } from './ingest.js';
@@ -172,6 +172,29 @@ export class Apps {
   /** Keeps a name out of use whose address under the apps domain is already taken, i.e. the platform's own host name. */
   reserveSlug(slug: string): void {
     this.reservedSlugs.add(slug);
+  }
+
+  /** Whether `ownerId` could create an instance named `slug` right now: well-formed, not reserved, not taken, not kept for someone else. */
+  slugFreeFor(slug: string, ownerId: string): boolean {
+    try { this.assertSlugFree(slug); } catch { return false; }
+    if (this.db.prepare('SELECT 1 FROM instances WHERE slug = ?').get(slug)) return false;
+    const retired = this.db.prepare('SELECT owner_id FROM retired_slugs WHERE slug = ?').get(slug) as { owner_id: string } | undefined;
+    return !retired || retired.owner_id === ownerId;
+  }
+
+  /**
+   * A free name for a new instance of `app` owned by `owner`: the app's name and the first part of the owner's name
+   * (`notes-jonas`), with a number when that is taken. Null in the unlikely case nothing short is free.
+   */
+  suggestSlug(app: App, owner: { id: string; name: string; email: string }): string | null {
+    const part = (owner.name.trim().split(/\s+/)[0] || owner.email.split('@')[0]).normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const base = `${app.slug}${part ? `-${part}` : ''}`.slice(0, MAX_SLUG_LENGTH - 3).replace(/-+$/, '');
+    for (let n = 1; n < 100; n++) {
+      const candidate = n === 1 ? base : `${base}-${n}`;
+      if (this.slugFreeFor(candidate, owner.id)) return candidate;
+    }
+    return null;
   }
 
   /** For a name that is about to be taken. Apps and instances that exist are never checked against the reserved names. */

@@ -44,6 +44,20 @@
     } catch (e) { /* the UTC text stays */ }
   });
 
+  // The name of a new instance: the address under the field follows what is typed. Opening the "get your own" panel puts the cursor in it.
+  document.querySelectorAll('input[data-address-template]').forEach(function (input) {
+    var out = document.querySelector('[data-address-for="' + input.id + '"]');
+    var template = input.getAttribute('data-address-template');
+    if (!out || !template) return;
+    input.addEventListener('input', function () { out.textContent = template.replace('__slug__', input.value.trim() || '…'); });
+  });
+  document.querySelectorAll('details.getown').forEach(function (panel) {
+    panel.addEventListener('toggle', function () {
+      var input = panel.open && panel.querySelector('input[name="slug"]');
+      if (input) { input.focus(); input.select(); }
+    });
+  });
+
   // Copy buttons: the text to copy and the confirmation label come from data attributes rendered by the server.
   document.querySelectorAll('[data-copy]').forEach(function (btn) {
     if (!navigator.clipboard) return;

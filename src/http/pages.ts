@@ -311,6 +311,20 @@ export function questionPage(locale: Locale, q: Question, req: { body?: unknown;
   return confirmPage(locale, q, { action: req.originalUrl.split('?')[0], csrf, fields, cancel }, opts);
 }
 
+/** The shape of an instance name for the browser's own check (`pattern`, matched whole; `-` escaped for the v flag; the length is maxlength's). */
+const SLUG_PATTERN = '[a-z0-9]([a-z0-9\\-]*[a-z0-9])?';
+
+/**
+ * The name of a new instance: the rules and the address it becomes under the field (the script keeps the address in step with what
+ * is typed), a free name filled in, and the browser checking the shape before anything is sent. `template` is the instance address
+ * with `__slug__` where the name goes.
+ */
+export function slugField(locale: Locale, id: string, label: string, value: string, template: string): string {
+  const address = template.replace('__slug__', value || '…');
+  return `<div class="field"><label for="${esc(id)}">${esc(label)}</label><input id="${esc(id)}" name="slug" required maxlength="${MAX_SLUG_LENGTH}" pattern="${SLUG_PATTERN}" autocapitalize="none" autocomplete="off" spellcheck="false" aria-describedby="${esc(id)}-hint" data-address-template="${esc(template)}"${value ? ` value="${esc(value)}"` : ''}>
+<p class="hint" id="${esc(id)}-hint">${esc(t(locale, 'instance.slugHint'))} <code data-address-for="${esc(id)}">${esc(address)}</code></p></div>`;
+}
+
 /** A labelled control in a form; `control` is trusted markup, `hint` plain text. */
 export const field = (id: string, label: string, control: string, hint = ''): string =>
   `<div class="field"><label for="${esc(id)}">${esc(label)}</label>${control}${hint ? `<p class="hint" id="${esc(id)}-hint">${esc(hint)}</p>` : ''}</div>`;

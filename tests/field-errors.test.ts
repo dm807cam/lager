@@ -29,7 +29,8 @@ function at(doc: Document, id: string) {
   return {
     message: error?.textContent?.trim() ?? null,
     invalid: control.getAttribute('aria-invalid'),
-    describedBy: control.getAttribute('aria-describedby'),
+    // The message comes first; a hint the field has follows it.
+    describedBy: control.getAttribute('aria-describedby')?.split(' ')[0] ?? null,
     focused: control.hasAttribute('autofocus'),
     value: control.getAttribute('value'),
     // The message sits between the label and the control.

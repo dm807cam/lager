@@ -264,7 +264,7 @@ export const de: Record<MessageKey, string> = {
   'dash.tokens.nameInvalid': 'Der Name des Tokens muss 1 bis {max} Zeichen lang sein.',
   'dash.tokens.unavailable': 'API-Tokens sind für deine Rolle nicht verfügbar.',
 
-  'instance.slugLabel': 'Name der Instanz (Kleinbuchstaben, Ziffern, Bindestriche)',
+  'instance.slugHint': "Kleinbuchstaben, Ziffern und Bindestriche. Daraus wird die Adresse",
   'instance.pageTitle': 'Instanz {slug}',
   'instance.disabledNotice': 'Diese Instanz wurde von einem Administrator deaktiviert. Du kannst sie nur noch löschen.',
   'instance.version': 'Version',

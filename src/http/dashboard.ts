@@ -9,7 +9,7 @@ import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { localeOf } from './locale.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { MAX_NAME } from '../platform/tokens.js';
-import { confirmAttrs, confirmed, questionPage, dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, type Question, staleFormPage, visibilityLabel, withNotice } from './pages.js';
+import { confirmAttrs, confirmed, questionPage, dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, type Question, slugField, staleFormPage, visibilityLabel, withNotice } from './pages.js';
 import { aiBadge, appCard, badge, btn, named, callout, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash } from './session.js';
 
@@ -68,7 +68,7 @@ function sharedSection(core: Core, locale: Locale, user: User, shared: Instance[
   return section('shared', t(locale, 'dash.shared'), `<div class="grid">${cards}</div>`, { count: shared.length });
 }
 
-function catalogSection(core: Core, locale: Locale, csrf: string, catalog: ReturnType<Core['access']['catalog']>, own: Instance[]): string {
+function catalogSection(core: Core, locale: Locale, user: User, csrf: string, catalog: ReturnType<Core['access']['catalog']>, own: Instance[]): string {
   const { instances, apps } = catalog;
   if (!instances.length && !apps.length) return '';
   const instCards = instances.map((i) => {
@@ -81,8 +81,9 @@ function catalogSection(core: Core, locale: Locale, csrf: string, catalog: Retur
   });
   const appCards = apps.map((a) => {
     const id = `new-${esc(a.slug)}`;
+    // A free name is filled in: getting a copy takes one press.
     const create = form(`/ui/apps/${encodeURIComponent(a.slug)}/instances`, csrf,
-      `<input type="hidden" name="from" value="home">${field(id, t(locale, 'home.copyName'), `<input id="${id}" name="slug" required maxlength="${MAX_SLUG_LENGTH}" autocomplete="off" spellcheck="false">`)}`,
+      `<input type="hidden" name="from" value="home">${slugField(locale, id, t(locale, 'home.copyName'), core.apps.suggestSlug(a, user) ?? '', instanceUrl(core.config, '__slug__'))}`,
       esc(t(locale, 'dash.createOwn')), 'primary', '', true);
     // Someone who already has a copy of this app learns so before making another one.
     const copies = own.filter((i) => i.appId === a.id).length;
@@ -163,7 +164,7 @@ function homePage(core: Core, locale: Locale, user: User, flash: Flash = {}): st
     shared.length ? t(locale, plural(shared.length, 'home.summary.shared.one', 'home.summary.shared.other'), { count: shared.length }) : '',
   ].filter(Boolean);
   return page(locale, 'Lager', `<div class="page-head"><h1 class="display">${esc(t(locale, 'home.title'))}</h1>${parts.length ? `<p class="lede">${esc(parts.join(' · '))}</p>` : ''}</div>
-${withNotice(locale, flash, `${ownSection(core, locale, user, own)}${sharedSection(core, locale, user, shared)}${catalogSection(core, locale, csrf, catalog, own)}`)}`, opts);
+${withNotice(locale, flash, `${ownSection(core, locale, user, own)}${sharedSection(core, locale, user, shared)}${catalogSection(core, locale, user, csrf, catalog, own)}`)}`, opts);
 }
 
 /** Everything about publishing: the apps the viewer deploys, the MCP connector and the API tokens. */
