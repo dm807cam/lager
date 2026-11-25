@@ -154,6 +154,18 @@ describe('response hardening', () => {
   });
 });
 
+describe('reflow', () => {
+  it('button labels wrap instead of pushing out of their card at 320 px; short row buttons stay on one line', () => {
+    const css = fs.readFileSync(path.join(STATIC, 'app.css'), 'utf8');
+    const rule = (selector: string): string => new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([^}]*)\\}`).exec(css)?.[1] ?? '';
+    const button = rule('.btn, button');
+    expect(button).toContain('white-space: normal');
+    expect(button).not.toContain('white-space: nowrap');
+    expect(button).toContain('max-width: 100%');
+    expect(rule('.btn-sm')).toContain('white-space: nowrap');
+  });
+});
+
 describe('shell', () => {
   it('shell has a skip link, one <main>, one <h1>, and landmarks for banner and navigation', async () => {
     s = await showcase();
