@@ -98,7 +98,7 @@ describe('instance page', () => {
     const { p, pc } = await setup();
     const act = await post(pc, p, '/ui/instances/notes/activate', { version: '1' });
     expect(act.status).toBe(302);
-    expect(act.headers.location).toBe('/instances/notes');
+    expect(act.headers.location.split('?')[0]).toBe('/instances/notes');
     expect(inst().activeVersion).toBe(1);
     await post(pc, p, '/ui/instances/notes/visibility', { visibility: 'public' });
     expect(inst().visibility).toBe('public');
@@ -113,7 +113,7 @@ describe('instance page', () => {
     const { p, u, pc } = await setup();
     const add = await post(pc, p, '/ui/instances/notes/grants', { email: 'u@x.y', level: 'view' });
     expect(add.status).toBe(302);
-    expect(add.headers.location).toBe('/instances/notes');
+    expect(add.headers.location.split('?')[0]).toBe('/instances/notes');
     expect(level('notes', u)).toBe('view');
     const shown = await follow(pc, add);
     expect(shown.text).toContain('u@x.y');
@@ -184,7 +184,7 @@ describe('instance page', () => {
     expect(h.core.apps.getInstanceBySlug('notes')).not.toBeNull();
     const ok = await post(pc, p, '/ui/instances/notes/delete', { confirm: 'notes' });
     expect(ok.status).toBe(302);
-    expect(ok.headers.location).toBe('/');
+    expect(ok.headers.location.split('?')[0]).toBe('/');
     expect(h.core.apps.getInstanceBySlug('notes')).toBeNull();
   });
 
@@ -303,7 +303,7 @@ describe('app page', () => {
     const c = h.core.users.create({ email: 'c@x.y', name: 'c', password: 'password-123', role: 'publisher' });
     const app = h.core.apps.getApp('notes')!;
     const add = await post(pc, p, '/ui/apps/notes/collaborators', { email: 'c@x.y' });
-    expect(add.headers.location).toBe('/apps/notes');
+    expect(add.headers.location.split('?')[0]).toBe('/apps/notes');
     expect(h.core.apps.isCollaborator(app.id, c.id)).toBe(true);
     expect((await follow(pc, add)).text).toContain('c@x.y');
     const rm = await post(pc, p, '/ui/apps/notes/collaborators/remove', { id: c.id });
@@ -330,7 +330,7 @@ describe('app page', () => {
     const { p, u, w, pc, wc } = await setup();
     const res = await post(pc, p, '/ui/apps/notes/instances', { slug: 'for-u', owner_email: 'u@x.y' });
     expect(res.status).toBe(302);
-    expect(res.headers.location).toBe('/apps/notes');
+    expect(res.headers.location.split('?')[0]).toBe('/apps/notes');
     expect(inst('for-u').ownerId).toBe(u.id);
     const own = await post(pc, p, '/ui/apps/notes/instances', { slug: 'mine' });
     expect(inst('mine').ownerId).toBe(p.id);
@@ -381,7 +381,7 @@ describe('app page', () => {
     h.core.settings.setMaxInstancesPerUser(1);
     h.core.apps.setSelfInstances(h.core.apps.getApp('notes')!.id, 'users', p.id);
     const first = await post(wc, w, '/ui/apps/notes/instances', { slug: 'w-one', from: 'home' });
-    expect(first.headers.location).toBe('/');
+    expect(first.headers.location.split('?')[0]).toBe('/');
     const second = await post(wc, w, '/ui/apps/notes/instances', { slug: 'w-two', from: 'home' });
     const shown = await follow(wc, second);
     expect(shown.text).toContain(en('notice.instanceLimit'));
@@ -404,7 +404,7 @@ describe('app page', () => {
     h.core.apps.deleteInstance(inst('u-inst').id, u.id);
     const ok = await post(pc, p, '/ui/apps/notes/delete', { confirm: 'notes' });
     expect(ok.status).toBe(302);
-    expect(ok.headers.location).toBe('/');
+    expect(ok.headers.location.split('?')[0]).toBe('/');
     expect(h.core.apps.getApp('notes')).toBeNull();
   });
 });
@@ -418,7 +418,7 @@ describe('self-publishing and versions', () => {
     expect(autoUpdateForm(before.text)).toMatch(/name="on"[^>]*value="1"[^>]*checked|checked[^>]*name="on"/);
     const off = await post(pc, p, '/ui/instances/notes/auto-update', { on: '0' });
     expect(off.status).toBe(302);
-    expect(off.headers.location).toBe('/instances/notes');
+    expect(off.headers.location.split('?')[0]).toBe('/instances/notes');
     expect(inst().autoUpdate).toBe(false);
     h.core.apps.deploy({ slug: 'notes', html: '<p>3</p>', userId: p.id });
     expect(inst().activeVersion).toBe(2);

@@ -203,8 +203,8 @@ const LIMITS: Partial<Record<MessageKey, { max: number }>> = {
   'admin.groups.nameInvalid': { max: MAX_GROUP_NAME },
   'admin.quota.invalid': { max: MAX_QUOTA_MB },
 };
-/** Notice and error texts: `t` plus the limits they quote. */
-export const noticeText = (locale: Locale, key: MessageKey): string => t(locale, key, LIMITS[key]);
+/** Notice and error texts: `t` plus the limits they quote and the values a flash brought along. */
+export const noticeText = (locale: Locale, key: MessageKey, params: Record<string, string | number> = {}): string => t(locale, key, { ...params, ...LIMITS[key] });
 
 const hidden = (fields: Record<string, string>): string =>
   Object.entries(fields).map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join('\n');
@@ -267,8 +267,21 @@ export const optionList = (options: ReadonlyArray<Option>, selected: string): st
   options.map(([v, label]) => `<option value="${esc(v)}"${v === selected ? ' selected' : ''}>${esc(label)}</option>`).join('');
 
 /** Notice line above a page body; the flash carries catalog keys and is shown in `locale`. */
-export const noticeHtml = (locale: Locale, flash: { ok?: MessageKey; error?: MessageKey }): string =>
-  (flash.ok ? notice('success', noticeText(locale, flash.ok)) : '') + (flash.error ? notice('danger', noticeText(locale, flash.error)) : '');
+export const noticeHtml = (locale: Locale, flash: { ok?: MessageKey; error?: MessageKey; params?: Record<string, string> }): string =>
+  (flash.ok ? notice('success', noticeText(locale, flash.ok, flash.params)) : '') + (flash.error ? notice('danger', noticeText(locale, flash.error, flash.params)) : '');
+
+/**
+ * `body` with the notice of `flash`: right above the element whose id is the flash's anchor when the body has one, so the change
+ * and the word about it are on screen together after the redirect, else at the top. The notice carries the id the redirect's
+ * fragment names (`#notice`).
+ */
+export function withNotice(locale: Locale, flash: { ok?: MessageKey; error?: MessageKey; params?: Record<string, string>; anchor?: string }, body: string): string {
+  const html = noticeHtml(locale, flash).replace('<div class="notice', '<div id="notice" tabindex="-1" class="notice');
+  if (!html) return body;
+  const at = flash.anchor ? body.indexOf(` id="${flash.anchor}"`) : -1;
+  const start = at < 0 ? -1 : body.lastIndexOf('<', at);
+  return start < 0 ? html + body : body.slice(0, start) + html + body.slice(start);
+}
 
 export const forbiddenInstancePage = (locale: Locale, opts: PageOpts = {}): string =>
   messagePage(locale, t(locale, 'error.forbidden.title'), t(locale, 'forbidden.instance'), backLink(locale), opts, 'danger');

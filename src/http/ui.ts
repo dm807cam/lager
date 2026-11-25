@@ -88,9 +88,9 @@ export function section(id: string, title: string, body: string, opts: { count?:
   return `<section class="section" id="${esc(id)}" aria-labelledby="${esc(id)}-title"><div class="section-head"><h2 id="${esc(id)}-title">${esc(title)}${count}</h2></div>${body}</section>`;
 }
 
-/** A card with a heading; `body` is trusted markup. */
-export const card = (title: string, body: string, cls = ''): string =>
-  `<section class="card${cls ? ` ${cls}` : ''}"><h2>${esc(title)}</h2>${body}</section>`;
+/** A card with a heading; `body` is trusted markup. `id` names it, for links and for notices placed above it. */
+export const card = (title: string, body: string, cls = '', id = ''): string =>
+  `<section class="card${cls ? ` ${cls}` : ''}"${id ? ` id="${esc(id)}"` : ''}><h2>${esc(title)}</h2>${body}</section>`;
 
 /**
  * A table that scrolls on wide screens and stacks its rows under 640 px. `heads` are plain-text column labels; an empty

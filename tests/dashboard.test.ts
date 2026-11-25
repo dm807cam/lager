@@ -160,7 +160,7 @@ describe('home page', () => {
     h.core.apps.setSelfInstances(app.id, 'users', p.id);
     const res = await post(h, cookie, '/ui/apps/notes/instances', { slug: 'mine', csrf: csrfOf(h, u.id) });
     expect(res.status).toBe(302);
-    expect(res.headers.location).toBe('/');
+    expect(res.headers.location.split('?')[0]).toBe('/');
     expect(h.core.apps.getInstanceBySlug('mine')!.ownerId).toBe(u.id);
     const home = await get(h, cookie);
     expect(home.text).toContain('href="http://mine.apps.localhost:8080"');
@@ -190,7 +190,7 @@ describe('home page', () => {
     const info = h.core.tokens.list(h.adminId)[0];
     const revoke = await post(h, cookie, `/ui/tokens/${info.id}/revoke`, { csrf: csrfFor(h) });
     expect(revoke.status).toBe(302);
-    expect(revoke.headers.location).toBe('/publish');
+    expect(revoke.headers.location.split('?')[0]).toBe('/publish');
     expect(h.core.tokens.list(h.adminId)).toHaveLength(0);
   });
 

@@ -69,7 +69,7 @@ describe('instance page: data from outside', () => {
     expect((await send()).status).toBe(202);
     const off = await post(pc, p, 'switch', { name: 'hits', on: '0' });
     expect(off.status).toBe(302);
-    expect(off.headers.location).toBe('/instances/stats');
+    expect(off.headers.location.split('?')[0]).toBe('/instances/stats');
     expect(h.core.ingest.isOff(inst.id, 'hits')).toBe(true);
     expect((await send()).status).toBe(404);
     const shown = await page(pc);

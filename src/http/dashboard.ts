@@ -9,9 +9,9 @@ import { requireUser, shellFor, type PlatformExtension } from './app.js';
 import { localeOf } from './locale.js';
 import { t, type Locale, type MessageKey } from '../i18n/index.js';
 import { MAX_NAME } from '../platform/tokens.js';
-import { dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, visibilityLabel } from './pages.js';
+import { dateText, esc, field, form, formErrorPage, levelLabel, noticeHtml, page, visibilityLabel, withNotice } from './pages.js';
 import { aiBadge, appCard, badge, btn, named, callout, copyField, dataTable, emptyState, icon, linkButton, section, signedIn, visibilityIcon } from './ui.js';
-import { csrfToken, csrfValid, readFlash, type Flash } from './session.js';
+import { csrfToken, csrfValid, flashUrl, readFlash, type Flash } from './session.js';
 
 const deploys = (user: User): boolean => user.role === 'admin' || user.role === 'publisher';
 const plural = (count: number, one: MessageKey, other: MessageKey): MessageKey => (count === 1 ? one : other);
@@ -148,16 +148,15 @@ function homePage(core: Core, locale: Locale, user: User, flash: Flash = {}): st
     shared.length ? t(locale, plural(shared.length, 'home.summary.shared.one', 'home.summary.shared.other'), { count: shared.length }) : '',
   ].filter(Boolean);
   return page(locale, 'Lager', `<div class="page-head"><h1 class="display">${esc(t(locale, 'home.title'))}</h1>${parts.length ? `<p class="lede">${esc(parts.join(' · '))}</p>` : ''}</div>
-${noticeHtml(locale, flash)}
-${ownSection(core, locale, user, own)}${sharedSection(core, locale, user, shared)}${catalogSection(core, locale, csrf, catalog)}`, opts);
+${withNotice(locale, flash, `${ownSection(core, locale, user, own)}${sharedSection(core, locale, user, shared)}${catalogSection(core, locale, csrf, catalog)}`)}`, opts);
 }
 
 /** Everything about publishing: the apps the viewer deploys, the MCP connector and the API tokens. */
-function publishPage(core: Core, locale: Locale, user: User, newToken?: { name: string; token: string }): string {
+function publishPage(core: Core, locale: Locale, user: User, newToken?: { name: string; token: string }, flash: Flash = {}): string {
   const csrf = csrfToken(core, user);
   const created = newToken ? callout(locale, t(locale, 'dash.tokens.created', { name: newToken.name }), newToken.token, t(locale, 'dash.tokens.copyNow')) : '';
   return page(locale, t(locale, 'nav.publish'), `<div class="page-head"><h1 class="display">${esc(t(locale, 'nav.publish'))}</h1><p class="lede">${esc(t(locale, 'publish.lede'))}</p></div>
-${created}${appsSection(core, locale, core.access.appsOf(user))}${connectPanel(locale, new URL('/mcp', core.config.publicUrl).href)}${tokenSection(core, locale, user, csrf)}`,
+${created}${withNotice(locale, flash, `${appsSection(core, locale, core.access.appsOf(user))}${connectPanel(locale, new URL('/mcp', core.config.publicUrl).href)}${tokenSection(core, locale, user, csrf)}`)}`,
   signedIn(core, user, 'publish', '/publish'));
 }
 
@@ -203,10 +202,10 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
   });
 
   // Only those who deploy have anything to publish; everyone else goes home.
-  router.get('/publish', noStore, auth, (_req, res) => {
+  router.get('/publish', noStore, auth, (req, res) => {
     const user = userOf(res);
     if (!deploys(user)) { res.redirect('/'); return; }
-    res.type('html').send(publishPage(core, localeOf(res), user));
+    res.type('html').send(publishPage(core, localeOf(res), user, undefined, readFlash(core, user, req.query.flash)));
   });
 
   // The new token is shown on the response to the creating request itself and is never stored in plain text.
@@ -217,7 +216,8 @@ export const dashboardExtension: PlatformExtension = (router, core) => {
   }));
 
   router.post('/ui/tokens/:id/revoke', ...action((req, res, user) => {
+    const name = core.tokens.list(user.id).find((tk) => tk.id === req.params.id)?.name ?? '';
     if (!core.tokens.revoke(user.id, req.params.id as string)) throw new LagerError('not_found', 'Token not found.');
-    res.redirect('/publish');
+    res.redirect(flashUrl(core, user, '/publish', { ok: 'notice.ok.tokenRevoked', params: { name }, anchor: 'tokens' }));
   }));
 };
