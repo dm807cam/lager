@@ -273,7 +273,8 @@ details.menu > summary::-webkit-details-marker { display: none; }
   border: 1px solid transparent; border-radius: var(--r-ctl); background: var(--accent); color: var(--accent-ink);
   font: inherit; font-size: 0.93rem; font-weight: 650; line-height: 1.2; text-align: center; text-decoration: none; cursor: pointer;
   /* A label longer than the room it has wraps onto a second line instead of pushing out of its card and the screen. */
-  white-space: normal; overflow-wrap: break-word; padding-block: 8px; max-width: 100%;
+  /* anywhere, not break-word: a flex item's min-content width shrinks only so, and one long word stays inside the button. */
+  white-space: normal; overflow-wrap: anywhere; padding-block: 8px; max-width: 100%;
   transition: background var(--ease), border-color var(--ease), color var(--ease), box-shadow var(--ease);
 }
 .btn:hover, button:hover { text-decoration: none; }
