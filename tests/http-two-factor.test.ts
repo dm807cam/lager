@@ -11,6 +11,7 @@ import { dashboardExtension } from '../src/http/dashboard.js';
 import { csrfToken } from '../src/http/session.js';
 import { MAX_CODES_PER_SIGN_IN, MAX_SECOND_STEP_COOKIE_BYTES, setupToken } from '../src/http/two-factor.js';
 import { t } from '../src/i18n/index.js';
+import { qrSvg } from '../src/platform/qr.js';
 import { MemoryMailer } from '../src/platform/mail.js';
 import { base32Decode, hotp, MAX_CODE_FAILURES, RECOVERY_CODE_COUNT, timeStep } from '../src/platform/two-factor.js';
 import { makeHarness, type Harness } from './support/http.js';
@@ -373,6 +374,11 @@ describe('the account page', () => {
     expect(new URL(uri).searchParams.get('issuer')).toBe('Lager (lager.localhost)');
     expect(uri).toContain('issuer=Lager%20(lager.localhost)');
     expect(uri).not.toContain('+');
+    // The same address as a QR code to scan, next to the button and the key, which stay (#91).
+    const qr = shown.text.match(/<svg class="qr"[\s\S]*?<\/svg>/)![0];
+    expect(qr).toBe(qrSvg(uri, t('en', 'account.twoFactor.setup.qr')));
+    expect(shown.text).toContain(t('en', 'account.twoFactor.setup.open'));
+    expect(shown.text).toContain(secret.match(/.{1,4}/g)!.join(' '));
     const setupField = /name="setup" value="([^"]+)"/.exec(shown.text)![1];
     const wrong = await s.post('/account/two-factor/confirm', { csrf: s.csrf(), setup: setupField, code: '000000' }, { cookie });
     expect(wrong.status).toBe(400);

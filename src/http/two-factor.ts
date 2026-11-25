@@ -3,6 +3,7 @@ import express from 'express';
 import type { Request, RequestHandler, Response } from 'express';
 import type { Core } from '../core.js';
 import { t, type Locale } from '../i18n/index.js';
+import { qrSvg } from '../platform/qr.js';
 import { MAX_CODE_INPUT, otpauthUri, RECOVERY_CODE_COUNT, SETUP_TTL_MS, TOTP_DIGITS, type CodeCheck } from '../platform/two-factor.js';
 import type { User } from '../platform/users.js';
 import { addressKey } from './client-address.js';
@@ -197,8 +198,9 @@ export function setupPage(core: Core, locale: Locale, user: User, csrf: string, 
 ${error ? notice('danger', error) : ''}
 <section class="card"><ol class="steps stack">
 <li><p>${esc(t(locale, 'account.twoFactor.setup.step1'))}</p>
+<div class="qr-setup">${qrSvg(uri, t(locale, 'account.twoFactor.setup.qr'))}<div class="stack">
 <p><a class="${btn('secondary')}" href="${esc(uri)}">${icon('open')}${esc(t(locale, 'account.twoFactor.setup.open'))}</a></p>
-${field('tf-key', t(locale, 'account.twoFactor.setup.key'), copyField(locale, grouped(secret)), t(locale, 'account.twoFactor.setup.keyHint'))}</li>
+${field('tf-key', t(locale, 'account.twoFactor.setup.key'), copyField(locale, grouped(secret)), t(locale, 'account.twoFactor.setup.keyHint'))}</div></div></li>
 <li><form method="post" action="/account/two-factor/confirm" class="stack">${hiddenField('csrf', csrf)}${hiddenField('setup', token)}
 ${field('code', t(locale, 'account.twoFactor.setup.step2'), codeInput(false, true), t(locale, 'account.twoFactor.setup.expiry'))}
 <div class="btn-row"><a class="${btn('secondary')}" href="/account">${esc(t(locale, 'signin.cancel'))}</a><button type="submit" class="${btn('primary')}">${esc(t(locale, 'account.twoFactor.setup.submit'))}</button></div></form></li>

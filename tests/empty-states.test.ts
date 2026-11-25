@@ -45,7 +45,8 @@ describe('empty states say what to do next', () => {
     expect(empty((await page(s, '/', 'paul@x.y')).getElementById('mine'))).toEqual({
       text: t('en', 'dash.noInstances'), detail: t('en', 'home.empty.publish'), links: [['/publish', 'primary']],
     });
-    expect(empty((await page(s, '/', 'uwe@x.y')).getElementById('mine'))).toEqual({ text: t('en', 'dash.noInstances'), detail: t('en', 'home.empty.user'), links: [] });
+    // Apps are shared with Uwe and listed under their own heading below: the text points there, not to "here".
+    expect(empty((await page(s, '/', 'uwe@x.y')).getElementById('mine'))).toEqual({ text: t('en', 'dash.noInstances'), detail: t('en', 'home.empty.sharedOnly'), links: [] });
   });
 
   it('an instance shared with nobody says who can open it now, by its visibility', async () => {
