@@ -18,7 +18,7 @@ import {
   confirmAttrs, confirmed, questionPage, dateText, esc, field, forbiddenAppPage, forbiddenInstancePage, form, hiddenField, levelLabel, levelOptions, missingPage, optionList, type Option, page, type Question,
   sizeText, staleFormPage, visibilityLabel, visibilityOptions, withNotice,
 } from './pages.js';
-import { appTile, avatar, badge, btn, named, card, copyField, dataTable, emptyState, icon, linkButton, meter, notice, personCell, signedIn, visibilityIcon } from './ui.js';
+import { appTile, avatar, badge, btn, named, card, copyButton, copyField, dataTable, emptyState, icon, linkButton, meter, notice, personCell, signedIn, visibilityIcon } from './ui.js';
 import { csrfToken, csrfValid, flashUrl, readFlash, type Flash, type Undo } from './session.js';
 
 const GRANT_LEVELS = ['view', 'interact', 'admin'] as const;
@@ -69,7 +69,7 @@ const at = (id: string, name: string): FieldOf => (req, _error) => ({ field: id,
 const NAME_ERRORS: ReadonlySet<MessageKey> = new Set(['notice.slugInvalid', 'notice.slugTaken', 'notice.slugRetired']);
 
 /** What a form did: the notice for the next page, the values it names, the section it is shown above, and another page to go to. */
-interface Done { ok: MessageKey; params?: Record<string, string>; anchor?: string; to?: string; undo?: Undo }
+interface Done { ok: MessageKey; params?: Record<string, string>; anchor?: string; to?: string; undo?: Undo; copy?: string }
 /** A form that needs a yes first: the question, asked on a page of its own when the form came without the answer. */
 interface Ask { ask: Question }
 
@@ -151,10 +151,14 @@ function grantsCard(core: Core, locale: Locale, inst: Instance, base: string, cs
   const list = rows.length
     ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'instance.grants.type'), t(locale, 'common.level'), ''], rows)
     : emptyState(t(locale, 'instance.grants.none'), 'share');
-  const add = form(`${base}/grants`, csrf, `${field('grant-email', t(locale, 'instance.grants.email'), '<input id="grant-email" name="email" type="email" maxlength="254" autocomplete="off">')}
-${field('grant-group', t(locale, 'instance.grants.orGroup'), `<select id="grant-group" name="group"><option value="">–</option>${groups}</select>`)}
+  // A person and a group are two forms: one of two fields that silently wins over the other cannot happen.
+  const person = form(`${base}/grants`, csrf, `${field('grant-email', t(locale, 'instance.grants.email'), '<input id="grant-email" name="email" type="email" maxlength="254" autocomplete="off">')}
 ${field('grant-level', t(locale, 'common.level'), `<select id="grant-level" name="level">${optionList(grantLevels, 'view')}</select>`)}`,
   `${icon('share')}${esc(t(locale, 'instance.grants.add'))}`, 'primary', 'form-row');
+  const group = groups ? form(`${base}/grants`, csrf, `${field('grant-group', t(locale, 'instance.grants.groupLabel'), `<select id="grant-group" name="group" required><option value="">–</option>${groups}</select>`)}
+${field('grant-group-level', t(locale, 'common.level'), `<select id="grant-group-level" name="level">${optionList(grantLevels, 'view')}</select>`)}`,
+  `${icon('share')}${esc(t(locale, 'instance.grants.add'))}`, 'secondary', 'form-row') : '';
+  const add = `<h4>${esc(t(locale, 'instance.grants.person'))}</h4>${person}${group ? `<h4 class="gap-top">${esc(t(locale, 'instance.grants.withGroup'))}</h4>${group}` : ''}`;
   return card(t(locale, 'instance.grants.title'), `${visibility}<div class="subsection"><h3>${esc(t(locale, 'instance.grants.people'))}</h3>${list}<div class="gap-top">${add}</div></div>`, '', 'sharing');
 }
 
@@ -317,7 +321,7 @@ ${behind}${versionsList(core, locale, user, app, base, csrf, inst.activeVersion,
     : emptyState(t(locale, 'instance.snapshots.none'), 'download')}</div></section>`;
   const domains = core.domains.canManage(user, core.access.canManageInstance(inst, user)) ? card(t(locale, 'instance.domains.title'), domainsBody(core, locale, inst, `${base}/domains`, csrf), '', 'domains') : '';
   return shell(core, locale, user, title, `${hero(app, app.title, `<a class="url" href="${esc(url)}">${esc(url)}</a>`, [visibility, badge(`v${inst.activeVersion}`)],
-    linkButton(url, `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary'))}
+    linkButton(url, `${icon('open')}${esc(t(locale, 'common.open'))}`, 'primary') + copyButton(locale, url, 'secondary', t(locale, 'instance.copyLink'), false))}
 <div class="layout"><div class="main-col">${versions}${grantsCard(core, locale, inst, base, csrf)}${ingestCard(core, locale, inst, base, csrf)}${embedCard(core, locale, inst, base, csrf)}${domains}${data}${del}</div>
 <aside class="side-col" aria-label="${esc(t(locale, 'instance.details'))}">${details}</aside></div>`, flash, here);
 }
@@ -419,9 +423,10 @@ export const manageExtension: PlatformExtension = (router, core) => {
     if (!core.access.isAppOwner(app, user)) throw new LagerError('forbidden', 'Only the owner may do this.');
     return app;
   };
-  const accountByEmail = (email: string): User => {
+  /** The active account with this address; `missing` is the notice when there is none. */
+  const accountByEmail = (email: string, missing: MessageKey = 'notice.noAccount'): User => {
     const found = core.users.getByEmail(email.trim());
-    if (!found || found.disabled) throw new Notice('notice.noAccount');
+    if (!found || found.disabled) throw new Notice(missing);
     return found;
   };
 
@@ -442,7 +447,7 @@ export const manageExtension: PlatformExtension = (router, core) => {
           send(res, 200, questionPage(localeOf(res), done.ask, req, csrfToken(core, user), back(req, user), shellOf(res)));
           return;
         }
-        toPage(res, user, done.to ?? back(req, user), { ok: done.ok, params: done.params, anchor: done.anchor, undo: done.undo });
+        toPage(res, user, done.to ?? back(req, user), { ok: done.ok, params: done.params, anchor: done.anchor, undo: done.undo, copy: done.copy });
       } catch (e) {
         if (e instanceof Notice) { toPage(res, user, back(req, user), { error: e.key, ...fieldOf?.(req, e.key) }); return; }
         if (!(e instanceof LagerError)) throw e;
@@ -574,15 +579,18 @@ export const manageExtension: PlatformExtension = (router, core) => {
     const email = field(req, 'email', 254).trim();
     const group = field(req, 'group');
     let name: string;
+    if (email !== '' && group !== '') throw new Notice('notice.grantBoth');
     if (email !== '') {
-      const account = accountByEmail(email);
+      // Nobody without an account can be shared with; what to do next depends on who may invite.
+      const account = accountByEmail(email, user.role === 'admin' ? 'notice.noAccount.admin' : 'notice.noAccount.ask');
       core.access.setGrant(inst, 'user', account.id, level, user);
       name = account.email;
     } else if (group !== '') {
       core.access.setGrant(inst, 'group', group, level, user);
       name = core.groups.get(group)?.name ?? group;
     } else throw new Notice('notice.grantTarget');
-    return { ok: 'notice.ok.shared', params: { name, level: levelLabel(localeOf(req.res!), level) }, anchor: 'sharing' };
+    // The address to send to the people just added comes with the notice.
+    return { ok: 'notice.ok.shared', params: { name, level: levelLabel(localeOf(req.res!), level) }, anchor: 'sharing', copy: instanceUrl(core.config, inst.slug) };
   }, (req, error) => (error === 'notice.grantTarget' ? undefined : at('grant-email', 'email')(req, error))));
 
   router.post('/ui/instances/:slug/grants/remove', ...action(instBack, (req, user) => {

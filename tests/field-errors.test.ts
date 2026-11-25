@@ -49,7 +49,8 @@ describe('a refused form', () => {
 
     const share = await refused(s, cookie, admin, '/ui/instances/notes/grants', { email: 'nobody@x.y', level: 'view' });
     expect(share.location).toMatch(/#grant-email$/);
-    expect(at(share.doc, 'grant-email')).toEqual(expected('notice.noAccount', 'grant-email', 'nobody@x.y'));
+    // An administrator can invite the person, and is told where.
+    expect(at(share.doc, 'grant-email')).toEqual(expected('notice.noAccount.admin', 'grant-email', 'nobody@x.y'));
 
     const domain = await refused(s, cookie, admin, '/ui/instances/notes/domains', { host: 'not a host' });
     expect(at(domain.doc, 'domain-host')).toEqual(expected('notice.hostInvalid', 'domain-host', 'not a host'));
