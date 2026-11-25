@@ -33,7 +33,7 @@ Alternatives that lost:
 - **Codes by mail** add nothing when the mailbox is also how the password is reset, and depend on SMTP being set up.
 - **"Remember this browser for 30 days"** would make a stolen device cookie as good as the second factor. Not offered.
 - **Keeping the count of wrong codes in memory**, like the password limits: a restart would reset it, and the password is already known at this step.
-- **A QR code on the setup page** needs an encoder; Lager has no dependency for one and does not want an outside service to render it. The `otpauth://` link opens the app on the same device, and the key can be typed elsewhere. To be revisited.
+- **A QR code on the setup page** needed an encoder; Lager has no dependency for one and does not want an outside service to render it. *Revisited (#91):* the setup page now shows the `otpauth://` address as a QR code, made on the server by a small encoder of Lager's own (`src/platform/qr.ts`: byte mode, level M, tested against reference symbols) and sent as inline SVG, black on white with a quiet zone in both colour schemes. No dependency, no outside service, no script. It carries the same secret the page already shows as text, on a page that is never cached. The button and the key stay.
 
 ## Consequences
 

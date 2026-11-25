@@ -491,6 +491,10 @@ td.actions .btn-row { justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
 }
 .empty .i { width: 24px; height: 24px; color: var(--ink-3); }
 .empty .empty-detail { max-width: 52ch; font-size: 0.875rem; }
+/* Two-step sign-in setup: the QR code next to the button and the key. Black on white in both schemes, so cameras read it. */
+.qr-setup { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s5); margin-top: var(--s3); }
+.qr-setup > .stack { flex: 1 1 16rem; min-width: 0; }
+.qr { width: 188px; height: 188px; flex: none; border-radius: 8px; box-shadow: 0 0 0 1px var(--line); }
 .empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--s2); margin-top: var(--s2); }
 .card .empty { border: 0; padding: var(--s5) var(--s3); }
 .empty-hero { max-width: 760px; margin: var(--s6) auto 0; text-align: center; }
