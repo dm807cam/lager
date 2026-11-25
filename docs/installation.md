@@ -178,7 +178,7 @@ Without a mail server Lager runs completely, just without mail:
 
 - Email addresses are not verified; new accounts are usable at once. For this reason registration defaults to "invitation only".
 - Invitations work: the link is shown once to the administrator in the administration area, who passes it on. An account created through it is usable at once.
-- "Forgot password" sends nothing. Instead an administrator creates a reset link in the administration area (Users; valid for 1 hour, usable once) and passes it on.
+- "Forgot your password?" leads to a page that says the server sends no mail and that the administrator can help, instead of a form. An administrator creates a reset link in the administration area (Users, then the account; valid for 1 hour, usable once) and passes it on. Setting a password through it also confirms an address that was registered while mail was still on.
 
 If you enable mail later, existing accounts stay verified.
 

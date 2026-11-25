@@ -381,6 +381,51 @@ describe('registration and verification', () => {
 describe('password reset', () => {
   const FORGOT = t('en', 'auth.forgot.sent');
 
+  it('without mail, forgot and resend say whom to ask instead of claiming a mail was sent', async () => {
+    h = makeHarness({ extensions: [dashboardExtension] });
+    expect(h.core.mailer.enabled).toBe(false);
+    const hh = h;
+    h.core.users.create({ email: 'ann@example.org', name: 'Ann', password: PASSWORD, role: 'user' });
+    h.core.users.create({ email: 'new@example.org', name: 'New', password: PASSWORD, role: 'user', verified: false });
+    const post = (path: string, body: Record<string, string>) => request(hh.app).post(path).set('Host', hh.host).type('form').send(body);
+    // The page offers no form, so nothing suggests that a mail is on its way.
+    const shown = await request(hh.app).get('/forgot').set('Host', hh.host);
+    expect(shown.status).toBe(200);
+    expect(shown.text).toContain(t('en', 'auth.forgot.noMail'));
+    expect(shown.text).not.toContain('action="/forgot"');
+    expect(shown.text).toContain('href="/login"');
+    // A form sent from an older page gets the same answer, for every address alike.
+    const known = await post('/forgot', { email: 'ann@example.org' });
+    const unknown = await post('/forgot', { email: 'nobody@example.org' });
+    expect(known.status).toBe(200);
+    expect(known.text).toContain(t('en', 'auth.forgot.noMail'));
+    expect(known.text).not.toContain(FORGOT);
+    expect(page(unknown.text)).toBe(page(known.text));
+    const resent = await post('/verify/resend', { email: 'new@example.org' });
+    expect(resent.status).toBe(200);
+    expect(resent.text).toContain(t('en', 'auth.resend.noMail'));
+    expect(resent.text).not.toContain(t('en', 'auth.resend.sent.text'));
+    // An unconfirmed account that signs in hears whom to ask, and gets no form that would send a mail.
+    const login = await post('/login', { email: 'new@example.org', password: PASSWORD });
+    expect(login.status).toBe(401);
+    expect(login.text).toContain(t('en', 'login.unverified.noMail'));
+    expect(login.text).not.toContain('action="/verify/resend"');
+    // So does a confirmation link that no longer works.
+    const stale = await request(hh.app).get('/verify?token=nope').set('Host', hh.host);
+    expect(stale.text).toContain(t('en', 'auth.resend.noMail'));
+    expect(stale.text).not.toContain('action="/verify/resend"');
+  });
+
+  it('with mail, an unconfirmed account and a stale link still get the form to send the link again', async () => {
+    const s = setup();
+    await s.register();
+    const login = await s.post('/login', { email: 'ann@example.org', password: PASSWORD });
+    expect(login.text).toContain(t('en', 'login.unverified'));
+    expect(login.text).not.toContain(t('en', 'login.unverified.noMail'));
+    expect(login.text).toContain('action="/verify/resend"');
+    expect((await s.get('/verify?token=nope')).text).toContain('action="/verify/resend"');
+  });
+
   it('forgot answers identically for known and unknown addresses', async () => {
     const s = setup();
     await s.registerVerified();

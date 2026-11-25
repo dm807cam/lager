@@ -39,6 +39,7 @@ export const es: Record<MessageKey, string> = {
   'login.tooMany': 'Demasiados intentos fallidos. Espera unos minutos.',
   'login.busy': 'El servidor está ocupado en este momento. Vuelve a intentarlo en un instante.',
   'login.unverified': 'Primero confirma tu correo electrónico.',
+  'login.unverified.noMail': "Primero confirma tu correo electrónico. Este servidor no envía correos por ahora: pide a su administrador un enlace para establecer tu contraseña, que también confirma tu dirección.",
   'login.disabled': 'Esta cuenta está desactivada.',
   'login.invalid': 'El correo electrónico o la contraseña no son correctos.',
 
@@ -70,10 +71,12 @@ export const es: Record<MessageKey, string> = {
   'auth.verify.wrong': 'La contraseña no es correcta.',
   'auth.resend.button': 'Reenviar el correo de confirmación',
   'auth.resend.sent.text': 'Si la dirección está registrada y aún sin confirmar, te hemos enviado un nuevo correo.',
+  'auth.resend.noMail': "Este servidor no envía correos, así que no puede enviarte un nuevo enlace de confirmación. Pide al administrador de este servidor un enlace para establecer tu contraseña: también confirma tu dirección.",
 
   'auth.forgot.title': 'Restablecer contraseña',
   'auth.forgot.submit': 'Enviar enlace de restablecimiento',
   'auth.forgot.sent': 'Si la dirección está registrada, te hemos enviado un correo para restablecer la contraseña.',
+  'auth.forgot.noMail': "Este servidor no envía correos, así que no puede enviarte un enlace de restablecimiento. Pide al administrador de este servidor un enlace para establecer una contraseña nueva.",
   'auth.reset.title': 'Nueva contraseña',
   'auth.reset.label': 'Nueva contraseña',
   'auth.reset.submit': 'Guardar contraseña',

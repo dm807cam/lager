@@ -293,7 +293,8 @@ describe('signed-in pages in every locale', () => {
     const pages: Array<[string, string, MessageKey[], string]> = [
       ['login', '/login', ['brand.tagline', 'brand.pitch', 'login.forgot', 'nav.skip'], ''],
       ['register', '/register', ['auth.register.title', 'common.toLogin'], ''],
-      ['forgot', '/forgot', ['auth.forgot.submit'], ''],
+      // This server sends no mail: the page says whom to ask instead of offering a form.
+      ['forgot', '/forgot', ['auth.forgot.title', 'auth.forgot.noMail', 'common.toLogin'], ''],
       ['empty home', '/', ['home.step.connect', 'home.step.ask', 'home.step.ask.text', 'home.step.appears', 'home.step.appears.text'], cookie],
     ];
     for (const locale of LOCALES) {

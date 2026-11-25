@@ -39,6 +39,7 @@ export const fr: Record<MessageKey, string> = {
   'login.tooMany': 'Trop de tentatives échouées. Veuillez patienter quelques minutes.',
   'login.busy': 'Le serveur est occupé pour le moment. Veuillez réessayer dans un instant.',
   'login.unverified': "Veuillez d’abord confirmer votre adresse e-mail.",
+  'login.unverified.noMail': "Veuillez d’abord confirmer votre adresse e-mail. Ce serveur n’envoie pas d’e-mails pour le moment : demandez à son administrateur un lien pour définir votre mot de passe, qui confirme aussi votre adresse.",
   'login.disabled': 'Ce compte est désactivé.',
   'login.invalid': 'Adresse e-mail ou mot de passe incorrect.',
 
@@ -70,10 +71,12 @@ export const fr: Record<MessageKey, string> = {
   'auth.verify.wrong': 'Le mot de passe est incorrect.',
   'auth.resend.button': "Renvoyer l’e-mail de confirmation",
   'auth.resend.sent.text': 'Si cette adresse est enregistrée chez nous et pas encore confirmée, nous vous avons envoyé un nouvel e-mail.',
+  'auth.resend.noMail': "Ce serveur n’envoie pas d’e-mails et ne peut donc pas vous envoyer de nouveau lien de confirmation. Demandez à l’administrateur de ce serveur un lien pour définir votre mot de passe : il confirme aussi votre adresse.",
 
   'auth.forgot.title': 'Mot de passe oublié',
   'auth.forgot.submit': 'Envoyer le lien de réinitialisation',
   'auth.forgot.sent': 'Si cette adresse est enregistrée chez nous, nous vous avons envoyé un e-mail pour réinitialiser le mot de passe.',
+  'auth.forgot.noMail': "Ce serveur n’envoie pas d’e-mails et ne peut donc pas vous envoyer de lien de réinitialisation. Demandez à l’administrateur de ce serveur un lien pour définir un nouveau mot de passe.",
   'auth.reset.title': 'Nouveau mot de passe',
   'auth.reset.label': 'Nouveau mot de passe',
   'auth.reset.submit': 'Enregistrer le mot de passe',
