@@ -5,7 +5,7 @@ import { MAX_NAME as MAX_TOKEN_NAME } from '../platform/tokens.js';
 import { MAX_QUOTA_MB } from '../platform/quotas.js';
 import { formatDate, formatSize, LOCALE_NAMES, LOCALES, t, type Locale, type MessageKey } from '../i18n/index.js';
 import { staticUrls } from './static.js';
-import { avatar, btn, icon, notice, SPRITE, type ButtonStyle, type IconName, type NavItem } from './ui.js';
+import { avatar, btn, copyButton, icon, notice, SPRITE, type ButtonStyle, type IconName, type NavItem } from './ui.js';
 
 export const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -365,13 +365,13 @@ export const noticeHtml = (locale: Locale, flash: { ok?: MessageKey; error?: Mes
  * and the word about it are on screen together after the redirect, else at the top. The notice carries the id the redirect's
  * fragment names (`#notice`).
  */
-export function withNotice(locale: Locale, flash: { ok?: MessageKey; error?: MessageKey; params?: Record<string, string>; anchor?: string; undo?: { action: string; fields: Record<string, string> }; field?: string; values?: Record<string, string> }, body: string, csrf = ''): string {
+export function withNotice(locale: Locale, flash: { ok?: MessageKey; error?: MessageKey; params?: Record<string, string>; anchor?: string; undo?: { action: string; fields: Record<string, string> }; field?: string; values?: Record<string, string>; copy?: string }, body: string, csrf = ''): string {
   // An error about one field is shown at that field, with what was typed; the page needs no banner then.
   if (flash.error && flash.field) {
     const placed = withFieldError(body, flash.field, noticeText(locale, flash.error, flash.params), flash.values);
     if (placed !== null) return placed;
   }
-  const undo = flash.ok && flash.undo && csrf ? undoForm(locale, flash.undo, csrf) : '';
+  const undo = (flash.ok && flash.undo && csrf ? undoForm(locale, flash.undo, csrf) : '') + (flash.ok && flash.copy ? `<span class="notice-undo">${copyButton(locale, flash.copy, 'secondary', t(locale, 'instance.copyLink'))}</span>` : '');
   const html = (flash.ok ? notice('success', noticeText(locale, flash.ok, flash.params), undo) : '') + (flash.error ? notice('danger', noticeText(locale, flash.error, flash.params)) : '');
   return placeNotice(html.replace('<div class="notice', '<div id="notice" tabindex="-1" class="notice'), flash.anchor, body);
 }

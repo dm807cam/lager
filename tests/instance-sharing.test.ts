@@ -111,3 +111,29 @@ describe('the instance page', () => {
     expect((await html()).querySelector('#versions .notice-warning')).toBeNull();
   });
 });
+
+describe('sharing', () => {
+  it('offers a form for a person and, where there are groups, one for a group; the app address can be copied', async () => {
+    s = await showcase();
+    const cookie = await s.h.login();
+    const doc = dom((await request(s.h.app).get('/instances/notes').set('Host', s.h.host).set('Cookie', cookie)).text);
+    const forms = [...doc.querySelectorAll('#sharing form[action="/ui/instances/notes/grants"]')].filter((f) => !f.classList.contains('inline-form'));
+    expect(forms.map((f) => [...f.querySelectorAll('input[name="email"], select[name="group"]')].map((e) => e.getAttribute('name')))).toEqual([['email'], ['group']]);
+    // The header offers the address to copy next to Open.
+    const copy = doc.querySelector('.hero-actions [data-copy]')!;
+    expect(copy.getAttribute('data-copy')).toBe('http://notes.apps.localhost:8080');
+    expect(copy.textContent).toBe(t('en', 'instance.copyLink'));
+    // Sharing ends with the address to send, ready to copy.
+    const csrf = csrfToken(s.h.core, s.h.core.users.get(s.h.adminId)!);
+    const res = await request(s.h.app).post('/ui/instances/notes/grants').set('Host', s.h.host).set('Cookie', cookie).type('form').send({ csrf, email: 'pia@x.y', level: 'view' });
+    const after = dom((await request(s.h.app).get(res.headers.location.split('#')[0]).set('Host', s.h.host).set('Cookie', cookie)).text);
+    expect(after.querySelector('#notice [data-copy]')!.getAttribute('data-copy')).toBe('http://notes.apps.localhost:8080');
+  });
+
+  it('has no group form on a server without groups', async () => {
+    s = await showcase();
+    s.h.core.groups.delete(s.ids.group);
+    const doc = dom((await request(s.h.app).get('/instances/notes').set('Host', s.h.host).set('Cookie', await s.h.login())).text);
+    expect(doc.querySelector('#sharing select[name="group"]')).toBeNull();
+  });
+});

@@ -69,8 +69,8 @@ export function notice(kind: 'success' | 'danger' | 'warning', text: string, ext
 }
 
 /** A copy button, hidden until the script can use the clipboard; without it the text next to it stays selectable. */
-export const copyButton = (locale: Locale, value: string, style: ButtonStyle = 'secondary'): string =>
-  `<button type="button" class="${btn(style, true)}" data-copy="${esc(value)}" data-copied="${esc(t(locale, 'common.copied'))}" hidden>${icon('copy')}<span data-label>${esc(t(locale, 'common.copy'))}</span></button>`;
+export const copyButton = (locale: Locale, value: string, style: ButtonStyle = 'secondary', label = t(locale, 'common.copy'), small = true): string =>
+  `<button type="button" class="${btn(style, small)}" data-copy="${esc(value)}" data-copied="${esc(t(locale, 'common.copied'))}" hidden>${icon('copy')}<span data-label>${esc(label)}</span></button>`;
 
 /** A value to copy: selectable text with a copy button. */
 export const copyField = (locale: Locale, value: string, style: ButtonStyle = 'secondary'): string =>

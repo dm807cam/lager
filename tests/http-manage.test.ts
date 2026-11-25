@@ -143,7 +143,14 @@ describe('instance page', () => {
     const res = await post(pc, p, '/ui/instances/notes/grants', { email: 'nobody@x.y', level: 'view' });
     const shown = await follow(pc, res);
     expect(shown.status).toBe(200);
-    expect(shown.text).toContain(en('notice.noAccount'));
+    // A publisher cannot invite: the message says whom to ask, and the address stays in the field.
+    expect(shown.text).toContain(en('notice.noAccount.ask'));
+    expect(shown.text).toContain('value="nobody@x.y"');
+    expect(h.core.access.listGrants(inst().id)).toHaveLength(0);
+    // An address and a group at once is refused rather than one of them winning quietly.
+    const group = h.core.groups.create('Both fields');
+    const both = await follow(pc, await post(pc, p, '/ui/instances/notes/grants', { email: 'nobody@x.y', group: group.id, level: 'view' }));
+    expect(both.text).toContain(en('notice.grantBoth'));
     expect(h.core.access.listGrants(inst().id)).toHaveLength(0);
   });
 

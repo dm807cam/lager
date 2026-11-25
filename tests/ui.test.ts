@@ -662,6 +662,7 @@ describe('behaviour of the forms', () => {
   // The storage forms of a group page and of every app in the apps overview (quota) were added with storage per group and app.
   // The forms of each account (role, ai-group, disabled, reset-link) moved from the users list to the account's own page (#73).
   // The auto-update and badge forms of the instance page became one settings form (#83); their old routes still work.
+  // The share form of the instance page became one for a person and one for a group (#84), to the same route.
   it('forms post the same fields to the same routes as before', async () => {
     s = await showcase();
     const expected = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')) as Record<string, unknown>;

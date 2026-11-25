@@ -140,7 +140,6 @@
       "fields": [
         "csrf",
         "email",
-        "group",
         "level"
       ]
     },
@@ -150,6 +149,15 @@
       "fields": [
         "csrf",
         "email",
+        "level"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "group",
         "level"
       ]
     },
@@ -273,7 +281,6 @@
       "fields": [
         "csrf",
         "email",
-        "group",
         "level"
       ]
     },
@@ -283,6 +290,15 @@
       "fields": [
         "csrf",
         "email",
+        "level"
+      ]
+    },
+    {
+      "action": "/ui/instances/tasks/grants",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "group",
         "level"
       ]
     },
@@ -792,25 +808,33 @@
       "fields": [
         "csrf",
         "email",
+        "level"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "email",
+        "level"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        "csrf",
+        "email",
+        "level"
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        "csrf",
         "group",
-        "level"
-      ]
-    },
-    {
-      "action": "/ui/instances/notes/grants",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "email",
-        "level"
-      ]
-    },
-    {
-      "action": "/ui/instances/notes/grants",
-      "method": "post",
-      "fields": [
-        "csrf",
-        "email",
         "level"
       ]
     },

@@ -296,12 +296,6 @@
           "maxlength": "254"
         },
         {
-          "name": "group",
-          "type": "select",
-          "required": false,
-          "maxlength": null
-        },
-        {
           "name": "level",
           "type": "select",
           "required": false,
@@ -350,6 +344,30 @@
           "required": false,
           "maxlength": null,
           "value": "{group:Team}"
+        },
+        {
+          "name": "level",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "group",
+          "type": "select",
+          "required": true,
+          "maxlength": null
         },
         {
           "name": "level",
@@ -637,12 +655,6 @@
           "maxlength": "254"
         },
         {
-          "name": "group",
-          "type": "select",
-          "required": false,
-          "maxlength": null
-        },
-        {
           "name": "level",
           "type": "select",
           "required": false,
@@ -666,6 +678,30 @@
           "required": false,
           "maxlength": null,
           "value": "admin@x.y"
+        },
+        {
+          "name": "level",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/tasks/grants",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "group",
+          "type": "select",
+          "required": true,
+          "maxlength": null
         },
         {
           "name": "level",
@@ -1777,12 +1813,6 @@
           "maxlength": "254"
         },
         {
-          "name": "group",
-          "type": "select",
-          "required": false,
-          "maxlength": null
-        },
-        {
           "name": "level",
           "type": "select",
           "required": false,
@@ -1856,6 +1886,30 @@
           "required": false,
           "maxlength": null,
           "value": "{group:Team}"
+        },
+        {
+          "name": "level",
+          "type": "select",
+          "required": false,
+          "maxlength": null
+        }
+      ]
+    },
+    {
+      "action": "/ui/instances/notes/grants",
+      "method": "post",
+      "fields": [
+        {
+          "name": "csrf",
+          "type": "hidden",
+          "required": false,
+          "maxlength": null
+        },
+        {
+          "name": "group",
+          "type": "select",
+          "required": true,
+          "maxlength": null
         },
         {
           "name": "level",
