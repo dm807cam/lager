@@ -130,13 +130,21 @@ describe('deleting an account', () => {
     expect(dbOf(w.core).prepare('SELECT ai_group_id FROM users WHERE id = ?').get(w.pia.id)).not.toEqual({ ai_group_id: null });
   });
 
-  it('the users page offers "Delete account" for a deactivated account only, and never for oneself', async () => {
+  it('the page of an account offers "Delete account" for a deactivated account only, and never for oneself', async () => {
     const w = await world();
-    const doc = new JSDOM((await w.get('/admin/users')).text).window.document;
-    const links = [...doc.querySelectorAll('a[href$="/delete"]')];
+    const deleteLinks = async (id: string): Promise<Element[]> =>
+      [...new JSDOM((await w.get(`/admin/users/${id}`)).text).window.document.querySelectorAll('main a[href$="/delete"]')];
+    const links = await deleteLinks(w.pia.id);
     expect(links.map((a) => a.getAttribute('href'))).toEqual([`/admin/users/${w.pia.id}/delete`]);
-    expect(links[0].getAttribute('aria-label')).toBe(t('en', 'admin.users.delete.of', { email: 'pia@x.y' }));
     expect(links[0].textContent).toBe(t('en', 'admin.users.delete'));
+    // An active account says why it cannot be deleted yet; one's own account offers neither.
+    expect(await deleteLinks(w.uwe.id)).toEqual([]);
+    expect((await w.get(`/admin/users/${w.uwe.id}`)).text).toContain(t('en', 'admin.users.delete.active'));
+    expect(await deleteLinks(w.admin.id)).toEqual([]);
+    // The list itself only leads to each account's page.
+    const list = new JSDOM((await w.get('/admin/users')).text).window.document;
+    expect(list.querySelectorAll('main a[href$="/delete"]')).toHaveLength(0);
+    expect(list.querySelector(`main a[href="/admin/users/${w.pia.id}"]`)!.getAttribute('aria-label')).toBe(t('en', 'card.manage', { title: 'pia@x.y' }));
   });
 
   it('the confirmation page lists what the account owns with counts and asks what to do with it', async () => {
@@ -178,10 +186,25 @@ describe('deleting an account', () => {
     for (const body of [{ decision: 'cancel' }, { decision: 'cancel', owned: 'delete', confirm: 'pia@x.y' }, { decision: '', owned: 'delete', confirm: 'pia@x.y' }]) {
       const res = await w.post(`/admin/users/${w.pia.id}/delete`, body);
       expect(res.status).toBe(302);
-      expect(res.headers.location).toBe('/admin/users');
+      // Back to the account's page, where the way to this question started.
+      expect(res.headers.location).toBe(`/admin/users/${w.pia.id}`);
     }
     expect(w.core.users.get(w.pia.id)).not.toBeNull();
     expect(w.core.apps.getApp('board')).not.toBeNull();
+    // Cancel for an account that no longer exists goes to the list.
+    const gone = await w.post('/admin/users/nope/delete', { decision: 'cancel' });
+    expect(gone.headers.location).toBe('/admin/users');
+  });
+
+  it('one’s own page sends to the account page and offers neither deactivating nor deleting', async () => {
+    const w = await world();
+    const doc = new JSDOM((await w.get(`/admin/users/${w.admin.id}`)).text).window.document;
+    const main = doc.querySelector('main')!;
+    expect(main.textContent).toContain(t('en', 'admin.users.self'));
+    expect(main.querySelector('a[href="/account"]')).not.toBeNull();
+    expect(main.querySelector('form[action$="/disabled"], a[href$="/delete"], form[action$="/reset-link"]')).toBeNull();
+    // Role and AI group stay: the server refuses demoting the last administrator.
+    expect(main.querySelector(`form[action="/admin/users/${w.admin.id}/role"]`)).not.toBeNull();
   });
 
   it('the script disables the delete button until the address is typed and leaves Cancel alone', async () => {
@@ -540,7 +563,7 @@ describe('deleting an account', () => {
       // With the other administrator gone, the one left can neither be deactivated nor, therefore, deleted.
       w.core.users.setDisabled(w.boss.id, true);
       expect((await w.post(`/admin/users/${w.boss.id}/delete`, { owned: 'transfer', transfer_to: 'admin@x.y', confirm: 'boss@x.y' })).status).toBe(200);
-      expect((await w.post(`/admin/users/${w.admin.id}/disabled`, { disabled: '1' })).status).toBe(409);
+      expect((await w.post(`/admin/users/${w.admin.id}/disabled`, { disabled: '1' })).status).toBe(403);
       expect(w.core.users.list().filter((u) => u.role === 'admin' && !u.disabled).map((u) => u.email)).toEqual(['admin@x.y']);
     });
 

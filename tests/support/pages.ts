@@ -154,6 +154,7 @@ export function pageVisits(s: Showcase): PageVisit[] {
     { name: 'app (owner)', path: '/apps/notes', as: 'admin' },
     { name: 'app (collaborator)', path: '/apps/notes', as: 'pia' },
     { name: 'admin users', path: '/admin/users', as: 'admin' },
+    { name: 'admin user', path: `/admin/users/${s.ids.uwe}`, as: 'admin' },
     { name: 'admin invites', path: '/admin/invites', as: 'admin' },
     { name: 'admin groups', path: '/admin/groups', as: 'admin' },
     { name: 'admin group', path: `/admin/groups/${s.ids.group}`, as: 'admin' },

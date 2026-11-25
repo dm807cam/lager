@@ -190,6 +190,9 @@ describe('shell', () => {
       ['/instances/notes', 'pia', 403, 'forbidden.instance'],
       ['/apps/tasks', 'uwe', 403, 'forbidden.app'],
       ['/admin/users', 'pia', 403, 'forbidden.admin'],
+      [`/admin/users/${s.ids.uwe}`, 'pia', 403, 'forbidden.admin'],
+      [`/admin/users/${s.ids.pia}`, 'uwe', 403, 'forbidden.admin'],
+      ['/admin/users/nope', 'admin', 404, 'admin.users.notFound'],
       ['/admin/groups/nope', 'admin', 404, 'admin.groups.missing'],
       ['/admin/instances/nope/domains', 'admin', 404, 'admin.instances.notFound'],
     ];
@@ -608,6 +611,7 @@ describe('behaviour of the forms', () => {
   // the markup may change, the action, method and field names of every form may not. The forms of the instance page's
   // "Data from outside" card (ingest/switch, ingest/token) were added with that card.
   // The storage forms of a group page and of every app in the apps overview (quota) were added with storage per group and app.
+  // The forms of each account (role, ai-group, disabled, reset-link) moved from the users list to the account's own page (#73).
   it('forms post the same fields to the same routes as before', async () => {
     s = await showcase();
     const expected = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')) as Record<string, unknown>;

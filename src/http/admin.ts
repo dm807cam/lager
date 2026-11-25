@@ -3,7 +3,7 @@ import type { Request, RequestHandler, Response } from 'express';
 import { instanceUrl } from '../config.js';
 import type { Core } from '../core.js';
 import { LagerError } from '../errors.js';
-import { formatSize, t, type Locale, type MessageKey } from '../i18n/index.js';
+import { formatDay, formatSize, t, type Locale, type MessageKey } from '../i18n/index.js';
 import { localeOf, requestLocale } from './locale.js';
 import { MAX_NAME } from '../platform/groups.js';
 import { MAX_QUOTA_MB } from '../platform/quotas.js';
@@ -56,28 +56,71 @@ const none = '<span class="muted">–</span>';
 
 const STATUS_TONES = { disabled: 'danger', active: 'success', unverified: 'warning' } as const;
 
+/** Where an account's own page lives. */
+const userPath = (id: string): string => `/admin/users/${encodeURIComponent(id)}`;
+/** The way back from a page about one account (deleting it, turning off its second step) to that account's page. */
+const backToUser = (u: User): string => `<a class="back" href="${esc(userPath(u.id))}">${icon('chevron', 'i-sm')}${esc(u.name || u.email)}</a>`;
+
+/** The status badges of an account: active, deactivated or unconfirmed, and whether it uses two-step sign-in. */
+function userBadges(core: Core, locale: Locale, u: User): string {
+  const state = u.disabled ? 'disabled' : u.verified ? 'active' : 'unverified';
+  const status = t(locale, u.disabled ? 'common.disabled' : u.verified ? 'common.active' : 'common.unverified');
+  return `${badge(status, { tone: STATUS_TONES[state], dot: true })}${core.twoFactor.isEnabled(u.id) ? ` ${badge(t(locale, 'admin.users.twoFactorOn'), { icon: 'shield', tone: 'success' })}` : ''}`;
+}
+
+/**
+ * The list of accounts: who, role, AI group, status and since when, and a link to each account's page where it is changed. The
+ * cells hold text only, so the table fits next to the navigation on any screen; with a form in every cell it could not.
+ */
 function usersSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
-  const csrf = csrfToken(core, admin);
-  const aiGroups: Option[] = [[DEFAULT_GROUP, t(locale, 'admin.ai.everyoneElse')], ...core.ai.listGroups().filter((g) => !g.isDefault).map((g): Option => [g.id, g.name])];
-  const rows = core.users.list().map((u) => {
-    const base = `/admin/users/${encodeURIComponent(u.id)}`;
-    const state = u.disabled ? 'disabled' : u.verified ? 'active' : 'unverified';
-    const status = t(locale, u.disabled ? 'common.disabled' : u.verified ? 'common.active' : 'common.unverified');
-    const twoFactorOn = core.twoFactor.isEnabled(u.id);
-    return [
-      personCell(u),
-      `<form method="post" action="${base}/role" class="inline-form">${hiddenField('csrf', csrf)}<select name="role" aria-label="${esc(t(locale, 'admin.users.roleOf', { email: u.email }))}">${roleOptions(locale, u.role)}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
-      `<form method="post" action="${base}/ai-group" class="inline-form">${hiddenField('csrf', csrf)}<select name="group" aria-label="${esc(t(locale, 'admin.users.aiGroupOf', { email: u.email }))}">${optionList(aiGroups, core.ai.groupIdOf(u.id))}</select><button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button></form>`,
-      `${badge(status, { tone: STATUS_TONES[state], dot: true })}${twoFactorOn ? ` ${badge(t(locale, 'admin.users.twoFactorOn'), { icon: 'shield', tone: 'success' })}` : ''}`,
-      `<span class="num">${dateText(locale, u.createdAt)}</span>`,
-      `<div class="btn-row">${form(`${base}/disabled`, csrf, hiddenField('disabled', u.disabled ? '0' : '1'), esc(t(locale, u.disabled ? 'common.activate' : 'common.deactivate')), 'quiet', '', true)}
-${form(`${base}/reset-link`, csrf, '', esc(t(locale, 'admin.users.resetLink')), 'quiet', '', true)}
-${twoFactorOn && u.id !== admin.id ? linkButton(`${base}/two-factor/reset`, esc(t(locale, 'admin.users.twoFactorReset')), 'quiet', true, named(t(locale, 'admin.users.twoFactorReset.of', { email: u.email }))) : ''}
-${u.disabled && u.id !== admin.id ? linkButton(`${base}/delete`, `${icon('trash')}${esc(t(locale, 'admin.users.delete'))}`, 'quiet', true, named(t(locale, 'admin.users.delete.of', { email: u.email }))) : ''}</div>`,
-    ];
-  });
+  const groupName = new Map(core.ai.listGroups().map((g) => [g.id, aiGroupName(locale, g)]));
+  const rows = core.users.list().map((u) => [
+    personCell(u),
+    esc(roleLabel(locale, u.role)),
+    esc(groupName.get(core.ai.groupIdOf(u.id)) ?? t(locale, 'admin.ai.everyoneElse')),
+    `<div class="badges">${userBadges(core, locale, u)}</div>`,
+    `<time class="num nowrap" datetime="${esc(u.createdAt)}" title="${dateText(locale, u.createdAt)}">${esc(formatDay(locale, u.createdAt))}</time>`,
+    linkButton(userPath(u.id), `${icon('settings')}${esc(t(locale, 'common.manage'))}`, 'quiet', true, named(t(locale, 'card.manage', { title: u.email }))),
+  ]);
   return shell(core, locale, admin, 'users', t(locale, 'admin.section.users'),
     dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.users.role'), t(locale, 'admin.users.aiGroup'), t(locale, 'common.status'), t(locale, 'common.created'), ''], rows, 'table-dense'), msg);
+}
+
+/**
+ * One account: its role and AI group, a reset link, two-step sign-in, deactivating and deleting. Each change comes back to this page.
+ * Null when the account does not exist.
+ */
+function userPage(core: Core, locale: Locale, admin: User, userId: string, msg?: Msg): string | null {
+  const u = core.users.get(userId);
+  if (!u) return null;
+  const csrf = csrfToken(core, admin);
+  const base = userPath(u.id);
+  const self = u.id === admin.id;
+  const aiGroups: Option[] = [[DEFAULT_GROUP, t(locale, 'admin.ai.everyoneElse')], ...core.ai.listGroups().filter((g) => !g.isDefault).map((g): Option => [g.id, g.name])];
+  const save = `<button type="submit" class="${btn('secondary', true)}">${esc(t(locale, 'common.save'))}</button>`;
+  const inline = (action: string, control: string): string => `<form method="post" action="${esc(action)}" class="inline-form setting-form">${hiddenField('csrf', csrf)}${control}${save}</form>`;
+  const twoFactorOn = core.twoFactor.isEnabled(u.id);
+  // The name is the card's heading; next to the avatar go the address and the status.
+  const head = `<div class="account-head gap-bottom">${avatar(u, 'lg')}<div><p class="lede">${esc(u.email)}</p><div class="badges gap-top">${userBadges(core, locale, u)}</div></div></div>
+${self ? `<p class="hint gap-bottom">${esc(t(locale, 'admin.users.self'))} <a href="/account">${esc(t(locale, 'nav.account'))}</a></p>` : ''}`;
+  const access = `<div>
+${settingRow('user-role', t(locale, 'admin.users.role'), t(locale, 'admin.users.role.hint'), inline(`${base}/role`, `<select id="user-role" name="role">${roleOptions(locale, u.role)}</select>`))}
+${settingRow('user-ai-group', t(locale, 'admin.users.aiGroup'), t(locale, 'admin.users.aiGroup.hint'), inline(`${base}/ai-group`, `<select id="user-ai-group" name="group">${optionList(aiGroups, core.ai.groupIdOf(u.id))}</select>`))}
+</div>`;
+  const action = (label: string, hint: string, control: string): string =>
+    `<div class="settings-row"><div><span class="label">${esc(label)}</span><p class="hint">${esc(hint)}</p></div><div>${control}</div></div>`;
+  // One's own password and second step are changed on the account page, with the current password and a code.
+  const signIn = self ? '' : `<div class="subsection"><h3>${esc(t(locale, 'admin.users.signIn'))}</h3>
+${action(t(locale, 'admin.users.resetLink'), t(locale, 'admin.users.resetLink.hint'), form(`${base}/reset-link`, csrf, '', esc(t(locale, 'admin.users.resetLink')), 'secondary', '', true))}
+${action(t(locale, 'account.twoFactor.title'), t(locale, twoFactorOn ? 'admin.users.twoFactor.onHint' : 'admin.users.twoFactor.offHint'),
+    twoFactorOn ? linkButton(`${base}/two-factor/reset`, esc(t(locale, 'admin.users.twoFactorReset')), 'secondary', true) : '')}</div>`;
+  const state = self ? '' : `<div class="subsection"><h3>${esc(t(locale, 'admin.users.access'))}</h3>
+${action(t(locale, u.disabled ? 'common.activate' : 'common.deactivate'), t(locale, u.disabled ? 'admin.users.activate.hint' : 'admin.users.deactivate.hint'),
+    form(`${base}/disabled`, csrf, hiddenField('disabled', u.disabled ? '0' : '1'), esc(t(locale, u.disabled ? 'common.activate' : 'common.deactivate')), 'secondary', '', true))}
+${action(t(locale, 'admin.users.delete'), t(locale, u.disabled ? 'admin.users.delete.hint' : 'admin.users.delete.active'),
+    u.disabled ? linkButton(`${base}/delete`, `${icon('trash')}${esc(t(locale, 'admin.users.delete'))}`, 'danger', true) : '')}</div>`;
+  return shell(core, locale, admin, 'users', u.name || u.email, `${head}${access}${signIn}${state}`, msg, base,
+    `<a class="back" href="/admin/users">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.section.users'))}</a>`);
 }
 
 /**
@@ -92,10 +135,9 @@ function twoFactorResetPage(core: Core, locale: Locale, admin: User, target: Use
   const body = `<p>${esc(t(locale, 'admin.users.twoFactorReset.text', { email: target.email }))}</p>
 <form method="post" action="${esc(base)}" class="stack">${hiddenField('csrf', csrfToken(core, admin))}
 ${field('tf-admin-current', t(locale, 'admin.users.twoFactorReset.password'), '<input id="tf-admin-current" name="current" type="password" required autocomplete="current-password">')}
-${code}<div class="btn-row"><a class="${btn('secondary')}" href="/admin/users">${esc(t(locale, 'signin.cancel'))}</a>
+${code}<div class="btn-row"><a class="${btn('secondary')}" href="${esc(userPath(target.id))}">${esc(t(locale, 'signin.cancel'))}</a>
 <button type="submit" class="${btn('danger')}">${esc(t(locale, 'admin.users.twoFactorReset'))}</button></div></form>`;
-  return shell(core, locale, admin, 'users', t(locale, 'admin.users.twoFactorReset.pageTitle', { email: target.email }), body, msg, base,
-    `<a class="back" href="/admin/users">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.section.users'))}</a>`);
+  return shell(core, locale, admin, 'users', t(locale, 'admin.users.twoFactorReset.pageTitle', { email: target.email }), body, msg, base, backToUser(target));
 }
 
 /** At most this many names of what an account owns are spelled out on the confirmation page; the counts are always complete. */
@@ -131,8 +173,7 @@ ${field('transfer-to', t(locale, 'admin.users.delete.transferEmail'), `<input id
 ${field('confirm', t(locale, 'admin.users.delete.confirm', { email: target.email }), `<input id="confirm" name="confirm" required autocomplete="off" spellcheck="false" data-confirm="${esc(target.email)}">`)}
 <div class="btn-row"><button type="submit" name="decision" value="cancel" formnovalidate class="${btn('secondary')}">${esc(t(locale, 'signin.cancel'))}</button>
 <button type="submit" name="decision" value="delete" class="${btn('danger')}">${icon('trash')}${esc(t(locale, 'admin.users.delete.submit'))}</button></div></form></div>`;
-  return shell(core, locale, admin, 'users', t(locale, 'admin.users.delete.pageTitle', { email: target.email }), body, msg, base,
-    `<a class="back" href="/admin/users">${icon('chevron', 'i-sm')}${esc(t(locale, 'admin.section.users'))}</a>`);
+  return shell(core, locale, admin, 'users', t(locale, 'admin.users.delete.pageTitle', { email: target.email }), body, msg, base, backToUser(target));
 }
 
 function invitesSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
@@ -493,8 +534,15 @@ export const adminExtension: PlatformExtension = (router, core) => {
   };
 
   const showUsers = (res: Response): void => send(res, 200, usersSection(core, localeOf(res), adminOf(res)));
+  /** An account's page with a message, or the list when the account is gone. */
+  const userView = (res: Response, user: User, id: string) => (m: Msg): string => userPage(core, localeOf(res), user, id, m) ?? usersSection(core, localeOf(res), user, m);
   router.get('/admin', noStore, admin, (_req, res) => { showUsers(res); });
   router.get('/admin/users', noStore, admin, (_req, res) => { showUsers(res); });
+  router.get('/admin/users/:id', noStore, admin, (req, res) => {
+    const html = userPage(core, localeOf(res), adminOf(res), param(req, 'id'));
+    if (html === null) send(res, 404, missing(req, res, 'admin.users.notFound', '/admin/users', 'admin.section.users'));
+    else send(res, 200, html);
+  });
   router.get('/admin/invites', noStore, admin, (_req, res) => { send(res, 200, invitesSection(core, localeOf(res), adminOf(res))); });
   router.get('/admin/groups', noStore, admin, (_req, res) => { send(res, 200, groupsSection(core, localeOf(res), adminOf(res))); });
   router.get('/admin/groups/:id', noStore, admin, (req, res) => {
@@ -543,29 +591,31 @@ export const adminExtension: PlatformExtension = (router, core) => {
 
   // --- users ---
 
-  const userMessages = { conflict: 'admin.users.lastAdmin', not_found: 'admin.users.notFound', invalid_argument: 'validation.generic' } as const;
+  const userMessages = { conflict: 'admin.users.lastAdmin', not_found: 'admin.users.notFound', invalid_argument: 'validation.generic', forbidden: 'admin.users.disableSelf' } as const;
 
   router.post('/admin/users/:id/role', ...action((req, res, user) => {
     try {
       core.users.setRole(param(req, 'id'), field(req, 'role') as Role);
-      res.redirect('/admin/users');
-    } catch (e) { failWith(res, e, (m) => usersSection(core, localeOf(res), user, m), userMessages); }
+      res.redirect(userPath(param(req, 'id')));
+    } catch (e) { failWith(res, e, userView(res, user, param(req, 'id')), userMessages); }
   }));
 
   router.post('/admin/users/:id/disabled', ...action((req, res, user) => {
     const value = field(req, 'disabled');
     try {
       if (value !== '0' && value !== '1') throw new LagerError('invalid_argument', 'disabled must be 0 or 1.');
+      // Deactivating signs the account out everywhere: one's own session would end with it. The page does not offer it either.
+      if (value === '1' && param(req, 'id') === user.id) throw new LagerError('forbidden', 'You cannot deactivate your own account.', 'disable_self');
       core.users.setDisabled(param(req, 'id'), value === '1');
-      res.redirect('/admin/users');
-    } catch (e) { failWith(res, e, (m) => usersSection(core, localeOf(res), user, m), userMessages); }
+      res.redirect(userPath(param(req, 'id')));
+    } catch (e) { failWith(res, e, userView(res, user, param(req, 'id')), userMessages); }
   }));
 
   router.post('/admin/users/:id/reset-link', ...action((req, res, user) => {
     try {
       const link = core.accounts.createResetLink(param(req, 'id'));
-      send(res, 200, usersSection(core, localeOf(res), user, { once: { title: t(localeOf(res), 'admin.users.resetLinkTitle'), link } }));
-    } catch (e) { failWith(res, e, (m) => usersSection(core, localeOf(res), user, m), userMessages); }
+      send(res, 200, userView(res, user, param(req, 'id'))({ once: { title: t(localeOf(res), 'admin.users.resetLinkTitle'), link } }));
+    } catch (e) { failWith(res, e, userView(res, user, param(req, 'id')), userMessages); }
   }));
 
   /**
@@ -578,8 +628,8 @@ export const adminExtension: PlatformExtension = (router, core) => {
     const locale = localeOf(res);
     const target = core.users.get(param(req, 'id'));
     if (!target) { send(res, 404, usersSection(core, locale, user, { error: t(locale, 'admin.users.notFound') })); return null; }
-    if (target.id === user.id) { send(res, 403, usersSection(core, locale, user, { error: t(locale, 'admin.users.twoFactorSelf') })); return null; }
-    if (!core.twoFactor.isEnabled(target.id)) { res.redirect('/admin/users'); return null; }
+    if (target.id === user.id) { send(res, 403, userView(res, user, target.id)({ error: t(locale, 'admin.users.twoFactorSelf') })); return null; }
+    if (!core.twoFactor.isEnabled(target.id)) { res.redirect(userPath(target.id)); return null; }
     return target;
   };
 
@@ -613,7 +663,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
       core.tokens.revokeAll(target.id);
       core.accounts.noticeTwoFactor(target, 'reset');
     }
-    send(res, 200, usersSection(core, locale, user, { ok: t(locale, 'admin.users.twoFactorResetDone', { email: target.email }) }));
+    send(res, 200, userView(res, user, target.id)({ ok: t(locale, 'admin.users.twoFactorResetDone', { email: target.email }) }));
   }));
 
   // Deleting an account: a page that says what goes with it, then the deletion itself. Not offered over REST or MCP.
@@ -629,7 +679,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
     const error = noticeText(locale, (e.reason !== undefined ? DELETE_NOTICES[e.reason] : undefined) ?? (e.code === 'not_found' ? 'admin.users.notFound' : 'validation.generic'));
     const status = e.code === 'not_found' ? 404 : e.code === 'conflict' ? 409 : e.code === 'forbidden' ? 403 : 400;
     const stays = e.reason !== 'delete_self' && e.reason !== 'delete_active';
-    send(res, status, (stays ? deleteUserPage(core, locale, user, id, { error }, answered) : null) ?? usersSection(core, locale, user, { error }));
+    send(res, status, (stays ? deleteUserPage(core, locale, user, id, { error }, answered) : null) ?? userView(res, user, id)({ error }));
   };
 
   router.get('/admin/users/:id/delete', noStore, admin, (req, res) => {
@@ -643,7 +693,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
 
   router.post('/admin/users/:id/delete', ...action((req, res, user) => {
     const id = param(req, 'id');
-    if (field(req, 'decision') !== 'delete') { res.redirect('/admin/users'); return; }
+    if (field(req, 'decision') !== 'delete') { res.redirect(core.users.get(id) ? userPath(id) : '/admin/users'); return; }
     const choice = field(req, 'owned');
     // Only what the form offers comes back in a re-rendered page.
     const answered = { owned: choice === 'delete' || choice === 'transfer' ? choice : undefined, transferTo: (req.body as Record<string, unknown>).transfer_to === undefined ? undefined : field(req, 'transfer_to', 254) };
@@ -958,8 +1008,8 @@ export const adminExtension: PlatformExtension = (router, core) => {
   router.post('/admin/users/:id/ai-group', ...action((req, res, user) => {
     try {
       core.ai.assign(param(req, 'id'), field(req, 'group'));
-      res.redirect('/admin/users');
-    } catch (e) { failWith(res, e, (m) => usersSection(core, localeOf(res), user, m), { not_found: 'admin.ai.notFound' }); }
+      res.redirect(userPath(param(req, 'id')));
+    } catch (e) { failWith(res, e, userView(res, user, param(req, 'id')), { not_found: 'admin.ai.notFound' }); }
   }));
 
   // --- instances ---

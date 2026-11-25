@@ -229,7 +229,8 @@ describe('signed-in pages in every locale', () => {
     publish: ['dash.tokens.create', 'dash.latestVersion', 'dash.connect', 'publish.lede', 'common.copy', 'common.copied', 'nav.publish'],
     instance: ['instance.delete.title', 'instance.grants.title', 'instance.snapshots.title', 'instance.visibility.who', 'instance.autoUpdate.label', 'common.dangerZone', 'instance.storage', 'instance.autoUpdate.title'],
     app: ['app.collaborators', 'app.self.title', 'app.delete.title', 'app.newInstance', 'app.collaboratorEmail'],
-    users: ['admin.section.settings', 'admin.users.resetLink', 'admin.users.role'],
+    users: ['admin.section.settings', 'admin.users.role', 'admin.users.aiGroup', 'common.manage'],
+    user: ['admin.users.resetLink', 'admin.users.role', 'admin.users.role.hint', 'admin.users.aiGroup.hint', 'admin.users.signIn', 'admin.users.access', 'admin.users.deactivate.hint', 'admin.users.delete.active'],
     invites: ['admin.invites.create', 'admin.invites.validUntil'],
     groups: ['admin.groups.create', 'admin.groups.newName'],
     group: ['admin.groups.delete', 'admin.groups.memberEmail'],
@@ -238,7 +239,7 @@ describe('signed-in pages in every locale', () => {
     account: ['account.password.title', 'account.locale.label', 'nav.signOut'],
   };
   const PAGES: Array<[string, string]> = [
-    ['home', '/'], ['publish', '/publish'], ['instance', '/instances/notes'], ['app', '/apps/notes'], ['users', '/admin/users'], ['invites', '/admin/invites'],
+    ['home', '/'], ['publish', '/publish'], ['instance', '/instances/notes'], ['app', '/apps/notes'], ['users', '/admin/users'], ['user', '/admin/users/USER'], ['invites', '/admin/invites'],
     ['groups', '/admin/groups'], ['group', '/admin/groups/GROUP'], ['settings', '/admin/settings'], ['adminApps', '/admin/apps'], ['account', '/account'],
   ];
 
@@ -267,7 +268,7 @@ describe('signed-in pages in every locale', () => {
     const cookie = await h.login();
     for (const locale of LOCALES) {
       for (const [name, route] of PAGES) {
-        const res = await request(h.app).get(route.replace('GROUP', groupId)).set('Host', h.host).set('Cookie', `${cookie}; lager_lang=${locale}`);
+        const res = await request(h.app).get(route.replace('GROUP', groupId).replace('USER', h.core.users.getByEmail('u@x.y')!.id)).set('Host', h.host).set('Cookie', `${cookie}; lager_lang=${locale}`);
         const where = `${locale} ${name}`;
         expect(res.status, where).toBe(200);
         expect(res.text, where).toContain(`<html lang="${locale}"`);

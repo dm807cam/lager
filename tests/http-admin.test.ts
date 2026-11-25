@@ -54,6 +54,13 @@ describe('administration area', () => {
     const before = s.hh.core.users.get(user.id)!.role;
     const p = await s.post(`/admin/users/${user.id}/role`, cookie, { role: 'admin' }, user);
     expect(p.status).toBe(403);
+    // The page of one account is the administration's as well.
+    const page = await s.get(`/admin/users/${user.id}`, cookie);
+    expect(page.status).toBe(403);
+    expect(page.text).toContain(en('forbidden.admin'));
+    const anonPage = await s.get(`/admin/users/${user.id}`);
+    expect(anonPage.status).toBe(302);
+    expect(anonPage.headers.location).toContain('/login');
     expect(s.hh.core.users.get(user.id)!.role).toBe(before);
     expect((await s.post('/admin/settings', cookie, { registration: 'open', maxInstances: '5' }, user)).status).toBe(403);
   });
@@ -80,10 +87,11 @@ describe('administration area', () => {
     const { user } = await s.makeUser('nina@x.y');
     const res = await s.post(`/admin/users/${user.id}/role`, admin, { role: 'publisher' });
     expect(res.status).toBe(302);
-    expect(res.headers.location).toBe('/admin/users');
+    expect(res.headers.location).toBe(`/admin/users/${user.id}`);
     expect(s.hh.core.users.get(user.id)!.role).toBe('publisher');
-    const page = await s.get('/admin/users', admin);
+    const page = await s.get(`/admin/users/${user.id}`, admin);
     expect(page.text).toMatch(/<option value="publisher" selected>/);
+    expect((await s.get('/admin/users/nope', admin)).status).toBe(404);
     const bad = await s.post(`/admin/users/${user.id}/role`, admin, { role: 'god' });
     expect(bad.status).toBe(400);
     expect(s.hh.core.users.get(user.id)!.role).toBe('publisher');
@@ -95,10 +103,23 @@ describe('administration area', () => {
     const res = await s.post(`/admin/users/${s.hh.adminId}/role`, admin, { role: 'user' });
     expect(res.status).toBe(409);
     expect(res.text).toContain(en('admin.users.lastAdmin'));
+    // The refusal shows on the account's own page, where the form was.
+    expect(res.text).toContain(`action="/admin/users/${s.hh.adminId}/role"`);
     expect(s.hh.core.users.get(s.hh.adminId)!.role).toBe('admin');
+    // Nobody deactivates their own account, last administrator or not: it would end their own session.
     const res2 = await s.post(`/admin/users/${s.hh.adminId}/disabled`, admin, { disabled: '1' });
-    expect(res2.text).toContain(en('admin.users.lastAdmin'));
+    expect(res2.status).toBe(403);
+    expect(res2.text).toContain(en('admin.users.disableSelf'));
     expect(s.hh.core.users.get(s.hh.adminId)!.disabled).toBe(false);
+    const { user: second } = await s.makeUser('second@x.y');
+    s.hh.core.users.setRole(second.id, 'admin');
+    expect((await s.post(`/admin/users/${s.hh.adminId}/disabled`, admin, { disabled: '1' })).status).toBe(403);
+    expect(s.hh.core.users.get(s.hh.adminId)!.disabled).toBe(false);
+    // An action on an account that does not exist answers 404 with the list.
+    const gone = await s.post('/admin/users/nope/role', admin, { role: 'user' });
+    expect(gone.status).toBe(404);
+    expect(gone.text).toContain(en('admin.users.notFound'));
+    expect(gone.text).toContain('href="/admin/users/'); 
   });
 
   it('disable and enable a user', async () => {
@@ -106,7 +127,9 @@ describe('administration area', () => {
     const admin = await s.hh.login();
     const { user, cookie } = await s.makeUser('nina@x.y');
     expect((await s.get('/', cookie)).status).toBe(200);
-    expect((await s.post(`/admin/users/${user.id}/disabled`, admin, { disabled: '1' })).status).toBe(302);
+    const off = await s.post(`/admin/users/${user.id}/disabled`, admin, { disabled: '1' });
+    expect(off.status).toBe(302);
+    expect(off.headers.location).toBe(`/admin/users/${user.id}`);
     expect((await s.get('/', cookie)).status).toBe(302);
     expect((await s.get('/admin/users', admin)).text).toContain(en('common.disabled'));
     await s.post(`/admin/users/${user.id}/disabled`, admin, { disabled: '0' });
