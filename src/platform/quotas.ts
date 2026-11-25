@@ -1,4 +1,4 @@
-import type { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import { LagerError } from '../errors.js';
 
 const MIB = 1024 * 1024;
@@ -15,7 +15,17 @@ export type QuotaSource = 'app' | 'group' | 'default';
  * the largest setting applies, so being in one more group never takes space away.
  */
 export class Quotas {
-  constructor(private db: DatabaseSync, readonly defaultBytes: number) {}
+  /** Runs before every write of an instance, several times for some: prepared once. */
+  private lookup: StatementSync;
+
+  constructor(private db: DatabaseSync, readonly defaultBytes: number) {
+    // The group with the largest setting; of two with the same size the one first by name, so the answer is stable.
+    this.lookup = db.prepare(`SELECT a.quota_bytes AS app, g.id AS group_id, g.name AS group_name, g.quota_bytes AS grp
+      FROM instances i JOIN apps a ON a.id = i.app_id
+      LEFT JOIN groups g ON g.id = (SELECT g2.id FROM group_members m JOIN groups g2 ON g2.id = m.group_id
+        WHERE m.user_id = i.owner_id AND g2.quota_bytes IS NOT NULL ORDER BY g2.quota_bytes DESC, g2.name LIMIT 1)
+      WHERE i.id = ?`);
+  }
 
   /** The setting of an app or a group in bytes, `null` to follow the next rule again. */
   private static check(bytes: number | null): number | null {
@@ -26,14 +36,25 @@ export class Quotas {
     return bytes;
   }
 
-  /** What the instance may use, in bytes (0 = unlimited), and where that comes from. An unknown instance gets the default. */
-  resolve(instanceId: string): { bytes: number; source: QuotaSource } {
-    const r = this.db.prepare(`SELECT a.quota_bytes AS app,
-      (SELECT MAX(g.quota_bytes) FROM group_members m JOIN groups g ON g.id = m.group_id WHERE m.user_id = i.owner_id) AS grp
-      FROM instances i JOIN apps a ON a.id = i.app_id WHERE i.id = ?`).get(instanceId) as { app: number | null; grp: number | null } | undefined;
+  /**
+   * What the instance may use, in bytes (0 = unlimited), and where that comes from; for a group, which one. An unknown
+   * instance gets the default.
+   */
+  resolve(instanceId: string): { bytes: number; source: QuotaSource; group?: { id: string; name: string } } {
+    const r = this.lookup.get(instanceId) as { app: number | null; group_id: string | null; group_name: string | null; grp: number | null } | undefined;
     if (r?.app != null) return { bytes: Number(r.app), source: 'app' };
-    if (r?.grp != null) return { bytes: Number(r.grp), source: 'group' };
+    if (r?.grp != null && r.group_id !== null) return { bytes: Number(r.grp), source: 'group', group: { id: r.group_id, name: r.group_name ?? '' } };
     return { bytes: this.defaultBytes, source: 'default' };
+  }
+
+  /**
+   * What all snapshots of the instance together may take is a multiple of this: its storage, but never less than the
+   * default (0 = unlimited). A smaller setting for an app or a group therefore never prunes snapshots the server's default
+   * would have kept.
+   */
+  snapshotBase(instanceId: string): number {
+    const bytes = this.of(instanceId);
+    return bytes <= 0 || this.defaultBytes <= 0 ? 0 : Math.max(bytes, this.defaultBytes);
   }
 
   /** What the instance may use, in bytes; 0 = unlimited. */

@@ -60,6 +60,21 @@ describe('snapshot byte budget', () => {
     expect(kept.map((s) => s.id)).toEqual(made.map((s) => s.id).reverse().slice(0, kept.length));
   });
 
+  it('a separate snapshot quota sets the budget instead of the instance quota', () => {
+    const store = dataStore(tmp(), { quota: 200 * KIB });
+    // As Quotas.snapshotBase does for an app or group held to less than the default: the default's budget still applies.
+    store.setSnapshotQuota(() => 10 * 1024 * KIB);
+    fill(store);
+    for (let n = 0; n < 8; n++) store.snapshot('i1', `s${n}`);
+    expect(store.listSnapshots('i1')).toHaveLength(8);
+    // Back to a small base: the next snapshot prunes the older ones that no longer fit.
+    store.setSnapshotQuota(() => 200 * KIB);
+    store.snapshot('i1', 'after');
+    const kept = store.listSnapshots('i1');
+    expect(kept.length).toBeLessThan(9);
+    expect(kept.reduce((sum, s) => sum + s.sizeBytes, 0)).toBeLessThanOrEqual(SNAPSHOT_QUOTA_FACTOR * 200 * KIB);
+  });
+
   it('keeps the newest snapshot that is at least a day old when newer ones fill the budget, and stays within it', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));

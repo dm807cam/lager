@@ -134,6 +134,7 @@ export function createCore(config: Config, opts?: { mailer?: Mailer; fetch?: typ
   // Pages an instance saved itself count like its documents and uploads against the one instance quota.
   const assets = new InstanceAssets(config.dataDir, quotaOf, (id) => data.usage(id) + apps.savedBytes(id));
   data.setExtraUsage((id) => assets.usage(id).bytes + apps.savedBytes(id));
+  data.setSnapshotQuota((id) => quotas.snapshotBase(id));
   apps.setQuota(quotaOf, (id) => data.usage(id) + assets.usage(id).bytes);
   const groups = new Groups(db, users);
   const access = new Access(db, users, groups, apps);

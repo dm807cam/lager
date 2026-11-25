@@ -150,6 +150,7 @@ export class InstanceData {
   private dbs: HandleCache;
   private lastStamp = 0;
   private extraUsage: (instanceId: string) => number = () => 0;
+  private snapshotQuota: Quota | null = null;
   /** Per instance and collection: when its listeners last heard of a received document, and the notice that is still to come. */
   private ingestNotices = new Map<string, { last: number; timer: NodeJS.Timeout | null; path: string }>();
 
@@ -235,6 +236,11 @@ export class InstanceData {
   /** Registers bytes stored next to the documents (uploaded assets) that count against the same quota. */
   setExtraUsage(fn: (instanceId: string) => number): void {
     this.extraUsage = fn;
+  }
+
+  /** The size the snapshot budget is a multiple of, when it is not the instance's own quota (see `Quotas.snapshotBase`). */
+  setSnapshotQuota(quota: Quota): void {
+    this.snapshotQuota = quota;
   }
 
   /** Throws `quota_exceeded` when the instance's storage is already full. */
@@ -657,7 +663,7 @@ export class InstanceData {
    */
   private prune(instanceId: string): void {
     const keep = Math.max(1, Math.floor(this.snapshotKeep));
-    const quota = quotaFor(this.quota, instanceId);
+    const quota = quotaFor(this.snapshotQuota ?? this.quota, instanceId);
     const budget = quota > 0 ? quota * SNAPSHOT_QUOTA_FACTOR : Infinity;
     const [newest, ...rest] = this.listSnapshots(instanceId);
     if (!newest) return;

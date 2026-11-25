@@ -202,8 +202,12 @@ const quotaInput = (core: Core, id: string, bytes: number | null, label = ''): s
   + ` value="${bytes === null ? '' : Math.floor(bytes / MIB)}"${core.quotas.defaultBytes > 0 ? ` placeholder="${Math.floor(core.quotas.defaultBytes / MIB)}"` : ''}${label ? ` aria-label="${esc(label)}"` : ''}>`;
 /** What an instance uses against its storage, and how much that is. */
 const storageText = (core: Core, locale: Locale, instanceId: string, used: number): string => {
-  const quota = core.quotas.of(instanceId);
-  return quota > 0 ? esc(t(locale, 'instance.storage.used', { used: formatSize(locale, used), quota: formatSize(locale, quota) })) : sizeText(locale, used);
+  const quota = core.quotas.resolve(instanceId);
+  const text = quota.bytes > 0 ? esc(t(locale, 'instance.storage.used', { used: formatSize(locale, used), quota: formatSize(locale, quota.bytes) })) : sizeText(locale, used);
+  // Why this instance has the storage it has: the app's setting wins even over a larger one of a group.
+  const source = quota.source === 'app' ? t(locale, 'admin.apps.quotaFromApp')
+    : quota.group ? t(locale, 'admin.apps.quotaFromGroup', { group: quota.group.name }) : '';
+  return source ? `${text}<span class="hint quota-source">${esc(source)}</span>` : text;
 };
 
 /** One setting: label and help text on the left, the control on the right; `control` is trusted markup. */

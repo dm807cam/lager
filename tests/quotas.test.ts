@@ -39,7 +39,7 @@ describe('storage per group and per app', () => {
     quotas.setGroup(large.id, 100 * MIB);
     // A group applies only to the instances its members own.
     groups.addMember(small.id, s.pub.id);
-    expect(quotas.resolve(inst)).toEqual({ bytes: 2 * MIB, source: 'group' });
+    expect(quotas.resolve(inst)).toEqual({ bytes: 2 * MIB, source: 'group', group: { id: small.id, name: 'Small' } });
     expect(quotas.of(s.boardInstance.id)).toBe(4 * MIB);
     // One more group never takes space away: the largest setting wins, also when it is smaller than the default.
     groups.addMember(large.id, s.pub.id);
@@ -53,6 +53,32 @@ describe('storage per group and per app', () => {
     expect(quotas.of(inst)).toBe(2 * MIB);
     groups.delete(small.id);
     expect(quotas.resolve(inst)).toEqual({ bytes: 4 * MIB, source: 'default' });
+  });
+
+  it('names the group that sets the storage, and follows the owner when an instance changes hands', () => {
+    const s = setup();
+    const { quotas, groups, users, removal } = s.hh.core;
+    const big = groups.create('Big');
+    quotas.setGroup(big.id, 64 * MIB);
+    groups.addMember(big.id, s.other.id);
+    expect(quotas.resolve(s.boardInstance.id)).toEqual({ bytes: 64 * MIB, source: 'group', group: { id: big.id, name: 'Big' } });
+    expect(quotas.of(s.notesInstance.id)).toBe(4 * MIB);
+    // Pia's account is removed and what she owns goes to Ola, who is in the group: her instance now has Ola's storage.
+    users.setDisabled(s.pub.id, true);
+    removal.remove(s.pub.id, users.get(s.hh.adminId)!, { transferTo: s.other.id });
+    expect(s.hh.core.apps.getInstance(s.notesInstance.id)!.ownerId).toBe(s.other.id);
+    expect(quotas.resolve(s.notesInstance.id)).toMatchObject({ bytes: 64 * MIB, source: 'group' });
+  });
+
+  it('never gives snapshots less room than the default', () => {
+    const s = setup();
+    const { quotas } = s.hh.core;
+    expect(quotas.snapshotBase(s.notesInstance.id)).toBe(4 * MIB);
+    quotas.setApp(s.notes.id, MIB);
+    expect(quotas.of(s.notesInstance.id)).toBe(MIB);
+    expect(quotas.snapshotBase(s.notesInstance.id)).toBe(4 * MIB);
+    quotas.setApp(s.notes.id, 40 * MIB);
+    expect(quotas.snapshotBase(s.notesInstance.id)).toBe(40 * MIB);
   });
 
   it('refuses sizes outside 1 MiB to the limit, and unknown apps and groups', () => {
@@ -112,20 +138,47 @@ describe('storage per group and per app', () => {
     expect((await s.post(`/admin/apps/${s.notes.id}/quota`, admin, { quota: '7' })).headers.location).toBe('/admin/apps');
     expect(s.hh.core.quotas.ofApp(s.notes.id)).toBe(7 * MIB);
     expect(s.hh.core.quotas.of(s.notesInstance.id)).toBe(7 * MIB);
-    expect((await s.get('/admin/apps', admin)).text).toContain('7.0 MiB');
+    const overview = (await s.get('/admin/apps', admin)).text;
+    expect(overview).toContain('7.0 MiB');
+    expect(overview).toContain(esc(t('en', 'admin.apps.quotaFromApp')));
+    const team = s.hh.core.groups.create('Board team');
+    s.hh.core.quotas.setGroup(team.id, 9 * MIB);
+    s.hh.core.groups.addMember(team.id, s.other.id);
+    expect((await s.get('/admin/apps', admin)).text).toContain(esc(t('en', 'admin.apps.quotaFromGroup', { group: 'Board team' })));
     expect((await s.post(`/admin/apps/${s.notes.id}/quota`, admin, { quota: '0' })).status).toBe(400);
     expect((await s.post('/admin/apps/nope/quota', admin, { quota: '5' })).status).toBe(404);
     await s.post(`/admin/apps/${s.notes.id}/quota`, admin, { quota: '' });
     expect(s.hh.core.quotas.ofApp(s.notes.id)).toBeNull();
   });
 
-  it('only administrators can change it', async () => {
+  it('only administrators can change it, and only with a valid form token', async () => {
     const s = setup();
-    const cookie = await s.hh.login('pub@x.y', PASSWORD);
-    const res = await request(s.hh.app).post(`/admin/apps/${s.notes.id}/quota`).set('Host', s.hh.host).set('Cookie', cookie).type('form')
-      .send({ csrf: csrfToken(s.hh.core, s.pub), quota: '500' });
-    expect(res.status).toBe(403);
-    expect(s.hh.core.quotas.ofApp(s.notes.id)).toBeNull();
+    const group = s.hh.core.groups.create('Team');
+    const routes = [`/admin/apps/${s.notes.id}/quota`, `/admin/groups/${group.id}/quota`];
+    const unchanged = (): void => {
+      expect(s.hh.core.quotas.ofApp(s.notes.id)).toBeNull();
+      expect(s.hh.core.quotas.ofGroup(group.id)).toBeNull();
+    };
+    const send = (path: string, body: Record<string, string>, cookie?: string) => {
+      const r = request(s.hh.app).post(path).set('Host', s.hh.host).type('form');
+      return (cookie ? r.set('Cookie', cookie) : r).send({ quota: '500', ...body });
+    };
+    const publisher = await s.hh.login('pub@x.y', PASSWORD);
+    const admin = await s.hh.login();
+    const adminCsrf = csrfToken(s.hh.core, s.hh.core.users.get(s.hh.adminId)!);
+    for (const path of routes) {
+      // Anonymous: sent to the sign-in page.
+      const anon = await send(path, { csrf: adminCsrf });
+      expect(anon.status).toBe(302);
+      expect(anon.headers.location).toContain('/login');
+      // A publisher, even with a valid token of their own.
+      expect((await send(path, { csrf: csrfToken(s.hh.core, s.pub) }, publisher)).status).toBe(403);
+      // An administrator without a token, with a wrong one, and with a publisher's.
+      expect((await send(path, {}, admin)).status).toBe(403);
+      expect((await send(path, { csrf: 'nope' }, admin)).status).toBe(403);
+      expect((await send(path, { csrf: csrfToken(s.hh.core, s.pub) }, admin)).status).toBe(403);
+      unchanged();
+    }
   });
 
   it('the instance page shows the storage that applies to it', async () => {
