@@ -190,6 +190,9 @@ describe('shell', () => {
       ['/instances/notes', 'pia', 403, 'forbidden.instance'],
       ['/apps/tasks', 'uwe', 403, 'forbidden.app'],
       ['/admin/users', 'pia', 403, 'forbidden.admin'],
+      [`/admin/users/${s.ids.uwe}`, 'pia', 403, 'forbidden.admin'],
+      [`/admin/users/${s.ids.pia}`, 'uwe', 403, 'forbidden.admin'],
+      ['/admin/users/nope', 'admin', 404, 'admin.users.notFound'],
       ['/admin/groups/nope', 'admin', 404, 'admin.groups.missing'],
       ['/admin/instances/nope/domains', 'admin', 404, 'admin.instances.notFound'],
     ];

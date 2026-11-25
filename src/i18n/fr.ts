@@ -444,6 +444,7 @@ export const fr: Record<MessageKey, string> = {
   'admin.users.activate.hint': "Ce compte est désactivé et ne peut pas se connecter. L’activer lui permet de se connecter à nouveau.",
   'admin.users.delete.hint': "Supprime le compte définitivement. La page suivante montre ce qu’il possède et vous laisse choisir ce qu’il en advient.",
   'admin.users.self': "C’est votre propre compte. Modifiez votre nom, votre mot de passe et la connexion en deux étapes sur la page de votre compte.",
+  'admin.users.disableSelf': "Vous ne pouvez pas désactiver votre propre compte. Un autre administrateur le peut.",
   'admin.settings.registration': 'Inscription',
   'admin.settings.noMail': "Sans envoi d’e-mails, les adresses e-mail ne sont pas confirmées.",
   'admin.settings.maxInstances': "Nombre maximal d’instances par utilisateur",

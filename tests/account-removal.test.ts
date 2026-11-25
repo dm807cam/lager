@@ -191,6 +191,20 @@ describe('deleting an account', () => {
     }
     expect(w.core.users.get(w.pia.id)).not.toBeNull();
     expect(w.core.apps.getApp('board')).not.toBeNull();
+    // Cancel for an account that no longer exists goes to the list.
+    const gone = await w.post('/admin/users/nope/delete', { decision: 'cancel' });
+    expect(gone.headers.location).toBe('/admin/users');
+  });
+
+  it('one’s own page sends to the account page and offers neither deactivating nor deleting', async () => {
+    const w = await world();
+    const doc = new JSDOM((await w.get(`/admin/users/${w.admin.id}`)).text).window.document;
+    const main = doc.querySelector('main')!;
+    expect(main.textContent).toContain(t('en', 'admin.users.self'));
+    expect(main.querySelector('a[href="/account"]')).not.toBeNull();
+    expect(main.querySelector('form[action$="/disabled"], a[href$="/delete"], form[action$="/reset-link"]')).toBeNull();
+    // Role and AI group stay: the server refuses demoting the last administrator.
+    expect(main.querySelector(`form[action="/admin/users/${w.admin.id}/role"]`)).not.toBeNull();
   });
 
   it('the script disables the delete button until the address is typed and leaves Cancel alone', async () => {
@@ -549,7 +563,7 @@ describe('deleting an account', () => {
       // With the other administrator gone, the one left can neither be deactivated nor, therefore, deleted.
       w.core.users.setDisabled(w.boss.id, true);
       expect((await w.post(`/admin/users/${w.boss.id}/delete`, { owned: 'transfer', transfer_to: 'admin@x.y', confirm: 'boss@x.y' })).status).toBe(200);
-      expect((await w.post(`/admin/users/${w.admin.id}/disabled`, { disabled: '1' })).status).toBe(409);
+      expect((await w.post(`/admin/users/${w.admin.id}/disabled`, { disabled: '1' })).status).toBe(403);
       expect(w.core.users.list().filter((u) => u.role === 'admin' && !u.disabled).map((u) => u.email)).toEqual(['admin@x.y']);
     });
 

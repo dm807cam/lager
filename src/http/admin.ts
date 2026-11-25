@@ -59,7 +59,7 @@ const STATUS_TONES = { disabled: 'danger', active: 'success', unverified: 'warni
 /** Where an account's own page lives. */
 const userPath = (id: string): string => `/admin/users/${encodeURIComponent(id)}`;
 /** The way back from a page about one account (deleting it, turning off its second step) to that account's page. */
-const backToUser = (locale: Locale, u: User): string => `<a class="back" href="${esc(userPath(u.id))}">${icon('chevron', 'i-sm')}${esc(u.name || u.email)}</a>`;
+const backToUser = (u: User): string => `<a class="back" href="${esc(userPath(u.id))}">${icon('chevron', 'i-sm')}${esc(u.name || u.email)}</a>`;
 
 /** The status badges of an account: active, deactivated or unconfirmed, and whether it uses two-step sign-in. */
 function userBadges(core: Core, locale: Locale, u: User): string {
@@ -109,10 +109,11 @@ ${settingRow('user-ai-group', t(locale, 'admin.users.aiGroup'), t(locale, 'admin
 </div>`;
   const action = (label: string, hint: string, control: string): string =>
     `<div class="settings-row"><div><span class="label">${esc(label)}</span><p class="hint">${esc(hint)}</p></div><div>${control}</div></div>`;
-  const signIn = `<div class="subsection"><h3>${esc(t(locale, 'admin.users.signIn'))}</h3>
+  // One's own password and second step are changed on the account page, with the current password and a code.
+  const signIn = self ? '' : `<div class="subsection"><h3>${esc(t(locale, 'admin.users.signIn'))}</h3>
 ${action(t(locale, 'admin.users.resetLink'), t(locale, 'admin.users.resetLink.hint'), form(`${base}/reset-link`, csrf, '', esc(t(locale, 'admin.users.resetLink')), 'secondary', '', true))}
 ${action(t(locale, 'account.twoFactor.title'), t(locale, twoFactorOn ? 'admin.users.twoFactor.onHint' : 'admin.users.twoFactor.offHint'),
-    twoFactorOn && !self ? linkButton(`${base}/two-factor/reset`, esc(t(locale, 'admin.users.twoFactorReset')), 'secondary', true) : '')}</div>`;
+    twoFactorOn ? linkButton(`${base}/two-factor/reset`, esc(t(locale, 'admin.users.twoFactorReset')), 'secondary', true) : '')}</div>`;
   const state = self ? '' : `<div class="subsection"><h3>${esc(t(locale, 'admin.users.access'))}</h3>
 ${action(t(locale, u.disabled ? 'common.activate' : 'common.deactivate'), t(locale, u.disabled ? 'admin.users.activate.hint' : 'admin.users.deactivate.hint'),
     form(`${base}/disabled`, csrf, hiddenField('disabled', u.disabled ? '0' : '1'), esc(t(locale, u.disabled ? 'common.activate' : 'common.deactivate')), 'secondary', '', true))}
@@ -136,7 +137,7 @@ function twoFactorResetPage(core: Core, locale: Locale, admin: User, target: Use
 ${field('tf-admin-current', t(locale, 'admin.users.twoFactorReset.password'), '<input id="tf-admin-current" name="current" type="password" required autocomplete="current-password">')}
 ${code}<div class="btn-row"><a class="${btn('secondary')}" href="${esc(userPath(target.id))}">${esc(t(locale, 'signin.cancel'))}</a>
 <button type="submit" class="${btn('danger')}">${esc(t(locale, 'admin.users.twoFactorReset'))}</button></div></form>`;
-  return shell(core, locale, admin, 'users', t(locale, 'admin.users.twoFactorReset.pageTitle', { email: target.email }), body, msg, base, backToUser(locale, target));
+  return shell(core, locale, admin, 'users', t(locale, 'admin.users.twoFactorReset.pageTitle', { email: target.email }), body, msg, base, backToUser(target));
 }
 
 /** At most this many names of what an account owns are spelled out on the confirmation page; the counts are always complete. */
@@ -172,7 +173,7 @@ ${field('transfer-to', t(locale, 'admin.users.delete.transferEmail'), `<input id
 ${field('confirm', t(locale, 'admin.users.delete.confirm', { email: target.email }), `<input id="confirm" name="confirm" required autocomplete="off" spellcheck="false" data-confirm="${esc(target.email)}">`)}
 <div class="btn-row"><button type="submit" name="decision" value="cancel" formnovalidate class="${btn('secondary')}">${esc(t(locale, 'signin.cancel'))}</button>
 <button type="submit" name="decision" value="delete" class="${btn('danger')}">${icon('trash')}${esc(t(locale, 'admin.users.delete.submit'))}</button></div></form></div>`;
-  return shell(core, locale, admin, 'users', t(locale, 'admin.users.delete.pageTitle', { email: target.email }), body, msg, base, backToUser(locale, target));
+  return shell(core, locale, admin, 'users', t(locale, 'admin.users.delete.pageTitle', { email: target.email }), body, msg, base, backToUser(target));
 }
 
 function invitesSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
@@ -590,7 +591,7 @@ export const adminExtension: PlatformExtension = (router, core) => {
 
   // --- users ---
 
-  const userMessages = { conflict: 'admin.users.lastAdmin', not_found: 'admin.users.notFound', invalid_argument: 'validation.generic' } as const;
+  const userMessages = { conflict: 'admin.users.lastAdmin', not_found: 'admin.users.notFound', invalid_argument: 'validation.generic', forbidden: 'admin.users.disableSelf' } as const;
 
   router.post('/admin/users/:id/role', ...action((req, res, user) => {
     try {
@@ -603,6 +604,8 @@ export const adminExtension: PlatformExtension = (router, core) => {
     const value = field(req, 'disabled');
     try {
       if (value !== '0' && value !== '1') throw new LagerError('invalid_argument', 'disabled must be 0 or 1.');
+      // Deactivating signs the account out everywhere: one's own session would end with it. The page does not offer it either.
+      if (value === '1' && param(req, 'id') === user.id) throw new LagerError('forbidden', 'You cannot deactivate your own account.', 'disable_self');
       core.users.setDisabled(param(req, 'id'), value === '1');
       res.redirect(userPath(param(req, 'id')));
     } catch (e) { failWith(res, e, userView(res, user, param(req, 'id')), userMessages); }

@@ -442,6 +442,7 @@ export const en = {
   'admin.users.activate.hint': "This account is deactivated and cannot sign in. Activating it lets it sign in again.",
   'admin.users.delete.hint': "Removes the account for good. The next page shows what it owns and lets you choose what happens to it.",
   'admin.users.self': "This is your own account. Change your name, password and two-step sign-in on your account page.",
+  'admin.users.disableSelf': "You cannot deactivate your own account. Another administrator can.",
   'admin.settings.registration': 'Registration',
   'admin.settings.noMail': 'Without email delivery, email addresses are not confirmed.',
   'admin.settings.maxInstances': 'Maximum instances per user',

@@ -530,7 +530,11 @@ describe('administrators', () => {
     s.core.twoFactor.confirmSetup(h!.adminId, codeFor(secret, -1));
     const { pending } = await s.password(ADMIN);
     const admin = cookieOf(await s.post('/login/two-factor', { code: codeFor(secret) }, { cookie: pending }), s.names.session)!;
-    expect((await s.get('/admin/users', admin)).text).not.toContain(`href="/admin/users/${h!.adminId}/two-factor/reset"`);
+    // One's own page offers no way to turn it off: that is the account page's, with a code.
+    const own = await s.get(`/admin/users/${h!.adminId}`, admin);
+    expect(own.status).toBe(200);
+    expect(own.text).not.toContain(`href="/admin/users/${h!.adminId}/two-factor/reset"`);
+    expect(own.text).not.toContain(t('en', 'admin.users.twoFactor.onHint'));
     const self = await s.post(`/admin/users/${h!.adminId}/two-factor/reset`, { csrf: s.csrf(h!.adminId), current: ADMIN.password, code: codeFor(secret, 1) }, { cookie: admin });
     expect(self.status).toBe(403);
     expect(s.core.twoFactor.isEnabled(h!.adminId)).toBe(true);

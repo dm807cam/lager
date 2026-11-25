@@ -444,6 +444,7 @@ export const de: Record<MessageKey, string> = {
   'admin.users.activate.hint': "Dieses Konto ist deaktiviert und kann sich nicht anmelden. Aktivierst du es, kann es sich wieder anmelden.",
   'admin.users.delete.hint': "Entfernt das Konto endgültig. Die nächste Seite zeigt, was ihm gehört, und du entscheidest, was damit geschieht.",
   'admin.users.self': "Das ist dein eigenes Konto. Name, Passwort und Anmeldung in zwei Schritten änderst du auf deiner Kontoseite.",
+  'admin.users.disableSelf': "Dein eigenes Konto kannst du nicht deaktivieren. Ein anderer Administrator kann das.",
   'admin.settings.registration': 'Registrierung',
   'admin.settings.noMail': 'Ohne E-Mail-Versand werden E-Mail-Adressen nicht bestätigt.',
   'admin.settings.maxInstances': 'Maximale Instanzen pro Nutzer',
