@@ -238,7 +238,6 @@ class Symbol {
       lines.push(m[i]);
       lines.push(m.map((row) => row[i]));
     }
-    const finderLike = [true, false, true, true, true, false, true];
     for (const line of lines) {
       for (let i = 0, run = 1; i < size; i++, run++) {
         if (i === size - 1 || line[i] !== line[i + 1]) {
@@ -246,13 +245,7 @@ class Symbol {
           run = 0;
         }
       }
-      for (let i = 0; i + 7 <= size; i++) {
-        if (!finderLike.every((d, k) => line[i + k] === d)) continue;
-        const lightBefore = i >= 4 && [1, 2, 3, 4].every((k) => !line[i - k]);
-        const lightAfter = i + 11 <= size && [7, 8, 9, 10].every((k) => !line[i + k]);
-        if (lightBefore) score += 40;
-        if (lightAfter) score += 40;
-      }
+      score += finderPenalty(line);
     }
     for (let y = 0; y + 1 < size; y++) {
       for (let x = 0; x + 1 < size; x++) {
@@ -265,6 +258,22 @@ class Symbol {
     score += (Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1) * 10;
     return score;
   }
+}
+
+/**
+ * Rule 3 of the mask penalty for one row or column: 40 for each dark-light-dark-dark-dark-light-dark run with four light modules
+ * before it, and 40 more with four after it. Outside the symbol is the quiet zone, which is light.
+ */
+export function finderPenalty(line: boolean[]): number {
+  const finderLike = [true, false, true, true, true, false, true];
+  const light = (k: number): boolean => k < 0 || k >= line.length || !line[k];
+  let score = 0;
+  for (let i = 0; i + 7 <= line.length; i++) {
+    if (!finderLike.every((d, k) => line[i + k] === d)) continue;
+    if ([1, 2, 3, 4].every((k) => light(i - k))) score += 40;
+    if ([7, 8, 9, 10].every((k) => light(i + k))) score += 40;
+  }
+  return score;
 }
 
 /** Encodes `text` at level M in the smallest version it fits; `mask` forces a mask pattern (0 to 7) instead of the best one. */
