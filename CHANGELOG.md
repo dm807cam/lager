@@ -16,7 +16,7 @@ All notable changes to Lager are listed here. The format follows [Keep a Changel
 
 ### Changed
 
-- **Administration › Users:** the list of accounts shows name, role, AI group, status and the day each account was created, with a **Manage** link per account. Role, AI group, reset link, two-step sign-in, deactivating and deleting moved to a page of their own for each account (`/admin/users/<id>`), with a sentence on what each does. With a form in every cell the list no longer fit next to the navigation: on every window wider than 1100 px its last column was cut off, and the date broke into four lines (#73).
+- **Administration › Users:** the list of accounts shows name, role, AI group, status and the day each account was created, with a **Manage** link per account. Role, AI group, reset link, two-step sign-in, deactivating and deleting moved to a page of their own for each account (`/admin/users/<id>`), with a sentence on what each does. One's own account offers neither deactivating nor deleting, and the server refuses deactivating it. With a form in every cell the list no longer fit next to the navigation: on every window wider than 1100 px its last column was cut off, and the date broke into four lines (#73).
 - **Docs:** the ChatGPT steps no longer ask for developer mode, which ChatGPT no longer needs for custom MCP servers, and say which plans may use connectors that write (Business, Enterprise and Edu; Pro reads only) and who may add one in a workspace.
 - **Dependencies:** nodemailer 10.6.1 (upstream bug fixes; Lager's emails do not change).
 
