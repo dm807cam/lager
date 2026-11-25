@@ -395,9 +395,20 @@ function aiSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
   const models = core.ai.listModels();
   const groups = core.ai.listGroups();
   const nameOf = new Map(providers.map((p) => [p.id, p.name]));
+  const everyone = groups.find((g) => g.isDefault);
+  // Three steps in a fixed order: a provider, a model of it, a default model for a group. Until a group has one, every call to
+  // lager.complete fails, so the page says so at the top and links to the next step.
+  const step = (n: number, key: MessageKey, href: string, label: string): string =>
+    notice('warning', t(locale, key, { n, total: 3 }), ` <a href="${esc(href)}">${esc(label)}</a>`);
   const status = core.ai.configured
-    ? notice('success', t(locale, 'admin.ai.status.on'))
-    : `<p class="hint">${esc(t(locale, 'admin.ai.status.off'))}</p>`;
+    ? notice('success', everyone?.modelId ? t(locale, 'admin.ai.status.ready', { model: everyone.modelId }) : t(locale, 'admin.ai.status.on'))
+    : !providers.length ? step(1, 'admin.ai.step.provider', '#add-provider', t(locale, 'admin.ai.providers.add'))
+      : !models.length ? step(2, 'admin.ai.step.model', '#add-model', t(locale, 'admin.ai.models.add'))
+        : step(3, 'admin.ai.step.group', `/admin/ai/groups/${encodeURIComponent(everyone?.id ?? DEFAULT_GROUP)}`, t(locale, 'admin.ai.everyoneElse'));
+  /** An "Add …" form behind its button, open while the list it adds to is empty, so a filled page is a list and not a stack of forms. */
+  const adder = (id: string, open: boolean, label: string, what: string, action: string, fields: string): string =>
+    `<details class="adder gap-top" id="${id}"${open ? ' open' : ''}><summary class="${btn('secondary', true)}">${icon('plus')}${esc(label)}</summary>
+<div class="gap-top">${form(action, csrf, fields, `${icon('plus')}${esc(t(locale, 'common.add'))}`, 'primary', 'stack settings-form', false, '', namedAction(locale, t(locale, 'common.add'), what))}</div></details>`;
   const providerRows = providers.map((p) => [
     `<a href="/admin/ai/providers/${encodeURIComponent(p.id)}"><strong>${esc(p.name)}</strong></a>`,
     esc(providerLabel(locale, p.type)),
@@ -417,16 +428,16 @@ function aiSection(core: Core, locale: Locale, admin: User, msg?: Msg): string {
     `<span class="num">${g.hourlyLimit}</span>`,
     `<span class="num">${g.isDefault ? '–' : g.memberCount}</span>`,
   ]);
-  const body = `<p class="hint">${esc(t(locale, 'admin.ai.intro'))}</p>${status}
+  const body = `${status}<p class="hint">${esc(t(locale, 'admin.ai.intro'))}</p>
 <div class="subsection"><h3>${esc(t(locale, 'admin.ai.providers'))}</h3>
 ${providers.length ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.ai.provider'), t(locale, 'admin.ai.baseUrl'), t(locale, 'admin.ai.key')], providerRows) : emptyState(t(locale, 'admin.ai.providers.none'))}
-<div class="gap-top">${form('/admin/ai/providers', csrf, providerFields(locale), `${icon('plus')}${esc(t(locale, 'admin.ai.providers.add'))}`, 'secondary', 'stack settings-form')}</div></div>
+${adder('add-provider', !providers.length, t(locale, 'admin.ai.providers.add'), t(locale, 'admin.ai.provider'), '/admin/ai/providers', providerFields(locale))}</div>
 <div class="subsection"><h3>${esc(t(locale, 'admin.ai.models'))}</h3><p class="hint">${esc(t(locale, 'admin.ai.models.hint'))}</p>
-${models.length ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.ai.provider'), t(locale, 'admin.ai.model'), t(locale, 'admin.ai.description')], modelRows) : emptyState(t(locale, 'admin.ai.models.none'))}
-${providers.length ? `<div class="gap-top">${form('/admin/ai/models', csrf, modelFields(core, locale), `${icon('plus')}${esc(t(locale, 'admin.ai.models.add'))}`, 'secondary', 'stack settings-form')}</div>` : ''}</div>
+${models.length ? dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.ai.provider'), t(locale, 'admin.ai.model'), t(locale, 'admin.ai.description')], modelRows) : emptyState(t(locale, 'admin.ai.models.none'), 'grid', providers.length ? {} : { detail: t(locale, 'admin.ai.models.first') })}
+${providers.length ? adder('add-model', !models.length, t(locale, 'admin.ai.models.add'), t(locale, 'admin.ai.model'), '/admin/ai/models', modelFields(core, locale)) : ''}</div>
 <div class="subsection"><h3>${esc(t(locale, 'admin.ai.groups'))}</h3><p class="hint">${esc(t(locale, 'admin.ai.groups.hint'))}</p>
 ${dataTable(locale, [t(locale, 'common.name'), t(locale, 'admin.ai.defaultModel'), t(locale, 'admin.ai.allowed'), t(locale, 'admin.ai.hourlyLimit'), t(locale, 'admin.ai.people')], groupRows)}
-${models.length ? `<div class="gap-top">${form('/admin/ai/groups', csrf, groupFields(core, locale), `${icon('plus')}${esc(t(locale, 'admin.ai.groups.add'))}`, 'secondary', 'stack settings-form')}</div>` : ''}</div>
+${models.length ? adder('add-group', false, t(locale, 'admin.ai.groups.add'), t(locale, 'admin.users.aiGroup'), '/admin/ai/groups', groupFields(core, locale)) : ''}</div>
 <div class="subsection">${form('/admin/ai/max-tokens', csrf, `<div>${settingRow('ai-max-tokens', t(locale, 'admin.ai.maxTokens'), t(locale, 'admin.ai.maxTokens.hint'),
     `<input id="ai-max-tokens" name="maxTokens" type="number" inputmode="numeric" min="1" max="${MAX_TOKENS_LIMIT}" step="1" required value="${core.ai.maxTokens}">`)}</div>`, esc(t(locale, 'common.save')), 'secondary', 'stack settings-form')}</div>
 <p class="hint">${esc(t(locale, 'admin.ai.access'))}</p>`;

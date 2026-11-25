@@ -222,6 +222,8 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .getown { width: 100%; }
 .getown > summary { list-style: none; }
 .getown > summary::-webkit-details-marker { display: none; }
+.adder > summary { list-style: none; width: fit-content; }
+.adder > summary::-webkit-details-marker { display: none; }
 .getown[open] > summary { margin-bottom: var(--s3); background: transparent; border-color: var(--line); color: var(--ink-2); }
 .getown[open] > summary .i { transform: rotate(90deg); }
 .getown > summary .i { transition: transform var(--ease); }
